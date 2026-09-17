@@ -37,7 +37,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D4 | v0 defers the roles it can do without | Ratified |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted at milestone close | Ratified |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -199,14 +199,14 @@ the list is confirmed, and a panel that agrees for that reason has not judged tw
 The trigger is one-directional on purpose. Duplicate findings can be counted. Anchoring cannot be
 measured until it has already been allowed, so the evidence only ever argues one way.
 
-## D7 — The engine is promoted at milestone close
+## D7 — The engine is promoted on a boundary, not per merge
 
 **Status:** Ratified.
 
 ### Rule
 
-1. The installed engine that builds Rigger is upgraded when a milestone closes, to the commit that
-   closed it.
+1. The installed engine that builds Rigger is upgraded on a declared boundary, to the commit that
+   closed it — never per merge and never on a whim. In v0 that boundary is a milestone close.
 2. `rigger doctor` passes against this repository's config before the upgraded engine resumes.
 3. `AGENTS.md` holds the rule for a card that changes the live gate, the live config, or the CLI
    entry point the running engine reads.
@@ -217,11 +217,10 @@ The installed engine is always a release behind the checkout it works on, and th
 closed on a schedule rather than on a whim. Per merge is churn: every card would reinstall the
 engine that dispatched it. Never is drift, and the gap grows until an upgrade is its own migration.
 
-A milestone is the natural unit because its exit test is the evidence that the new engine works.
-
-This decision expires when v0 ships, because the unit it names does with it. What replaces a
-milestone as the promote boundary is not knowable yet, and recording that it is unknown is more
-honest than guessing at it now.
+A milestone is v0's unit because its exit test is the evidence that the new engine works. What
+serves after v0 is not knowable yet, and it is a smaller question than the one this decision
+settles: the choice is that a boundary exists at all, and that choice does not expire with any
+particular boundary.
 
 ## D8 — A fact the code owns is generated, never typed
 
@@ -264,7 +263,7 @@ rule 3 is what makes replacing it a fix rather than a change.
 
 | Deferred | Returns when |
 |---|---|
-| The packet's contents as consumer configuration | A judge escalates as ambiguous for want of something the evidence did not carry, often enough that the owner sees the pattern. |
+| The packet's contents as consumer configuration | The loop escalates cards as ambiguous because a judge could not rule on what it was given, often enough that the owner sees the pattern. |
 
 ### Notes
 
@@ -362,8 +361,7 @@ and the safer one to get by silence.
 ### Rule
 
 1. v0 runs the engine on macOS, and writes no Windows-specific code before the WSL2 spike
-   reports. WSL2 is the route it tries first, because it reuses the macOS process model rather
-   than adding a second one.
+   reports. WSL2 is the route it tries first.
 2. What Rigger builds is unconstrained by this. A consumer on macOS can build software that runs
    anywhere.
 

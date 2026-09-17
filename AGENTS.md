@@ -34,10 +34,12 @@ permission first.
   you finish against that. A follow-up issue may only cover what falls outside it. Anything
   inside it that you left undone means the work is not done, and a defect you introduced is
   never a follow-up. Finishing includes deleting what is obsolete and updating the references
-  and the docs. If you cannot finish, escalate: say what is left and leave the card open. An
-  escalation is one of three categories, and naming which is how the engine routes it:
-  `recorded-decision` for a change to a decision the owner recorded, `critical` for a fault
-  that must not merge, and `ambiguous` for a question no role could resolve.
+  and the docs. If you cannot finish, say what is left and leave the card open. Where you are
+  making the thing, escalate it. Name which of three categories it is, because that is how the
+  engine routes it: `recorded-decision` for a change to a decision the owner recorded,
+  `critical` for a fault that must not merge, `ambiguous` for a question no role could resolve.
+  Where you are judging it, you return a verdict and never an escalation; the loop raises one
+  if your verdict calls for it.
 - **Write the acceptance before the work.** A card states what done means before anything
   starts, and whoever files it writes that, loading the acceptance skill first. Only its author
   changes it afterwards — never the maker, who is judged against it. Work you find outside it
