@@ -188,8 +188,16 @@ function walkArguments(words, subcommand, onOption, onOperand) {
 
     onOption(word, word);
     if (isCluster(word)) {
-      for (const letter of word.slice(1)) onOption(`-${letter}`, word);
-      if (values.short.has(word.slice(-1))) i++;
+      const letters = word.slice(1);
+      for (let n = 0; n < letters.length; n++) {
+        onOption(`-${letters[n]}`, word);
+        if (!values.short.has(letters[n])) continue;
+        // Everything after an option that takes a value is that value rather than more flags.
+        // `-m"a message"` lexes to one token, and the letters of the message are not options.
+        // Where the option is the last letter, the value is the word after it instead.
+        if (n === letters.length - 1) i++;
+        break;
+      }
     }
   }
 }
@@ -224,14 +232,30 @@ const PUSH_RESERVED_OPERAND = (word) =>
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
 /** Inspect one command. Returns the reason to refuse, or null. */
-function objectionTo(words, depth) {
+function objectionTo(given, depth) {
+  // A command may carry environment assignments before the program it runs, and `env` may carry
+  // them too: `GIT_AUTHOR_DATE=… git commit …` runs git, and the program to read is not word one.
+  let words = given;
+  for (;;) {
+    let start = 0;
+    while (start < words.length && ASSIGNMENT.test(words[start])) start++;
+    words = words.slice(start);
+    if (words.length && basename(words[0]) === 'env') {
+      words = words.slice(1);
+      continue;
+    }
+    break;
+  }
   if (!words.length) return null;
 
   // A shell asked to run a command string is that command string; look inside it once.
   const program = basename(words[0]);
   if (SHELLS.has(program) && depth < 2) {
-    const flag = words.indexOf('-c');
+    // -c may be written in a cluster, as `bash -lc "…"`.
+    const flag = words.findIndex((word) => word === '-c' || (isCluster(word) && word.includes('c')));
     const script = flag === -1 ? undefined : words[flag + 1];
     if (script !== undefined) {
       for (const inner of commandsIn(script)) {
@@ -260,7 +284,14 @@ function objectionTo(words, depth) {
       i++;
       continue;
     }
-    if (/^--config-env=|^--git-dir=|^--work-tree=|^--namespace=|^--exec-path=/.test(word)) continue;
+    // git documents --config-env=<name>=<envvar>, so the setting is inside this one word.
+    if (word.startsWith('--config-env=')) {
+      if (/^core\.hooksPath\s*=/i.test(word.slice('--config-env='.length))) {
+        return 'turning the repository hooks off (core.hooksPath)';
+      }
+      continue;
+    }
+    if (/^--git-dir=|^--work-tree=|^--namespace=|^--exec-path=/.test(word)) continue;
     if (GIT_GLOBALS_TAKING_A_VALUE.has(word)) i++;
   }
 
