@@ -3,6 +3,10 @@ the rules for allocating, ratifying and retiring them.
 
 # Decision register
 
+**Ratified by the owner, 2026-09-17.** Every entry below binds from that date. A change to this
+register is ratified as a whole, and the date above moves with it. An amendment to one entry
+records its own date in that entry's status.
+
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
 
@@ -39,7 +43,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D10 | v0 builds no resume | Ratified |
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
-| D13 | v0 runs on macOS, and reaches Windows through WSL2 | Ratified |
+| D13 | macOS is v0's only host | Ratified |
 
 ## D1 — Redo over resume
 
@@ -136,7 +140,7 @@ A role is never free. Each one adds a dispatch, a prompt to maintain, and a path
 v0 buys the cheaper arrangement first and measures whether it hurts, rather than staffing against a
 problem it has not had.
 
-The two deferred here would do real work. An adjudicator settles a maker and judge who cannot
+The roles deferred here would do real work. An adjudicator settles a maker and judge who cannot
 agree. An architect holds the layer boundaries across cards that no single card shows. v0 gives
 both jobs to the owner, who is already in the loop for every architecture delta.
 
@@ -215,6 +219,10 @@ engine that dispatched it. Never is drift, and the gap grows until an upgrade is
 
 A milestone is the natural unit because its exit test is the evidence that the new engine works.
 
+This decision expires when v0 ships, because the unit it names does with it. What replaces a
+milestone as the promote boundary is not knowable yet, and recording that it is unknown is more
+honest than guessing at it now.
+
 ## D8 — A fact the code owns is generated, never typed
 
 **Status:** Ratified.
@@ -226,7 +234,8 @@ A milestone is the natural unit because its exit test is the evidence that the n
 2. A hand edit under `docs/derived/` is a lint failure, not an argument.
 3. A fact is generated when the code owns it and an author would otherwise retype it. The role
    roster and the escalation set qualify, because the config states both.
-4. `docs/derived/` is created when the first generated document exists, never before.
+4. `docs/derived/` exists only while it holds a generated document, so it is created by the first
+   one and never stands empty.
 
 ### Notes
 
@@ -236,12 +245,11 @@ directory is not, which is why the split is a path rather than a convention.
 Rule 3 is a test, not a list. A list would be wrong today: the layer table looks derivable and is
 not, because its `Decides` and `Never decides` columns are judgment that no code emits.
 
-Rule 4 is the cost control. An empty directory teaches nothing, and the rule binds from the day it
-is written whether or not the directory exists.
+Rule 4 is the cost control. An empty directory teaches nothing, and a directory that outlives its
+last generated document is a place for hand-written files to accumulate.
 
-Until a generator exists, the roster and the escalation set are typed by hand wherever they
-appear. Those are the copies the first generator replaces, and the rule is what makes replacing
-them a fix rather than a change.
+Where a fact rule 3 covers is still typed by hand, it is a copy the first generator replaces, and
+rule 3 is what makes replacing it a fix rather than a change.
 
 ## D9 — A judge is handed its evidence
 
@@ -256,7 +264,7 @@ them a fix rather than a change.
 
 | Deferred | Returns when |
 |---|---|
-| The packet's contents as consumer configuration | Judges routinely read the same material beyond the packet, which `report` sees as repeated work the packet could have carried. |
+| The packet's contents as consumer configuration | A judge escalates as ambiguous for want of something the evidence did not carry, often enough that the owner sees the pattern. |
 
 ### Notes
 
@@ -277,14 +285,16 @@ not the view of it. `R-EVIDENCE-5` holds that.
 
 ### Rule
 
-1. v0 builds no resume, no runner reattachment, no terminal proof, and no reclamation.
+1. v0 builds no resume: it does not continue a part-done card, reattach to a dispatch that
+   outlived the engine, prove what a dispatch did from its own output, or reclaim a workspace it
+   no longer tracks.
 2. This defers the work rather than refusing it, and it returns as a new decision.
 
 ### Deferred, and what returns it
 
 | Deferred | Returns when |
 |---|---|
-| Resuming a part-done card, reattaching to a dispatch that outlived the engine, and reclaiming a workspace the engine no longer tracks | A production incident shows redo was insufficient. The journal records that incident. |
+| Resuming a card part-done when the engine died, rather than doing it again | A production incident shows redo was insufficient. The journal records that incident. |
 
 ### Notes
 
@@ -311,7 +321,7 @@ This decision expires. D1 holds the choice of redo, which does not.
 
 | Deferred | Returns when |
 |---|---|
-| Multi-host coordination, and the leases and fencing tokens it needs | A consumer must run two engines against one repository, or a later phase takes it up. Every claim and lock in L3 changes with it, and the leases and fencing tokens that replace one engine keep `R-WORK-2` by a different mechanism, and `R-WORK-4` is withdrawn with this decision. |
+| Multi-host coordination, and the leases and fencing tokens it needs | A consumer must run two engines against one repository. Every claim and lock in L3 changes with it, and the leases and fencing tokens that replace one engine keep `R-WORK-2` by a different mechanism. |
 
 ### Notes
 
@@ -345,14 +355,15 @@ Calling all provisioning best-effort models only the warmup. Rigger's own config
 The default is optional, so a step that declares nothing is a warmup, which is the commoner case
 and the safer one to get by silence.
 
-## D13 — v0 runs on macOS, and reaches Windows through WSL2
+## D13 — macOS is v0's only host
 
 **Status:** Ratified.
 
 ### Rule
 
-1. v0 runs the engine on macOS. Windows is reached through WSL2 if a spike shows the workloads
-   run there, and native Windows is built only if that spike says they do not.
+1. v0 runs the engine on macOS, and writes no Windows-specific code before the WSL2 spike
+   reports. WSL2 is the route it tries first, because it reuses the macOS process model rather
+   than adding a second one.
 2. What Rigger builds is unconstrained by this. A consumer on macOS can build software that runs
    anywhere.
 

@@ -77,6 +77,8 @@ repository with no change to the work product.
 
 ## 2. Platform
 
+D13 records the choice and what would reverse it; this section is what follows for the build.
+
 **macOS first.** Containment is a POSIX process group: `spawn` with `detached: true`,
 `process.kill(-pgid, signal)` for the tree, and a `ps -o lstart= -p` start-time check before
 killing a recorded pgid after restart. launchd supervises unattended runs.
