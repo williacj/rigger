@@ -1,0 +1,25 @@
+{
+  "name": "@williacj/rigger",
+  "version": "0.0.0",
+  "description": "ABOUTME: The npm package manifest for Rigger: its identity, its Node floor, and every script the repository defines.",
+  "license": "MIT",
+  "author": "CJ Williams",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/williacj/rigger.git"
+  },
+  "homepage": "https://github.com/williacj/rigger#readme",
+  "bugs": {
+    "url": "https://github.com/williacj/rigger/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "budget:package": "node scripts/package-budget.mjs",
+    "budget:instructions": "node scripts/instruction-budget.mjs",
+    "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
+  }
+}
