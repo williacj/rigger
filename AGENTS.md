@@ -101,8 +101,11 @@ without the owner's approval. `npm run` lists every script.
   document — rather than adding a parallel one.
 - **Never copy-paste — extract and import.** Rule of Three.
 - **Every file opens with an `ABOUTME:` header** saying what it is, on as few lines as that
-  takes. `README.md`, `CLAUDE.md`, `.gitignore` and `LICENSE` are exempt: the first two are the
-  front door and an import, and the others are not ours to caption.
+  takes. Where the format reserves the first line — a shebang, YAML frontmatter — the header
+  goes on the line below it, or below the block that line opens. A format with no comment
+  syntax to carry one is exempt, which in this repository means JSON. `README.md`, `CLAUDE.md`,
+  `.gitignore` and `LICENSE` are exempt as well: the first two are the front door and an import,
+  and the others are not ours to caption.
 - **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`. Comments
   say what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack
