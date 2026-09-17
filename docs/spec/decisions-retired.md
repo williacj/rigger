@@ -2,10 +2,5 @@ ABOUTME: Bodies of Rigger decisions that a later decision superseded, kept for t
 
 # Retired decisions
 
-A decision arrives here when a later decision supersedes it. Its row stays in
-`docs/spec/decisions.md`, so its id is never reused and the successor is always reachable from the
-predecessor.
-
-Nothing here binds. Read it for why a choice was made and why it changed.
-
-No decision has been retired yet.
+Nothing here binds. Read it for why a choice was made and why it changed. `docs/spec/decisions.md`
+states when a decision arrives here.

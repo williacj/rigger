@@ -1,9 +1,10 @@
-ABOUTME: Rigger's architecture of record: the eight layers and their boundaries, every extension point a consumer has, the failure model, the CI-enforced budgets, and the cross-layer invariants.
+ABOUTME: Rigger's architecture of record: the eight layers and their boundaries, every extension
+point a consumer has, the failure model, the CI-enforced budgets, and the cross-layer invariants.
 
 # Architecture
 
-Read this before changing anything. It fixes boundaries, contracts, and budgets; it does not
-specify module internals.
+Read this before changing anything. It fixes boundaries, contracts and budgets, and the few
+internals a boundary depends on. It is not a design document for any one module.
 
 Rigger is eight layers. Each has one job, one vocabulary at its upper boundary, and one change
 authority. A fault is handled at the lowest layer that can handle it and crosses a boundary only
@@ -30,7 +31,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L2 Workflow** | The next action for a card from its stage and observable facts; the review loop; the gate rule; escalation routing; the infrastructure hold | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, holds | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority, concurrency, claims taken synchronously before any await, the repo lane, CPU share, pause and resume, and the three trigger kinds | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | Anything about how Rigger runs | Findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
-| **L5 Observation** | How every layer's events are recorded and which signals derive from them | Nothing. L5 never acts. | The report | Engineer cards | `src/observation/` |
+| **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders and re-tiers within L3 and L4. The meta-level loop proposes changes to any layer. | It applies nothing to L0 through L3 itself, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, final verdicts, answers to escalations | | | | A person |
 
@@ -68,12 +69,13 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board and its column display names, the concurrency N, the worktree root, the rule that derives a worktree's topic from a card, and whether telemetry pushes | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
+| **Engine settings** | The repository, the board and its column display names, the concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind | L2 for the loop and gate; L3 for provisioning | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
-| **Verdict vocabulary** | Fixed by Rigger: sound, needs revision, critical, recorded-decision change, ambiguous | L2 | Fixed |
+| **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
+| **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
 | **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what is exempt | L0 reads the files; nothing else in Rigger reads the configuration | Yes |
 | **Provisioning steps** | A command, its working directory, and the labels that select it | L3 schedules; L1 runs | Yes |
 | **Escalation set** | Which verdict and workflow outcomes are the owner's to decide | L2 | Yes, default is the three current categories |
@@ -103,7 +105,7 @@ export default {
     // One judge. rounds omitted, so the default of three applies.
     change:   { select: { labels: ['type:change'] },   maker: 'engineer',      judges: ['reviewer'],
                 provisioning: ['npm-ci'] },
-    // The panel case: two agent judges concurrently, the owner last and never dispatched.
+    // The panel case: two agent judges concurrently, the owner last.
     decision: { select: { labels: ['type:decision'] }, maker: 'pm',            judges: ['reviewer', 'engineer', 'owner'],
                 rounds: 2, provisioning: ['npm-ci'] },
     spike:    { select: { labels: ['type:spike'] },    maker: 'spikeEngineer', judges: ['reviewer'],
@@ -155,8 +157,8 @@ command line; it never changes the result.
 
 Every event carries a timestamp, run id, layer, and card and dispatch identifiers when there are
 any. Each layer owns one event family and no layer writes another layer's events. L5 owns the sink,
-one JSONL stream in the consumer's state directory, and the report. The report derives one signal
-set per layer:
+one JSONL stream in the consumer's state directory, and the report. Six layers produce a signal
+set. L5 owns the sink rather than a signal, and L7 is a person:
 
 - **L0** substrate fault rate
 - **L1** execution duration and survivor rate
@@ -229,7 +231,7 @@ changes nothing; only deleting does. The budget is 2,000 words.
 ## Where to start reading
 
 Once code exists: `src/workflow/next-action` for what Rigger does with a card,
-`src/execution/run` for how it runs anything, and `src/scheduling/tick` for when. Each layer's
-directory carries an `AGENTS.md` holding the rules that bind work in that directory and nothing
-else; the layer's vocabulary, decisions and event family are the table above, which that file
+`src/execution/run` for how it runs anything, and `src/scheduling/tick` for when. A layer's
+directory carries an `AGENTS.md` when it has rules that bind work there, and that file holds
+nothing else; the layer's vocabulary, decisions and event family are the table above, which it
 points at rather than restates.

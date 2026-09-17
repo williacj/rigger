@@ -28,9 +28,9 @@ permission first.
   dispatch an independent reviewer rather than reading it back to yourself.
 - **Never delete or rewrite existing work without the owner's permission.** Ask unless you added
   it in this same piece of work, or your change orphaned it.
-- **Finished means finished.** Every piece of work states what done means before it starts, and you
-  finish against that. A follow-up issue may only cover what falls outside it: anything inside it
-  that you left undone means the work is not done, and a defect you introduced is never a
+- **Finished means finished.** Every piece of work states what done means before it starts, and
+  you finish against that. A follow-up issue may only cover what falls outside it. Anything inside
+  it that you left undone means the work is not done, and a defect you introduced is never a
   follow-up. Finishing includes deleting what is obsolete and updating the references and the docs.
   If you cannot finish, say what is left and park the work — never close it.
 - **Answer the question asked.** If the owner is asking rather than instructing, answer it and stop.
@@ -45,6 +45,7 @@ permission first.
 | `ARCHITECTURE.md` | Layers, boundaries, extension points, failure model, budgets, invariants | `L#`, extension point |
 | `docs/spec/decisions.md` | Recorded decisions | `D#` |
 | `README.md` | The CLI contract — the verb list is the spec | verb |
+| `docs/v0-build-plan.md` | Order and exit tests, until v0 ships | `M#` |
 
 Read `ARCHITECTURE.md`'s invariants before you change anything. They bind every layer and this file
 does not repeat them. Changing a recorded decision needs the owner's agreement and an entry in
@@ -71,10 +72,11 @@ the owner's approval. `npm run` lists every script.
 ## Any role
 
 - **Smallest reasonable change, shaped like what is already there.** Read how this repository
-  handles the same kind of problem, then extend what it built — a module, a utility, a decision, a
+  handles the same kind of problem. Extend what it built — a module, a utility, a decision, a
   document — rather than adding a parallel one.
 - **Never copy-paste — extract and import.** Rule of Three.
-- **Every file opens with a one-line `ABOUTME:` header.**
+- **Every file opens with an `ABOUTME:` header** saying what it is, on as few lines as that
+  takes. `README.md` and `CLAUDE.md` are exempt: one is the front door, the other is an import.
 - **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`. Comments say
   what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack
@@ -95,16 +97,21 @@ the owner's approval. `npm run` lists every script.
 ## When you write a decision
 
 A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal**. It parks for the owner; you never
-ratify your own. Allocate its id from the register — a duplicate reds the build. Load the
+ratify your own. Allocate its id as the register says. Load the
 `.claude/skills/spec-style/` skill before you write. Resolve the ambiguity inside the delta or
 escalate it, never leave it for the implementer to guess.
 
 ## Ask the owner before
 
-Any architectural decision · contradicting a recorded decision · restructuring code · adding
-backward compatibility · choosing between approaches where the choice matters · force-pushing,
-deleting a branch, or writing to an issue or pull request that is not your card's · any time you do
-not understand the task. Otherwise act autonomously and finish, including the obvious follow-ups.
+Ask before any of these.
+
+- Any architectural decision, or contradicting a recorded one.
+- Restructuring code, or adding backward compatibility.
+- Choosing between approaches where the choice matters.
+- Force-pushing, deleting a branch, or writing to an issue or pull request that is not your card's.
+- Any time you do not understand the task.
+
+Otherwise act autonomously and finish, including the obvious follow-ups.
 
 ## Review and merge
 

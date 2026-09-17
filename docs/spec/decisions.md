@@ -34,7 +34,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 
 ### Rule
 
-1. Rigger recovers by redo, never by resume. `ARCHITECTURE.md`'s failure model states the
+1. Rigger recovers by redo. v0 builds no resume. `ARCHITECTURE.md`'s failure model states the
    mechanism, and this decision states the choice.
 2. One engine runs against one repository. v0 builds no lease, no fencing token, and no multi-host
    coordination.
@@ -61,6 +61,9 @@ one engine runs and redo is the recovery, so v0 pays for neither.
 
 The trigger matters more than the deferral. An argument returns none of these, and neither does a
 near miss in development.
+
+Rules 2 and 3 expire. Rule 1's preference for redo is the part that does not, and a returning
+resume would sit beside it rather than replace it.
 
 
 ## D2 — Every card carries its acceptance
@@ -189,7 +192,7 @@ change.
 
 | Deferred | Returns when |
 |---|---|
-| Conflict domains, and the per-card receipt that declares them | `report` shows merge collisions costing more rework than declaring domains up front would cost to maintain. |
+| Conflict domains, and the per-card receipt that declares them | `rigger report` shows merge collisions costing more rework than declaring domains up front would cost to maintain. |
 
 ### Notes
 
@@ -234,8 +237,8 @@ measured until it has already been allowed, so the evidence only ever argues one
 1. The installed engine that builds Rigger is upgraded when a milestone closes, to the commit that
    closed it.
 2. `rigger doctor` passes against this repository's config before the upgraded engine resumes.
-3. A card that changes the live gate, the live config, or the CLI entry point the running engine
-   reads is done by hand. `AGENTS.md` states that rule.
+3. `AGENTS.md` holds the rule for a card that changes the live gate, the live config, or the CLI
+   entry point the running engine reads.
 
 ### Notes
 

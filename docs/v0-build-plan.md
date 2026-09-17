@@ -13,26 +13,24 @@ Rigger, not using it; a consumer wants the README.
 
 ## 1. Premises
 
-Four premises shape the build order in §4. Everything else this plan rests on is stated once in
-`ARCHITECTURE.md` and cited here, never restated: the failure model, the layer boundaries, the
-budgets, and the cross-layer invariants.
+Four premises shape the build order in §4. Each summarises a fact `ARCHITECTURE.md` owns and cites
+it; the citation is where the binding text lives, and a conflict resolves there.
 
 1. **Engine death loses in-flight work.** Restart is redo. Resume is not built until a production
    incident shows redo was insufficient, and that incident is recorded in the journal.
    (`ARCHITECTURE.md`, Failure model.)
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting.
-3. **On a host fault, keep going.** Provisioning is best-effort; survivors are killed and logged.
-   Only a repeated identical host fault pauses admission, and it pauses admission, not cards.
-   (`ARCHITECTURE.md`, Failure model.)
+3. **On a host fault, keep going.** Provisioning is best-effort and survivors are killed and
+   logged (`ARCHITECTURE.md`, Failure model). Only a repeated identical host fault pauses
+   admission, and it pauses admission rather than cards; L2 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
 
-Two consequences of the layer map drive this plan. A fault is handled at the lowest layer that can
-handle it. Everything a consumer can change is declared in L4, and read by exactly one layer
-through the extension points listed there. The per-layer budget check is a build-order
-deliverable, and the owner has set the numbers.
+Two of `ARCHITECTURE.md`'s boundary rules drive this plan's order: a fault is handled at the
+lowest layer that can handle it, and everything a consumer changes is declared in L4. The
+per-layer budget check is a build-order deliverable, and the owner has set the numbers.
 
 ### 1.1 Self-hosting
 
@@ -41,8 +39,8 @@ files, the review skill, and the hooks are at once what builds Rigger and what R
 consumer's configuration. Self-hosting therefore costs no production lines, because L4 carries no
 budget.
 
-**What gets used when.** The dispatch loop cannot host itself before M5. Every other verb is used
-earlier:
+**What gets used when.** Each verb is used against this repository as soon as it exists. The
+dispatch loop is last, because it needs the execution core and the roles beneath it:
 
 | From | Rigger builds Rigger by |
 |---|---|
@@ -50,10 +48,12 @@ earlier:
 | M0 | `rigger doctor` runs against this repository |
 | M1 | `rigger setup-board` creates this repository's real board, fields, and labels |
 | M1 | `rigger plan` prints this repository's real pull order; read-only, so it is safe long before the loop exists |
+| M1 | `rigger report` over whatever events exist by then |
 | M3 | worktrees and provisioning steps run against this repository's own cards |
 | M4 | the first dispatch Rigger makes itself, under the installation rule below |
 | M5 | the first merge through the gate |
-| M7 | `rigger report` over this repository's own event stream |
+| M6 | `rigger pause` and `rigger resume` against this repository's own run |
+| M7 | `rigger report` over this repository's own event stream, complete across every layer |
 
 **The installation rule.** A dispatching engine never runs from the checkout it is changing. The
 engine that builds Rigger is installed from a packed tarball (`npm pack`, then install the `.tgz`)
@@ -100,7 +100,7 @@ The register needs a home and a rule from M0, because the `recorded-decision` es
 means nothing without somewhere for a ratified decision to land: `ARCHITECTURE.md` for anything
 structural, `docs/spec/` for the rest, both written under the `spec-style` skill.
 
-Decision ids are allocated from one register, and a duplicate reds the build.
+The register states how ids are allocated and what a duplicate costs.
 
 ## 4. Build order
 
@@ -137,7 +137,8 @@ Three checks run in CI, and each covers something the others do not.
 
 The **resolver** verifies the `path:line` pointers in the documents `doc-references.json` names,
 at the fail level that config gives each. It runs whole-file rather than diff-scoped, because
-Rigger starts with no backlog to migrate. The root instruction file is `soft` while M0 is open and
+Rigger starts with no backlog to migrate. The register is `strict` from its first commit, because
+it names only assets that land here. The root instruction file is `soft` while M0 is open and
 `strict` once M0 closes, when the assets it names exist. Writing Rigger's own
 `doc-references.json` is the first use of that extension point.
 
@@ -147,11 +148,12 @@ Those two documents are in scope because they name only assets that land here, w
 name code that arrives later. The path check keeps its own exemptions, and `docs/derived/` is on
 that list until D8 rule 4 creates it.
 
-The **lint** covers `ARCHITECTURE.md`, the register, and this plan.
+The **lint** covers every document in the repository, including `AGENTS.md` and the README.
 
 Exit:
 
-- The verb list matches the README verbatim.
+- The verbs, and their order, match the README's block. Their help text is not part of the
+  match; `doctor` gains checks as later milestones land.
 - `init` and `doctor` pass on a fresh clone.
 - `npm pack` produces a tarball that installs outside this checkout and runs `--help` from there
   (§1.1).
@@ -165,7 +167,8 @@ Exit:
 
 **M1. Board client and scheduler.**
 
-- Read Ready, Coding, Review, and Owner from the Projects v2 board.
+- Read every column the config declares — Ready, Coding, Review, Owner and Done — from the
+  Projects v2 board.
 - Pull in priority order with N in flight, claim synchronously in memory before any await, and
   settle after each completion.
 - Cold start reads the board and treats every Coding or Review card with no PR, or no fresh
@@ -357,8 +360,8 @@ Run before any Windows containment code. Docs-only PR under `docs/spikes/`.
 3. Tauri Linux build libraries (webkit2gtk 4.1, gtk3, libsoup3, librsvg2, ayatana-appindicator);
    clone Emend.
 4. Run `cargo test` in `src-tauri/`, `npm test`, `npm run test:harness`, `npm run test:e2e` under
-   WSLg or headless. Record pass/fail per suite and cold `cargo build --workspace` time. Windows
-   native baseline: 64 s.
+   WSLg or headless. Record pass/fail per suite and cold `cargo build --workspace` time, against a
+   Windows native baseline measured in the same run.
 5. One real `claude -p` dispatch started with `setsid`; kill the parent; `pgrep` proves nothing
    survives.
 6. List every test that passes on Windows native and fails under WSL2.

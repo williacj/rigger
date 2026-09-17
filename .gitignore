@@ -1,6 +1,5 @@
 node_modules/
 .rigger/
-.slack-token
 *.log
 .DS_Store
 spikes/

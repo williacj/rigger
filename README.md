@@ -108,9 +108,13 @@ Rigger merges code without a person in the loop, so this section is explicit.
 configured, dispatches your agent CLI, opens and comments on pull requests, moves cards between
 columns, and merges pull requests that pass the gate.
 
-**What Rigger never does:** approve its own work, merge without a fresh SHA-bound verdict, ratify a
-change to one of your recorded decisions, push to the default branch except through a gated merge,
-or continue past an ambiguity it cannot resolve.
+**What Rigger never does:**
+
+- approve its own work;
+- merge without a fresh SHA-bound verdict;
+- ratify a change to one of your recorded decisions;
+- push to the default branch except through a gated merge;
+- continue past an ambiguity it cannot resolve.
 
 **Credentials.** Rigger stores none. It calls `gh` and your agent CLI, each authenticated by you,
 and inherits exactly the permissions you gave them. Scope those permissions with each tool's own
@@ -136,10 +140,10 @@ Milestones, in order:
 | M2 | Execution core | A lingering grandchild is killed and named; SIGKILL then restart kills the recorded group |
 | M3 | Worktrees and provisioning | Steps come from config; a failed step logs and the card proceeds |
 | M4 | Roles | A real maker opens a PR; a real judge writes a verdict |
-| M5 | Gate and merge | A stale marker blocks; a fresh one merges; two finalizations serialize |
+| M5 | Gate and merge | A stale marker blocks; three fresh sound markers merge; two finalizations serialize |
 | M6 | Escalation and infrastructure hold | Six identical host failures yield two attempts, one hold, zero escalations |
 | M7 | Report complete, clock triggers | Every layer reports; scheduled work creates cards |
-| M8 | Acceptance on emend | A thirty-card window with zero infrastructure-caused escalations; first tagged release |
+| M8 | Acceptance on Emend | A thirty-card window with zero infrastructure-caused escalations; first tagged release |
 | M9 | Object-level improvement loop | The backlog is reordered from evidence, every move with its signal |
 | M10 | Meta-level improvement loop | Proposals against any layer, each with its signal, none self-applied |
 
@@ -153,8 +157,8 @@ and ratifier lanes, a Slack surface, native Windows. Each arrives as a capabilit
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
 - One coding-agent CLI, authenticated. Claude Code is the shipped adapter; Codex is next.
 - Node.js 20 or later.
-- **macOS** today. Linux is expected to work but initially will be untested. **Windows** is
-  planned through WSL2, pending a spike; native Windows is not in v0.
+- **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
+  v0. Linux is untested, and nothing in v0 depends on it.
 
 ## Install and usage
 
@@ -177,19 +181,19 @@ npx @williacj/rigger report        # derive the signals from the event stream
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means
 `npx @williacj/rigger <verb>`.
 
-Unattended runs on macOS use launchd; the plist and the start and stop skills ship with the
-package.
+Unattended runs on macOS use launchd. `rigger init` writes the plist and the operator skills into
+your repository, where you own them like the rest.
 
 ## Configuration
 
 One config file names the repository, the board, the column display names, the provider per role,
-the concurrency, the provisioning steps with the card labels that select each one, and, for each
-kind of work, one maker role and the judges that review it. A code change might have one judge. A
-requirements proposal might have three, with you last. Which outcomes are yours to decide is also
-configuration; the default set is a change to a recorded decision, a critical finding, and
-ambiguity. Scheduled work is declared the same way: a clock trigger creates a card on your board,
-and that card goes through the loop like any other. [`ARCHITECTURE.md`](ARCHITECTURE.md) lists every
-extension point; there are no others.
+and the concurrency. It names the provisioning steps with the card labels that select each one.
+And for each kind of work it names one maker role and the judges that review it. A code change
+might have one judge. A requirements proposal might have three, with you last. Which outcomes are
+yours to decide is also configuration; the default set is a change to a recorded decision, a
+critical finding, and ambiguity. Scheduled work is declared the same way: a clock trigger creates
+a card on your board, and that card goes through the loop like any other.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) lists every extension point; there are no others.
 
 Every feature beyond the core is a capability block you switch on. A project with a dozen roles
 and binding decision documents runs the full set. A project with one command that checks its
@@ -205,12 +209,17 @@ chat channel yet.
 
 ## Architecture
 
-Rigger is eight layers, each with one job and one boundary. From the bottom: **substrate**
-adapters for GitHub, git, the operating system, and each agent CLI; **execution**, which runs one
-dispatch in one workspace and returns an exit code; **workflow**, the state machine that decides
-what happens to a card; **scheduling**, which decides which card and when; **quality**, your
-roles, procedures, and kinds of work, living in your repository rather than in Rigger;
-**observation**, the event stream and the report; **improvement**, the two loops; and **you**.
+Rigger is eight layers, each with one job and one boundary, from the bottom up:
+
+- **substrate** — adapters for GitHub, git, the operating system, and each agent CLI;
+- **execution** — runs one dispatch in one workspace and returns an exit code;
+- **workflow** — the state machine that decides what happens to a card;
+- **scheduling** — decides which card, and when;
+- **quality** — your roles, procedures, and kinds of work, living in your repository rather than
+  in Rigger;
+- **observation** — the event stream and the report;
+- **improvement** — the two loops;
+- **you**.
 
 The core is execution plus the substrate's process adapter: the code that owns every process
 Rigger starts. It is the smallest layer and carries the tightest size budget, enforced in CI,
@@ -230,7 +239,7 @@ changing anything.
 
 ## What Rigger learns
 
-Rigger measures from the first dispatch: how long work takes, how many review rounds each kind of
+Rigger measures from the first dispatch. How long work takes, how many review rounds each kind of
 work needs, how often it escalates and why, how often a host fault interrupts it, and how well the
 model tier matched the card. `rigger report` shows those signals per layer.
 
