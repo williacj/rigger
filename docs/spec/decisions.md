@@ -62,9 +62,6 @@ one engine runs and redo is the recovery, so v0 pays for neither.
 The trigger matters more than the deferral. An argument returns none of these, and neither does a
 near miss in development.
 
-### Open
-
-None.
 
 ## D2 — Every card carries its acceptance
 
@@ -117,9 +114,6 @@ a warranty that the card asked for the right things.
 The rule adds no state. The acceptance lives on the card and the dispositions live in the marker,
 so a restart still reads everything it needs from the board (D1).
 
-### Open
-
-None.
 
 ## D3 — Escalation is bounded by configuration
 
@@ -145,9 +139,6 @@ cheap can afford more rounds than one whose maker runs for an hour.
 Three is the default because three worked in practice. It comes from running the loop, not from
 analysis, and the number is the consumer's to change on its own evidence.
 
-### Open
-
-None.
 
 ## D4 — v0 defers the roles it can do without
 
@@ -182,9 +173,6 @@ both jobs to the owner, who is already in the loop for every architecture delta.
 This decision expires. It is the boundary, not the principle — D3 holds the part that does not
 change.
 
-### Open
-
-None.
 
 ## D5 — v0 detects a conflict when Git does
 

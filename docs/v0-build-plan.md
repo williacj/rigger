@@ -365,7 +365,3 @@ Run before any Windows containment code. Docs-only PR under `docs/spikes/`.
 
 Verdict: "WSL2 hosts provisioning and Engineer dispatch for all cards except <list>", or "no,
 because <suite or tool>".
-
-## 6. Open questions
-
-None.
