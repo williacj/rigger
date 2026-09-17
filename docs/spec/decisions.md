@@ -72,8 +72,8 @@ prove what the dead engine had already done. A redone card asks the board, which
    that finds it insufficient returns the card to its author with the reason, and never rewrites
    the acceptance itself.
 9. L2 records a revised acceptance as an event, and a verdict written before the card's latest
-   acceptance is stale exactly as one written before the head commit is. Every judge reviews again. The card
-   spends the kind's rounds, and exhausting them escalates it as `ambiguous` (D3).
+   acceptance is stale exactly as one written before the head commit is. Every judge reviews again.
+   The card spends the kind's rounds, and exhausting them escalates it as `ambiguous` (D3).
 10. A follow-up issue may not carry an acceptance item of the card that filed it.
 11. A maker that cannot meet an item escalates the card as `ambiguous`, naming the item. The maker
     never closes the card.
