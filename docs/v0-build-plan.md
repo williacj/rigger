@@ -132,16 +132,16 @@ The README's "Install and usage" block is the CLI spec: `rigger --help` lists ex
 in that order, and no others.
 
 The lint covers `ARCHITECTURE.md`, the register, and this plan, and CI runs it.
-`doc-references.json` is consumer-owned, so writing Rigger's own is the first use of that extension
-point. It exempts `docs/derived/`, which D8 creates only when the first generated document exists;
-the exemption comes off that day. `**/AGENTS.md` is `strict` in it, so every instruction file is checked from the day it is
-created. A second CI check asserts that every backticked repository path in an instruction file, or
-in the register, exists on disk. The resolver checks `path:line` pointers, not bare paths, so this
-covers what it does not. Those two are in scope because they name only assets that land here; the
-other documents name code that arrives later.
-The gate is whole-file, not diff-scoped, because Rigger starts with no backlog to migrate. The root
-instruction file is `soft` while M0 is open, and is promoted to `strict` as M0 closes, once the
-assets it names exist.
+`doc-references.json` is consumer-owned, so writing Rigger's own is the first use of that
+extension point. It exempts `docs/derived/`, which D8 creates only when the first generated
+document exists; the exemption comes off that day. `**/AGENTS.md` is `strict` in it, so every
+instruction file is checked from the day it is created. A second CI check asserts that every
+backticked repository path in an instruction file, or in the register, exists on disk. The
+resolver checks `path:line` pointers, not bare paths, so this covers what it does not. Those two
+are in scope because they name only assets that land here; the other documents name code that
+arrives later. The gate is whole-file, not diff-scoped, because Rigger starts with no backlog to
+migrate. The root instruction file is `soft` while M0 is open, and is promoted to `strict` as M0
+closes, once the assets it names exist.
 
 Exit:
 
@@ -219,6 +219,9 @@ Exit:
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
   session or another judge's output. Each writes its own verdict marker, named by head SHA and
   judge role.
+- L2 composes a review packet for each judge dispatch and L1 delivers it (D9). It carries the card
+  and its acceptance, the pull request, the head and base SHAs, the diff, the changed files, the
+  kind of work, and the judge's role. A judge may read beyond it.
 - Rigger binds two kinds of work against its own board: a code change (maker engineer, judge
   reviewer) and a decision proposal (maker PM, judges reviewer and engineer, then owner). The
   second is the panel case — two agent judges running concurrently, with the owner last.
@@ -229,6 +232,8 @@ Exit:
 - A two-judge panel writes two markers for one head, each judge in its own dispatch, and neither
   receives the maker's session or the other judge's output.
 - The judge configured as `owner` is not dispatched.
+- Two judges at one head receive the same card, base SHA and diff, and each packet's digest is in
+  the event stream.
 
 **M5. Gate and merge.**
 

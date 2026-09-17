@@ -26,6 +26,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D6 | Judges review independently | Ratified 2026-09-16 |
 | D7 | The engine is promoted at milestone close | Ratified 2026-09-16 |
 | D8 | A fact the code owns is generated, never typed | Ratified 2026-09-16 |
+| D9 | A judge is handed its evidence | Ratified 2026-09-16 |
 
 ## D1 — Redo over resume
 
@@ -279,3 +280,37 @@ not, because its `Decides` and `Never decides` columns are judgment that no code
 
 Rule 4 is the cost control. An empty directory teaches nothing, and the rule binds from the day it
 is written whether or not the directory exists.
+
+## D9 — A judge is handed its evidence
+
+**Status:** Ratified by the owner 2026-09-16.
+
+### Rule
+
+1. L2 composes a review packet for each judge dispatch, and L1 delivers it with the dispatch.
+2. The packet carries the card and its acceptance, the pull request number, the head SHA, the base
+   SHA, the diff between them, the list of changed files, the kind of work, and which role this
+   judge is. On a re-review it also carries what the maker changed since the last round.
+3. The packet carries no other judge's findings or verdict, and no part of the maker's session
+   (D6).
+4. A judge may read beyond the packet. The packet is a floor, never a limit.
+5. L2 records each packet's digest in the event stream.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| The packet's contents as consumer configuration | Judges routinely read the same material beyond the packet, which `report` sees as repeated work the packet could have carried. |
+
+### Notes
+
+The packet exists for efficiency. Every judge on a card needs the same diff against the same base,
+and deriving it once costs less than deriving it in each dispatch.
+
+Rule 4 is what keeps that a saving rather than a cage. A judge that suspects an unchanged file
+matters must be able to read it, and a packet that forbade looking further would make judges worse
+at the job the packet exists to speed up.
+
+Rule 5 is cheap and answers a question that is otherwise unanswerable later: what did this judge
+see. A verdict binds to a SHA, which fixes the commit but not the view of it; the digest fixes the
+view.
