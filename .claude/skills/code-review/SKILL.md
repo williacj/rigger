@@ -62,15 +62,16 @@ the group's rows — these questions point at them, and the rows are what binds.
 | `R-CONFLICT` | Can two cards changing one thing silently overwrite each other? |
 | `R-RECORD` | Is every event still stamped with when, which run, and which card and dispatch? Does the change rewrite or drop one, or start recording only once something is turned on? |
 | `R-IMPROVE` | Does a loop change code, or act on its own on something the owner recorded as a decision? Does a proposal still cite the signal it would improve? |
-| `R-SAFE` | Does the change store a credential, log one, make a network call outside the tools Rigger already uses, copy the record off the machine, or let Rigger run against the source tree it is running from? |
+| `R-SAFE` | Does the change store a credential, make a network call outside the tools Rigger already uses, copy the record off the machine, or let Rigger run against the source tree it is running from? Whether it *logs* a secret belongs to the same sweep but to a different document — `AGENTS.md`, "When you write code", not an `R-SAFE` row. |
 | `R-OPTION` | If a consumer left the capability this change touches unconfigured, does Rigger still run without it? |
 
 Then the rules that bind every change in this repository, whatever it touches:
 
 - **Placement and boundaries.** Is the code where `ARCHITECTURE.md` says it lives, and does it
   reach through a boundary for something two layers down?
-- **Budget.** Does the change push the package past its line budget without deleting as much as
-  it adds (`ARCHITECTURE.md`, "Budgets")?
+- **Budget.** Does the change push the package past its line budget? A change that would must
+  delete as much as it adds, **or** carry a ratified budget change — either route is sound, and
+  flagging one that took the second is a false finding (`ARCHITECTURE.md`, "Budgets").
 - **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
   implementation, does it declare the requirement it proves, does it sleep, and was a failing
   test deleted or weakened (`AGENTS.md`; the `tdd` skill)?
