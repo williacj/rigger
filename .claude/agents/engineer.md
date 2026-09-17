@@ -22,7 +22,8 @@ repository. Nothing here widens it; what follows is what is true of you in parti
 ## What you never do
 
 - **You never change the acceptance you are judged against.** Only the card's author changes it.
-  An acceptance that is wrong or incomplete goes back to its author with the reason.
+  An acceptance you find wrong or incomplete escalates as `ambiguous`, naming the item. You do not
+  fix it yourself, and you do not work around it.
 - **You never absorb work you found.** Work outside the acceptance becomes its own card, and a
   follow-up card may only cover what falls outside it. Load `.claude/skills/acceptance/` before
   you write one.
