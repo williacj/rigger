@@ -1,0 +1,281 @@
+ABOUTME: Rigger's decision register: every D# id ever allocated, the live decisions in full, and the rules for allocating, ratifying and retiring them.
+
+# Decision register
+
+Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
+a duplicate id reds the build.
+
+A decision holds one lifespan. A permanent principle and a boundary that expires never share an
+entry, because retiring the entry would discard both.
+
+A decision is `Proposed`, then `Ratified`, then `Superseded by D#` when a later decision replaces
+it. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and its row stays in
+the table below so its id is never reused.
+
+A ratified decision may be amended when the change adds within its stated scope, and the amendment
+records its date in the entry's status. A change to what a ratified rule means is never an
+amendment: a later decision supersedes it, so the original stays readable.
+
+| id | decision | status |
+|---|---|---|
+| D1 | Redo over resume | Ratified 2026-09-15 |
+| D2 | Every card carries its acceptance | Ratified 2026-09-15 |
+| D3 | Escalation is bounded by configuration | Ratified 2026-09-15 |
+| D4 | v0 defers the roles it can do without | Ratified 2026-09-15, amended 2026-09-16 |
+| D5 | v0 detects a conflict when Git does | Ratified 2026-09-16 |
+| D6 | Judges review independently | Ratified 2026-09-16 |
+| D7 | The engine is promoted at milestone close | Ratified 2026-09-16 |
+| D8 | A fact the code owns is generated, never typed | Ratified 2026-09-16 |
+
+## D1 — Redo over resume
+
+**Status:** Ratified by the owner 2026-09-15.
+
+### Rule
+
+1. Rigger recovers by redo, never by resume. `ARCHITECTURE.md`'s failure model states the
+   mechanism, and this decision states the choice.
+2. One engine runs against one repository. v0 builds no lease, no fencing token, and no multi-host
+   coordination.
+3. v0 builds no runner reattachment, no terminal proof, and no reclamation.
+4. Rules 2 and 3 defer work. They do not refuse it. Each returns on its own trigger, and each
+   returns as a new decision rather than as an addition to this one.
+5. L3 records a redo when it re-dispatches a card after an engine death. `report` separates redone
+   work from work done at the first attempt.
+
+### Deferred, and what returns each
+
+| Deferred | Returns when |
+|---|---|
+| Multi-host coordination, and the leases and fencing tokens it needs | A consumer must run two engines against one repository. Every claim and lock in L3 changes with it. |
+| Resume, runner reattachment, terminal proof, reclamation | A production incident shows redo was insufficient. The journal records that incident. |
+
+### Notes
+
+Redo is cheaper to build than resume, and far cheaper to reason about. A resumed dispatch must
+prove what the dead engine had already done. A redone card asks the board, which never died.
+
+Leases, fencing and reattachment exist to make resume and multi-host safe. They guard nothing while
+one engine runs and redo is the recovery, so v0 pays for neither.
+
+The trigger matters more than the deferral. An argument returns none of these, and neither does a
+near miss in development.
+
+### Open
+
+None.
+
+## D2 — Every card carries its acceptance
+
+**Status:** Ratified by the owner 2026-09-15.
+
+### Rule
+
+1. Every card carries an `## Acceptance` section in the issue body, written as plain bullets. Each
+   item states exactly one condition a judge can test.
+2. The card's author writes the acceptance before the card reaches `Ready`. The PM writes it for a
+   card the PM decomposes. The owner writes it for a card the owner files. The author loads the
+   `.claude/skills/acceptance/` skill first.
+3. The engine does not admit a card that carries no acceptance. `rigger plan` lists that card and
+   names the reason.
+4. The engine also refuses a card whose acceptance fails the form check: an item that repeats the
+   card's title, or an item matching a vacuous form the skill lists. The check is a floor, never a
+   finding of adequacy.
+5. A spike card's acceptance states what a complete answer contains, never what the answer is. The
+   question it asks is not an acceptance item.
+6. The maker finishes against the acceptance, never against its own reading of the card.
+7. Each judge records every acceptance item in its marker, as met or unmet. A marker that leaves an
+   item unmet is not sound, and the gate refuses the merge.
+8. Each judge also records whether the acceptance was sufficient for what the card asked. A judge
+   that finds it insufficient returns the card to its author with the reason, and never rewrites
+   the acceptance itself.
+9. A revised acceptance invalidates every verdict for that card, and every judge reviews again. The
+   card spends the kind's rounds, and exhausting them escalates it as `ambiguous` (D3).
+10. A follow-up issue may not carry an acceptance item of the card that filed it.
+11. A maker that cannot meet an item escalates the card as `ambiguous`, naming the item. The maker
+    never closes the card.
+
+### Notes
+
+Without a stated bar, finished means whatever the maker decides it means. A card can close while
+the work it named is undone, and no layer sees the difference: the column reads `Done` either way.
+
+Rule 3 sets the bar before any work starts, so the card's author fixes it rather than the maker who
+wants to close it. Rule 7 makes an unmet item visible in the marker and in `report`.
+
+The acceptance is content, and the board holds state, so it lives in the issue body rather than in
+a board field. The body travels with the issue, `gh issue view` shows it, and an edit to it is in
+the issue's history. Plain bullets, never a task list: a ticked box would put disposition on the
+card, and the marker is where a disposition belongs.
+
+No check proves an acceptance adequate. Rule 4 is a floor that catches a vacuous item, and rule 8
+catches a bar that proved too low only after the work is done. What the mechanism buys is
+visibility: a weak bar is recorded and sent back instead of passing green. A green marker is never
+a warranty that the card asked for the right things.
+
+The rule adds no state. The acceptance lives on the card and the dispositions live in the marker,
+so a restart still reads everything it needs from the board (D1).
+
+### Open
+
+None.
+
+## D3 — Escalation is bounded by configuration
+
+**Status:** Ratified by the owner 2026-09-15.
+
+### Rule
+
+1. Every path to the owner is a category in the consumer's configured escalation set.
+2. A decision never adds a path to the owner. It names a category the consumer already configured,
+   and the escalation set decides who sees it.
+3. The review round count is consumer configuration, per kind of work. The default is three
+   rounds.
+
+### Notes
+
+Escalation is the failure path, never the default. Every path to the owner is a category the
+consumer configured, so a consumer can count them and an author cannot add one. Without rule 2 each
+new decision may quietly widen what interrupts the owner, and nothing would notice.
+
+Rule 3 puts the cost of disagreement in the consumer's hands. A kind of work whose judgements are
+cheap can afford more rounds than one whose maker runs for an hour.
+
+Three is the default because three worked in practice. It comes from running the loop, not from
+analysis, and the number is the consumer's to change on its own evidence.
+
+### Open
+
+None.
+
+## D4 — v0 defers the roles it can do without
+
+**Status:** Ratified by the owner 2026-09-15. Amended 2026-09-16 to defer the architect.
+
+### Rule
+
+1. A kind of work has one maker and one or more judges. v0 gives them no adjudicator, and no role
+   settles a disagreement between them.
+2. A maker and a judge who disagree spend the kind's rounds. Exhausting them escalates the card as
+   `ambiguous` (D3).
+3. v0 has no architect. A delta to `ARCHITECTURE.md` comes from whichever role needs it, and parks
+   for the owner.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| An adjudicator role, and the triage lane that routes to it | `report` shows escalation volume the owner cannot absorb, or shows rounds exhausting on disagreements a third role could settle. Adding the lane's column to a board already in use is the first test that board columns can change. |
+| An architect role | Decompositions escalate as `ambiguous` on layer-boundary questions, or reviews keep finding boundary violations the lenses missed. |
+
+### Notes
+
+A role is never free. Each one adds a dispatch, a prompt to maintain, and a path for work to take.
+v0 buys the cheaper arrangement first and measures whether it hurts, rather than staffing against a
+problem it has not had.
+
+The two deferred here would do real work. An adjudicator settles a maker and judge who cannot
+agree. An architect holds the layer boundaries across cards that no single card shows. v0 gives
+both jobs to the owner, who is already in the loop for every architecture delta.
+
+This decision expires. It is the boundary, not the principle — D3 holds the part that does not
+change.
+
+### Open
+
+None.
+
+## D5 — v0 detects a conflict when Git does
+
+**Status:** Ratified by the owner 2026-09-16.
+
+### Rule
+
+1. A card declares no conflict domains, and carries no receipt naming its authority base or the
+   surfaces it expects to change. Its acceptance says what must be true, and nothing more.
+2. Two cards that change the same code collide at merge, where Git reports it. The card that loses
+   the race returns to its maker.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| Conflict domains, and the per-card receipt that declares them | `report` shows merge collisions costing more rework than declaring domains up front would cost to maintain. |
+
+### Notes
+
+Declaring the surfaces a card will touch lets the scheduler refuse to run two cards that must
+collide. It is not free. It needs a vocabulary of domains, a receipt on every card, and a
+decomposition step that fills the receipt in correctly.
+
+v0 runs one host at three cards. Git already detects the collision, later than the machinery that
+would prevent it and at a fraction of the cost. Detecting late costs rework on one card, and
+`report` is where that cost becomes visible.
+
+## D6 — Judges review independently
+
+**Status:** Ratified by the owner 2026-09-16.
+
+### Rule
+
+1. The judges for a card run concurrently. No judge sees another judge's findings or verdict, and
+   no judge sees the maker's session.
+2. `ARCHITECTURE.md`'s invariants state the mechanism. This decision states the choice.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| Showing a later judge the findings an earlier judge filed | `report` shows judges filing near-duplicate findings often enough that the repeated work costs more than independence is worth. |
+
+### Notes
+
+Sharing findings is cheaper. A second judge that has read the first one's list stops looking once
+the list is confirmed, and a panel that agrees for that reason has not judged twice.
+
+The trigger is one-directional on purpose. Duplicate findings can be counted. Anchoring cannot be
+measured until it has already been allowed, so the evidence only ever argues one way.
+
+## D7 — The engine is promoted at milestone close
+
+**Status:** Ratified by the owner 2026-09-16.
+
+### Rule
+
+1. The installed engine that builds Rigger is upgraded when a milestone closes, to the commit that
+   closed it.
+2. `rigger doctor` passes against this repository's config before the upgraded engine resumes.
+3. A card that changes the live gate, the live config, or the CLI entry point the running engine
+   reads is done by hand. `AGENTS.md` states that rule.
+
+### Notes
+
+The installed engine is always a release behind the checkout it works on, and that gap has to be
+closed on a schedule rather than on a whim. Per merge is churn: every card would reinstall the
+engine that dispatched it. Never is drift, and the gap grows until an upgrade is its own migration.
+
+A milestone is the natural unit because its exit test is the evidence that the new engine works.
+
+## D8 — A fact the code owns is generated, never typed
+
+**Status:** Ratified by the owner 2026-09-16.
+
+### Rule
+
+1. `docs/spec/` holds ratified documents, written by an author. `docs/derived/` holds generated
+   documents, written by a tool.
+2. A hand edit under `docs/derived/` is a lint failure, not an argument.
+3. A fact is generated when the code owns it and an author would otherwise retype it. The role
+   roster and the escalation set qualify, because the config states both.
+4. `docs/derived/` is created when the first generated document exists, never before.
+
+### Notes
+
+Asking "is this hand-written or produced?" of a document is a judgment call. Asking it of a
+directory is not, which is why the split is a path rather than a convention.
+
+Rule 3 is a test, not a list. A list would be wrong today: the layer table looks derivable and is
+not, because its `Decides` and `Never decides` columns are judgment that no code emits.
+
+Rule 4 is the cost control. An empty directory teaches nothing, and the rule binds from the day it
+is written whether or not the directory exists.
