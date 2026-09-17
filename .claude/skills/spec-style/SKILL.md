@@ -64,14 +64,21 @@ Either way the id stays allocated and never comes round again, and a document ci
 resolves to an explanation rather than to nothing. The duplicate-id check reads the live file
 and the retired one together.
 
-### 4. Ratification is the owner's, and everything in the live file binds
+### 4. Ratification is the owner's, and each register records it differently
 
 Each register carries the date the owner ratified it. A change to it is ratified as a whole and
-moves that date; an amendment to one decision records its own date in that entry's status.
+moves that date; an amendment to one decision records its own date in that entry's status. You
+never ratify your own (`AGENTS.md`, "When you write a decision or a requirement").
 
-Every row in `docs/spec/requirements.md` binds, so a reader never has to check a column before
-trusting one. A row you have proposed and the owner has not ratified lives in its pull request
-and never in the file. You never ratify your own.
+How a register shows what is ratified differs between the two, so read the preamble of the one
+you are writing before you place a proposal:
+
+- **`docs/spec/requirements.md`** has no status column: every row in it binds, so a reader never
+  has to check one before trusting a row, and a row proposed and not yet ratified lives in its
+  pull request and never there.
+- **`docs/spec/decisions.md`** carries the state on the entry instead. A decision is `Proposed`,
+  then `Ratified`, then `Superseded by D#`, and the entry's status is where that state is
+  recorded.
 
 ## The shape of an entry
 
