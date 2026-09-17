@@ -3,3 +3,4 @@ node_modules/
 .slack-token
 *.log
 .DS_Store
+spikes/

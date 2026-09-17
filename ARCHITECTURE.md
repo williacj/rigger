@@ -62,8 +62,8 @@ between the two.
 
 ## Extension points
 
-Everything a consumer can change is declared in L4 and read by exactly one Rigger layer. There are
-no other hooks. A need that does not fit one of these rows is a design conversation, not a
+Everything a consumer can change is declared in L4 and read by the layer named beside it. There
+are no other hooks. A need that does not fit one of these rows is a design conversation, not a
 workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
@@ -83,7 +83,8 @@ workaround.
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface | L0 | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
-The config file declares every row above except the two adapters and the two Rigger fixes. The
+The config file declares every row above except the two adapters, which are code, and the rows
+marked fixed. The
 adapters are code, added to Rigger itself. The shape, abbreviated:
 
 ```js
@@ -141,7 +142,8 @@ Rigger created, and Rigger records that group id. On its own exit it kills every
 On start, L1 kills every group it recorded before anything else runs. L3 then reads the board, and
 L2 computes each card's next action from its stage and observable facts. Those facts are the card's
 column, its pull request, that request's head SHA, the SHA each verdict names, and the last
-transition the board shows. L2 derives them on every read. Rigger persists no in-flight state. Work lost to Rigger's death is done again from the card's column. Recovery
+transition the board shows. L2 derives them on every read. Rigger persists no in-flight state.
+Work lost to Rigger's death is done again from the card's column. Recovery
 machinery enters L1 only after a recorded production incident in which redo was demonstrably
 insufficient.
 
@@ -181,7 +183,8 @@ its own reason. Field names are not yet fixed.
 
 ## Budgets
 
-Each layer has a line budget checked in CI. The core, L1 plus L0's process adapter, is the tightest.
+Each layer has a line budget checked in CI. The core is L1 plus L0's process adapter, and it
+carries the budget that matters most: it is where a bug means a stray process or a lost result.
 These bound Rigger's own production code. L4 has no budget: the roles, review procedure, and
 provisioning steps are the consumer's, live in the consumer's repository, and are theirs to size.
 L7 is a person. Tests and the templates under `templates/` are not counted, and neither are blank

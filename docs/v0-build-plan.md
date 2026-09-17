@@ -65,14 +65,15 @@ concern, not an M8 one.
 **vN builds vN+1.** The installed engine is always a release behind the checkout it works on. That
 is a standing condition, not a transition, and it needs a promote step. That step names when the
 installed engine is upgraded, to which version, and what becomes of a card that changes a config
-schema or CLI contract the running engine reads. Open question §6.3, to be settled before M5.
+schema or CLI contract the running engine reads. D7 settles it.
 
-**The engine never merges a change to its own live gate.** `rigger init` forks the gate hook into
-the consumer repository, so this repository holds a live `.claude/hooks/review-gate.cjs` and, under
-`templates/`, the shipped copy of the same thing. A card editing the template is ordinary work. A
-card editing the live hook, the live config, or the CLI entry point the running engine executes is
-changing the thing that adjudicates its own merge. Those cards carry a label that excludes them
-from self-dispatch, and are done by hand.
+**The engine never merges a change to its own live gate.** `rigger init` installs the gate as a
+git hook under `.githooks/`, pointed at by `core.hooksPath`. It binds every ref update alike: a
+dispatch, a human `git merge`, a second provider's session. This repository holds the live hook,
+and `templates/` holds the shipped copy of the same thing. A card editing the template is ordinary
+work. A card editing the live hook, the live config, or the CLI entry point the running engine
+executes is changing the thing that adjudicates its own merge. Those cards carry a label that
+excludes them from self-dispatch, and are done by hand.
 
 **The manual path stays open.** A Rigger fault must never block Rigger's development. The M0
 assets are equally a Claude Code session's assets, so any card can be done by hand in this
@@ -84,7 +85,7 @@ repository with no change to the work product.
 `process.kill(-pgid, signal)` for the tree, and a `ps -o lstart= -p` start-time check before
 killing a recorded pgid after restart. launchd supervises unattended runs.
 
-**Windows only as the WSL2 spike decides** (§6). If Engineer workloads run under WSL2, Windows
+**Windows only as the WSL2 spike decides** (§5). If Engineer workloads run under WSL2, Windows
 needs nothing native. If not, a Windows containment backend is a separate, budgeted port after v0
 is proven on macOS. Consumers' Windows-specific test suites run in their own CI, never on the host
 Rigger schedules from.
@@ -116,12 +117,13 @@ order; milestones with no edge between them may run concurrently.
   the role prompts for engineer, reviewer, spike-engineer and PM, the skills, the hooks, and
   `settings.json`. Those drawn from a private prototype are starting points, reviewed against
   Rigger's own decisions before they are committed.
-- The config declares the eight consumer extension points from `ARCHITECTURE.md`, and the
-  validator rejects anything outside them. Per kind of work it names one maker role and an ordered
+- The config declares the consumer extension points `ARCHITECTURE.md` lists, and the validator
+  rejects anything outside them. Per kind of work it names one maker role and an ordered
   list of judge roles, with `owner` reserved and allowed only last.
 - L5's event envelope and JSONL sink. The first events recorded are L1's dispatch events and L0's
   process events, from the Reviewer session in this milestone's exit test.
-- Three verbs work: `init` writes the starter config and forks the templates into `.claude/`;
+- Three verbs work: `init` writes the starter config and forks each template where its provider
+  reads it;
   `doctor` checks Node version, `gh` auth, agent CLI auth, and config validity, one line each; and
   `--help`. The rest print "not yet implemented" and exit non-zero until their milestone.
 - The doc-reference resolver and `spec-style-lint`, with Rigger's own
@@ -131,17 +133,21 @@ order; milestones with no edge between them may run concurrently.
 The README's "Install and usage" block is the CLI spec: `rigger --help` lists exactly those verbs,
 in that order, and no others.
 
-The lint covers `ARCHITECTURE.md`, the register, and this plan, and CI runs it.
-`doc-references.json` is consumer-owned, so writing Rigger's own is the first use of that
-extension point. It exempts `docs/derived/`, which D8 creates only when the first generated
-document exists; the exemption comes off that day. `**/AGENTS.md` is `strict` in it, so every
-instruction file is checked from the day it is created. A second CI check asserts that every
-backticked repository path in an instruction file, or in the register, exists on disk. The
-resolver checks `path:line` pointers, not bare paths, so this covers what it does not. Those two
-are in scope because they name only assets that land here; the other documents name code that
-arrives later. The gate is whole-file, not diff-scoped, because Rigger starts with no backlog to
-migrate. The root instruction file is `soft` while M0 is open, and is promoted to `strict` as M0
-closes, once the assets it names exist.
+Three checks run in CI, and each covers something the others do not.
+
+The **resolver** verifies the `path:line` pointers in the documents `doc-references.json` names,
+at the fail level that config gives each. It runs whole-file rather than diff-scoped, because
+Rigger starts with no backlog to migrate. The root instruction file is `soft` while M0 is open and
+`strict` once M0 closes, when the assets it names exist. Writing Rigger's own
+`doc-references.json` is the first use of that extension point.
+
+The **path check** asserts that every backticked repository path in an instruction file, or in the
+register, exists on disk. The resolver never looks at bare paths, so this covers what it misses.
+Those two documents are in scope because they name only assets that land here, where the others
+name code that arrives later. The path check keeps its own exemptions, and `docs/derived/` is on
+that list until D8 rule 4 creates it.
+
+The **lint** covers `ARCHITECTURE.md`, the register, and this plan.
 
 Exit:
 
@@ -153,8 +159,9 @@ Exit:
 - A hand-typed `path:line` literal in a `strict` document reds the build.
 - A duplicate decision id reds the build.
 - A backticked path in an instruction file or in the register that does not exist reds the build.
-- One Reviewer session, run by hand against this repo, writes a verdict marker the gate honours.
-  Nothing dispatches until M4, so every role at M0 is invoked from a session.
+- One Reviewer session, run by hand against this repo, reviews a diff and produces findings.
+  Nothing dispatches until M4 and no gate exists until M5, so this exercises the role prompt, the
+  skill and the hooks, and nothing downstream of them.
 
 **M1. Board client and scheduler.**
 
@@ -245,7 +252,7 @@ Exit:
   agent judge is sound.
 - Any judge asking for changes returns the work to the maker. A new commit invalidates every marker
   and the whole panel re-reviews.
-- Merges serialize through the R3 repo lane.
+- Merges serialize through L3's repo lane.
 
 Exit:
 
@@ -358,3 +365,7 @@ Run before any Windows containment code. Docs-only PR under `docs/spikes/`.
 
 Verdict: "WSL2 hosts provisioning and Engineer dispatch for all cards except <list>", or "no,
 because <suite or tool>".
+
+## 6. Open questions
+
+None.

@@ -151,7 +151,7 @@ and ratifier lanes, a Slack surface, native Windows. Each arrives as a capabilit
 - A GitHub repository with a Projects v2 board. `rigger setup-board` creates the columns and
   fields.
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
-- One coding-agent CLI, authenticated. Claude Code and OpenAI Codex the current supported adapters.
+- One coding-agent CLI, authenticated. Claude Code is the shipped adapter; Codex is next.
 - Node.js 20 or later.
 - **macOS** today. Linux is expected to work but initially will be untested. **Windows** is
   planned through WSL2, pending a spike; native Windows is not in v0.
@@ -163,7 +163,7 @@ and ratifier lanes, a Slack surface, native Windows. Each arrives as a capabilit
 > `rigger --help` lists exactly these verbs.
 
 ```bash
-npx @williacj/rigger init          # write a starter config and fork the role templates into .claude/
+npx @williacj/rigger init          # write a starter config, fork the role templates
 npx @williacj/rigger doctor        # check gh auth, agent CLI auth, Node, config, board fields
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, in order

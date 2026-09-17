@@ -4,9 +4,9 @@ ABOUTME: Repo-wide rules for every agent working in Rigger, whatever its role. L
 
 Rules for **every** session in this repository.
 
-A dispatched session has a role — engineer, reviewer, spike-engineer, PM — and its authority comes
-from that role's agent prompt in `.claude/agents/`; this file never assigns one. Where a role
-prompt is narrower than a rule here, the role prompt wins for that role.
+A dispatched session has a role, and its authority comes from that role's agent prompt; this file
+never assigns one. Where a role prompt is narrower than a rule here, the role prompt wins for that
+role.
 
 A session with no agent prompt has no role and no narrowing: every rule here applies as written.
 The operative difference is that the owner is present, so "ask the owner" means ask now and wait,
@@ -109,9 +109,9 @@ not understand the task. Otherwise act autonomously and finish, including the ob
 ## Review and merge
 
 Every PR gets the `.claude/skills/code-review/` pass before merge, run by someone other than its
-author. Review the branch diff **before** opening the PR: the verdict binds to the head SHA, so a
-later commit stales it. Any Critical blocks the merge. Never work around a hook — if a gate stops
-you, review.
+author. Review the branch diff **before** opening the PR: a later commit stales the verdict, on the
+terms `ARCHITECTURE.md`'s invariants set. Never work around a hook — if a gate stops you,
+review.
 
 ## Self-hosting
 
