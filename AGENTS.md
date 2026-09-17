@@ -48,10 +48,10 @@ permission first.
 | `README.md` | The CLI contract — the verb list is the spec | verb |
 | `docs/v0-build-plan.md` | Order and exit tests, until v0 ships | `M#` |
 
-Read `ARCHITECTURE.md`'s invariants before you change anything. They bind every layer and this file
-does not repeat them. Changing a recorded decision needs the owner's agreement and an entry in
-the owning document. Two documents in conflict, or a gap neither resolves, goes to the owner —
-never to whoever noticed it.
+Read `ARCHITECTURE.md`'s invariants before you change anything. They bind every layer and this
+file does not repeat them. Changing anything in the table above needs the owner's agreement, and a
+decision records it in the register. Two documents in conflict, or a gap neither resolves, goes to
+the owner — never to whoever noticed it.
 
 ## Documents own their facts
 
@@ -77,8 +77,8 @@ the owner's approval. `npm run` lists every script.
   document — rather than adding a parallel one.
 - **Never copy-paste — extract and import.** Rule of Three.
 - **Every file opens with an `ABOUTME:` header** saying what it is, on as few lines as that takes.
-  `README.md`, `CLAUDE.md` and `.gitignore` are exempt: two are the front door and an import, and
-  the third is a list.
+  `README.md`, `CLAUDE.md`, `.gitignore` and `LICENSE` are exempt: the first two are the front door
+  and an import, and the others are not ours to caption.
 - **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`. Comments
   say what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack

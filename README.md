@@ -149,8 +149,7 @@ Milestones, in order:
 
 Each milestone's exit test is in `docs/v0-build-plan.md`, which owns them. v0 is M0 through M8.
 The improvement loops follow as M9 and M10. Not planned for v0: an adjudicator role and the triage
-lane that routes to it, a Slack surface, native Windows. Each arrives as a capability block, if at
-all.
+lane that routes to it, and native Windows. Each arrives if evidence calls for it, and not before.
 
 ## Requirements
 

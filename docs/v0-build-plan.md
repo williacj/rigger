@@ -14,11 +14,10 @@ Rigger, not using it; a consumer wants the README.
 Four premises shape the build order in §4. Where one summarises a fact `ARCHITECTURE.md` owns it
 cites it, and the citation is where the binding text lives; a conflict resolves there.
 
-1. **Engine death loses in-flight work.** Restart is redo. Resume is not built until a production
-   incident shows redo was insufficient, and that incident is recorded in the journal.
-   (`ARCHITECTURE.md`, Failure model.)
+1. **Engine death loses in-flight work.** Restart is redo (`ARCHITECTURE.md`, Failure model), and
+   D10 holds what v0 therefore does not build.
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
-   `concurrency` setting.
+   `concurrency` setting (`ARCHITECTURE.md`, Extension points).
 3. **On a host fault, keep going.** Provisioning is best-effort and survivors are killed and
    logged (`ARCHITECTURE.md`, Failure model). Only a repeated identical host fault pauses
    admission, and it pauses admission rather than cards; L2 owns that hold.
@@ -51,7 +50,7 @@ dispatch loop is last, because it needs the execution core and the roles beneath
 | M4 | the first dispatch Rigger makes itself, under the installation rule below |
 | M5 | the first merge through the gate |
 | M6 | `rigger pause` and `rigger resume` against this repository's own run |
-| M7 | `rigger report` over this repository's own event stream, complete across every layer |
+| M7 | `rigger report` over this repository's own event stream, for every layer that has landed |
 
 **The installation rule.** A dispatching engine never runs from the checkout it is changing. The
 engine that builds Rigger is installed from a packed tarball (`npm pack`, then install the `.tgz`)
@@ -65,8 +64,9 @@ is a standing condition, not a transition, and it needs a promote step. That ste
 installed engine is upgraded, to which version, and what becomes of a card that changes a config
 schema or CLI contract the running engine reads. D7 settles it.
 
-**The engine never merges a change to its own live gate.** `rigger init` installs the gate as a
-git hook under `.githooks/`, pointed at by `core.hooksPath`. It binds every ref update alike: a
+**The engine never merges a change to its own live gate.** From M5 the gate is a git hook under
+`.githooks/`, pointed at by `core.hooksPath`, and `rigger init` installs it in a consumer's
+repository. It binds every ref update alike: a
 dispatch, a human `git merge`, a second provider's session. This repository holds the live hook,
 and `templates/` holds the shipped copy of the same thing. `AGENTS.md` states which cards are
 excluded from self-dispatch as a result, and D7 records the promote step that follows from it.
@@ -106,8 +106,9 @@ order; milestones with no edge between them may run concurrently.
 
 **M0. Skeleton, agent assets, consumer contract.**
 
-- Package layout; CI runs the suite and the package budget check.
-- `HarnessConfig` required core, with this repository's own config — written by `init` — as the
+- Package layout; CI runs the suite, the package budget check, and the instruction-file word
+  budget check.
+- The config's required core, with this repository's own config — written by `init` — as the
   first fixture.
 - The development assets: `ARCHITECTURE.md`, `AGENTS.md` and its `CLAUDE.md` import, the journal,
   the role prompts, the skills — including the acceptance skill D2 rule 2 requires — the hooks,
@@ -118,8 +119,8 @@ order; milestones with no edge between them may run concurrently.
   list of judge roles, with `owner` reserved and allowed only last.
 - L5's event envelope and JSONL sink. Nothing writes to them yet: L1's dispatch events and L0's
   process events begin at M2, when there is an execution core to emit them.
-- Two verbs work, and the `--help` flag: `init` writes the starter config and forks each template
-  where its provider reads it;
+- Two verbs work, and so does the `--help` flag. `init` writes the starter config and forks each
+  template where its provider reads it;
   `doctor` checks Node version, `gh` auth, agent CLI auth, and config validity, one line each; and
   `--help`. The rest print "not yet implemented" and exit non-zero until their milestone.
 - The doc-reference resolver and `spec-style-lint`, with Rigger's own
@@ -129,7 +130,8 @@ order; milestones with no edge between them may run concurrently.
 The README's "Install and usage" block is the CLI spec: `rigger --help` lists exactly those verbs,
 in that order, and no others.
 
-Three checks run in CI, and each covers something the others do not.
+Several checks run in CI. Three of them read the documents, and each covers something the others
+do not.
 
 The **resolver** verifies the `path:line` pointers in the documents `doc-references.json` names,
 at the fail level that config gives each. It runs whole-file rather than diff-scoped, because
@@ -240,7 +242,7 @@ Exit:
   write into is M5's.
 - The judge configured as `owner` is not dispatched.
 - Two judges at one head receive the same card, base SHA and diff, and each packet's digest is in
-  the event stream.
+  the event stream. What they write their findings into is M5's.
 
 **M5. Gate and merge.**
 
@@ -248,7 +250,8 @@ Exit:
 - The marker records every acceptance item of its card as met or unmet (D2).
 - The gate admits a merge only when every configured judge has a fresh verdict for the head, none
   is Critical, all are sound, and the consumer's CI is green.
-- The owner's verdict is ratified or rejected, requested only after every agent judge is sound.
+- The owner's verdict uses the same vocabulary as any judge's, requested only after every agent
+  judge is sound.
 - Any judge asking for changes returns the work to the maker. A new commit invalidates every marker
   and the whole panel re-reviews.
 - Merges serialize through L3's repo lane.
@@ -306,8 +309,8 @@ In order:
    with survivors logged.
 2. SIGKILL of Rigger during three live Engineers leaves no descendant within ten seconds, and the
    restart re-dispatches all three.
-3. A bounded canary of ten Emend cards, including one requirements proposal judged by the
-   three-role panel and then the owner. That panel needs two Emend assets that do not exist yet,
+3. A bounded canary of ten Emend cards, including one requirements proposal judged by Emend's
+   panel and then the owner. That panel needs two Emend assets that do not exist yet,
    a PM reviewer role and an architecture-review skill; both are Emend cards and both land first.
 4. A thirty-card window with zero infrastructure-caused escalations, and every merge carrying a
    fresh verdict from every configured judge. Judged from `report`, not by hand.
@@ -332,7 +335,7 @@ Exit:
 
 - Reading M8's thirty cards of recorded telemetry, one drain-time run produces a reordering with a
   cited signal for every move.
-- No move touches L0 through L3.
+- No move changes code in L0 through L3.
 
 **M10. Meta-level improvement loop.**
 

@@ -29,10 +29,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts; the review loop; the gate rule; escalation routing; the infrastructure hold | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, holds | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority, concurrency, claims taken synchronously before any await, the repo lane, CPU share, pause and resume, and the three trigger kinds | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput | Spec rows and config | `src/scheduling/` |
+| **L3 Scheduling** | Pull order by priority, concurrency, claims taken synchronously before any await, the repo lane, pause and resume, and the three trigger kinds | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | Anything about how Rigger runs | Findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
-| **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders and re-tiers within L3 and L4. The meta-level loop proposes changes to any layer. | It applies nothing to L0 through L3 itself, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
+| **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code in L0 through L3, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, final verdicts, answers to escalations | | | | A person |
 
 ## Boundary rules
@@ -76,7 +76,7 @@ workaround.
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
 | **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
-| **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what is exempt | L0 reads the files; nothing else in Rigger reads the configuration | Yes |
+| **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | L0 reads the files; nothing else in Rigger reads the configuration | Yes |
 | **Provisioning steps** | A command, optionally a working directory, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it | L3 schedules; L1 runs | Yes |
 | **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
@@ -205,7 +205,7 @@ lines or comment lines: a comment cannot carry a bug.
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
-finding rather than a build failure, and the rows are the agreed split rather than nine gates.
+finding rather than a build failure, and the rows are the agreed split rather than one gate each.
 
 A change that would push the package over must delete as much as it adds, or carry a ratified
 budget change.
@@ -216,20 +216,18 @@ directory's file therefore changes nothing; only deleting does. The budget is 2,
 
 ## Invariants that hold across every layer
 
-- The board is the workflow truth. Rigger persists no workflow state of its own.
-- No judge role is the maker role. Every judge runs in its own dispatch, sees no other judge's
-  verdict, and writes its own verdict bound to the head SHA. A new commit invalidates every verdict
-  for that card. The gate needs a fresh verdict from every configured judge; any Critical blocks;
-  the owner, when configured as a judge, is always last and is never dispatched.
-- One worktree per card, on a branch derived from the card. Agents never share a checkout.
-- Merge happens only through the gate. The gate is a git hook, not a prompt, and it fails closed.
-  It admits a merge only on positive evidence: every configured judge's verdict fresh for the head
-  and sound, and the consumer's CI green.
-- Nothing outside the configured escalation set reaches the owner, and nothing inside it proceeds
-  without the owner.
-- Rigger stores no credentials. It inherits `gh` and the agent CLI's.
-- Telemetry is sent to nobody. Pushing it to a data ref in the consumer's own repository is
-  opt-in.
+- The board is the workflow truth. Rigger persists no workflow state of its own. - No judge role
+  is the maker role. Every judge runs in its own dispatch, sees no other judge's verdict, and
+  writes its own verdict into a marker bound to the head SHA. A new commit invalidates every
+  verdict for that card. The gate needs a fresh verdict from every configured judge; any Critical
+  blocks; the owner, when configured as a judge, is always last and is never dispatched. - One
+  worktree per card, on a branch derived from the card. Agents never share a checkout. - Merge
+  happens only through the gate. The gate is a git hook, not a prompt, and it fails closed. It
+  admits a merge only on positive evidence: every configured judge's verdict sound and fresh for
+  both the head commit and the card's latest acceptance, and the consumer's CI green. - Nothing
+  outside the configured escalation set reaches the owner, and nothing inside it proceeds without
+  the owner. - Rigger stores no credentials. It inherits `gh` and the agent CLI's. - Telemetry is
+  sent to nobody. Pushing it to a data ref in the consumer's own repository is opt-in.
 
 ## Where to start reading
 
