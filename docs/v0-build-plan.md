@@ -14,13 +14,13 @@ Rigger, not using it; a consumer wants the README.
 Four premises shape the build order in §4. Where one summarises a fact `ARCHITECTURE.md` owns it
 cites it, and the citation is where the binding text lives; a conflict resolves there.
 
-1. **Engine death loses in-flight work.** Restart is redo (`ARCHITECTURE.md`, Failure model), and
-   D10 holds what v0 therefore does not build.
+1. **Engine death loses in-flight work.** Restart is redo (`R-STATE-2`), and D10 holds what v0
+   therefore does not build.
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting (`ARCHITECTURE.md`, Extension points).
-3. **On a host fault, keep going.** Provisioning is best-effort and survivors are killed and
-   logged (`ARCHITECTURE.md`, Failure model). Only a repeated identical host fault pauses
-   admission, and it pauses admission rather than cards; L2 owns that hold.
+3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
+   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-5`). A repeated host fault closes
+   admission rather than stopping cards (`R-FAIL-3`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
@@ -65,11 +65,10 @@ is a standing condition, not a transition, and it needs a promote step. That ste
 installed engine is upgraded, to which version, and what becomes of a card that changes a config
 schema or CLI contract the running engine reads. D7 settles it.
 
-**The engine never merges a change to its own live gate.** From M5 the gate is a git hook under
-`.githooks/`, pointed at by `core.hooksPath`, and `rigger init` installs it in a consumer's
-repository. It binds every ref update alike: a
-dispatch, a human `git merge`, a second provider's session. This repository holds the live hook,
-and `templates/` holds the shipped copy of the same thing. `AGENTS.md` states which cards are
+**The engine never merges a change to its own live gate.** From M5 the gate is the git hook
+`ARCHITECTURE.md` describes, and it binds every route to this repository's main line, Rigger's own
+dispatches included. This repository holds the live hook, and `templates/` holds the shipped copy
+of the same thing. `AGENTS.md` states which cards are
 excluded from self-dispatch as a result, and D7 records the promote step that follows from it.
 
 **The manual path stays open.** A Rigger fault must never block Rigger's development. The M0
@@ -95,7 +94,8 @@ ratified by the owner before it binds.
 
 The register needs a home and a rule from M0, because the `recorded-decision` escalation category
 means nothing without somewhere for a ratified decision to land: `ARCHITECTURE.md` for anything
-structural, `docs/spec/` for the rest, both written under the `spec-style` skill.
+structural, `docs/spec/decisions.md` for a choice, and `docs/spec/requirements.md` for what must
+be true as a result. All are written under the `spec-style` skill.
 
 The register states how ids are allocated and what a duplicate costs.
 
@@ -112,12 +112,18 @@ order; milestones with no edge between them may run concurrently.
 - The config's required core, with this repository's own config — written by `init` — as the
   first fixture.
 - The development assets: `ARCHITECTURE.md`, `AGENTS.md` and its `CLAUDE.md` import, the journal,
-  the role prompts, the skills — including the acceptance skill D2 rule 2 requires — the hooks,
+  the role prompts, the skills — including the acceptance skill `R-CARD-4` requires — the hooks,
   and `settings.json`. Those drawn from a private prototype are starting points, reviewed against
   Rigger's own decisions before they are committed.
 - The config declares the consumer extension points `ARCHITECTURE.md` lists, and the validator
   rejects anything outside them. Per kind of work it names one maker role and an ordered
   list of judge roles, with `owner` reserved and allowed only last.
+- `docs/derived/test-matrix.md`, one row per requirement, naming the tests that prove it. Each
+  test declares the requirement it proves and a tool builds the matrix from those declarations, so
+  it is the first generated document and the reason `docs/derived/` exists at all (D8). A row with
+  no test is a visible gap, the way `checked by: nothing yet` is in the register. CI reds on a
+  requirement no test claims. This outlives the plan: at v0 the exit tests below become history,
+  and the matrix is what still ties a requirement to its evidence.
 - L5's event envelope and JSONL sink. Nothing writes to them yet: L1's dispatch events and L0's
   process events begin at M2, when there is an execution core to emit them.
 - Two verbs work, and so does the `--help` flag. `init` writes the starter config and forks each
@@ -155,10 +161,14 @@ Exit:
   match; the verbs gain checks and behaviour as later milestones land.
 - `init` and `doctor` pass on a fresh clone.
 - `npm pack` produces a tarball that installs outside this checkout and runs `--help` from there
-  (§1.1).
-- The validator rejects a missing required key.
+  (§1.1) (`R-SAFE-5`).
+- The validator rejects a missing required key (`R-SCHED-10`).
 - A hand-typed `path:line` literal in a `strict` document reds the build.
-- A duplicate decision id reds the build.
+- Every requirement id appears in `docs/derived/test-matrix.md`, and the matrix regenerates
+  byte-identical from the tests. A requirement no test claims reds the build.
+- A duplicate decision id reds the build, and so does a duplicate requirement id. The
+  requirement check reads `docs/spec/requirements.md` and `docs/spec/requirements-retired.md`
+  together, because a retired id stays allocated.
 - A backticked path in an instruction file or in the register that does not exist reds the build.
 - One Reviewer session, run by hand against this repo, reviews a diff and produces findings.
   Nothing dispatches until M4 and no gate exists until M5, so this exercises the role prompt, the
@@ -182,13 +192,14 @@ Exit:
 
 Exit:
 
-- A fake board drives pull, complete, and cold restart with no persisted state.
+- A fake board drives pull, complete, and cold restart with no persisted state
+  (`R-STATE-1`, `R-STATE-2`).
 - A card carrying no acceptance, or one failing the acceptance form check, is not admitted, and
-  `plan` names the reason (D2).
+  `plan` names the reason (`R-CARD-7`, `R-CARD-8`).
 - `setup-board` creates this repository's real board, fields, and labels.
-- `plan` prints its real pull order.
+- `plan` prints its real pull order (`R-SCHED-1`).
 - Concurrency comes from config. With `concurrency: 1` the engine works one card at a time; with
-  `concurrency: 3` it works three at once.
+  `concurrency: 3` it works three at once (`R-SCHED-2`).
 - The column display names come from config: a board whose columns are named differently drives
   the same loop.
 - The demo GIF regenerates from the tape in CI.
@@ -204,21 +215,24 @@ This is the budgeted module.
 Exit:
 
 - A tree with a lingering grandchild whose parent exits 0 yields result 0, and the grandchild is
-  dead and named in the log.
-- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling.
+  dead and named in the log (`R-STATE-5`).
+- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling
+  (`R-STATE-4`).
 
 **M3. Worktrees and provisioning.**
 
 - One worktree per card under the consumer's topic rule.
-- Provisioning steps come from consumer config and run as best-effort M2 runs. Each step may
-  declare the card labels that select it.
+- Provisioning steps come from consumer config and run as M2 runs. Each step may declare the card
+  labels that select it, and whether the work requires it (D12).
 - Rigger's config: `npm ci` for every card, and `vhs` only for cards labelled `area:demo`, which
   are the ones that re-record the demo tape.
 
 Exit:
 
 - A card whose labels select no step beyond the first provisions with that step only.
-- A step exiting non-zero logs, and the card proceeds.
+- An optional step exiting non-zero logs, and the card proceeds (`R-PROV-2`).
+- A required step exiting non-zero dispatches no maker, and the card retries once in a fresh
+  worktree (`R-FAIL-1`, `R-FAIL-2`).
 
 **M4. Roles.**
 
@@ -228,8 +242,8 @@ Exit:
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
   session or another judge's output. Each writes its own findings, named by head SHA and judge
   role; M5 fixes the schema they are written into.
-- L2 composes a review packet for each judge dispatch and L1 delivers it. D9 states what it
-  carries.
+- L2 composes a review packet for each judge dispatch and L1 delivers it. `R-EVIDENCE` states
+  what it carries.
 - Rigger binds three kinds of work against its own board: a code change (maker engineer, judge
   reviewer), a decision proposal (maker PM, judges reviewer and engineer, then owner), and a spike
   (maker spike-engineer, judge reviewer). The proposal is the panel case — two agent judges
@@ -237,18 +251,19 @@ Exit:
 
 Exit:
 
-- A real maker dispatch on a throwaway Rigger card opens a PR.
+- A real maker dispatch on a throwaway Rigger card opens a PR (`R-WORK-6`).
 - A two-judge panel runs for one head, each judge in its own dispatch, and neither receives the
   maker's session or the other judge's output. Each writes its findings; the marker schema they
   write into is M5's.
-- The judge configured as `owner` is not dispatched.
-- Two judges at one head receive the same card, base SHA and diff, and each packet's digest is in
+- The judge configured as `owner` is not dispatched (`R-LOOP-11`).
+- Two judges at one head receive the same card, base SHA and diff, and what each was given is in
   the event stream. What they write their findings into is M5's.
 
 **M5. Gate and merge.**
 
 - Verdict marker schema and git gate hook, and `init` grows to install the hook.
-- The marker records every acceptance item of its card as met or unmet (D2).
+- The marker records every acceptance item of its card as met or unmet (`R-LOOP-5`), and whether
+  the acceptance covered what the card asked (`R-LOOP-6`).
 - The gate admits a merge only when every configured judge's verdict is sound and fresh for both
   the head commit and the card's latest acceptance, none is Critical, and the consumer's CI is
   green.
@@ -260,23 +275,25 @@ Exit:
 
 Exit, against a fixture configured with three agent judges:
 
-- One stale marker among three blocks.
-- Three fresh sound markers merge.
-- A Critical from one judge blocks regardless of the other two.
-- The owner is not asked while any agent judge is unsatisfied.
-- A marker leaving one acceptance item unmet is not sound, and the gate refuses it.
+- One stale marker among three blocks (`R-GATE-2`).
+- Three fresh sound markers merge (`R-GATE-4`).
+- A Critical from one judge blocks regardless of the other two (`R-GATE-6`).
+- The owner is not asked while any agent judge is unsatisfied (`R-LOOP-11`).
+- A marker leaving one acceptance item unmet is not sound, and the gate refuses it
+  (`R-VERDICT-4`).
 - A judge ruling the acceptance insufficient returns the card to its author instead of merging it
-  (D2).
-- A red CI blocks a merge that every judge has passed.
+  (`R-LOOP-6`).
+- A red CI blocks a merge that every judge has passed (`R-GATE-8`).
 - A verdict written before the card's latest acceptance is stale, and the gate refuses it.
-- Two finalizations at once serialize.
+- Two merges at once serialize (`R-SCHED-9`).
 
 **M6. Escalation and infrastructure hold.**
 
 - The configured escalation set routes to the owner's column, with a comment carrying the reason
   and the evidence.
-- Infrastructure-class failures — provisioning, spawn failure, worktree creation — retry the same
-  card once in a fresh worktree.
+- Infrastructure-class failures — a required provisioning step, a spawn failure, a worktree that
+  cannot be created — retry the same card once. A worktree that cannot be created is retried in
+  place rather than in a fresh one.
 - A second identical failure in one run pauses admission with a logged reason and one telemetry
   event, leaving every card in its column.
 - Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason.
@@ -285,8 +302,8 @@ Exit, against a fixture configured with three agent judges:
 Exit:
 
 - A card that fails on infrastructure twice yields two attempts, one hold, and zero escalations.
-  Admission is paused, so a third attempt never starts.
-- `pause` during a run finishes in-flight cards and admits none.
+  Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-3`, `R-FAIL-4`).
+- `pause` during a run finishes in-flight cards and admits none (`R-SCHED-3`).
 
 **M7. Report complete, clock triggers.**
 
@@ -298,14 +315,14 @@ Exit:
 
 Exit:
 
-- A clock trigger creates a card that goes through the whole loop.
-- A missed trigger fires once on restart.
+- A clock trigger creates a card that goes through the whole loop (`R-SCHED-5`).
+- A missed trigger fires once on restart (`R-SCHED-8`).
 - A card re-dispatched after an engine death is recorded as a redo, and `report` counts it apart
-  from first-attempt work (D1).
+  from first-attempt work (D1) (`R-STATE-3`).
 - `report` on this repository's own event stream shows the signals of every layer that has
-  landed.
+  landed (`R-RECORD-2`, `R-RECORD-3`, `R-RECORD-4`).
 - Telemetry push comes from config: off by default writes nothing to the data ref, and on writes
-  the stream there.
+  the stream there (`R-SAFE-3`).
 
 **M8. Acceptance on Emend.**
 
@@ -340,8 +357,8 @@ Then:
 Exit:
 
 - Reading M8's thirty cards of recorded telemetry, one drain-time run produces a reordering with a
-  cited signal for every move.
-- No move changes code in L0 through L3.
+  cited signal for every move (`R-IMPROVE-3`).
+- No move changes code, in any layer (`R-IMPROVE-1`).
 
 **M10. Meta-level improvement loop.**
 
@@ -353,8 +370,10 @@ Exit:
 
 Exit:
 
-- One run produces at least one proposal per populated layer, each with its signal.
-- A proposal that would push the package over its budget is refused, with the budget named.
+- One run produces at least one proposal per populated layer, each with its signal
+  (`R-IMPROVE-3`, `R-IMPROVE-5`).
+- A proposal that would push the package over its budget is refused, with the budget named
+  (`R-IMPROVE-4`).
 
 ## 5. Spike: Engineer workloads under WSL2 (`type:spike`)
 
