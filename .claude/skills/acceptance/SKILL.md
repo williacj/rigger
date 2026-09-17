@@ -25,8 +25,12 @@ repository that is this one.
 ## The one test
 
 **A judge must be able to rule on the item without asking you.** That is `R-CARD-2`, and every
-rule below is a way of passing it. You will not be there when the card is judged, and a judge
-that has to guess what you meant either guesses or returns the card.
+rule below is a way of passing it.
+
+You will not be there when the card is judged. A judge that cannot rule on an item records it
+unmet (`R-LOOP-5`), and a verdict leaving any item unmet is not sound (`R-VERDICT-4`). The maker
+revises, that change spends one of the card's rounds (`R-LOOP-8`), and a card that exhausts its
+rounds escalates as ambiguous (`R-LOOP-9`). An item only you can read is paid for in rounds.
 
 ## How to write an item that passes it
 
