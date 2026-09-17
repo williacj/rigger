@@ -94,8 +94,8 @@ The pairing is yours to name, and the same loop runs each one:
 - a designer and a design reviewer;
 - a spike engineer answering a question and a reviewer judging whether the writeup answers it;
 - a writer and an editor;
-- a product manager proposing requirements, judged by a second product manager, a designer, and
-  an architect, and then by you.
+- a product manager proposing requirements, judged by a designer and an architect, and then by
+  you.
 
 Sometimes the last judge is you. A change to one of your recorded decisions reaches you only after
 the agent judges are satisfied, so what you read has already been vetted.
@@ -133,22 +133,24 @@ several private versions of Rigger to prove out the concept and identify key req
 
 Milestones, in order:
 
-| | Milestone | Done when |
-|---|---|---|
-| M0 | Skeleton, agent assets, consumer contract | `rigger --help`, `init`, and `doctor` work; the config validator rejects a missing key |
-| M1 | Board client and scheduler | A fake board drives pull, complete, and cold restart with no persisted state |
-| M2 | Execution core | A lingering grandchild is killed and named; SIGKILL then restart kills the recorded group |
-| M3 | Worktrees and provisioning | Steps come from config; a failed step logs and the card proceeds |
-| M4 | Roles | A real maker opens a PR; a real judge writes a verdict |
-| M5 | Gate and merge | A stale marker blocks; three fresh sound markers merge; two finalizations serialize |
-| M6 | Escalation and infrastructure hold | Six identical host failures yield two attempts, one hold, zero escalations |
-| M7 | Report complete, clock triggers | Every layer reports; scheduled work creates cards |
-| M8 | Acceptance on Emend | A thirty-card window with zero infrastructure-caused escalations; first tagged release |
-| M9 | Object-level improvement loop | The backlog is reordered from evidence, every move with its signal |
-| M10 | Meta-level improvement loop | Proposals against any layer, each with its signal, none self-applied |
+| | Milestone |
+|---|---|
+| M0 | Skeleton, agent assets, consumer contract |
+| M1 | Board client and scheduler |
+| M2 | Execution core |
+| M3 | Worktrees and provisioning |
+| M4 | Roles |
+| M5 | Gate and merge |
+| M6 | Escalation and infrastructure hold |
+| M7 | Report complete, clock triggers |
+| M8 | Acceptance on Emend |
+| M9 | Object-level improvement loop |
+| M10 | Meta-level improvement loop |
 
-v0 is M0 through M8. The improvement loops follow as M9 and M10. Not planned for v0: the triage
-and ratifier lanes, a Slack surface, native Windows. Each arrives as a capability block, if at all.
+Each milestone's exit test is in `docs/v0-build-plan.md`, which owns them. v0 is M0 through M8.
+The improvement loops follow as M9 and M10. Not planned for v0: an adjudicator role and the triage
+lane that routes to it, a Slack surface, native Windows. Each arrives as a capability block, if at
+all.
 
 ## Requirements
 
@@ -158,7 +160,7 @@ and ratifier lanes, a Slack surface, native Windows. Each arrives as a capabilit
 - One coding-agent CLI, authenticated. Claude Code is the shipped adapter; Codex is next.
 - Node.js 20 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
-  v0. Linux is untested, and nothing in v0 depends on it.
+  v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
 
 ## Install and usage
 
@@ -181,8 +183,7 @@ npx @williacj/rigger report        # derive the signals from the event stream
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means
 `npx @williacj/rigger <verb>`.
 
-Unattended runs on macOS use launchd. `rigger init` writes the plist and the operator skills into
-your repository, where you own them like the rest.
+Unattended runs on macOS use launchd, whose assets are part of the substrate Rigger ships.
 
 ## Configuration
 
@@ -222,9 +223,9 @@ Rigger is eight layers, each with one job and one boundary, from the bottom up:
 - **you**.
 
 The core is execution plus the substrate's process adapter: the code that owns every process
-Rigger starts. It is the smallest layer and carries the tightest size budget, enforced in CI,
-because it is the layer where a bug means a stray process or a lost result. Everything above it is
-rules, and rules are cheap to test.
+Rigger starts. Its budget matters most, and CI enforces the package total, because the core is
+where a bug means a stray process or a lost result. Everything above it is rules, and rules are
+cheap to test.
 
 Three rules shape the core. A command's result is its exit code and captured output; a stray
 process is killed and logged and never changes the answer. Rigger keeps no in-flight state: if it

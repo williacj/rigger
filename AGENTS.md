@@ -1,4 +1,5 @@
-ABOUTME: Repo-wide rules for every agent working in Rigger, whatever its role. Loaded into every session, so it holds only what is true in every session.
+ABOUTME: Repo-wide rules for every agent working in Rigger, whatever its role. Loaded into every
+session, so it holds only what is true in every session.
 
 # AGENTS.md
 
@@ -75,10 +76,11 @@ the owner's approval. `npm run` lists every script.
   handles the same kind of problem. Extend what it built — a module, a utility, a decision, a
   document — rather than adding a parallel one.
 - **Never copy-paste — extract and import.** Rule of Three.
-- **Every file opens with an `ABOUTME:` header** saying what it is, on as few lines as that
-  takes. `README.md` and `CLAUDE.md` are exempt: one is the front door, the other is an import.
-- **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`. Comments say
-  what and why, never what changed.
+- **Every file opens with an `ABOUTME:` header** saying what it is, on as few lines as that takes.
+  `README.md`, `CLAUDE.md` and `.gitignore` are exempt: two are the front door and an import, and
+  the third is a list.
+- **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`. Comments
+  say what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack
   fixes.
 

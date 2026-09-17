@@ -24,7 +24,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
 ## The layers
 
-| Layer | Decides | Never decides | Emits | Changed by | Lives in |
+| Layer | Decides | Never decides | Emits, in part | Changed by | Lives in |
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout | Engineer cards, within the L1 budget | `src/execution/` |
@@ -77,16 +77,16 @@ workaround.
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
 | **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
 | **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what is exempt | L0 reads the files; nothing else in Rigger reads the configuration | Yes |
-| **Provisioning steps** | A command, its working directory, and the labels that select it | L3 schedules; L1 runs | Yes |
-| **Escalation set** | Which verdict and workflow outcomes are the owner's to decide | L2 | Yes, default is the three current categories |
-| **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | M9, M10 |
-| **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | M7 |
+| **Provisioning steps** | A command, optionally a working directory, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it | L3 schedules; L1 runs | Yes |
+| **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
+| **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
+| **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI | L0 | Claude Code shipped; Codex next |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface | L0 | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
-The config file declares every row above except the two adapters, which are code, and the rows
-marked fixed. The
+The config file declares the rows whose v0 column says Yes. The rows marked fixed are Rigger's, and
+Role skills and Document checking are files the config points at rather than contains. The two
 adapters are code, added to Rigger itself. The shape, abbreviated:
 
 ```js
@@ -134,8 +134,8 @@ report and a stale-card sweep, dispatch directly without a card. A clock trigger
 Rigger is not running fires once on the next start if its window was missed; that catch-up policy
 is per trigger in config.
 
-Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd and Task
-Scheduler assets that do it are L0.
+Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd assets that
+do it are L0. A Windows equivalent arrives with native Windows, which is not in v0.
 
 ## Failure model
 
@@ -185,14 +185,15 @@ its own reason. Field names are not yet fixed.
 
 ## Budgets
 
-Each layer has a line budget checked in CI. The core is L1 plus L0's process adapter, and it
-carries the budget that matters most: it is where a bug means a stray process or a lost result.
+Each layer has a line budget, the CLI and config have one between them, and their sum is the
+package budget. The core is L1 plus L0's process adapter, so it spans two rows. Its budget matters
+most, because the core is where a bug means a stray process or a lost result.
 These bound Rigger's own production code. L4 has no budget: the roles, review procedure, and
 provisioning steps are the consumer's, live in the consumer's repository, and are theirs to size.
 L7 is a person. Tests and the templates under `templates/` are not counted, and neither are blank
 lines or comment lines: a comment cannot carry a bug.
 
-| Layer | Production lines |
+| Budget | Production lines |
 |---|---|
 | L0 | 3,000 |
 | L1 | 1,500 |
@@ -203,14 +204,15 @@ lines or comment lines: a comment cannot carry a bug.
 | CLI and config | 1,500 |
 | **Package** | **12,000** |
 
-Package is the sum of the rows above, not a separate ceiling. CI runs one check, against the total.
+CI runs one check, against the package total. A layer that grows past its own row is a review
+finding rather than a build failure, and the rows are the agreed split rather than nine gates.
 
-A change that would exceed a layer's budget must delete as much as it adds, or carry a ratified
+A change that would push the package over must delete as much as it adds, or carry a ratified
 budget change.
 
-Instruction files carry one budget of their own, covering the root `AGENTS.md` and every nested one
-together, checked the same way. Moving text from the root file into a directory's file therefore
-changes nothing; only deleting does. The budget is 2,000 words.
+Instruction files carry one budget of their own, covering the root `AGENTS.md` and every nested
+one together, checked the same way: one number, one check. Moving text from the root file into a
+directory's file therefore changes nothing; only deleting does. The budget is 2,000 words.
 
 ## Invariants that hold across every layer
 
@@ -220,8 +222,9 @@ changes nothing; only deleting does. The budget is 2,000 words.
   for that card. The gate needs a fresh verdict from every configured judge; any Critical blocks;
   the owner, when configured as a judge, is always last and is never dispatched.
 - One worktree per card, on a branch derived from the card. Agents never share a checkout.
-- Merge happens only through the gate. The gate is a git hook, not a prompt, and it fails closed:
-  it admits a merge only on positive evidence that every condition is met.
+- Merge happens only through the gate. The gate is a git hook, not a prompt, and it fails closed.
+  It admits a merge only on positive evidence: every configured judge's verdict fresh for the head
+  and sound, and the consumer's CI green.
 - Nothing outside the configured escalation set reaches the owner, and nothing inside it proceeds
   without the owner.
 - Rigger stores no credentials. It inherits `gh` and the agent CLI's.

@@ -1,6 +1,4 @@
-ABOUTME: Build plan for Rigger v0: failure model, size budget, platform, self-hosting,
-constitution, milestones, and copy-over rules. Rigger is its own first consumer and macOS is the
-first host.
+ABOUTME: Build plan for Rigger v0: premises, self-hosting, platform, constitution, build order, and the WSL2 spike. Rigger is its own first consumer and macOS is the first host.
 
 # Rigger v0 build plan
 
@@ -13,8 +11,8 @@ Rigger, not using it; a consumer wants the README.
 
 ## 1. Premises
 
-Four premises shape the build order in §4. Each summarises a fact `ARCHITECTURE.md` owns and cites
-it; the citation is where the binding text lives, and a conflict resolves there.
+Four premises shape the build order in §4. Where one summarises a fact `ARCHITECTURE.md` owns it
+cites it, and the citation is where the binding text lives; a conflict resolves there.
 
 1. **Engine death loses in-flight work.** Restart is redo. Resume is not built until a production
    incident shows redo was insufficient, and that incident is recorded in the journal.
@@ -28,9 +26,9 @@ it; the citation is where the binding text lives, and a conflict resolves there.
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
 
-Two of `ARCHITECTURE.md`'s boundary rules drive this plan's order: a fault is handled at the
-lowest layer that can handle it, and everything a consumer changes is declared in L4. The
-per-layer budget check is a build-order deliverable, and the owner has set the numbers.
+Two things `ARCHITECTURE.md` fixes drive this plan's order: a fault is handled at the lowest
+layer that can handle it, and everything a consumer changes is declared in L4. The
+budget check is a build-order deliverable, and the owner has set the numbers.
 
 ### 1.1 Self-hosting
 
@@ -70,10 +68,8 @@ schema or CLI contract the running engine reads. D7 settles it.
 **The engine never merges a change to its own live gate.** `rigger init` installs the gate as a
 git hook under `.githooks/`, pointed at by `core.hooksPath`. It binds every ref update alike: a
 dispatch, a human `git merge`, a second provider's session. This repository holds the live hook,
-and `templates/` holds the shipped copy of the same thing. A card editing the template is ordinary
-work. A card editing the live hook, the live config, or the CLI entry point the running engine
-executes is changing the thing that adjudicates its own merge. Those cards carry a label that
-excludes them from self-dispatch, and are done by hand.
+and `templates/` holds the shipped copy of the same thing. `AGENTS.md` states which cards are
+excluded from self-dispatch as a result, and D7 records the promote step that follows from it.
 
 **The manual path stays open.** A Rigger fault must never block Rigger's development. The M0
 assets are equally a Claude Code session's assets, so any card can be done by hand in this
@@ -110,20 +106,20 @@ order; milestones with no edge between them may run concurrently.
 
 **M0. Skeleton, agent assets, consumer contract.**
 
-- Package layout; CI runs the suite and the §1 budget check.
+- Package layout; CI runs the suite and the package budget check.
 - `HarnessConfig` required core, with this repository's own config — written by `init` — as the
   first fixture.
 - The development assets: `ARCHITECTURE.md`, `AGENTS.md` and its `CLAUDE.md` import, the journal,
-  the role prompts for engineer, reviewer, spike-engineer and PM, the skills, the hooks, and
-  `settings.json`. Those drawn from a private prototype are starting points, reviewed against
+  the role prompts, the skills — including the acceptance skill D2 rule 2 requires — the hooks,
+  and `settings.json`. Those drawn from a private prototype are starting points, reviewed against
   Rigger's own decisions before they are committed.
 - The config declares the consumer extension points `ARCHITECTURE.md` lists, and the validator
   rejects anything outside them. Per kind of work it names one maker role and an ordered
   list of judge roles, with `owner` reserved and allowed only last.
-- L5's event envelope and JSONL sink. The first events recorded are L1's dispatch events and L0's
-  process events, from the Reviewer session in this milestone's exit test.
-- Three verbs work: `init` writes the starter config and forks each template where its provider
-  reads it;
+- L5's event envelope and JSONL sink. Nothing writes to them yet: L1's dispatch events and L0's
+  process events begin at M2, when there is an execution core to emit them.
+- Two verbs work, and the `--help` flag: `init` writes the starter config and forks each template
+  where its provider reads it;
   `doctor` checks Node version, `gh` auth, agent CLI auth, and config validity, one line each; and
   `--help`. The rest print "not yet implemented" and exit non-zero until their milestone.
 - The doc-reference resolver and `spec-style-lint`, with Rigger's own
@@ -227,20 +223,21 @@ Exit:
   Claude Code adapter as the default.
 - Role names, prompts, and skills owned by the consumer; model tier per role from the card's label.
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
-  session or another judge's output. Each writes its own verdict marker, named by head SHA and
-  judge role.
-- L2 composes a review packet for each judge dispatch and L1 delivers it (D9). It carries the card
-  and its acceptance, the pull request, the head and base SHAs, the diff, the changed files, the
-  kind of work, and the judge's role. A judge may read beyond it.
-- Rigger binds two kinds of work against its own board: a code change (maker engineer, judge
-  reviewer) and a decision proposal (maker PM, judges reviewer and engineer, then owner). The
-  second is the panel case — two agent judges running concurrently, with the owner last.
+  session or another judge's output. Each writes its own findings, named by head SHA and judge
+  role; M5 fixes the schema they are written into.
+- L2 composes a review packet for each judge dispatch and L1 delivers it. D9 states what it
+  carries.
+- Rigger binds three kinds of work against its own board: a code change (maker engineer, judge
+  reviewer), a decision proposal (maker PM, judges reviewer and engineer, then owner), and a spike
+  (maker spike-engineer, judge reviewer). The proposal is the panel case — two agent judges
+  running concurrently, with the owner last.
 
 Exit:
 
 - A real maker dispatch on a throwaway Rigger card opens a PR.
-- A two-judge panel writes two markers for one head, each judge in its own dispatch, and neither
-  receives the maker's session or the other judge's output.
+- A two-judge panel runs for one head, each judge in its own dispatch, and neither receives the
+  maker's session or the other judge's output. Each writes its findings; the marker schema they
+  write into is M5's.
 - The judge configured as `owner` is not dispatched.
 - Two judges at one head receive the same card, base SHA and diff, and each packet's digest is in
   the event stream.
@@ -250,14 +247,13 @@ Exit:
 - Verdict marker schema and git gate hook.
 - The marker records every acceptance item of its card as met or unmet (D2).
 - The gate admits a merge only when every configured judge has a fresh verdict for the head, none
-  is Critical, and all are sound.
-- The owner's verdict is the existing ratified-or-rejected disposition, requested only after every
-  agent judge is sound.
+  is Critical, all are sound, and the consumer's CI is green.
+- The owner's verdict is ratified or rejected, requested only after every agent judge is sound.
 - Any judge asking for changes returns the work to the maker. A new commit invalidates every marker
   and the whole panel re-reviews.
 - Merges serialize through L3's repo lane.
 
-Exit:
+Exit, against a fixture configured with three agent judges:
 
 - One stale marker among three blocks.
 - Three fresh sound markers merge.
@@ -265,6 +261,7 @@ Exit:
 - The owner is not asked while any agent judge is unsatisfied.
 - A marker leaving one acceptance item unmet is not sound, and the gate refuses it.
 - A judge ruling the acceptance insufficient escalates the card instead of merging it.
+- A red CI blocks a merge that every judge has passed.
 - Two finalizations at once serialize.
 
 **M6. Escalation and infrastructure hold.**
@@ -348,7 +345,7 @@ Exit:
 Exit:
 
 - One run produces at least one proposal per populated layer, each with its signal.
-- A proposal that would exceed a layer's budget is refused, with the budget named.
+- A proposal that would push the package over its budget is refused, with the budget named.
 
 ## 5. Spike: Engineer workloads under WSL2 (`type:spike`)
 

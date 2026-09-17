@@ -18,7 +18,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 
 | id | decision | status |
 |---|---|---|
-| D1 | Redo over resume | Ratified 2026-09-15 |
+| D1 | Redo over resume | Ratified 2026-09-15, amended 2026-09-17 |
 | D2 | Every card carries its acceptance | Ratified 2026-09-15 |
 | D3 | Escalation is bounded by configuration | Ratified 2026-09-15 |
 | D4 | v0 defers the roles it can do without | Ratified 2026-09-15, amended 2026-09-16 |
@@ -27,44 +27,27 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D7 | The engine is promoted at milestone close | Ratified 2026-09-16 |
 | D8 | A fact the code owns is generated, never typed | Ratified 2026-09-16 |
 | D9 | A judge is handed its evidence | Ratified 2026-09-16 |
+| D10 | v0 builds no resume and no second host | Ratified 2026-09-17 |
 
 ## D1 — Redo over resume
 
-**Status:** Ratified by the owner 2026-09-15.
+**Status:** Ratified by the owner 2026-09-15. Amended 2026-09-17: the v0 boundaries it carried
+moved to D10, so this entry holds one lifespan.
 
 ### Rule
 
-1. Rigger recovers by redo. v0 builds no resume. `ARCHITECTURE.md`'s failure model states the
-   mechanism, and this decision states the choice.
-2. One engine runs against one repository. v0 builds no lease, no fencing token, and no multi-host
-   coordination.
-3. v0 builds no runner reattachment, no terminal proof, and no reclamation.
-4. Rules 2 and 3 defer work. They do not refuse it. Each returns on its own trigger, and each
-   returns as a new decision rather than as an addition to this one.
-5. L3 records a redo when it re-dispatches a card after an engine death. `report` separates redone
+1. Rigger recovers by redo. `ARCHITECTURE.md`'s failure model states the mechanism, and this
+   decision states the choice.
+2. L3 records a redo when it re-dispatches a card after an engine death. `report` separates redone
    work from work done at the first attempt.
-
-### Deferred, and what returns each
-
-| Deferred | Returns when |
-|---|---|
-| Multi-host coordination, and the leases and fencing tokens it needs | A consumer must run two engines against one repository. Every claim and lock in L3 changes with it. |
-| Resume, runner reattachment, terminal proof, reclamation | A production incident shows redo was insufficient. The journal records that incident. |
 
 ### Notes
 
 Redo is cheaper to build than resume, and far cheaper to reason about. A resumed dispatch must
 prove what the dead engine had already done. A redone card asks the board, which never died.
 
-Leases, fencing and reattachment exist to make resume and multi-host safe. They guard nothing while
-one engine runs and redo is the recovery, so v0 pays for neither.
-
-The trigger matters more than the deferral. An argument returns none of these, and neither does a
-near miss in development.
-
-Rules 2 and 3 expire. Rule 1's preference for redo is the part that does not, and a returning
-resume would sit beside it rather than replace it.
-
+This decision does not expire. What v0 declines to build while redo is the recovery is D10's, and
+a resume that later arrives would sit beside this choice rather than replace it.
 
 ## D2 — Every card carries its acceptance
 
@@ -117,7 +100,6 @@ a warranty that the card asked for the right things.
 The rule adds no state. The acceptance lives on the card and the dispositions live in the marker,
 so a restart still reads everything it needs from the board (D1).
 
-
 ## D3 — Escalation is bounded by configuration
 
 **Status:** Ratified by the owner 2026-09-15.
@@ -141,7 +123,6 @@ cheap can afford more rounds than one whose maker runs for an hour.
 
 Three is the default because three worked in practice. It comes from running the loop, not from
 analysis, and the number is the consumer's to change on its own evidence.
-
 
 ## D4 — v0 defers the roles it can do without
 
@@ -176,7 +157,6 @@ both jobs to the owner, who is already in the loop for every architecture delta.
 This decision expires. It is the boundary, not the principle — D3 holds the part that does not
 change.
 
-
 ## D5 — v0 detects a conflict when Git does
 
 **Status:** Ratified by the owner 2026-09-16.
@@ -210,9 +190,9 @@ would prevent it and at a fraction of the cost. Detecting late costs rework on o
 
 ### Rule
 
-1. The judges for a card run concurrently. No judge sees another judge's findings or verdict, and
-   no judge sees the maker's session.
-2. `ARCHITECTURE.md`'s invariants state the mechanism. This decision states the choice.
+1. The agent judges for a card run concurrently, and the owner, when configured as a judge, is
+   last. No judge sees another judge's findings or verdict, and none sees the maker's session.
+2. `ARCHITECTURE.md`'s invariants state the independence. This decision states the choice.
 
 ### Deferred, and what returns it
 
@@ -272,13 +252,18 @@ not, because its `Decides` and `Never decides` columns are judgment that no code
 Rule 4 is the cost control. An empty directory teaches nothing, and the rule binds from the day it
 is written whether or not the directory exists.
 
+Until a generator exists, the roster and the escalation set are typed: in `ARCHITECTURE.md`'s
+config sample, and in the build plan's milestones. Those are the copies the first generator
+replaces, and the rule is what makes replacing them a fix rather than a change.
+
 ## D9 — A judge is handed its evidence
 
 **Status:** Ratified by the owner 2026-09-16.
 
 ### Rule
 
-1. L2 composes a review packet for each judge dispatch, and L1 delivers it with the dispatch.
+1. L2 composes a review packet for each judge dispatch. It reaches L1 with the dispatch L3
+   schedules, so it crosses no boundary the layer map does not already carry.
 2. The packet carries the card and its acceptance, the pull request number, the head SHA, the base
    SHA, the diff between them, the list of changed files, the kind of work, and which role this
    judge is. On a re-review it also carries what the maker changed since the last round.
@@ -305,3 +290,33 @@ at the job the packet exists to speed up.
 Rule 5 is cheap and answers a question that is otherwise unanswerable later: what did this judge
 see. A verdict binds to a SHA, which fixes the commit but not the view of it; the digest fixes the
 view.
+
+## D10 — v0 builds no resume and no second host
+
+**Status:** Ratified by the owner 2026-09-17. Split out of D1, which holds the principle this
+bounds.
+
+### Rule
+
+1. v0 builds no resume, no runner reattachment, no terminal proof, and no reclamation.
+2. One engine runs against one repository. v0 builds no lease, no fencing token, and no multi-host
+   coordination.
+3. Both defer work rather than refusing it. Each returns on its own trigger, and each returns as a
+   new decision rather than as an addition to this one.
+
+### Deferred, and what returns each
+
+| Deferred | Returns when |
+|---|---|
+| Multi-host coordination, and the leases and fencing tokens it needs | A consumer must run two engines against one repository. Every claim and lock in L3 changes with it. |
+| Resume, runner reattachment, terminal proof, reclamation | A production incident shows redo was insufficient. The journal records that incident. |
+
+### Notes
+
+Leases, fencing and reattachment exist to make resume and multi-host safe. They guard nothing while
+one engine runs and redo is the recovery, so v0 pays for neither.
+
+The trigger matters more than the deferral. An argument returns none of these, and neither does a
+near miss in development.
+
+This decision expires. D1 holds the part that does not change.
