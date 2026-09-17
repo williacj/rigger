@@ -80,10 +80,12 @@ holds, so one item carries one independently ruleable outcome, never a scenario 
 
 - Given a Ready card has no acceptance, when `rigger plan` evaluates it, then the card is not
   pulled.
-- For that card, `rigger plan` names the card and identifies missing acceptance as the reason.
+- Given a Ready card has no acceptance, when `rigger plan` evaluates it, then `plan` names the
+  card and identifies missing acceptance as the reason.
 
 Those are `R-CARD-7`'s two halves, one apiece; `plan` is the verb the README gives for showing
-what a run refuses.
+what a run refuses. Each bullet repeats its own context rather than borrowing it from the one
+above: standing alone is worth the words it costs.
 
 ## A spike card
 
@@ -121,7 +123,7 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 
 1. Did you start from the outcome, the proof, the constraints and the failure states that apply?
 2. Can a judge rule on each item without asking you (`R-CARD-2`)?
-3. Is each one condition, and standalone (`R-CARD-2`)?
+3. Is each one condition (`R-CARD-2`)? And, separately, does each stand on its own?
 4. Does each say what done means rather than how to reach it?
 5. Where the card turns on a threshold, is the value named and its source cited?
 6. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?

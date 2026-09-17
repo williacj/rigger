@@ -89,6 +89,13 @@ Match what is there rather than inventing a shape.
   alongside the observer — use one of them. The actor in `made true by` is never the entry in
   `checked by`: Rigger doing a thing is not a check that Rigger did it. A gap is written as
   `nothing yet`, or as `nothing could` *with its reason*.
+- **A retired requirement row** is `id | requirement | from | withdrawn | replaced by`. The
+  `requirement` column holds the row's exact text, unchanged, because a citation has to resolve
+  to what the row said rather than to a later summary of it; that file never paraphrases. `from`
+  comes across with it, because the withdrawn requirement's decision is the thread back to the
+  register. `made true by` and `checked by` are dropped deliberately: a row that binds nobody is
+  made true by nobody and checked by nothing. `replaced by` names the requirement that took over,
+  and is empty where one was withdrawn outright rather than superseded.
 - **A decision entry** is `Status`, then `Rule` as numbered rules, then, where it defers work, a
   `Deferred, and what returns it` table, then `Notes`. Each deferral row names one deferred
   thing and the evidence that returns it; a deferral no evidence can return is a refusal and is
