@@ -18,7 +18,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 
 | id | decision | status |
 |---|---|---|
-| D1 | Redo over resume | Ratified 2026-09-15, amended 2026-09-17 |
+| D1 | Redo over resume | Ratified 2026-09-15 |
 | D2 | Every card carries its acceptance | Ratified 2026-09-15 |
 | D3 | Escalation is bounded by configuration | Ratified 2026-09-15 |
 | D4 | v0 defers the roles it can do without | Ratified 2026-09-15, amended 2026-09-16 |
@@ -31,8 +31,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 
 ## D1 — Redo over resume
 
-**Status:** Ratified by the owner 2026-09-15. Amended 2026-09-17: the v0 boundaries it carried
-moved to D10, so this entry holds one lifespan.
+**Status:** Ratified by the owner 2026-09-15.
 
 ### Rule
 
@@ -45,9 +44,6 @@ moved to D10, so this entry holds one lifespan.
 
 Redo is cheaper to build than resume, and far cheaper to reason about. A resumed dispatch must
 prove what the dead engine had already done. A redone card asks the board, which never died.
-
-This decision does not expire. What v0 declines to build while redo is the recovery is D10's, and
-a resume that later arrives would sit beside this choice rather than replace it.
 
 ## D2 — Every card carries its acceptance
 
