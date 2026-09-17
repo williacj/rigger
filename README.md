@@ -163,7 +163,7 @@ and ratifier lanes, a Slack surface, native Windows. Each arrives as a capabilit
 > `rigger --help` lists exactly these verbs.
 
 ```bash
-npx @williacj/rigger init          # write a starter config and fork the role templates into .rigger/
+npx @williacj/rigger init          # write a starter config and fork the role templates into .claude/
 npx @williacj/rigger doctor        # check gh auth, agent CLI auth, Node, config, board fields
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, in order
@@ -171,6 +171,7 @@ npx @williacj/rigger once          # pull and finish one card, then exit
 npx @williacj/rigger run           # run until the board drains
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
 npx @williacj/rigger resume        # reopen admission
+npx @williacj/rigger report        # derive the signals from the event stream
 ```
 
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means

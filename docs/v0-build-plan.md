@@ -121,7 +121,7 @@ order; milestones with no edge between them may run concurrently.
   list of judge roles, with `owner` reserved and allowed only last.
 - L5's event envelope and JSONL sink. The first events recorded are L1's dispatch events and L0's
   process events, from the Reviewer session in this milestone's exit test.
-- Three verbs work: `init` writes the starter config and forks the templates into `.rigger/`;
+- Three verbs work: `init` writes the starter config and forks the templates into `.claude/`;
   `doctor` checks Node version, `gh` auth, agent CLI auth, and config validity, one line each; and
   `--help`. The rest print "not yet implemented" and exit non-zero until their milestone.
 - The doc-reference resolver and `spec-style-lint`, with Rigger's own
@@ -133,7 +133,8 @@ in that order, and no others.
 
 The lint covers `ARCHITECTURE.md`, the register, and this plan, and CI runs it.
 `doc-references.json` is consumer-owned, so writing Rigger's own is the first use of that extension
-point. `**/AGENTS.md` is `strict` in it, so every instruction file is checked from the day it is
+point. It exempts `docs/derived/`, which D8 creates only when the first generated document exists;
+the exemption comes off that day. `**/AGENTS.md` is `strict` in it, so every instruction file is checked from the day it is
 created. A second CI check asserts that every backticked repository path in an instruction file, or
 in the register, exists on disk. The resolver checks `path:line` pointers, not bare paths, so this
 covers what it does not. Those two are in scope because they name only assets that land here; the

@@ -83,8 +83,8 @@ the owner's approval. `npm run` lists every script.
 ## When you write code
 
 - **TDD.** Failing test, then the minimal code, then refactor while green; load the
-  `.claude/skills/tdd/` skill before the first test body. Spike cards are exempt: throwaway, under
-  `/spikes/`, never merged.
+  `.claude/skills/tdd/` skill before the first test body. Spike cards are exempt: throwaway work in
+  a gitignored spikes directory, never merged.
 - **Every bug fix starts with the failing test.** Never delete a failing test — raise it with the
   owner.
 - **No sleeps in tests.** Injectable clocks and condition-based waits.

@@ -68,11 +68,13 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board and its column display names, the concurrency N, and whether telemetry pushes | L0 for the repository and board; L3 for N; L5 for the push | Yes, N defaults to 3 |
+| **Engine settings** | The repository, the board and its column display names, the concurrency N, the worktree root, the rule that derives a worktree's topic from a card, and whether telemetry pushes | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind | L2 for the loop and gate; L3 for provisioning | Yes |
-| **Roles** | A name, an agent file in the consumer's repository, a provider, and a default model tier | L1 for dispatch; L2 for maker and judge identity | Yes |
-| **Review procedure** | A skill in the consumer's repository, invoked by a judge role's agent file | Nothing in Rigger reads it; the judge does | Yes |
+| **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
+| **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
+| **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger: sound, needs revision, critical, recorded-decision change, ambiguous | L2 | Fixed |
+| **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what is exempt | L0 reads the files; nothing else in Rigger reads the configuration | Yes |
 | **Provisioning steps** | A command, its working directory, and the labels that select it | L3 schedules; L1 runs | Yes |
 | **Escalation set** | Which verdict and workflow outcomes are the owner's to decide | L2 | Yes, default is the three current categories |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | M9, M10 |
