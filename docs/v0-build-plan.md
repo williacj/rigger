@@ -2,7 +2,7 @@ ABOUTME: Build plan for Rigger v0: premises, self-hosting, platform, constitutio
 
 # Rigger v0 build plan
 
-**Status:** Ratified by the owner 2026-09-16. This plan ends when v0 ships at M8. M9 and M10 are
+**Status:** Ratified by the owner 2026-09-17. This plan ends when v0 ships at M8. M9 and M10 are
 sketched here and become cards once v0 is done. Its durable content moves to the register or to
 `ARCHITECTURE.md`, the board carries the order, and what is left here is history.
 
@@ -248,8 +248,9 @@ Exit:
 
 - Verdict marker schema and git gate hook.
 - The marker records every acceptance item of its card as met or unmet (D2).
-- The gate admits a merge only when every configured judge has a fresh verdict for the head, none
-  is Critical, all are sound, and the consumer's CI is green.
+- The gate admits a merge only when every configured judge's verdict is sound and fresh for both
+  the head commit and the card's latest acceptance, none is Critical, and the consumer's CI is
+  green.
 - The owner's verdict uses the same vocabulary as any judge's, requested only after every agent
   judge is sound.
 - Any judge asking for changes returns the work to the maker. A new commit invalidates every marker
@@ -263,8 +264,11 @@ Exit, against a fixture configured with three agent judges:
 - A Critical from one judge blocks regardless of the other two.
 - The owner is not asked while any agent judge is unsatisfied.
 - A marker leaving one acceptance item unmet is not sound, and the gate refuses it.
-- A judge ruling the acceptance insufficient escalates the card instead of merging it.
+- A judge ruling the acceptance insufficient returns the card to its author instead of merging it
+  (D2).
 - A red CI blocks a merge that every judge has passed.
+- A verdict written before the card's latest acceptance revision is stale, and the gate refuses
+  it.
 - Two finalizations at once serialize.
 
 **M6. Escalation and infrastructure hold.**
@@ -279,7 +283,8 @@ Exit, against a fixture configured with three agent judges:
 
 Exit:
 
-- Six identical infrastructure failures yield two attempts, one hold, and zero escalations.
+- A card that fails on infrastructure twice yields two attempts, one hold, and zero escalations.
+  Admission is paused, so a third attempt never starts.
 - `pause` during a run finishes in-flight cards and admits none.
 
 **M7. Report complete, clock triggers.**

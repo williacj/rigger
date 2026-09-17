@@ -251,9 +251,9 @@ not, because its `Decides` and `Never decides` columns are judgment that no code
 Rule 4 is the cost control. An empty directory teaches nothing, and the rule binds from the day it
 is written whether or not the directory exists.
 
-Until a generator exists, the roster and the escalation set are typed: in `ARCHITECTURE.md`'s
-config sample, and in the build plan's milestones. Those are the copies the first generator
-replaces, and the rule is what makes replacing them a fix rather than a change.
+Until a generator exists, the roster and the escalation set are typed by hand wherever they
+appear. Those are the copies the first generator replaces, and the rule is what makes replacing
+them a fix rather than a change.
 
 ## D9 — A judge is handed its evidence
 

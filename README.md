@@ -195,7 +195,7 @@ critical finding, and ambiguity. Scheduled work is declared the same way: a cloc
 a card on your board, and that card goes through the loop like any other.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) lists every extension point; there are no others.
 
-Every feature beyond the core is a capability block you switch on. A project with a dozen roles
+Every feature beyond the core is optional. A project with a dozen roles
 and binding decision documents runs the full set. A project with one command that checks its
 work runs the core and nothing else, and an absent block is a tested state, not a degraded one. Role
 prompts, the review skill, and the gate hook are forked into your repository by `rigger init` and

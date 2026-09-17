@@ -48,9 +48,10 @@ permission first.
 | `README.md` | The CLI contract — the verb list is the spec | verb |
 | `docs/v0-build-plan.md` | Order and exit tests, until v0 ships | `M#` |
 
-Read `ARCHITECTURE.md`'s invariants before you change anything. They bind every layer and this
-file does not repeat them. Changing anything in the table above needs the owner's agreement, and a
-decision records it in the register. Two documents in conflict, or a gap neither resolves, goes to
+Read `ARCHITECTURE.md`'s invariants before you change anything. They bind every layer; this file
+states only what a session must do about them. Changing anything in the table above needs the
+owner's agreement. A change to a recorded decision is written in the register; a change to the
+others is written where it lives. Two documents in conflict, or a gap neither resolves, goes to
 the owner — never to whoever noticed it.
 
 ## Documents own their facts
