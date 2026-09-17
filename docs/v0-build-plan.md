@@ -50,6 +50,7 @@ dispatch loop is last, because it needs the execution core and the roles beneath
 | M4 | the first dispatch Rigger makes itself, under the installation rule below |
 | M5 | the first merge through the gate |
 | M6 | `rigger pause` and `rigger resume` against this repository's own run |
+| M6 | this repository's own runs supervised by launchd, governable with `pause` and `resume` |
 | M7 | `rigger report` over this repository's own event stream, for every layer that has landed |
 
 **The installation rule.** A dispatching engine never runs from the checkout it is changing. The
@@ -151,7 +152,7 @@ The **lint** covers every document in the repository, including `AGENTS.md` and 
 Exit:
 
 - The verbs, and their order, match the README's block. Their help text is not part of the
-  match; `doctor` gains checks as later milestones land.
+  match; the verbs gain checks and behaviour as later milestones land.
 - `init` and `doctor` pass on a fresh clone.
 - `npm pack` produces a tarball that installs outside this checkout and runs `--help` from there
   (§1.1).
@@ -246,7 +247,7 @@ Exit:
 
 **M5. Gate and merge.**
 
-- Verdict marker schema and git gate hook.
+- Verdict marker schema and git gate hook, and `init` grows to install the hook.
 - The marker records every acceptance item of its card as met or unmet (D2).
 - The gate admits a merge only when every configured judge's verdict is sound and fresh for both
   the head commit and the card's latest acceptance, none is Critical, and the consumer's CI is
@@ -279,6 +280,7 @@ Exit, against a fixture configured with three agent judges:
 - A second identical failure in one run pauses admission with a logged reason and one telemetry
   event, leaving every card in its column.
 - Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason.
+- The launchd assets that keep the engine alive across a reboot, which L0 owns.
 
 Exit:
 

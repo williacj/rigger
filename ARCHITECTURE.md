@@ -159,13 +159,14 @@ command line; it never changes the result.
 Every event carries a timestamp, run id, layer, and card and dispatch identifiers when there are
 any. Each layer owns one event family and no layer writes another layer's events. L5 owns the sink,
 one JSONL stream in the consumer's state directory, and the report. Six layers produce a signal
-set. L5 owns the sink rather than a signal, and L7 is a person:
+set. L5 owns the sink rather than a signal, and L7 is a person. A signal is derived, where an
+event is recorded: L2 records a tier correction, and L4's tier accuracy is the rate across them.
 
 - **L0** substrate fault rate
 - **L1** execution duration and survivor rate
 - **L2** escalation rate and rounds per card
 - **L3** throughput and utilization
-- **L4** first-pass rate and rework
+- **L4** first-pass rate, rework, and tier accuracy
 - **L6** proposal acceptance
 
 The envelope and sink exist from the first dispatch. Each layer's family lands with the layer.

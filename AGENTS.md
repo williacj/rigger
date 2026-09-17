@@ -43,7 +43,8 @@ permission first.
 
 | Document | Authority | Cite as |
 |---|---|---|
-| `ARCHITECTURE.md` | Layers, boundaries, extension points, failure model, budgets, invariants | `L#`, extension point |
+| `AGENTS.md` | Rules for every session in this repository | section |
+| `ARCHITECTURE.md` | The architecture of record — everything in it | `L#`, extension point, section |
 | `docs/spec/decisions.md` | Recorded decisions | `D#` |
 | `README.md` | The CLI contract — the verb list is the spec | verb |
 | `docs/v0-build-plan.md` | Order and exit tests, until v0 ships | `M#` |
