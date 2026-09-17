@@ -1,0 +1,4 @@
+#!/bin/sh
+# ABOUTME: Git's pre-push hook. Refuses a push made with a failing suite.
+
+exec "$(dirname "$0")/refuse-if-suite-red"

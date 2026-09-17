@@ -1,0 +1,15 @@
+#!/bin/sh
+# ABOUTME: Runs the suite and refuses the git operation that called it when the suite is not
+# green. `AGENTS.md` holds the rule; this is the one place the commit and push hooks enforce it.
+
+set -u
+
+if npm test; then
+  exit 0
+fi
+
+echo "" >&2
+echo "refused: the suite is not green." >&2
+echo "Fix it and commit the fix on its own before you go on (AGENTS.md, Before you start)." >&2
+echo "--no-verify needs the owner's approval first." >&2
+exit 1
