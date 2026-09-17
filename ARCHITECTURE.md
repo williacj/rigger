@@ -223,6 +223,7 @@ directory's file therefore changes nothing; only deleting does. The budget is 2,
   invalidates every verdict for that card. The gate needs a fresh verdict from every configured
   judge; any Critical blocks; the owner, when configured as a judge, is always last and is never
   dispatched.
+- One engine runs against one repository, with sole control of its board and its worktrees.
 - One worktree per card, on a branch derived from the card. Agents never share a checkout.
 - Merge happens only through the gate. The gate is a git hook, not a prompt, and it fails closed.
   It admits a merge only on positive evidence: every configured judge's verdict sound and fresh

@@ -267,8 +267,7 @@ Exit, against a fixture configured with three agent judges:
 - A judge ruling the acceptance insufficient returns the card to its author instead of merging it
   (D2).
 - A red CI blocks a merge that every judge has passed.
-- A verdict written before the card's latest acceptance revision is stale, and the gate refuses
-  it.
+- A verdict written before the card's latest acceptance is stale, and the gate refuses it.
 - Two finalizations at once serialize.
 
 **M6. Escalation and infrastructure hold.**
