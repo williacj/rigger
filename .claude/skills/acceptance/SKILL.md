@@ -13,8 +13,9 @@ board field, and never as a task list (`D2` rule 2).
 
 ## The one test
 
-**A judge must be able to rule on the item without asking you.** That is `R-CARD-2`, and every
-rule below is a way of passing it.
+**A judge must be able to rule on the item without asking you.** That is `R-CARD-2`'s test, and
+every rule below is a way of passing it. Its other half — one condition per item — is under
+"Write each item".
 
 You will not be there when the card is judged. A judge that cannot rule on an item records it
 unmet (`R-LOOP-5`), and a verdict leaving any item unmet is not sound (`R-VERDICT-4`). An item
