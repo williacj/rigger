@@ -50,8 +50,8 @@ the wrong thing.
 
 **Name the thing, and the observable fact about it.** The ruling should be a reading, not an
 opinion. Name the concrete thing that would prove the item false as well — the output, the file,
-the exit code whose presence settles it. An item with no falsifier gives a judge nothing to look
-for but your wording, and your wording will always agree with itself.
+the exit code whose presence or value settles it. An item with no falsifier gives a judge nothing
+to look for but your wording, and your wording will always agree with itself.
 
 **Cut the words that hand the ruling back to you.** *Appropriate, clean, properly, robust,
 comprehensive, reasonable, as needed, where necessary, good.* Each of these means "ask the
@@ -61,7 +61,8 @@ know what you are asking for.
 **A list of instances is evidence for a class, never the class itself.** Where an item names
 members of a class, say that they are instances, and ask for the positive check instead: only
 sanctioned members may appear. An item enumerating what must not appear is met exactly by the
-absence of what it listed — the list above, written into one, is satisfied by any synonym.
+absence of what it listed — the list under "Cut the words that hand the ruling back to you",
+written into one, is satisfied by any synonym.
 
 **Name the threshold, where there is one.** Where the card turns on quantity, duration, capacity,
 compatibility or another threshold, name the value and how it is measured. Never invent a number
