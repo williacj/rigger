@@ -56,7 +56,7 @@ pull request carrying it is no longer docs-only.
   usually becomes work, and that work is its own card with its own acceptance.
 - Deliver the report as a pull request, so a judge rules on it before it lands.
 
-## The three ways you go wrong
+## The ways you go wrong
 
 1. **You report the answer the card hoped for.** Report the one you found, including the one that
    closes the route. An acceptance item you cannot meet escalates as `ambiguous`, naming the item.
