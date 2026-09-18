@@ -1,114 +1,78 @@
 ---
 name: spec-style
-description: Write a delta to docs/spec/ or ARCHITECTURE.md — a new or changed requirement row, a decision entry, an architecture section — or retire one. Use before drafting any requirement or decision, and before allocating, changing or withdrawing an R- or D- id.
+description: The register Rigger's binding documents are written in — four form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
 ---
 
-ABOUTME: The four rules the decision register and the requirements were written under, and the
-shape a row or entry takes, for anyone proposing a delta to them.
+ABOUTME: The four form rules Rigger's binding documents are written under, and the test behind
+each, for anyone drafting or reviewing a delta to them.
 
-# Writing a requirement or a decision
+# The Rigger register
 
-A delta to `ARCHITECTURE.md` or to anything under `docs/spec/` is a **proposal**. `AGENTS.md`'s
-"When you write a decision or a requirement" section holds what that obliges you to do; this
-skill holds how the corpus is written, so that what you propose reads like what is already
-there.
+Four rules. They constrain **form only**. Content is never negotiable: every bound, exception and
+gate survives an edit made under them. Where form and meaning pull apart, keep the meaning and
+flag the sentence.
 
-Read the file you are changing before you draft. Both registers state their own rules in their
-preambles, and those preambles are the authority. What follows is those rules, gathered.
+They describe how the corpus is already written, so that a delta written under them reads like
+what is already there. That is the whole of the job — a reader should not be able to pick your
+row out of the ones around it.
 
 ## The four rules
 
-### 1. Each register owns one kind of sentence
+### 1. One term per concept
 
-A **decision** records what was chosen, why, and what would reverse it. A **requirement**
-states what must be true as a result: observable from outside, naming no mechanism, so that it
-survives a redesign of the structure that satisfies it. Where a requirement follows from a
-decision it cites it in its `from` column, and the decision is where the reasoning lives.
-`ARCHITECTURE.md` holds the structure, and never repeats what must be true.
+Rigger's vocabulary is small, and keeping it small is what stops a reader wondering whether two
+words name two mechanisms. A card is **escalated** — never bubbled, parked or forwarded. A role
+is **dispatched**. A judge returns a **verdict**, never an approval or a sign-off. Name a new
+concept once, then reuse the name.
 
-Rules that bind work *in this repository* rather than *the product* are neither: `AGENTS.md`
-holds those, and `docs/spec/decisions.md` holds the ones about building Rigger.
+The converse binds as hard: where two words already name two things, never collapse them. A
+**judge** is the slot in the loop that returns a verdict; a **reviewer** is one of the roles that
+can fill it (`ARCHITECTURE.md`, `judges: ['reviewer']`). Editing either into the other destroys a
+distinction the configuration depends on.
 
-So: before you write a sentence, decide which document owns it. `AGENTS.md`'s "Documents own
-their facts" gives the three treatments — own it, refer to it, or do not say it — and a
-sentence that no document owns is the third.
+### 2. Sentences of about 25 words, and never past 40
 
-### 2. One id names one thing, and an id is never reused
+Split a compound. Use an em-dash aside sparingly, and never nested. A sentence carrying an
+ordered sequence wants to be a list — that is rule 4.
 
-Each register allocates its own ids. Requirement ids group by subject, and a new requirement
-takes a new id in its group. `D#` numbers are allocated in the register itself, one id to one
-decision. A duplicate id reds the build.
+The ceiling is not a preference about prose. A requirement is a thing a judge rules on and a
+maker builds against, and a 40-word sentence hides its own conditions.
 
-Whether an edit keeps its id is a test, not a preference:
+### 3. Active voice, actor named
 
-- **A requirement** keeps its id when the edit does not change what must be true of Rigger,
-  read across the whole document, however much the words moved. Change that, and the edit takes
-  a new id and withdraws the old one. A split withdraws and allocates one new id per part; a
-  merge withdraws and allocates one. A change to `made true by` or to `checked by` is never a
-  change to what must be true, and never takes a new id.
-- **A decision** may be amended when the change adds within its stated scope, and the amendment
-  records its date in the entry's status. A change to what a ratified rule *means* is never an
-  amendment: a later decision supersedes it, so the original stays readable.
+The engine, the gate, the maker, the judge, the owner, the consumer, the role. Passive only where
+the actor is genuinely unknown, or genuinely does not matter.
 
-### 3. Retirement keeps the citation resolvable and the id allocated
+Where authority is the subject — who may merge, who may ratify, who may withdraw a row — an
+ambiguous "it" is a defect rather than a style choice. `docs/spec/requirements.md` splits `made
+true by` from `checked by` for this reason: two actors, two columns, nothing left to infer.
 
-Nothing is deleted, and the two registers retire differently:
+### 4. Structure that matches the meaning
 
-- A withdrawn **requirement's row leaves** `docs/spec/requirements.md` for
-  `docs/spec/requirements-retired.md`, carrying its exact text and its `from`. Only the owner
-  withdraws one.
-- A superseded **decision's row stays** in the register's table, marked `Superseded by D#`,
-  while its body moves to `docs/spec/decisions-retired.md`.
+A sequence of more than three steps, or a rule with three or more conditions, becomes a numbered
+or bulleted list. State the discriminating test before the list it governs, so that a reader
+knows what they are sorting by before they start sorting.
 
-Either way the id stays allocated and never comes round again, and a document citing it still
-resolves to an explanation rather than to nothing. The duplicate-id check reads the live file
-and the retired one together.
+`docs/spec/requirements.md`'s `checked by` passage is one exemplar: it says the two columns differ
+and why, then gives the five forms as a numbered list. `docs/spec/decisions.md`'s **Deferred, and
+what returns it** tables are the other — one row per deferred thing, one column for the evidence
+that returns it, and no prose carrying what the table holds better.
 
-### 4. Ratification is the owner's, and each register records it differently
+## What this skill is not
 
-Each register carries the date the owner ratified it. A change to it is ratified as a whole and
-moves that date; an amendment to one decision records its own date in that entry's status. You
-never ratify your own (`AGENTS.md`, "When you write a decision or a requirement").
+- **Not a rewrite licence.** Never improve a ratified clause's meaning while restyling it. Where
+  a rule here and a clause's meaning conflict, keep the meaning and say so in the proposal.
+- **Not the register's mechanics.** Allocating, amending, retiring and ratifying an id belong to
+  each register's preamble, which is the authority; `AGENTS.md`'s "When you write a decision or a
+  requirement" states what proposing one obliges you to do. Read the preamble of the file you are
+  changing before you draft.
+- **Not a lint.** Nothing checks these mechanically. They hold because an author applies them and
+  a reviewer reads for them.
 
-How a register shows what is ratified differs between the two, so read the preamble of the one
-you are writing before you place a proposal:
+## Before you hand it off
 
-- **`docs/spec/requirements.md`** has no status column: every row in it binds, so a reader never
-  has to check one before trusting a row, and a row proposed and not yet ratified lives in its
-  pull request and never there.
-- **`docs/spec/decisions.md`** carries the state on the entry instead. A decision is `Proposed`,
-  then `Ratified`, then `Superseded by D#`, and the entry's status is where that state is
-  recorded.
-
-## The shape of an entry
-
-Match what is there rather than inventing a shape.
-
-- **A requirement row** is `id | requirement | made true by | checked by | from`. The
-  requirements preamble states the five forms `checked by` takes and requires the derivation
-  alongside the observer — use one of them. The actor in `made true by` is never the entry in
-  `checked by`: Rigger doing a thing is not a check that Rigger did it. A gap is written as
-  `nothing yet`, or as `nothing could` *with its reason*.
-- **A retired requirement row** is `id | requirement | from | withdrawn | replaced by`. The
-  `requirement` column holds the row's exact text, unchanged, because a citation has to resolve
-  to what the row said rather than to a later summary of it; that file never paraphrases. `from`
-  comes across with it, because the withdrawn requirement's decision is the thread back to the
-  register. `made true by` and `checked by` are dropped deliberately: a row that binds nobody is
-  made true by nobody and checked by nothing. `replaced by` names the requirement that took over,
-  and is empty where one was withdrawn outright rather than superseded.
-- **A decision entry** is `Status`, then `Rule` as numbered rules, then, where it defers work, a
-  `Deferred, and what returns it` table, then `Notes`. Each deferral row names one deferred
-  thing and the evidence that returns it; a deferral no evidence can return is a refusal and is
-  written as one. One entry holds one lifespan, because retiring an entry discards all of it.
-
-## Before you propose it
-
-1. Is this a decision, a requirement, an architecture change, or a repository rule? Write it
-   where that document lives, and refer to it from everywhere else.
-2. Does the id you allocated exist in the live register or the retired one? Neither reuses one.
-3. If you edited an existing row, apply rule 2's test and say in the proposal which way it came
-   out.
-4. Does the new requirement have a test that claims it? Without one the build reds
-   (`AGENTS.md`).
-5. Did you resolve the ambiguity inside the delta, or escalate it? Never leave it for the
-   implementer to guess.
+1. Does every concept use the corpus's existing word, and does every existing distinction survive?
+2. Is any sentence past 40 words? Are most nearer 25 than 35?
+3. Does every sentence about authority name its actor?
+4. Is anything ordered or conditional still buried in prose?
+5. Did you change what a ratified clause means? That is a proposal, not a restyle.
