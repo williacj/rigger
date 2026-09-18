@@ -8,14 +8,8 @@ then state it as standalone conditions a judge can rule on without asking the au
 
 # Writing an acceptance
 
-An acceptance states what done means. It is written before any work on the card starts
-(`R-CARD-1`), by the card's author — the owner for a card the owner files, the decomposing role
-for a card it produced (`R-CARD-3`). It lives in the issue body as plain bullets, not in a board
-field and never as a task list (`D2` rule 2). `R-CARD-4` obliges an author writing one to load
-the skill the consumer supplies for it; in this repository that is this one.
-
-After admission only its author changes it, never the maker it is judged against (`R-CARD-5`),
-and every change is recorded with who made it (`R-CARD-6`).
+An acceptance states what done means. It lives in the issue body as plain bullets — not in a
+board field, and never as a task list (`D2` rule 2).
 
 ## The one test
 
@@ -102,11 +96,12 @@ and on what evidence, and what would reverse the recommendation.
 becomes its own card rather than joining this one (`R-CARD-11`), and a follow-up may only cover
 work outside it — an item left undone means the card is not done (`R-CARD-10`).
 
-**Changing it after admission is expensive.** A change to the acceptance, like a change to the
-work, sends every judge back and spends one of the card's rounds (`R-LOOP-8`); a card that
-exhausts its rounds escalates as ambiguous (`R-LOOP-9`); and the change stales every verdict
-already returned (`R-GATE-7`). Settle the bar with whoever will help you before you file;
-afterwards it is expensive, and yours alone.
+**Changing it after admission is expensive, and it stays yours.** Only its author changes an
+acceptance after admission, never the maker it is judged against (`R-CARD-5`), and every change
+is recorded with who made it (`R-CARD-6`). A change to the acceptance, like a change to the work,
+sends every judge back and spends one of the card's rounds (`R-LOOP-8`); a card that exhausts its
+rounds escalates as ambiguous (`R-LOOP-9`); and the change stales every verdict already returned
+(`R-GATE-7`). Settle the bar with whoever will help you before you file.
 
 ## What is checked, and what is not
 
