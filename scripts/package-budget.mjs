@@ -24,6 +24,15 @@ export function packageBudget(architecture) {
   return Number(row[1].replace(/,/g, ''));
 }
 
+/** Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on. */
+function endOfQuoted(line, start, quote) {
+  for (let i = start; i < line.length; i++) {
+    if (line[i] === '\\') i++;
+    else if (line[i] === quote) return i + 1;
+  }
+  return -1;
+}
+
 /**
  * The production lines in one source file's text.
  *
@@ -31,41 +40,62 @@ export function packageBudget(architecture) {
  * or when it falls inside a block comment. A line carrying both code and a comment counts once,
  * because the code on it can carry a bug.
  *
- * The scan reads comment openers that a string literal could also contain, so a line holding
- * only the text "/*" in quotes reads as a comment. That costs an undercount of one line in a
- * file that has to be well past the budget for the difference to decide anything.
+ * The scan reads quoted runs, so a comment opener inside a string or a template literal opens
+ * no comment. Two shapes still fool it, both needing a parser to tell apart: a block-comment
+ * opener inside a regular expression literal, as in the character class for `/` and `*`, and
+ * one inside a template literal that spans lines. What either costs is bounded and never
+ * silent. The lines between a false opener and the next closer are undercounted, and an opener
+ * the scan never closes throws rather than swallowing the rest of the file, because source
+ * that parses cannot leave a block comment open.
  */
 export function countProductionLines(source) {
   let count = 0;
   let inBlock = false;
   for (const line of source.split('\n')) {
-    let rest = line.trim();
+    // Only a block comment carries across lines. A quoted run does not, because the scan
+    // cannot tell a backtick opening a template from one inside a regular expression, and
+    // `scripts/absorption-check.mjs` holds a regex with an odd number of them. Ending every
+    // quoted run at the line end costs nothing a line count can see: what a line holds after
+    // a mis-read quote does not change that the line holds code.
+    let inTemplate = false;
     let code = false;
-    while (rest) {
+    let i = 0;
+    while (i < line.length) {
       if (inBlock) {
-        const close = rest.indexOf('*/');
+        const close = line.indexOf('*/', i);
         if (close < 0) break;
-        rest = rest.slice(close + 2).trim();
         inBlock = false;
-        continue;
-      }
-      const block = rest.indexOf('/*');
-      const lineComment = rest.indexOf('//');
-      if (lineComment >= 0 && (block < 0 || lineComment < block)) {
-        code ||= lineComment > 0;
+        i = close + 2;
+      } else if (inTemplate) {
+        code = true;
+        const close = endOfQuoted(line, i, '`');
+        if (close < 0) break;
+        inTemplate = false;
+        i = close;
+      } else if (line[i] === ' ' || line[i] === '\t' || line[i] === '\r') {
+        i++;
+      } else if (line[i] === '/' && line[i + 1] === '/') {
         break;
-      }
-      if (block >= 0) {
-        code ||= block > 0;
-        rest = rest.slice(block + 2);
+      } else if (line[i] === '/' && line[i + 1] === '*') {
         inBlock = true;
-        continue;
+        i += 2;
+      } else if (line[i] === '`') {
+        code = true;
+        inTemplate = true;
+        i++;
+      } else if (line[i] === '"' || line[i] === "'") {
+        code = true;
+        const close = endOfQuoted(line, i + 1, line[i]);
+        if (close < 0) break;
+        i = close;
+      } else {
+        code = true;
+        i++;
       }
-      code = true;
-      break;
     }
     if (code) count++;
   }
+  if (inBlock) throw new Error('a block comment opens and never closes, so the scan lost the rest of the file');
   return count;
 }
 
@@ -94,10 +124,13 @@ export function productionFiles(root) {
 /** What the package spends, file by file, and what it is allowed. */
 export function check(root) {
   const budget = packageBudget(readFileSync(join(root, 'ARCHITECTURE.md'), 'utf8'));
-  const files = productionFiles(root).map((path) => ({
-    path,
-    lines: countProductionLines(readFileSync(path, 'utf8')),
-  }));
+  const files = productionFiles(root).map((path) => {
+    try {
+      return { path, lines: countProductionLines(readFileSync(path, 'utf8')) };
+    } catch (cause) {
+      throw new Error(`${path}: ${cause.message}`, { cause });
+    }
+  });
   const total = files.reduce((sum, file) => sum + file.lines, 0);
   return { budget, files, total };
 }

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  check,
   countProductionLines,
   packageBudget,
   productionFiles,
@@ -38,6 +39,45 @@ test('code after a block comment closes on the same line counts', () => {
   assert.equal(countProductionLines('/* why */ const a = 1;\n'), 1);
 });
 
+test('a comment opener inside a string opens no comment', () => {
+  const source = ['const s = "/*";', 'const a = 1;', 'const b = 2;'].join('\n');
+  assert.equal(countProductionLines(source), 3);
+});
+
+test('a comment opener inside a template literal opens no comment', () => {
+  const source = ['const s = `/*`;', 'const a = 1;'].join('\n');
+  assert.equal(countProductionLines(source), 2);
+});
+
+test('an apostrophe in a comment opens no string', () => {
+  const source = ["// don't count me", 'const a = 1;', 'const b = 2;'].join('\n');
+  assert.equal(countProductionLines(source), 2);
+});
+
+test('an unbalanced backtick does not carry a quoted run past its line', () => {
+  // A regular expression literal can hold an odd number of backticks, and
+  // `scripts/absorption-check.mjs` holds exactly this one. Carrying a quoted run across the
+  // line end would make every comment line below it count as code.
+  const source = [
+    'const words = (s) => s.replace(/`[^`]*`/g, " ");',
+    '// inline code names a mechanism',
+    'const a = 1;',
+  ].join('\n');
+  assert.equal(countProductionLines(source), 2);
+});
+
+test('a template literal spanning lines carries code on each of them', () => {
+  const source = ['const s = `', 'text', '`;', 'const a = 1;'].join('\n');
+  assert.equal(countProductionLines(source), 4);
+});
+
+test('a block comment left open fails rather than swallowing the rest of the file', () => {
+  // Source that parses cannot leave one open, so reaching the end inside a block comment means
+  // the scan was fooled — by the regex literal its own doc comment names, or by something else.
+  // The budget is a gate, and a gate that undercounts in silence is worse than one that stops.
+  assert.throws(() => countProductionLines('/* open\nconst a = 1;\n'), /never closes/);
+});
+
 test('the budget is read from the architecture, not typed here', () => {
   const architecture = [
     '| Budget | Production lines |',
@@ -66,4 +106,13 @@ test('the walk takes production sources and leaves tests out', () => {
 test('a repository with no production sources yet walks to nothing', () => {
   const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
   assert.deepEqual(productionFiles(root), []);
+});
+
+test('the file the scan could not read through is named in the failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  mkdirSync(join(root, 'src'), { recursive: true });
+  writeFileSync(join(root, 'ARCHITECTURE.md'), '| **Package** | **12,000** |\n');
+  writeFileSync(join(root, 'src', 'open.mjs'), '/* open\nconst a = 1;\n');
+
+  assert.throws(() => check(root), /open\.mjs.*never closes/);
 });
