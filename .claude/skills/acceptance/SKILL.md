@@ -32,7 +32,9 @@ refuses outright (`R-CARD-8`). Work these out before you write any:
 - **The proof.** What observable change shows it was reached? That is what the items assert.
 - **The constraints that already bind.** Where something outside the card fixes part of the
   answer, cite it: a requirement id, a `D#`, an `AGENTS.md` section. A constraint with no source
-  behind it is you prescribing the implementation.
+  behind it is you prescribing the implementation. Open each source where it lives as you write
+  the citation down. A half-remembered id does not reach the maker as uncertainty — it reaches
+  them as an instruction, and `R-LOOP-1` has them build against it faithfully.
 - **The boundary and failure states that apply.** Empty input, invalid input, limits,
   permissions, a dependency failing, partial completion. Consider each; carry over only the ones
   this card can actually reach. A documentation card owes no error criterion, and one invented to
@@ -47,12 +49,20 @@ A judge reconstructing an item from the bullet above it is one misreading away f
 the wrong thing.
 
 **Name the thing, and the observable fact about it.** The ruling should be a reading, not an
-opinion.
+opinion. Name the concrete thing that would prove the item false as well — the output, the file,
+the exit code whose presence or value settles it. An item with no falsifier gives a judge nothing
+to look for but your wording, and your wording will always agree with itself.
 
 **Cut the words that hand the ruling back to you.** *Appropriate, clean, properly, robust,
 comprehensive, reasonable, as needed, where necessary, good.* Each of these means "ask the
 author". Name the condition the word stands for instead. If you cannot name it, you do not yet
 know what you are asking for.
+
+**A list of instances is evidence for a class, never the class itself.** Where an item names
+members of a class, say that they are instances, and ask for the positive check instead: only
+sanctioned members may appear. An item enumerating what must not appear is met exactly by the
+absence of what it listed — the list under "Cut the words that hand the ruling back to you",
+written into one, is satisfied by any synonym.
 
 **Name the threshold, where there is one.** Where the card turns on quantity, duration, capacity,
 compatibility or another threshold, name the value and how it is measured. Never invent a number
@@ -98,6 +108,11 @@ and on what evidence, and what would reverse the recommendation.
 becomes its own card rather than joining this one (`R-CARD-11`), and a follow-up may only cover
 work outside it — an item left undone means the card is not done (`R-CARD-10`).
 
+**Exhausting one axis is not covering the card.** An item can hold along every value of the axis
+it names and still miss a defect on an axis it never named. Every command exits zero; every one
+of them writes to the wrong path. Where the card varies on more than one axis, name each of
+them, an item apiece (`R-CARD-2`).
+
 **Changing it after admission is expensive, and it stays yours.** Only its author changes an
 acceptance after admission, never the maker it is judged against (`R-CARD-5`), and every change
 is recorded with who made it (`R-CARD-6`). A change to the acceptance, like a change to the work,
@@ -119,10 +134,14 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 ## Before you file
 
 1. Did you start from the outcome, the proof, the constraints and the failure states that apply?
-2. Can a judge rule on each item without asking you (`R-CARD-2`)?
-3. Is each one condition (`R-CARD-2`)?
-4. Does each stand on its own?
-5. Does each say what done means rather than how to reach it?
-6. Where the card turns on a threshold, is the value named and its source cited?
-7. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
-8. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
+2. Did you open every source you cite, where that source lives?
+3. Can a judge rule on each item without asking you (`R-CARD-2`)?
+4. Is each one condition (`R-CARD-2`)?
+5. Does each stand on its own?
+6. Does each name the concrete thing that would prove it false?
+7. Does each say what done means rather than how to reach it?
+8. Where an item lists instances of a class, does it ask for the positive check instead?
+9. Where the card turns on a threshold, is the value named and its source cited?
+10. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
+11. Does the set name every axis this card varies on, rather than exhausting one of them?
+12. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
