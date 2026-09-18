@@ -3,8 +3,9 @@ name: tdd
 description: Write code test-first — a failing test, the minimal code that passes it, then refactor while green. Use before the first test body of any change to source, for every bug fix, and when deciding what a test must declare about the requirement it proves.
 ---
 
-ABOUTME: The failing-test-first loop this repository requires, what a test declares about the
-requirement it proves, and the rules on sleeps, deleted tests and spikes.
+ABOUTME: The failing-test-first loop this repository requires, what counts as a real red, what
+makes a test worth keeping, what a test declares about the requirement it proves, and the rules
+on sleeps, deleted tests and spikes.
 
 # Test-driven development
 
@@ -19,15 +20,48 @@ own, then start the work (`AGENTS.md`, "Before you start").
 fail, and read the failure. A test that has never failed has proved nothing — it may be
 asserting on the wrong thing, or on nothing.
 
-**Green.** Write the minimal code that makes it pass. Minimal is not a style note: anything
-beyond what the test demands is code no test asked for. Put it where `ARCHITECTURE.md` says it
-lives; a need that fits no extension point is a design conversation, not a workaround.
+Red counts only when the test you meant to write actually ran, or reached the compile-time check
+you meant it to reach, and failed because the behaviour you asked for is missing or wrong. A
+syntax error, a broken fixture, a missing dependency or an unrelated failure is not red: it is a
+test you have not managed to run yet. Clear it, then go and get the failure you meant.
 
-**Refactor.** Improve the code while the suite stays green, then commit. Extract rather than
-copy-paste, by the Rule of Three (`AGENTS.md`, "Any role").
+**Green.** Write the minimal code that makes it pass, then rerun that same target and watch it
+pass. Minimal is not a style note: anything beyond what the test demands is code no test asked
+for. Put it where `ARCHITECTURE.md` says it lives; a need that fits no extension point is a
+design conversation, not a workaround.
 
-Then the next test. Small steps, often — the loop's value is the failure you saw, and a large
-step throws it away.
+**Refactor.** Improve the code while the suite stays green, rerunning the affected tests after
+each step. Extract rather than copy-paste, by the Rule of Three (`AGENTS.md`, "Any role"). Run
+the whole `npm test` suite before you commit — `AGENTS.md`'s "Before you start" forbids
+committing or pushing with a failing suite, and one focused target passing is not that.
+
+Then the next test, and one slice at a time: finish red, green and refactor for one behaviour
+before you write the next test. Never batch the tests and then batch the implementation —
+test-first means one test ahead of the code, not the whole suite ahead of it. Small steps, often:
+the loop's value is the failure you saw, and a large step throws it away.
+
+## A test worth keeping
+
+None of this binds. `AGENTS.md` states the loop; this is the craft that decides whether running
+it bought anything.
+
+**Test behaviour at the narrowest stable interface** — a public entry point, or a boundary
+`ARCHITECTURE.md` names. A refactor that preserves the behaviour should not need the test
+changed. Assertions about private structure, or about which collaborator was called how, are
+assertions about today's implementation, unless that interaction is itself the contract. Prefer
+real collaborators, and substitute only what is slow, nondeterministic, or across an external
+boundary.
+
+**Name the break before you write the body.** What plausible production defect should make this
+test fail? If the only answer is that someone renamed a private method, moved the source text
+around, or called a mock differently, the test guards an implementation detail and will cost
+more than it catches.
+
+**Derive the expected value independently** — from the requirement, from a worked example, or
+from a literal you checked by hand. Never compute it with the production algorithm or one of its
+helpers: a test that asks the code what the answer should be agrees with the code by
+construction, and passes just as happily once the code is wrong. Failing first does not catch
+this one, because such a test fails before the code exists and passes for ever after.
 
 ## A bug fix
 
@@ -63,8 +97,9 @@ no test claims reds the build (`AGENTS.md`; `docs/v0-build-plan.md`, M0).
 So when you add a requirement, the test that claims it is part of the same work. And when you
 write a test, name the requirement it proves rather than leaving the matrix to guess.
 
-Tests are outside the package line budget (`ARCHITECTURE.md`, "Budgets"). Thoroughness in the
-suite costs nothing against it.
+Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is not a
+licence to write more of them: every test costs execution time and maintenance, so each one
+still has to protect a concrete behaviour.
 
 ## Spikes
 
