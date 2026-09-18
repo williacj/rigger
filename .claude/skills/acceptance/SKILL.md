@@ -40,10 +40,11 @@ refuses outright (`R-CARD-8`). Work these out before you write any:
 
 ## Write each item
 
-**One condition, and standalone.** One condition per item (`R-CARD-2`); an `and` usually hides
-two. Separately: each item names enough subject and context to be ruled on by itself. A judge
-reconstructing an item from the bullet above it is one misreading away from ruling on the wrong
-thing.
+**One condition per item.** That is `R-CARD-2`'s first half; an `and` usually hides two.
+
+**Each item stands on its own.** Each names enough subject and context to be ruled on by itself.
+A judge reconstructing an item from the bullet above it is one misreading away from ruling on
+the wrong thing.
 
 **Name the thing, and the observable fact about it.** The ruling should be a reading, not an
 opinion.
@@ -119,8 +120,9 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 
 1. Did you start from the outcome, the proof, the constraints and the failure states that apply?
 2. Can a judge rule on each item without asking you (`R-CARD-2`)?
-3. Is each one condition (`R-CARD-2`)? And, separately, does each stand on its own?
-4. Does each say what done means rather than how to reach it?
-5. Where the card turns on a threshold, is the value named and its source cited?
-6. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
-7. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
+3. Is each one condition (`R-CARD-2`)?
+4. Does each stand on its own?
+5. Does each say what done means rather than how to reach it?
+6. Where the card turns on a threshold, is the value named and its source cited?
+7. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
+8. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
