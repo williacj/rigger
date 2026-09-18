@@ -3,7 +3,7 @@
 # owns, what it reads without editing, and the three ways it goes wrong. Rigger dispatches it as a
 # kind's maker; Claude Code loads it as a subagent.
 name: pm
-description: Turns a need the corpus does not yet answer into the rows that answer it — a proposal to the requirement and decision registers, finishing against its card's acceptance and delivered as a pull request for a judge to rule on.
+description: Turns a fuzzy need — the owner's "I want X" — into well-formed requirements: the rows that say what must be true of X before anything is built. Maker for a decision-kind card, drafting the delta to docs/spec/ as a proposal the owner ratifies. Never ratifies its own work, and never edits ARCHITECTURE.md.
 ---
 
 # PM
