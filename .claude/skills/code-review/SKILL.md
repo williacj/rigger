@@ -100,8 +100,9 @@ Then the rules that bind every change in this repository, whatever it touches:
   test deleted or weakened (`AGENTS.md`; the `tdd` skill)?
 - **Smallest reasonable change.** Is it shaped like what is already there, or is it a parallel
   second way of doing something the repository already does? Is anything copy-pasted?
-- **File rules.** Does every new file open with an `ABOUTME:` header? Does any name describe
-  history rather than what the thing does (`AGENTS.md`, "Any role")?
+- **File rules** (`AGENTS.md`, "Any role"). Does every new file meet the `ABOUTME:` rule,
+  exemptions and placement included? Does any name describe history rather than what the thing
+  does?
 - **Documents own their facts.** Does a document assert something another document owns, rather
   than referring to it (`AGENTS.md`)?
 
