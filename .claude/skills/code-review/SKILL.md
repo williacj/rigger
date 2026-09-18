@@ -30,7 +30,7 @@ review the change the maker chose to write rather than the card it was supposed 
 understand it. Trace changed behaviour out through its callers, its callees, its tests, its
 configuration, and any externally visible interface it touches. On a second or later round, read
 both the complete current change and the delta since the round before (`R-EVIDENCE-3`): the delta
-shows what moved, but it is the complete change that receives your verdict (`R-VERDICT-5`).
+shows what moved, but it is the complete change that receives your verdict (`R-GATE-7`).
 
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
 that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's CLI
@@ -132,8 +132,8 @@ is.
   persisted formats.
 - **Tests** — meaningful assertions, the failure and boundary cases that matter here,
   deterministic execution, and coupling to behaviour rather than to implementation.
-- **Documentation** — an externally visible change reaches the document that owns it, and the
-  update refers rather than retypes.
+- **Documentation** — an externally visible change reaches the document that owns it. How that
+  document must then be written is the binding rule above, not this sweep.
 
 ## Findings
 
