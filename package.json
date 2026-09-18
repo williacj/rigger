@@ -1,7 +1,7 @@
 {
   "name": "@williacj/rigger",
   "version": "0.0.0",
-  "description": "ABOUTME: The npm package manifest for Rigger: its identity, its Node floor, and every script the repository defines.",
+  "description": "The engine that lets your AI agents deliver work you defined, to a standard you set, while you do something else.",
   "license": "MIT",
   "author": "CJ Williams",
   "repository": {

@@ -53,21 +53,45 @@ test('every script the repository defines is reachable from npm run', () => {
   }
 });
 
+/**
+ * One top-level block of a YAML document, its own key line included and its comment lines
+ * dropped. Reading the block rather than the whole file keeps an assertion about triggers from
+ * being answered by the word `push` written somewhere else, and dropping comment lines keeps a
+ * trigger someone commented out from still answering for itself.
+ */
+function topLevelBlock(yaml, key) {
+  const lines = yaml.split('\n').filter((line) => !/^\s*#/.test(line));
+  const start = lines.findIndex((line) => line.startsWith(`${key}:`));
+  assert.notEqual(start, -1, `the workflow has no top-level \`${key}:\``);
+  const after = lines.slice(start + 1);
+  const end = after.findIndex((line) => /^\S/.test(line));
+  return [lines[start], ...(end < 0 ? after : after.slice(0, end))].join('\n');
+}
+
+/** Every command the workflow runs, in order. A step that is commented out runs nothing. */
+function runCommands(yaml) {
+  return [...yaml.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)].map(([, command]) => command);
+}
+
 test('CI runs on every push and every pull request', () => {
-  const triggers = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\njobs:'));
-  assert.match(triggers, /^\s+push:/m);
-  assert.match(triggers, /^\s+pull_request:/m);
+  const triggers = topLevelBlock(workflow, 'on');
+  assert.match(triggers, /\bpush\b/);
+  assert.match(triggers, /\bpull_request\b/);
 });
 
-test('CI runs the suite and both budget checks', () => {
-  for (const command of ['npm test', 'npm run budget:package', 'npm run budget:instructions']) {
-    assert.ok(workflow.includes(`run: ${command}`), `CI never runs \`${command}\``);
+test('CI installs from the lockfile, then runs the suite and both budget checks', () => {
+  const commands = runCommands(workflow);
+  for (const wanted of ['npm ci', 'npm test', 'npm run budget:package', 'npm run budget:instructions']) {
+    assert.ok(commands.includes(wanted), `CI never runs \`${wanted}\`; it runs: ${commands.join(', ')}`);
   }
+});
+
+test('the workflow says what it is', () => {
+  assert.ok(workflow.startsWith('# ABOUTME:'));
 });
 
 test('the README badge points at that workflow', () => {
   const file = 'ci.yml';
-  assert.ok(workflow.startsWith('# ABOUTME:'), 'the workflow says what it is');
   assert.match(
     read('README.md'),
     new RegExp(

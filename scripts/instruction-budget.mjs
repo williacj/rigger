@@ -19,7 +19,15 @@ export function instructionBudget(architecture) {
   return Number(stated[1].replace(/,/g, ''));
 }
 
-/** The words in one instruction file: whatever whitespace separates, as `wc -w` counts them. */
+/**
+ * The words in one instruction file: whatever whitespace separates, and nothing else.
+ *
+ * This is not what GNU `wc -w` reports, and the difference matters before anyone quotes one
+ * number against the other. `wc -w` does not count a token made only of non-ASCII punctuation,
+ * so a standalone em dash or arrow is a word here and is not a word there. These instruction
+ * files use both, which is the whole of why this count runs above `wc -w`'s. The budget is
+ * enforced against this count.
+ */
 export function countWords(text) {
   return text.split(/\s+/).filter(Boolean).length;
 }
