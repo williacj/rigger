@@ -3,7 +3,7 @@ the rules for allocating, ratifying and retiring them.
 
 # Decision register
 
-**Ratified by the owner, 2026-09-17.** Every entry below binds from that date. A change to this
+**Ratified by the owner, 2026-09-20.** Every entry below binds from that date. A change to this
 register is ratified as a whole, and the date above moves with it. An amendment to one entry
 records its own date in that entry's status.
 
@@ -44,7 +44,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
 | D13 | macOS is v0's only host | Ratified |
-| D15 | A diagram is admitted where prose cannot carry the shape | Proposed |
+| D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 
 ## D1 — Redo over resume
 
@@ -383,7 +383,7 @@ spike exists because that reuse is an assumption, not a finding.
 
 ## D15 — A diagram is admitted where prose cannot carry the shape
 
-**Status:** Proposed.
+**Status:** Ratified.
 
 ### Rule
 
