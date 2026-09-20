@@ -33,10 +33,10 @@ A ratified decision may be amended when the change adds within its stated scope,
 records its date in the entry's status. A change to what a ratified rule means is never an
 amendment: a later decision supersedes it, so the original stays readable.
 
-An entry's status is `Ratified`, or `Superseded by D#` once a later decision replaces it. Those
-two are the only values it takes, and an amendment adds its date to a `Ratified` status rather
-than a third. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and its row
-stays in the table below so its id is never reused.
+An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
+it. Those two openings are the only ones it takes, and an amendment adds its date after `Ratified`
+rather than a third. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and
+its row stays in the table below so its id is never reused.
 
 | id | decision | status |
 |---|---|---|
