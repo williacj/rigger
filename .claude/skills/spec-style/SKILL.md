@@ -58,6 +58,10 @@ and why, then gives the five forms as a numbered list. `docs/spec/decisions.md`'
 what returns it** tables are the other — one row per deferred thing, one column for the evidence
 that returns it, and no prose carrying what the table holds better.
 
+A structure that neither a list nor a table carries — a set of things and the relations between
+them — becomes a diagram. `docs/spec/decisions.md`'s `D15` holds when a diagram is admitted, what
+it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map is the exemplar.
+
 ## What this skill is not
 
 - **Not a rewrite licence.** Never improve a ratified clause's meaning while restyling it. Where
