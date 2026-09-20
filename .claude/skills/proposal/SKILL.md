@@ -9,8 +9,9 @@ has to carry.
 
 # Writing a proposal
 
-A delta to `docs/spec/` is a proposal. The rows are its payload; the proposal is the argument that
-earns them. It travels as the pull request body, and the owner ratifies from it.
+A delta to `ARCHITECTURE.md` or to `docs/spec/` is a proposal (`AGENTS.md`, "When you write a
+decision or a requirement"). The rows are its payload; the proposal is the argument that earns
+them. It travels as the pull request body, and the owner ratifies from it.
 
 `.claude/skills/spec-style/` holds the form a row is written in. This skill holds what has to be
 true before you write one.
@@ -36,8 +37,9 @@ the card, ask the owner and wait for the reply.
 - **What is already settled.** Read the preamble of `docs/spec/requirements.md`, then the rows,
   then `docs/spec/requirements-retired.md`, then `docs/spec/decisions.md`. You have it when you can
   name the rows that come nearest the need and say what each leaves unanswered. A need the register
-  already answers is a reading error rather than a delta, and a need a ratified decision forecloses
-  escalates as `recorded-decision`.
+  already answers is a reading error rather than a delta. A need a ratified decision forecloses
+  escalates as `recorded-decision` instead (`.claude/agents/pm.md`, "What you read, and what you
+  never edit").
 - **The boundary.** What this need does not include. You have it when you can name three things a
   reader would expect the proposal to cover and will not find in it. Knowing it now is what stops
   the proposal growing while you draft.
@@ -47,8 +49,8 @@ the card, ask the owner and wait for the reply.
 Ask what each thing is a statement about: what Rigger must do, what was chosen among the ways to
 do it, or where the code lives. Three answers, three documents.
 
-- **A requirement** — what must be true of Rigger, observable from outside, naming no mechanism. It
-  survives a rewrite of the code beneath it. It lands in `docs/spec/requirements.md`.
+- **A requirement** — what must be true of Rigger, in the sense the preamble of
+  `docs/spec/requirements.md` gives the word. It lands in that file.
 - **A decision** — a choice among the structures that satisfy the requirements, with what would
   reverse it. It lands in `docs/spec/decisions.md`. Most are not yours: a structural choice comes
   from whichever role needs it (`D4` rule 3).
