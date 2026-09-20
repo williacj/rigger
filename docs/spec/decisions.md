@@ -44,6 +44,7 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
 | D13 | macOS is v0's only host | Ratified |
+| D15 | A diagram is admitted where prose cannot carry the shape | Proposed |
 
 ## D1 — Redo over resume
 
@@ -379,3 +380,52 @@ bug costs a stray process or a lost result.
 
 WSL2 is the cheaper route because it reuses the macOS model rather than adding a second one. The
 spike exists because that reuse is an assumption, not a finding.
+
+## D15 — A diagram is admitted where prose cannot carry the shape
+
+**Status:** Proposed.
+
+### Rule
+
+1. An author draws a diagram for a subject only when both tests hold. The subject is a set of
+   things and the relations between them. No single passage states those relations, so a reader
+   assembles the shape from two or more passages or not at all.
+2. An author adds a diagram beside the prose and the rows it depicts, never in place of them.
+3. A diagram under `docs/spec/` owns nothing. It depicts only what the rows already state, it
+   cites the id of every row it depicts, and it loses to the row where the two disagree.
+4. A diagram in `ARCHITECTURE.md` owns the structure it depicts, as that document's prose does.
+   It may therefore depict a relation no sentence there states, and it owes no citation — both
+   denied to a diagram under `docs/spec/`. A diagram there and a sentence there that disagree
+   are a fault in the document, and the owner resolves it.
+5. An author draws in Mermaid, in a fenced `mermaid` block, and this decision admits no other
+   form.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A diagram form other than Mermaid | A consumer's forge does not render a fenced `mermaid` block, so a reader there sees source where the corpus shows a diagram. |
+| A check that a diagram under `docs/spec/` cites an id for everything it depicts | A judge files a finding for a citation that is missing or does not resolve, where the document-checking extension point could have caught it. |
+
+### Notes
+
+The corpus drew nothing until now, and prose is still the default. A diagram earns its place only
+on rule 1's tests, because every diagram is a second statement of something the document already
+holds, and the second statement is what goes stale.
+
+One decision covers two venues because a single rule would be wrong for one of them. Under
+`docs/spec/` the rows own the facts, so a diagram there refers to them and owns nothing. In
+`ARCHITECTURE.md` the document owns the structure, so a diagram there owns what it depicts. That
+is the "own it, refer to it" split in `AGENTS.md`, under "Documents own their facts", applied
+to a diagram.
+
+Mermaid is text. It diffs, a judge reads its source rather than an image, and the forge renders
+it, so the diagram reviews like the rest of the corpus. An image file would review as a blob.
+
+Whether the resolver checks a diagram's citations is declared at the document-checking extension
+point, and this decision does not declare it. The table above records the question rather than
+answering it.
+
+What would reverse this is drift the reader sees: `report` showing judges filing findings against
+diagrams that disagree with what they depict, or the owner reading a diagram the document has
+outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.
