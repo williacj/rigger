@@ -63,8 +63,10 @@ export function check(root) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const { budget, files, total } = check(root);
+  // CI passes no argument and this repository is measured. A path measures that repository
+  // instead, which is how a test watches the check refuse one.
+  const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const { budget, files, total } = check(process.argv[2] ? resolve(process.argv[2]) : here);
   for (const file of files) console.log(`${String(file.words).padStart(6)}  ${file.path}`);
   console.log(`${String(total).padStart(6)}  words, against a budget of ${budget}`);
   if (total > budget) {

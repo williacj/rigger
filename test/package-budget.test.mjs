@@ -103,6 +103,22 @@ test('the walk takes production sources and leaves tests out', () => {
   assert.deepEqual(productionFiles(root), [join(root, 'src', 'substrate', 'git.mjs')]);
 });
 
+test('a template, and a check Rigger ships for a consumer, are not counted', () => {
+  // The Budgets section puts `templates/` outside the budget, and a check Rigger ships for a
+  // consumer's own CI is one of the things that ships from there: ARCHITECTURE.md's Document
+  // checking row says the resolver ships as a template and that no layer reads it. Neither runs
+  // a card, so neither is counted, wherever the directory sits.
+  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  mkdirSync(join(root, 'templates'), { recursive: true });
+  mkdirSync(join(root, 'src', 'templates'), { recursive: true });
+  mkdirSync(join(root, 'src', 'workflow'), { recursive: true });
+  writeFileSync(join(root, 'templates', 'resolver.mjs'), 'const shipped = 1;\n');
+  writeFileSync(join(root, 'src', 'templates', 'gate.mjs'), 'const alsoShipped = 2;\n');
+  writeFileSync(join(root, 'src', 'workflow', 'next-action.mjs'), 'const counted = 3;\n');
+
+  assert.deepEqual(productionFiles(root), [join(root, 'src', 'workflow', 'next-action.mjs')]);
+});
+
 test('a repository with no production sources yet walks to nothing', () => {
   const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
   assert.deepEqual(productionFiles(root), []);

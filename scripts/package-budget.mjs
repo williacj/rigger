@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url';
 const SOURCES = 'src';
 const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 const TEST_SUFFIX = /(?:\.|-|_)test\.(?:m|c)?js$/;
+// A template is outside the budget wherever it sits, rather than only at the root, so a
+// directory of them under `src/` does not quietly start counting.
+const SHIPPED = 'templates';
 
 /**
  * The package's line budget, read from ARCHITECTURE.md's Budgets table rather than typed here,
@@ -112,7 +115,7 @@ export function productionFiles(root) {
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .flatMap((entry) => {
         const path = join(dir, entry.name);
-        if (entry.isDirectory()) return walk(path);
+        if (entry.isDirectory()) return entry.name === SHIPPED ? [] : walk(path);
         if (!SOURCE_SUFFIX.test(entry.name)) return [];
         if (TEST_SUFFIX.test(entry.name)) return [];
         return [path];
@@ -136,8 +139,10 @@ export function check(root) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const { budget, files, total } = check(root);
+  // CI passes no argument and this repository is measured. A path measures that repository
+  // instead, which is how a test watches the check refuse one.
+  const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const { budget, files, total } = check(process.argv[2] ? resolve(process.argv[2]) : here);
   for (const file of files) console.log(`${String(file.lines).padStart(6)}  ${file.path}`);
   console.log(`${String(total).padStart(6)}  production lines, against a budget of ${budget}`);
   if (total > budget) {
