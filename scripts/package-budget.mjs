@@ -83,6 +83,17 @@ function runsAsTest(name, foldsCase, foldsBareTest) {
     (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name)
   );
 }
+
+/**
+ * Whether a name is a test spelling, read exactly as written.
+ *
+ * Exported because `scripts/build-test-matrix.mjs` asks the same question of a file name, and a
+ * second copy of the answer is a second place for it to drift. It is built from the two halves
+ * above rather than spelled a second time, so there is still one answer here. It does not fold:
+ * folding is the runner's and varies by host, where what the matrix reads is this repository's
+ * own corpus, whose names are all lower case.
+ */
+export const TEST_FILE = new RegExp(`${TEST_LITERAL.source}|${TEST_PATTERNED.source}`);
 // Directories the budget never charges for, wherever they sit rather than only at the root: a
 // directory of templates under `src/` is still templates, and `node --test` runs every file
 // under a `test` directory whatever it is called.
@@ -98,8 +109,13 @@ export function packageBudget(architecture) {
   return Number(row[1].replace(/,/g, ''));
 }
 
-/** Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on. */
-function endOfQuoted(line, start, quote) {
+/**
+ * Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on.
+ *
+ * Exported because `scripts/build-test-matrix.mjs` has the same reason to read a quoted run:
+ * a comment opener inside one opens no comment, whichever scan is looking at it.
+ */
+export function endOfQuoted(line, start, quote) {
   for (let i = start; i < line.length; i++) {
     if (line[i] === '\\') i++;
     else if (line[i] === quote) return i + 1;
@@ -174,7 +190,11 @@ export function countProductionLines(source) {
 }
 
 /** Every production source file under a repository root, in a stable order. */
-export function productionFiles(root, foldsCase = RUNNER_FOLDS_CASE, foldsBareTest = RUNNER_FOLDS_BARE_TEST) {
+export function productionFiles(
+  root,
+  foldsCase = RUNNER_FOLDS_CASE,
+  foldsBareTest = RUNNER_FOLDS_BARE_TEST,
+) {
   const walk = (dir) => {
     let entries;
     try {
