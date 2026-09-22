@@ -136,14 +136,14 @@ export function lintFiles(root, skill) {
   });
 }
 
-/** What each document the lint reads breaks, in the order it reads them. */
+/** Every rule the documents the lint reads break, in the order it reads them. */
 export function check(root) {
   const skill = readFileSync(join(root, SKILL), 'utf8');
   const rules = { ceiling: sentenceCeiling(skill), terms: ruledOutTerms(skill) };
-  return lintFiles(root, skill).map((path) => ({
-    path,
-    findings: findings(readFileSync(join(root, path), 'utf8'), rules),
-  }));
+  const documents = lintFiles(root, skill);
+  const found = documents.flatMap((path) =>
+    findings(readFileSync(join(root, path), 'utf8'), rules).map((one) => ({ path, ...one })));
+  return { documents, findings: found, failing: found.length > 0 };
 }
 
 /**
@@ -178,13 +178,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // CI passes no argument and this repository is read. A path reads that repository instead,
   // which is how a test watches the lint refuse one.
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const read = check(process.argv[2] ? resolve(process.argv[2]) : here);
-  const found = read.flatMap(({ path, findings: each }) => each.map((f) => ({ path, ...f })));
+  const { documents, findings: found, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
   for (const { path, line, rule, term, words, text } of found) {
     const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words`;
     console.error(`${path}:${line}  ${why}\n        ${text}`);
   }
-  for (const { path, findings: each } of read) console.log(`${String(each.length).padStart(6)}  ${path}`);
-  console.log(`${String(found.length).padStart(6)}  findings, against the rules .claude/skills/spec-style/SKILL.md states`);
-  if (found.length) process.exit(1);
+  for (const path of documents) {
+    console.log(`${String(found.filter((one) => one.path === path).length).padStart(6)}  ${path}`);
+  }
+  console.log(`${String(found.length).padStart(6)}  findings, against the rules ${SKILL} states`);
+  if (failing) {
+    console.error(`Rules 1 and 2 of ${SKILL} bind every document above. A finding is a form to fix, never a rule to loosen.`);
+    process.exit(1);
+  }
 }

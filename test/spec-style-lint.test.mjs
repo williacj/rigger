@@ -179,9 +179,24 @@ test('the current corpus passes the lint', () => {
   // The lint guards documents it did not write. A finding here is a claim about the corpus,
   // which only the owner may change, so a red here means the lint is wrong until they say
   // otherwise. The message carries every finding, because one at a time would cost a round each.
-  const reported = check(repository).flatMap(({ path, findings: found }) =>
-    found.map((f) => `${path}:${f.line}  ${f.rule}  ${f.term ?? `${f.words} words`}  ${f.text}`));
+  const reported = check(repository).findings
+    .map((f) => `${f.path}:${f.line}  ${f.rule}  ${f.term ?? `${f.words} words`}  ${f.text}`);
   assert.deepEqual(reported, []);
+});
+
+test('a finding names the file it sits in, alongside the line and the word count', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rigger-names-'));
+  mkdirSync(join(root, '.claude', 'skills', 'spec-style'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
+  writeFileSync(join(root, '.claude', 'skills', 'spec-style', 'SKILL.md'), SKILL);
+  writeFileSync(join(root, 'README.md'), 'The engine runs the loop.\n');
+  writeFileSync(join(root, 'ARCHITECTURE.md'), `${sentenceOf(41)}\n`);
+  writeFileSync(join(root, 'docs', 'spec', 'decisions.md'), 'A decision was chosen.\n');
+
+  assert.deepEqual(
+    check(root).findings.map(({ path, line, words }) => ({ path, line, words })),
+    [{ path: 'ARCHITECTURE.md', line: 1, words: 41 }],
+  );
 });
 
 test('the skill names which of its four rules the lint covers', () => {
