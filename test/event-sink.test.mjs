@@ -3,11 +3,16 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { openSink, readEvents } from '../src/observation/sink.mjs';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
 
 /** A fresh state directory for one test, under the OS temp directory. */
 const stateDir = () => mkdtempSync(join(tmpdir(), 'rigger-events-'));
@@ -108,4 +113,48 @@ test('an emitting layer that supplies an envelope field is refused, and told whi
     () => emitter.emit('survivor.killed', { card: 9999, name: 'rust-analyzer-proc-macro-srv' }),
     /card/,
   );
+});
+
+test('an append leaves what is already on disk byte for byte, whoever opened the stream', () => {
+  const directory = stateDir();
+  const first = openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14, AT_14_19]) });
+  first.emitter({ layer: 'L3', card: 1412 }).emit('pull', { queueDepth: 7 });
+  first.emitter({ layer: 'L3', card: 1412 }).emit('pull', { queueDepth: 6 });
+  const before = readFileSync(join(directory, 'events.jsonl'));
+
+  // A second run of the engine over a state directory that already holds a stream. Opening it
+  // for writing rather than for appending is the defect this watches for, and it would cost
+  // every event of the run before.
+  const second = openSink({ directory, run: 'r-9a03', now: clockOver([AT_14_19]) });
+  second.emitter({ layer: 'L3', card: 1500 }).emit('pull', { queueDepth: 1 });
+
+  const after = readFileSync(join(directory, 'events.jsonl'));
+  assert.ok(after.length > before.length, 'the stream did not grow');
+  assert.deepEqual(after.subarray(0, before.length), before, 'the bytes already recorded changed');
+  assert.deepEqual(readEvents(directory).map((event) => [event.run, event.queueDepth]), [
+    ['r-8f21', 7],
+    ['r-8f21', 6],
+    ['r-9a03', 1],
+  ]);
+});
+
+test('an event recorded before the writing process is killed is still there afterwards', () => {
+  const directory = stateDir();
+  // The sink writes synchronously and never flushes a buffer of its own, and this is where
+  // that is measured rather than argued: a child records two events and is then killed
+  // outright, so nothing it held in memory can reach the stream after the call returned.
+  const child = [
+    `import { openSink } from ${JSON.stringify(sinkModule)};`,
+    `const sink = openSink({ directory: ${JSON.stringify(directory)}, run: 'r-8f21', now: () => ${AT_14_14} });`,
+    "const { emit } = sink.emitter({ layer: 'L3', card: 1412 });",
+    "emit('pull', { queueDepth: 7 });",
+    "emit('pull', { queueDepth: 6 });",
+    "process.kill(process.pid, 'SIGKILL');",
+  ].join('\n');
+
+  const killed = spawnSync(process.execPath, ['--input-type=module', '-e', child], { encoding: 'utf8' });
+
+  assert.equal(killed.stderr, '', 'the child failed before it was killed');
+  assert.notEqual(killed.status, 0, 'the child exited normally, so nothing was killed');
+  assert.deepEqual(readEvents(directory).map((event) => event.queueDepth), [7, 6]);
 });
