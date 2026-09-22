@@ -14,9 +14,18 @@ const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const manifest = JSON.parse(read('package.json'));
 const workflow = read('.github', 'workflows', 'ci.yml');
 
-test('the package declares the Node floor the README promises', () => {
-  assert.equal(manifest.engines.node, '>=20');
-  assert.match(read('README.md'), /^- Node\.js 20 or later\.$/m);
+test('the Node floor is 20 or later, and the README states the same one', () => {
+  // Read out of both documents and compared, rather than each asserted against a literal 20.
+  // The acceptance ties the two together, so a floor moved to 22 in both places should hold
+  // this item and a floor moved in only one place should break it.
+  const range = manifest.engines.node.match(/^>=\s*(\d+)/);
+  assert.ok(range, `\`engines.node\` is \`${manifest.engines.node}\`, which names no floor`);
+  const stated = read('README.md').match(/^- Node\.js (\d+) or later\.$/m);
+  assert.ok(stated, "the README's Prerequisites state no Node version");
+
+  const floor = Number(range[1]);
+  assert.equal(floor, Number(stated[1]), 'the package and the README name different floors');
+  assert.ok(floor >= 20, `the declared floor is Node ${floor}, below the 20 the card asks for`);
 });
 
 test('an install under an older Node fails, and names that as the reason', () => {
@@ -83,6 +92,21 @@ test('CI installs from the lockfile, then runs the suite and both budget checks'
   const commands = runCommands(workflow);
   for (const wanted of ['npm ci', 'npm test', 'npm run budget:package', 'npm run budget:instructions']) {
     assert.ok(commands.includes(wanted), `CI never runs \`${wanted}\`; it runs: ${commands.join(', ')}`);
+  }
+});
+
+test('a check that exits non-zero fails the workflow run', () => {
+  // A step's non-zero exit fails the job by default, so what this looks for is the two ways
+  // that default gets turned off: the key that tells Actions to carry on, and a command that
+  // swallows its own status before Actions ever sees it.
+  assert.doesNotMatch(workflow, /continue-on-error/);
+  assert.doesNotMatch(workflow, /set \+e/);
+  for (const command of runCommands(workflow)) {
+    assert.doesNotMatch(
+      command,
+      /\|\||;\s*(true|exit 0)|\btrue\s*$/,
+      `\`${command}\` swallows its own exit code`,
+    );
   }
 });
 
