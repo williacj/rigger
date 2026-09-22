@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { productionFiles } from '../scripts/package-budget.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -182,4 +183,34 @@ test('a torn line is refused rather than passed over, and the reader says which 
   writeFileSync(join(directory, 'events.jsonl'), whole.subarray(0, whole.length - 8));
 
   assert.throws(() => readEvents(directory), /events\.jsonl line 1 is not a recorded event/);
+});
+
+test('no layer emits an event yet, so nothing in production reaches for the sink', () => {
+  // The card that lands each layer's event family wires that layer up; until then the suite is
+  // the only caller. `productionFiles` is the package budget's own walk, so what this reads is
+  // what CI charges the budget for rather than a second idea of where production code lives.
+  const files = productionFiles(root);
+  assert.ok(
+    files.some((file) => file.endsWith(join('src', 'observation', 'sink.mjs'))),
+    'the walk found no sink, so it would find no caller either',
+  );
+  const callers = files
+    .filter((file) => !file.includes(join('src', 'observation')))
+    .filter((file) => readFileSync(file, 'utf8').includes('observation/sink'));
+  assert.deepEqual(callers, []);
+});
+
+test('the sink refuses to open, or to emit, without an envelope field it cannot invent', () => {
+  // Every one of these leaves the field out of the JSON altogether, so the cost of letting it
+  // through is a record whose events cannot be put beside each other, discovered by whoever
+  // reads it back later.
+  const directory = stateDir();
+  const now = clockOver([]);
+  assert.throws(() => openSink({ run: 'r-8f21', now }), /directory/);
+  assert.throws(() => openSink({ directory, now }), /run/);
+  assert.throws(() => openSink({ directory, run: 'r-8f21' }), /now/);
+
+  const sink = openSink({ directory, run: 'r-8f21', now });
+  assert.throws(() => sink.emitter({ card: 1412 }), /layer/);
+  assert.throws(() => sink.emitter({ layer: 'L3', card: 1412 }).emit(undefined, { queueDepth: 7 }), /event/);
 });

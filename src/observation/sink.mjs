@@ -10,6 +10,14 @@ const STREAM = 'events.jsonl';
 // writing a fact about the run or the card that it is not the layer to know.
 const ENVELOPE = ['ts', 'run', 'layer', 'event', 'card', 'dispatch'];
 
+/**
+ * What the sink cannot invent. An absent value would leave its field out of the JSON, and an
+ * event missing one is not the event `R-RECORD-7` asks for, so the sink says so at the call.
+ */
+function required(value, name) {
+  if (value === undefined) throw new Error(`the sink was given no ${name}, which every event carries`);
+}
+
 /** The one stream L5 owns, inside the state directory the consumer named. */
 const streamPath = (directory) => join(directory, STREAM);
 
@@ -19,13 +27,18 @@ const streamPath = (directory) => join(directory, STREAM);
  * `now` is the run's clock, read once per event, and it returns epoch milliseconds.
  */
 export function openSink({ directory, run, now }) {
+  required(directory, 'directory');
+  required(run, 'run');
+  required(now, 'now');
   mkdirSync(directory, { recursive: true });
   const path = streamPath(directory);
 
-  return {
-    /** An emitter for one layer, and the card and dispatch its events arise under. */
-    emitter: ({ layer, card, dispatch }) => ({
+  /** An emitter for one layer, and the card and dispatch its events arise under. */
+  function emitter({ layer, card, dispatch }) {
+    required(layer, 'layer');
+    return {
       emit(event, fields) {
+        required(event, 'event');
         const stamped = Object.keys(fields ?? {}).filter((key) => ENVELOPE.includes(key));
         if (stamped.length > 0) {
           throw new Error(`${event} supplied ${stamped.join(', ')}, which the sink stamps`);
@@ -41,8 +54,10 @@ export function openSink({ directory, run, now }) {
         };
         appendFileSync(path, `${JSON.stringify(record)}\n`);
       },
-    }),
-  };
+    };
+  }
+
+  return { emitter };
 }
 
 /**
