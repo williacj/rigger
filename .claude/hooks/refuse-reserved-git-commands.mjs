@@ -36,18 +36,32 @@ class Unreadable extends Error {}
 
 const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 
-// Bash owns what a here-document is. This is a copy of the part of that rule the gate needs, and
-// a copy can disagree with the thing it copies, so here is where this one can. Each disagreement
-// is settled by refusing, because a refusal costs a message written through a file and the other
-// answer costs a reserved command run without anyone deciding to.
+// Bash owns what a here-document is. This is a copy of the part of that rule the gate needs, so
+// this is where the copy can disagree with bash, and what it does about each disagreement.
 //
-//   - A body bash would end at end of input this gate calls unreadable. Bash warns and runs the
-//     command; there is no warning to give here, and the alternative is skipping to the end.
-//   - An arithmetic *command*, `(( x << y ))`, is not the arithmetic *expansion* `$(( ))` the
-//     lexer knows, so its `<<` reads as a redirection, finds no closing delimiter, and refuses.
-//   - A line ending is a line feed. A body whose closing delimiter carries a carriage return
-//     does not close, here or in bash, and refuses rather than running with a warning.
-//   - `$( (subshell) )` pairs its first `)` with the `$(`. Nothing is skipped either way.
+// A `<<` opens a here-document only where bash reads a command's words, and only where a
+// redirection may begin. Skipping a body is the gate choosing not to read text, so a `<<` this
+// lexer honours and bash ignores skips commands bash goes on to run — which is why the notion of
+// where one can open must not exceed bash's. Bash reads no command word inside a quoted string,
+// a comment, an arithmetic expression, a parameter expansion or a backtick substitution. The
+// first, second, third and fifth the lexer takes whole. The fourth, and `$[ ]` with it, need no
+// modelling: a `<<` inside one is inside a word, and a redirection begins only at the start of a
+// word or after the file descriptor it redirects. That list was taken from bash by running it,
+// and `[[ ]]` and a `case` pattern are absent from it because bash rejects a `<<` in either.
+//
+// Where the copy still disagrees, it refuses:
+//   - A body bash would end at end of input. Bash warns and runs the command; a permission
+//     decision has no warning to give, and the alternative is skipping to the end of the text.
+//   - A `<<` inside a word — `cat foo<<EOF`, `a=1<<EOF`, `let x=1<<EOF`. Bash makes each a
+//     here-document. The gate cannot tell them from a `<<` inside a construct of that word.
+//   - A closing delimiter carrying a carriage return, which closes no body here or in bash. Bash
+//     warns and runs.
+//   - `$( (subshell) )`, whose first `)` this lexer pairs with the `$(`. Nothing is skipped.
+//
+// And one disagreement it does not settle by refusing, because it never did: the gate reads
+// inside no command substitution and no subshell as commands, so `$(git push --force)`, its
+// backtick spelling, and `( git push --force )` are all permitted and all run. That predates this
+// lexer, is its own card, and nothing here widens or narrows it.
 
 /** Where bash ends an unquoted word: a blank, or one of the characters that begin an operator. */
 const METACHARACTER = /[ \t\n|&;()<>]/;
@@ -62,27 +76,27 @@ const METACHARACTER = /[ \t\n|&;()<>]/;
 function delimiterAt(text, start) {
   let i = start;
   while (text[i] === ' ' || text[i] === '\t') i++;
-  let word = '';
+  let delimiter = '';
 
   for (; i < text.length; i++) {
     const ch = text[i];
     if (ch === "'" || ch === '"') {
       const close = text.indexOf(ch, i + 1);
       if (close === -1) throw new Unreadable('the command has an unbalanced quote');
-      word += text.slice(i + 1, close);
+      delimiter += text.slice(i + 1, close);
       i = close;
       continue;
     }
     if (ch === '\\' && i + 1 < text.length) {
-      word += text[++i];
+      delimiter += text[++i];
       continue;
     }
     if (METACHARACTER.test(ch)) break;
-    word += ch;
+    delimiter += ch;
   }
 
-  if (!word) throw new Unreadable('a here-document names no delimiter');
-  return { word, end: i };
+  if (!delimiter) throw new Unreadable('a here-document names no delimiter');
+  return { delimiter, end: i };
 }
 
 /**
@@ -97,14 +111,14 @@ function delimiterAt(text, start) {
  */
 function skipBodies(text, start, pending) {
   let i = start;
-  for (const { word, stripTabs } of pending) {
+  for (const { delimiter, stripTabs } of pending) {
     for (;;) {
       if (i >= text.length) throw new Unreadable('a here-document has no closing delimiter');
       const breakAt = text.indexOf('\n', i);
       const end = breakAt === -1 ? text.length : breakAt;
       const line = stripTabs ? text.slice(i, end).replace(/^\t+/, '') : text.slice(i, end);
       i = breakAt === -1 ? end : breakAt + 1;
-      if (line === word) break;
+      if (line === delimiter) break;
       if (breakAt === -1) throw new Unreadable('a here-document has no closing delimiter');
     }
   }
@@ -112,18 +126,19 @@ function skipBodies(text, start, pending) {
 }
 
 /**
- * The index of the closing parenthesis of the arithmetic expansion that starts at `$((`.
+ * The index of the parenthesis that closes an arithmetic expression, given the index of the first
+ * of the two that open it — `$((` and `((` alike.
  *
- * `<<` inside one is bash's left shift rather than a redirection, so the expansion is taken whole
- * and nothing inside it is lexed as a redirection. One that never closes is unreadable.
+ * `<<` inside either is bash's left shift rather than a redirection, so the expression is taken
+ * whole and nothing in it is lexed. One that never closes is unreadable.
  */
-function arithmeticEnd(text, start) {
+function arithmeticEnd(text, firstParen) {
   let depth = 0;
-  for (let i = start + 1; i < text.length; i++) {
+  for (let i = firstParen; i < text.length; i++) {
     if (text[i] === '(') depth++;
     else if (text[i] === ')' && --depth === 0) return i;
   }
-  throw new Unreadable('the command has an unclosed arithmetic expansion');
+  throw new Unreadable('the command has an unclosed arithmetic expression');
 }
 
 /**
@@ -136,13 +151,22 @@ function commandsIn(text) {
   let token = '';
   let open = false; // a token is open even when it lexed to the empty string, as "" does
   let quote = null;
+  let word = ''; // the word being read, which is what says whether a redirection may begin here
   const pending = []; // the here-documents opened on the line being read, in the order bash feeds them
   const suspended = []; // the quote each open `$(` interrupted, restored when it closes
   let quotedSubst = 0; // how many of those quotes were real, so the text is inside one after all
 
+  // A token is what the rules are read against; a word is bash's grammar. They differ, because
+  // quoting leaves the token and never the word: `""` lexes to an empty token and a real word.
+  const add = (read) => {
+    token += read;
+    word += read;
+    open = true;
+  };
   const endToken = () => {
     if (open) tokens.push(token);
     token = '';
+    word = '';
     open = false;
   };
   const endCommand = () => {
@@ -154,13 +178,36 @@ function commandsIn(text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
 
-    // Read before the quote state, because an arithmetic expansion is itself inside double quotes
-    // as often as it is outside them, and it is not shell text in either place.
+    // Arithmetic, in the `$(( ))` expansion form and in the `((  ))` command form. Read before the
+    // quote state, because an expansion is inside double quotes as often as outside them, and is
+    // not shell text in either place. The command form only begins where a command may.
     if ((quote === null || quote === '"') && text.startsWith('$((', i)) {
-      const end = arithmeticEnd(text, i);
-      token += text.slice(i, end + 1);
-      open = true;
+      const end = arithmeticEnd(text, i + 1);
+      add(text.slice(i, end + 1));
       i = end;
+      continue;
+    }
+    if (quote === null && word === '' && text.startsWith('((', i)) {
+      const end = arithmeticEnd(text, i);
+      add(text.slice(i, end + 1));
+      i = end;
+      continue;
+    }
+    // A comment runs to the end of the line and bash reads no word in any of it. The line feed is
+    // left to the loop, because a here-document opened earlier on this line takes its body after
+    // it — `cat <<EOF # a note` is one here-document and one comment.
+    if (quote === null && word === '' && ch === '#') {
+      const breakAt = text.indexOf('\n', i);
+      i = (breakAt === -1 ? text.length : breakAt) - 1;
+      continue;
+    }
+    // A backtick substitution looks for its own here-document bodies inside itself, so a `<<` in
+    // one takes nothing from the lines after it. Taken whole, as `$( )`'s contents already are.
+    if (quote === null && ch === '`') {
+      const close = text.indexOf('`', i + 1);
+      if (close === -1) throw new Unreadable('the command has an unclosed backtick substitution');
+      add(text.slice(i, close + 1));
+      i = close;
       continue;
     }
 
@@ -171,70 +218,74 @@ function commandsIn(text) {
       suspended.push(quote);
       if (quote !== null) quotedSubst++;
       quote = null;
-      token += '$(';
-      open = true;
+      add('$(');
       i++;
       continue;
     }
 
     if (quote) {
-      if (ch === '\\' && quote === '"' && i + 1 < text.length) {
-        token += text[++i];
-      } else if (ch === quote) {
+      if (ch === '\\' && quote === '"' && i + 1 < text.length) add(text[++i]);
+      else if (ch === quote) {
         quote = null;
-      } else {
-        token += ch;
-      }
-      open = true;
+        open = true;
+      } else add(ch);
       continue;
     }
 
     if (ch === ')' && suspended.length) {
       quote = suspended.pop();
       if (quote !== null) quotedSubst--;
-      token += ')';
-      open = true;
+      add(')');
       continue;
     }
     if (ch === "'" || ch === '"') {
       quote = ch;
+      // The quoting marks the word without entering the token, which is where it is stripped.
+      word += ch;
       open = true;
       continue;
     }
     if (ch === '\\' && i + 1 < text.length) {
-      token += text[++i];
-      open = true;
+      add(text[++i]);
       continue;
     }
     if (ch === '<' && text[i + 1] === '<') {
       // A here-string carries its data on this line, so it opens no body and skips nothing.
       if (text[i + 2] === '<') {
-        token += '<<<';
-        open = true;
+        add('<<<');
         i += 2;
         continue;
       }
+      // Bash begins a redirection at the start of a word, or straight after the file descriptor
+      // it redirects, and nowhere else. A `<<` further into a word is inside some construct of
+      // that word — `${x:-<<W}`, `$[1<<W]` — and a `<<` this gate cannot place is one it must not
+      // skip a body for, because the text it skipped would be commands bash goes on to run.
+      if (word !== '' && !/^\d+$/.test(word)) {
+        throw new Unreadable('a `<<` appears where a here-document cannot be placed');
+      }
       const stripTabs = text[i + 2] === '-';
-      const { word, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
-      pending.push({ word, stripTabs });
+      const { delimiter, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
+      pending.push({ delimiter, stripTabs });
       // The redirection stays in the token list rather than being dropped, because a word removed
       // here is a word an option that takes a value would swallow from further along the command.
-      token += (stripTabs ? '<<-' : '<<') + word;
-      open = true;
+      add((stripTabs ? '<<-' : '<<') + delimiter);
       i = end - 1;
       continue;
     }
     if (ch === '\n' && pending.length) {
       i = skipBodies(text, i + 1, pending) - 1;
       pending.length = 0;
+      word = '';
       if (!quotedSubst) endCommand();
       continue;
     }
-    // A substitution written inside double quotes stands where one word does, so its blanks and
-    // its operators divide nothing: the words on either side of it are the same command's words.
     if (quotedSubst) {
       token += ch;
       open = true;
+      // A substitution inside double quotes stands where one word does, so its blanks and its
+      // operators divide no commands. They still divide its words, which is what places a `<<`.
+      if (ch === ' ' || ch === '\t' || ch === '\n' || OPERATORS.includes(ch)) word = '';
+      else word += ch;
       continue;
     }
     if (ch === ' ' || ch === '\t' || ch === '\r') {
@@ -251,8 +302,7 @@ function commandsIn(text) {
       continue;
     }
 
-    token += ch;
-    open = true;
+    add(ch);
   }
 
   if (quote) throw new Unreadable('the command has an unbalanced quote');

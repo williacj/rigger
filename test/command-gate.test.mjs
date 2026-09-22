@@ -93,6 +93,45 @@ export const RESERVED_SPELLINGS = [
   lines("cat > notes.md <<'EOF'", "don't", 'EOF', 'git branch -D topic'),
 ];
 
+/**
+ * Payloads that put `<<WORD` where bash reads no command word, the reserved command on the lines
+ * after it, and a line reading `WORD` at the end. Bash ignores the `<<` and runs the command on
+ * line two. A gate that honours the `<<` skips all of it as body data and never sees the command.
+ *
+ * Every one was run under bash with `git` replaced by a marker on `PATH`, and bash ran the marker
+ * in every one. The region each uses is named from the enumeration in the gate's own source.
+ */
+export const INERT_REGION_PAYLOADS = [
+  ['a comment at the end of a line', lines('echo hi # <<X', 'git push --force', 'X')],
+  ['a comment that is the whole line', lines('# <<Z', 'git push -f origin main', 'Z')],
+  ['a comment before a commit -n', lines('true # <<N', 'git commit -n -m x', 'N')],
+  ['a comment whose delimiter is `git`', lines('echo a # <<git', 'git push --force', 'git')],
+  [
+    'a real here-document with a comment after it',
+    lines('cat <<EOF # <<Y', 'body', 'EOF', 'git push --force', 'Y'),
+  ],
+  ['an arithmetic command', lines('(( 1 << x ))', 'git push --force', 'x')],
+  ['an arithmetic command, closed up', lines('((1<<x))', 'git push --force', 'x')],
+  ['an arithmetic command after if', lines('if (( 1 << n )); then :; fi', 'git push --force', 'n')],
+  [
+    'an arithmetic command in a for header',
+    lines('for (( i=0; i<<n; i++ )); do :; done', 'git push --force', 'n'),
+  ],
+  [
+    'an arithmetic command after while',
+    lines('while (( 1 << n )); do break; done', 'git push --force', 'n'),
+  ],
+  // These five close on ``W` ``, `W}` or `W]` rather than on `W`, because the delimiter word bash
+  // reads runs to a metacharacter and a backtick, `}` and `]` are not metacharacters — so the
+  // delimiter is ``W` `` and the closing line must be spelled the same way. Written with a bare
+  // `W` they are refused by the accident of no line matching the delimiter, which is no control.
+  ['a backtick substitution', lines('echo `cat <<W`', 'git push --force', 'W`')],
+  ['a parameter expansion', lines('echo ${x:-<<W}', 'git push --force', 'W}')],
+  ['a nested parameter expansion', lines('echo ${x:-${y:-<<W}}', 'git push --force', 'W}}')],
+  ['a pattern substitution', lines('echo ${x//<<W/}', 'git push --force', 'W/}')],
+  ['the old $[ ] arithmetic form', lines('echo $[1<<W]', 'git push --force', 'W]')],
+];
+
 /** Commands the gate cannot read, which it refuses rather than guess at. */
 export const UNREADABLE_COMMANDS = [
   "echo don't",
@@ -102,6 +141,15 @@ export const UNREADABLE_COMMANDS = [
   'echo $(( 1 + 1',
   'echo $(git status',
   lines("cat <<'EOF'", 'a body that ends', 'EOF', "echo don't"),
+  // A body that runs out with the text, in the shape a here-document is usually written in: the
+  // last line ends with a line feed. The two above end without one, and reach a different guard.
+  lines('cat <<EOF', 'a body that never ends', ''),
+  lines('cat <<EOF', 'git push --force', ''),
+  'echo `git status',
+  // A `<<` inside a word, where bash begins no redirection and this gate places none.
+  lines('cat foo<<EOF', 'body', 'EOF'),
+  lines('a=1<<W', 'git push --force', 'W'),
+  lines('let x=1<<W', 'git push --force', 'W'),
 ];
 
 test('an apostrophe in a here-document body does not make the command unreadable', () => {
@@ -192,6 +240,23 @@ test('every reserved spelling is refused', () => {
   for (const command of RESERVED_SPELLINGS) {
     refuses(command, `the reserved spelling \`${command}\``);
   }
+});
+
+test('a `<<` where bash reads no command word hides nothing', () => {
+  // The gate's notion of where a here-document can open must not exceed bash's. Where it does, a
+  // `<<` the gate honours and bash ignores skips the commands after it, and the gate never sees
+  // them. Each payload's reserved command is one bash runs.
+  for (const [region, command] of INERT_REGION_PAYLOADS) {
+    refuses(command, `a reserved command hidden behind a \`<<\` in ${region}`);
+  }
+});
+
+test('a `#` bash does not read as a comment hides nothing', () => {
+  // A comment begins at the start of a word, and quoting starts a word without putting anything
+  // in the token. Miss that and `''#` reads as a comment, taking the rest of its line with it.
+  // Bash runs the push in both of these; it was run under bash to check.
+  refuses("echo ''#x ; git push --force", "a `#` after '' is part of a word, not a comment");
+  refuses('echo ""#x ; git push --force', 'a `#` after "" is part of a word, not a comment');
 });
 
 test('a command the gate cannot read is refused', () => {
