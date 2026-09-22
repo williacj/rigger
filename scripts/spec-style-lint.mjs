@@ -39,13 +39,11 @@ export function paragraphs(text) {
       fence = marker[1];
       return;
     }
-    // A blank line, a table row, a heading, a block quote or a list marker all end the prose
-    // that ran before them. Only the first three of those start nothing in its place.
-    if (line === '' || line.startsWith('|') || line.startsWith('#') || line.startsWith('>')) {
-      close();
-      return;
-    }
-    if (/^(?:[-*+]|\d+[.)])\s/.test(line)) {
+    // A blank line, a table row, a heading, a block quote and a list marker all end the prose
+    // that ran before them, and none of them opens prose of its own. A line under a list marker
+    // belongs to the item and ends with it, which is why nothing reopens until the next
+    // paragraph.
+    if (/^$|^[|#>]|^(?:[-*+]|\d+[.)])\s/.test(line)) {
       close();
       return;
     }
@@ -61,10 +59,10 @@ export function paragraphs(text) {
  *
  * A sentence ends at a full stop, question mark or exclamation, once whatever closes the sentence
  * is past — a quote, a bracket, a backtick, an emphasis marker. The next word settles whether the
- * stop ended a sentence or abbreviated a word, and a capital, a digit or an opening marker says
- * it did. Where the next word is neither, the stop is read as an abbreviation and the sentence
- * runs on, which counts two sentences as one rather than splitting `ex. a product manager` in
- * half. That errs toward a finding, never away from one.
+ * stop ended a sentence or abbreviated a word: a capital or a digit says it ended one, through
+ * whatever opens the next word. Where the next word is neither, the stop is read as an
+ * abbreviation and the sentence runs on, rather than splitting `ex. a product manager` in half.
+ * That counts two sentences as one and never one as two, so it errs toward a finding.
  */
 export function sentences(paragraph) {
   const found = [];
@@ -91,14 +89,16 @@ export function findings(text, { ceiling, terms }) {
   const found = [];
   const lines = text.split('\n');
   for (const paragraph of paragraphs(text)) {
-    // Every sentence after the first starts somewhere inside the paragraph, and a paragraph runs
-    // across lines. Its first line is what a reader is sent to, and the sentence text is what
-    // then finds it, so the finding carries both.
+    // A paragraph runs across lines, so a sentence inside one starts at a line the paragraph no
+    // longer knows. The finding names the paragraph's own line and carries the sentence, which
+    // is what takes a reader the rest of the way.
     for (const sentence of sentences(paragraph.text)) {
       const words = countWords(sentence);
       if (words > ceiling) found.push({ rule: 'sentence', line: paragraph.line, words, text: sentence });
     }
   }
+  // Every line is read for a term, a table row and a fenced block included. Those two carry no
+  // sentence, but they do carry words, and rule 1 is about which words the corpus uses.
   for (const term of terms) {
     const boundary = new RegExp(`\\b${term}\\b`, 'i');
     lines.forEach((line, index) => {
