@@ -109,11 +109,20 @@ those declarations, so the matrix is generated and never hand-edited (`D8`), and
 no test claims reds the build (`AGENTS.md`; `docs/v0-build-plan.md`, M0).
 
 A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
-for, naming as many ids as that test proves, separated by commas. It is a whole line, so a
-declaration quoted inside a string claims nothing, and one standing above no test is refused.
-`npm run matrix` rebuilds the matrix and `npm run matrix:check` refuses one that has gone stale,
-so the declarations a piece of work adds are regenerated and committed with it. A declaration
-naming an id `docs/spec/requirements.md` does not hold is refused by name.
+for, naming as many ids as that test proves, separated by commas. `npm run matrix` rebuilds the
+matrix and `npm run matrix:check` refuses one that has gone stale, so the declarations a piece of
+work adds are regenerated and committed with it. A declaration naming an id
+`docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
+test — a call that is commented out is not a test.
+
+The scan reads lines, not syntax, which is what a fixture in a test has to work around. A
+declaration is a whole line, so one written inside a single-line string claims nothing: that is
+the shape a fixture takes here, with `\n` escapes where it needs more than one line. Write the
+same fixture as a template literal spanning lines and its lines are lines like any other, so the
+declaration in it is refused where it sits rather than read as a claim. What the scan cannot see
+is a quoted run, so a backtick, or either half of a block-comment marker, inside a string shifts
+its reading of where that literal or comment ends — one more reason a fixture goes in a
+single-line string, where no such shift arises.
 
 So when you add a requirement, the test that claims it is part of the same work. And when you
 write a test, name the requirement it proves rather than leaving the matrix to guess.

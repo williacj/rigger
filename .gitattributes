@@ -5,4 +5,4 @@
 
 # A generated document is compared with what its tool produces, byte for byte, so the bytes in
 # the working tree have to be the bytes the tool writes on every platform.
-docs/derived/* text eol=lf
+docs/derived/** text eol=lf

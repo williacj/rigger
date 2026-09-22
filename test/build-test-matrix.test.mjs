@@ -143,6 +143,62 @@ test('a declaration quoted inside a string is no claim by the file quoting it', 
   assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
 });
 
+test('a declaration inside a fixture that spans lines is refused, not claimed', () => {
+  // The lines of a template literal are lines like any other, so anchoring alone does not tell a
+  // declaration from the text of a fixture. Telling the two apart would need a parser; refusing
+  // the one the scan cannot read does not, and what it costs is a claim, loudly, rather than a
+  // matrix naming a test that does not exist.
+  const source = lines(
+    'const fixture = `',
+    '// proves R-ONE-1',
+    "test('a fixture that proves nothing', () => {});",
+    '`;',
+    "test('the only real test in this file', () => {});",
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /line 2\b/);
+    assert.match(error.message, /R-ONE-1/);
+    return true;
+  });
+});
+
+test('a declaration above a test that is commented out is refused, because that is no test', () => {
+  const source = lines(
+    '// proves R-ONE-1',
+    "// test('a test someone commented out', () => {});",
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), /stands above no test/);
+});
+
+test('a test commented out in a block claims nothing, declaration and all', () => {
+  // The same shape as a call commented out with two slashes, and it has to end the same way.
+  // Here the declaration is commented out with it, so there is nothing to refuse: what the file
+  // says is that neither line is live.
+  const source = lines(
+    '/*',
+    '// proves R-ONE-1',
+    "test('a test someone commented out', () => {});",
+    '*/',
+    "test('the only real test in this file', () => {});",
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
+});
+
+test('a declaration above a string holding a call is refused, because that is no test', () => {
+  // A claim names a line that begins with a call to the runner. A line that merely carries the
+  // text of one, the way a fixture does, is not a test and cannot be named as one.
+  const source = lines(
+    '// proves R-ONE-1',
+    'const source = "test(\'a fixture that proves nothing\', () => {});";',
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), /stands above no test/);
+});
+
 test('the matrix holds one row per requirement, naming every test that claims it', () => {
   const requirements = [
     { id: 'R-ONE-1', checkedBy: 'the test suite' },
@@ -333,6 +389,43 @@ test('the committed matrix holds the ids the register holds, in the order it hol
 
   assert.ok(registered.length > 0, 'the register states no requirements to match against');
   assert.deepEqual(ids(matrix), registered);
+});
+
+test('no run writes a matrix naming a test that is a fixture, or one commented out', () => {
+  // Both files were reported as a matrix that named two tests, neither of which existed. What
+  // the run does with them is what matters: an exit code, and no document.
+  const sources = {
+    'a fixture that spans lines': lines(
+      'const fixture = `',
+      '// proves R-ONE-1',
+      "test('a fixture that proves nothing', () => {});",
+      '`;',
+      "test('the only real test in this file', () => {});",
+      '',
+    ),
+    'a call that is commented out': lines(
+      '// proves R-ONE-1',
+      "// test('a test someone commented out', () => {});",
+      '',
+    ),
+  };
+
+  for (const [shape, source] of Object.entries(sources)) {
+    const dir = fixture({
+      'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+      'docs/spec/requirements-retired.md': retiredOf(),
+      'test/first.test.mjs': source,
+    });
+
+    const { status, stdout, stderr } = run(dir, '--write');
+
+    assert.notEqual(status, 0, `${shape} was read as a test`);
+    assert.match(stdout + stderr, /test\/first\.test\.mjs/);
+    assert.throws(
+      () => readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md')),
+      `${shape} left a matrix behind`,
+    );
+  }
 });
 
 test('this repository holds a matrix that is current, and nothing else under docs/derived', () => {

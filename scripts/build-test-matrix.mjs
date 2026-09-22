@@ -32,33 +32,98 @@ export function register(text) {
   return rows;
 }
 
-// A declaration is a whole line, so a test file quoting one inside a string declares nothing:
-// the generator's own tests hand fixture sources to the scanner, and a scan that matched
-// anywhere on a line would read those fixtures as claims by the file quoting them.
+// A declaration is a whole line. That keeps a declaration quoted inside a single-line string
+// from claiming anything, which this generator's own tests need: they hand it fixture sources,
+// and a scan matching anywhere on a line would read every fixture as a claim by the file
+// quoting it. It settles nothing on its own about a fixture that spans lines, because the lines
+// of a template literal are lines like any other; the scan below is what answers that.
 const DECLARATION = /^\/\/ proves (\S.*)$/;
-// What the declaration sits above: a call to the runner with a quoted title. The ids are not
-// matched against a shape here — `docs/spec/requirements.md` says which ids exist, and a
-// declaration naming anything else is refused by name rather than passed over in silence.
-const TEST_CALL = /(?:^|[^\w$.])(?:test|it)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/;
+// What the declaration sits above: a line that begins with a call to the runner and a quoted
+// title. Beginning the line is what keeps a line merely carrying the text of a call — a fixture,
+// or a call commented out — from being named as a test. The ids are not matched against a shape
+// here: `docs/spec/requirements.md` says which ids exist, and a declaration naming anything else
+// is refused by name rather than passed over in silence.
+const TEST_CALL = /^(?:await\s+)?(?:test|it)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/;
+// An escape, or a backtick that is not escaped. Counting those is how the scan reads whether a
+// template literal is open where a declaration sits.
+const BACKTICK = /\\.|`/g;
 
-/** Every declaration in one test file's source, in the order they appear. */
+/** How many backticks a line carries that an escape does not swallow. */
+function backticks(line) {
+  return (line.match(BACKTICK) ?? []).filter((token) => token === '`').length;
+}
+
+/** Whether a block comment is open at the end of a line, given whether one was open before it. */
+function commenting(line, open) {
+  let at = 0;
+  while (at < line.length) {
+    if (open) {
+      const close = line.indexOf('*/', at);
+      if (close < 0) return true;
+      open = false;
+      at = close + 2;
+    } else {
+      const start = line.indexOf('/*', at);
+      const slashes = line.indexOf('//', at);
+      // Two slashes first, and the rest of the line is a comment that opens no block.
+      if (start < 0 || (slashes >= 0 && slashes < start)) return false;
+      open = true;
+      at = start + 2;
+    }
+  }
+  return open;
+}
+
+/**
+ * Every declaration in one test file's source, in the order they appear.
+ *
+ * The scan reads lines, not syntax, so it never guesses at one it cannot read. A claim names
+ * only a line that begins with a call to the runner; a declaration standing above anything else,
+ * a call commented out among them, is refused. So is one under an odd backtick, where a template
+ * literal is open and the line may be the text of a fixture rather than a claim. A declaration
+ * inside a block comment is read as commented out, along with the test beneath it.
+ *
+ * What the scan cannot see is a quoted run, so a backtick, or either half of a block-comment
+ * marker, inside a string shifts its reading of where that literal or comment ends. A fixture
+ * written as a single-line string carries no such shift, which is the shape a fixture takes
+ * here for that reason. Where one does shift the reading, it costs a declaration refused by
+ * name, or a claim never made, or — where the shift falls inside a fixture that already spans
+ * lines — a claim naming a line of that fixture. Reading those apart for certain needs a
+ * parser, and this is a scan.
+ */
 export function declarationsIn(source, file) {
   const lines = source.split(/\r?\n/);
-  return lines.flatMap((line, index) => {
-    const declaration = line.trim().match(DECLARATION);
-    if (!declaration) return [];
-    const call = (lines[index + 1] ?? '').match(TEST_CALL);
-    if (!call) {
-      throw new Error(
-        `${file} line ${index + 1}: \`${line.trim()}\` stands above no test, so nothing proves ` +
-        `${declaration[1]}. A declaration goes on the line directly above the test it speaks for.`,
-      );
+  const found = [];
+  let quoting = false;
+  let commented = false;
+  for (const [index, line] of lines.entries()) {
+    const declaration = commented ? null : line.trim().match(DECLARATION);
+    if (declaration) {
+      const at = `${file} line ${index + 1}: \`${line.trim()}\``;
+      if (quoting) {
+        throw new Error(
+          `${at} follows a backtick the scan never saw closed, so it cannot tell a declaration ` +
+          `of ${declaration[1]} from the text of a fixture. A fixture that spans lines goes in ` +
+          'a single-line string with \\n escapes.',
+        );
+      }
+      const next = (lines[index + 1] ?? '').trim();
+      const call = next.startsWith('//') ? null : next.match(TEST_CALL);
+      if (!call) {
+        throw new Error(
+          `${at} stands above no test, so nothing proves ${declaration[1]}. A declaration goes ` +
+          'on the line directly above the test it speaks for.',
+        );
+      }
+      found.push({
+        ids: declaration[1].split(',').map((id) => id.trim()),
+        title: call[2].replace(/\\(.)/g, '$1'),
+      });
     }
-    return [{
-      ids: declaration[1].split(',').map((id) => id.trim()),
-      title: call[2].replace(/\\(.)/g, '$1'),
-    }];
-  });
+    if (!commented && backticks(line) % 2 === 1) quoting = !quoting;
+    commented = commenting(line, commented);
+  }
+  return found;
 }
 
 const PREAMBLE = [
