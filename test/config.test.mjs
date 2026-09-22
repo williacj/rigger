@@ -118,6 +118,23 @@ test('a file that exports no config at all is refused rather than crashing its r
   }
 });
 
+test('a declaration that holds no declarations is refused wherever it sits, and the refusal names it', () => {
+  // The top level is not a special case: every shape the validator reads holds declarations, so
+  // one that holds a string or a null is refused where it sits rather than read as an empty set.
+  for (const site of ['board', 'board.columns', 'roles.engineer', 'kinds.change', 'provisioning.vhs', 'telemetry']) {
+    for (const nothing of [null, 'npm ci']) {
+      const parts = site.split('.');
+      const config = structuredClone(rigger);
+      walkTo(config, parts.slice(0, -1))[parts.at(-1)] = nothing;
+      const refusals = validate(config);
+      assert.ok(
+        refusals.some((refusal) => refusal.includes(`\`${site}\``)),
+        `\`${site}\` set to ${JSON.stringify(nothing)} earned no refusal naming it: ${refusals.join('; ') || 'none'}`,
+      );
+    }
+  }
+});
+
 test('every key the validator requires is refused when missing, and the refusal names it', () => {
   const paths = requiredOf().flatMap((path) => expand(rigger, path.split('.')));
   assert.ok(paths.length > 0, 'the validator requires nothing, so nothing was checked');
@@ -163,10 +180,26 @@ function refusal(config) {
   return refusals[0];
 }
 
+test('every kind this repository declares names one maker role and an ordered list of judge roles', () => {
+  const names = Object.keys(rigger.roles);
+  assert.ok(Object.keys(rigger.kinds).length > 0, 'the config declares no kind of work');
+  for (const [name, kind] of Object.entries(rigger.kinds)) {
+    assert.ok(names.includes(kind.maker), `kinds.${name} makes its work with \`${kind.maker}\`, which is no declared role`);
+    assert.ok(Array.isArray(kind.judges) && kind.judges.length > 0, `kinds.${name} names no ordered list of judges`);
+    for (const judge of kind.judges) {
+      assert.ok(judge === 'owner' || names.includes(judge), `kinds.${name} is judged by \`${judge}\`, which is no declared role`);
+    }
+  }
+});
+
 test('a kind whose maker is no role the config declares is refused, and the refusal names it', () => {
   const earned = refusal(withKind({ maker: 'architect' }));
   assert.match(earned, /`kinds\.change\.maker`/);
   assert.match(earned, /architect/);
+});
+
+test('a kind naming more than one maker is refused, because a kind has one maker', () => {
+  assert.match(refusal(withKind({ maker: ['engineer', 'pm'] })), /`kinds\.change\.maker`/);
 });
 
 test('a kind whose judge is neither a declared role nor the owner is refused, and the refusal names it', () => {

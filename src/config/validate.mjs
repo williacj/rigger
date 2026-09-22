@@ -91,9 +91,18 @@ const at = (path, key) => (path ? `${path}.${key}` : key);
 const SAYS = { boolean: 'true or false', array: 'a list' };
 const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof value === type);
 
+/** Whether a value is a set of declarations, which is what every shape holds. */
+const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
 /** Reads one value's keys against its shape, and every shape nested under it. */
 function readShape(value, shape, path, refusals) {
   const rules = SHAPES[shape];
+  if (!declares(value)) {
+    // Refused where it sits rather than read as an empty set, which would report every key under
+    // it as missing and bury the one fault that caused them.
+    refusals.push(`\`${path || 'the config'}\` holds no declarations, and Rigger reads ${JSON.stringify(value) ?? String(value)} as none`);
+    return;
+  }
   for (const [key, rule] of Object.entries(rules)) {
     if (!(key in value)) {
       if (rule.required) {
@@ -160,12 +169,10 @@ function readKinds(config, refusals) {
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
-  // A config file with no `export default` hands this `undefined`, which names none of the
-  // required keys and has no keys to read. Saying so beats the reader crashing on it.
-  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
-    return [`the config is ${Array.isArray(config) ? 'a list' : String(config)}, and Rigger reads a config as a set of declarations`];
-  }
   readShape(config, 'config', '', refusals);
+  // A config file with no `export default` hands this `undefined`, and the rules below read
+  // declarations there are none of. The refusal for that is already the one above.
+  if (!declares(config)) return refusals;
   readKinds(config, refusals);
   for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
     if (!CATEGORIES.includes(category)) {
