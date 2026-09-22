@@ -20,6 +20,7 @@
     "test": "node --test",
     "budget:package": "node scripts/package-budget.mjs",
     "budget:instructions": "node scripts/instruction-budget.mjs",
+    "lint:spec-style": "node scripts/spec-style-lint.mjs",
     "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
   }
 }
