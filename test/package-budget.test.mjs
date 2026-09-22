@@ -117,11 +117,21 @@ const RUN_AS_TESTS = [
   'src/scheduling/test/helper.mjs',
 ];
 const NOT_TESTS = ['src/scheduling/latest.mjs', 'src/scheduling/testing.mjs', 'src/workflow/real.mjs'];
+// The same spellings with the `test` token in another case, in a directory of their own so that
+// a case-insensitive filesystem folds none of them onto a name above. Which side of the line
+// these fall on is the runner's answer and it differs by platform, so no list here can say;
+// `productionFiles` is asked with each answer below, and the relation test asks the runner.
+const CASE_VARIED = [
+  'src/casing/TEST-b.mjs',
+  'src/casing/TEST.mjs',
+  'src/casing/a.TEST.mjs',
+  'src/casing/c_Test.mjs',
+];
 
-/** A repository holding every shape above, each file a test the runner can really run. */
-function everyShape() {
+/** A repository holding each of the shapes given, every file a test the runner can really run. */
+function everyShape(paths) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-shapes-'));
-  for (const path of [...RUN_AS_TESTS, ...NOT_TESTS]) {
+  for (const path of paths) {
     mkdirSync(join(root, dirname(path)), { recursive: true });
     writeFileSync(join(root, path), `import { test } from 'node:test';\ntest('${path}', () => {});\n`);
   }
@@ -129,16 +139,27 @@ function everyShape() {
 }
 
 test('no spelling the test runner executes is charged to the budget', () => {
-  const root = everyShape();
+  const root = everyShape([...RUN_AS_TESTS, ...NOT_TESTS]);
 
   assert.deepEqual(productionFiles(root), NOT_TESTS.map((path) => join(root, path)));
+});
+
+test('where the runner folds a filename’s case, a test spelled in another case is not charged', () => {
+  // `node --test` matches most of its default pattern case-insensitively on some platforms, and
+  // there it runs `a.TEST.mjs`. Charging it would put a file the runner executes into a budget
+  // ARCHITECTURE.md's Budgets section keeps tests out of. The exception is the bare `test` name:
+  // node spells that alternative with no glob magic in it, and the runner declines `TEST.mjs`
+  // even where it accepts `a.TEST.mjs`, so that one is production and is charged.
+  const root = everyShape(CASE_VARIED);
+
+  assert.deepEqual(productionFiles(root, true), [join(root, 'src', 'casing', 'TEST.mjs')]);
 });
 
 test('what the check calls a test is what the test runner runs', () => {
   // The two definitions have to move together, and only the runner can say what it runs. This
   // asks it, on whichever Node is running the suite, rather than trusting the patterns copied
   // into the list above.
-  const root = everyShape();
+  const root = everyShape([...RUN_AS_TESTS, ...NOT_TESTS, ...CASE_VARIED]);
   const counted = productionFiles(root);
 
   // `NODE_TEST_CONTEXT` marks a process as already inside a test run, and a child that inherits

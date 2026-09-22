@@ -16,7 +16,34 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // command's own default patterns: `test.js`, `test-*.js`, and the `.test.`, `-test.` and
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
 // file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
-const TEST_FILE = /(?:^|[.\-_])test\.(?:m|c)?js$|^test-.*\.(?:m|c)?js$/;
+//
+// The split is by case, and it is the runner's, not a convention of ours. Node spells its
+// default pattern as one brace alternation, and on some platforms it matches an alternative
+// carrying glob magic without regard to case while comparing a wholly literal one by string
+// equality. `test.mjs` brace-expands to a literal, so only that spelling is declined-or-run on
+// its exact case; every other alternative keeps a `*` or a character class and folds.
+const TEST_LITERAL = /^test\.(?:m|c)?js$/;
+const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
+const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
+// Whether the runner folds is the runner's answer, and it turns on the platform rather than on
+// the filesystem: node keys its glob matcher on the platform, so a case-sensitive directory on
+// Windows still folds and a case-insensitive filesystem elsewhere still does not.
+//
+// Measured, not reasoned. On Windows 11 10.0.26200, NTFS, Node v24.18.0, `node --test` ran
+// `a.TEST.mjs`, `TEST-b.mjs` and `c_Test.mjs` and declined `TEST.mjs`.
+//
+// Where this answer can differ from the runner's: every platform but win32 is taken not to fold,
+// and that is measured only where this repository's CI runs. On an unmeasured platform whose
+// runner does fold, a test spelled in another case is charged — an overcount, which leaves the
+// gate stricter than ARCHITECTURE.md's Budgets section and never able to admit a package that is
+// over budget. It does not pass silently either: the relation test in
+// `test/package-budget.test.mjs` asks the real runner on whatever host it runs, and reds there.
+const RUNNER_FOLDS_CASE = process.platform === 'win32';
+
+/** Whether `node --test` runs a file of this name, where `foldsCase` says how it matches. */
+function runsAsTest(name, foldsCase) {
+  return TEST_LITERAL.test(name) || (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name);
+}
 // Directories the budget never charges for, wherever they sit rather than only at the root: a
 // directory of templates under `src/` is still templates, and `node --test` runs every file
 // under a `test` directory whatever it is called.
@@ -108,7 +135,7 @@ export function countProductionLines(source) {
 }
 
 /** Every production source file under a repository root, in a stable order. */
-export function productionFiles(root) {
+export function productionFiles(root, foldsCase = RUNNER_FOLDS_CASE) {
   const walk = (dir) => {
     let entries;
     try {
@@ -122,7 +149,7 @@ export function productionFiles(root) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) return UNCHARGED.has(entry.name) ? [] : walk(path);
         if (!SOURCE_SUFFIX.test(entry.name)) return [];
-        if (TEST_FILE.test(entry.name)) return [];
+        if (runsAsTest(entry.name, foldsCase)) return [];
         return [path];
       });
   };
