@@ -492,9 +492,10 @@ covers document to document: a fact owned elsewhere is written as a reference an
 Neither reaches code that restates what a tool would have answered.
 
 An authority is a tool or command, and this entry reaches no other kind.
-`scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a number out of
-`ARCHITECTURE.md`, which is a document that owns a fact rather than a tool that answers for one,
-so no rule here binds either.
+`scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a budget number
+out of `ARCHITECTURE.md`. That read depends on a document that owns a fact rather than on a
+tool that answers for one, so no rule here reaches that dependency. What the same files take
+from a tool is bound as any other code is.
 
 Two defects in `scripts/package-budget.mjs` lived in that gap, and no lens in
 `.claude/skills/code-review/` asked the question that would have caught either. `docs/journal.md`
