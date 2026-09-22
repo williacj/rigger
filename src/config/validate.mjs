@@ -23,7 +23,7 @@ export const SHAPES = {
     roles: { required: true, entries: 'role' },
     kinds: { required: true, entries: 'kind' },
     provisioning: { entries: 'step' },
-    escalate: {},
+    escalate: { type: 'array' },
     telemetry: { keys: 'telemetry' },
   },
   board: {
@@ -61,7 +61,9 @@ export const SHAPES = {
     run: { required: true },
     // A step that declares nothing is optional (`R-PROV-1`), so `required` is the declaration and
     // never the state, and a step that selects no labels is selected by the kinds that name it.
-    required: {},
+    // The declaration is a boolean because it answers whether: anything else is read by `required
+    // === true` as a step that declared nothing, which is not what its author wrote.
+    required: { type: 'boolean' },
     select: { keys: 'select' },
   },
   telemetry: {
@@ -75,8 +77,19 @@ export const SHAPES = {
  */
 const OWNER = 'owner';
 
+/**
+ * The escalation categories, which are Rigger's and not the consumer's (`R-ESCALATE-3`). A
+ * consumer chooses which of them are the owner's to decide and adds none (`R-ESCALATE-2`), so a
+ * config naming anything else names a route to the owner Rigger does not offer.
+ */
+export const CATEGORIES = ['recorded-decision', 'critical', 'ambiguous'];
+
 /** Where a key sits, written as a reader of a refusal would look for it in the file. */
 const at = (path, key) => (path ? `${path}.${key}` : key);
+
+/** What a refusal calls each type a rule can ask for, and whether a value is one. */
+const SAYS = { boolean: 'true or false', array: 'a list' };
+const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof value === type);
 
 /** Reads one value's keys against its shape, and every shape nested under it. */
 function readShape(value, shape, path, refusals) {
@@ -87,6 +100,9 @@ function readShape(value, shape, path, refusals) {
         refusals.push(`\`${at(path, key)}\` is required, and the config does not name it`);
       }
       continue;
+    }
+    if (rule.type && !holds(value[key], rule.type)) {
+      refusals.push(`\`${at(path, key)}\` must be ${SAYS[rule.type]}`);
     }
     if (rule.keys) readShape(value[key], rule.keys, at(path, key), refusals);
     if (rule.entries) {
@@ -144,7 +160,27 @@ function readKinds(config, refusals) {
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
+  // A config file with no `export default` hands this `undefined`, which names none of the
+  // required keys and has no keys to read. Saying so beats the reader crashing on it.
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    return [`the config is ${Array.isArray(config) ? 'a list' : String(config)}, and Rigger reads a config as a set of declarations`];
+  }
   readShape(config, 'config', '', refusals);
   readKinds(config, refusals);
+  for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
+    if (!CATEGORIES.includes(category)) {
+      refusals.push(`\`escalate\` names \`${category}\`, which is no escalation category Rigger offers`);
+    }
+  }
   return refusals;
 }
+
+/**
+ * Whether the work requires this provisioning step.
+ *
+ * `R-PROV-1`: a step declares whether the work requires it, and a step that does not declare it
+ * is optional. D12 gives the reason the silence falls that way — the commoner step is a warmup
+ * that can fail and cost nothing, where a setup that fails dispatches a maker into a worktree
+ * that cannot run the work.
+ */
+export const workRequires = (step) => step?.required === true;

@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { SHAPES, validate } from '../src/config/validate.mjs';
+import { CATEGORIES, SHAPES, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -110,6 +110,14 @@ test("the validator accepts this repository's own config unchanged", () => {
   assert.deepEqual(validate(rigger), []);
 });
 
+test('a file that exports no config at all is refused rather than crashing its reader', () => {
+  // A config file whose module exports nothing hands the validator `undefined`, which is the
+  // shape a missing `export default` takes. It is a config naming none of the required keys.
+  for (const nothing of [undefined, null, 'rigger.config.mjs', []]) {
+    assert.match(refusal(nothing), /config/);
+  }
+});
+
 test('every key the validator requires is refused when missing, and the refusal names it', () => {
   const paths = requiredOf().flatMap((path) => expand(rigger, path.split('.')));
   assert.ok(paths.length > 0, 'the validator requires nothing, so nothing was checked');
@@ -196,6 +204,37 @@ test('a kind naming one role as both its maker and a judge is refused, and the r
     assert.match(earned, /`kinds\.change`/, judges.join(', '));
     assert.match(earned, /engineer/, judges.join(', '));
   }
+});
+
+test('an escalation category Rigger does not offer is refused, and the refusal names it', () => {
+  assert.match(refusal({ ...rigger, escalate: ['critical', 'infrastructure'] }), /infrastructure/);
+});
+
+test('a consumer choosing among the fixed categories is accepted, adding none of its own', async () => {
+  // R-ESCALATE-2: the set is Rigger's, a consumer chooses which of them are the owner's, and all
+  // are unless the consumer says otherwise. The default the architecture publishes is therefore
+  // the whole set, which is what the offered categories are checked against.
+  const every = (await publishedShape()).escalate;
+  assert.deepEqual(unique(CATEGORIES), unique(every));
+  assert.deepEqual(validate({ ...rigger, escalate: [] }), []);
+  for (const category of every) assert.deepEqual(validate({ ...rigger, escalate: [category] }), []);
+  assert.deepEqual(validate({ ...rigger, escalate: every }), []);
+});
+
+test('a provisioning step that declares nothing is read as optional', () => {
+  // R-PROV-1: a step declares whether the work requires it, and one that does not declare it is
+  // optional. The expected readings come from that row and from D12, which has this repository's
+  // own config carrying one of each.
+  assert.equal(workRequires({ run: 'brew install vhs' }), false);
+  assert.equal(workRequires({ run: 'npm ci', required: true }), true);
+  assert.equal(workRequires({ run: 'npm ci', required: false }), false);
+  assert.equal(workRequires(rigger.provisioning.vhs), false);
+  assert.equal(workRequires(rigger.provisioning['npm-ci']), true);
+});
+
+test('a provisioning step whose declaration is not a boolean is refused, so nothing is read as required by truthiness', () => {
+  const config = { ...rigger, provisioning: { ...rigger.provisioning, vhs: { ...rigger.provisioning.vhs, required: 'yes' } } };
+  assert.match(refusal(config), /`provisioning\.vhs\.required`/);
 });
 
 test('a role called owner is refused, because the owner is the one judge that is not a role', () => {
