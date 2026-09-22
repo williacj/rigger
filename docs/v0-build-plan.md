@@ -124,8 +124,9 @@ order; milestones with no edge between them may run concurrently.
   test declares the requirement it proves and a tool builds the matrix from those declarations, so
   it is the first generated document and the reason `docs/derived/` exists at all (D8). A row with
   no test is a visible gap, the way `checked by: nothing yet` is in the register. CI reds on a
-  requirement no test claims. This outlives the plan: at v0 the exit tests below become history,
-  and the matrix is what still ties a requirement to its evidence.
+  requirement the register gains with no test to claim it, and counts the rest as gaps that close
+  by M8 (D17). This outlives the plan: at v0 the exit tests below become history, and the matrix
+  is what still ties a requirement to its evidence.
 - L5's event envelope and JSONL sink. Nothing writes to them yet: L1's dispatch events and L0's
   process events begin at M2, when there is an execution core to emit them.
 - Two verbs work, and so does the `--help` flag. `init` writes the starter config and forks each
@@ -167,7 +168,8 @@ Exit:
 - The validator rejects a missing required key (`R-SCHED-10`).
 - A hand-typed `path:line` literal in a `strict` document reds the build.
 - Every requirement id appears in `docs/derived/test-matrix.md`, and the matrix regenerates
-  byte-identical from the tests. A requirement no test claims reds the build.
+  byte-identical from the tests. A requirement the register gains with no test to claim it reds
+  the build, and the requirements the register already held are counted gaps (D17).
 - A duplicate decision id reds the build, and so does a duplicate requirement id. The
   requirement check reads `docs/spec/requirements.md` and `docs/spec/requirements-retired.md`
   together, because a retired id stays allocated.
@@ -344,6 +346,7 @@ In order:
 
 Then:
 
+- No counted gap is left: a test claims every requirement in `docs/spec/requirements.md` (D17).
 - First tagged release and npm publish.
 - The README's Status section and the "nothing is published yet" note are updated.
 - The Telemetry and Security sections are checked against the shipped behaviour.

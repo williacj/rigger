@@ -105,11 +105,15 @@ says what broke. Never log a secret (`AGENTS.md`).
 ## What a test declares
 
 Each test declares the requirement it proves. A tool builds `docs/derived/test-matrix.md` from
-those declarations, so the matrix is generated and never hand-edited (`D8`), and a requirement
-no test claims reds the build (`AGENTS.md`; `docs/v0-build-plan.md`, M0).
+those declarations, so the matrix is generated and never hand-edited (`D8`). A requirement the
+register gains with no test to claim it reds the build (`AGENTS.md`, "When you write a decision
+or a requirement"). One the register already held is a counted gap, which the matrix shows and
+the build does not red on, and `D17` holds the difference and when each gap closes.
 
-So when you add a requirement, the test that claims it is part of the same work. And when you
-write a test, name the requirement it proves rather than leaving the matrix to guess.
+So when you add a requirement, the test that claims it is part of the same work. Where your card
+is what makes an older requirement true, its test closes that requirement's counted gap in the
+same work (`D17` rule 6). And when you write a test, name the requirement it proves rather than
+leaving the matrix to guess.
 
 Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is not a
 licence to write more of them: every test costs execution time and maintenance, so each one
