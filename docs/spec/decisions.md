@@ -3,9 +3,14 @@ the rules for allocating, ratifying and retiring them.
 
 # Decision register
 
-**Ratified by the owner, 2026-09-20.** Every entry below binds from that date. A change to this
-register is ratified as a whole, and the date above moves with it. An amendment to one entry
-records its own date in that entry's status.
+**Every entry below binds**, so a reader never has to check a status before trusting one. A
+decision proposed and not yet ratified lives in its pull request, never here.
+`docs/spec/requirements.md` rules the same for a requirement, and its preamble carries the
+reasoning.
+
+The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
+entry binds once that pull request merges. A proposal is therefore written as it will read once
+ratified, and the pull request body is what says it is a proposal.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
@@ -20,14 +25,6 @@ is a requirement, and `docs/spec/requirements.md` holds those.
 
 A decision holds one lifespan. A permanent principle and a boundary that expires never share an
 entry, because retiring the entry would discard both.
-
-A decision proposed and not yet ratified lives in its pull request, never here. Every entry below
-binds, so a reader never has to check a status before trusting one. `docs/spec/requirements.md`
-rules the same for a requirement, and its preamble carries the reasoning.
-
-The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
-entry binds once that pull request merges. A proposal is therefore written as it will read once
-ratified, and the pull request body is what says it is a proposal.
 
 A ratified decision may be amended when the change adds within its stated scope, and the amendment
 records its date in the entry's status. A change to what a ratified rule means is never an
