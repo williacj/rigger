@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { VERBS, help } from '../src/cli/rigger.mjs';
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const manifest = JSON.parse(read('package.json'));
@@ -90,10 +92,10 @@ test('--help lists exactly the verbs the README lists, in that order and no othe
   // gained and the CLI never did, one the CLI kept after the README dropped it, a misspelling, or
   // the order rearranged. The expected list is derived from the README on every run, so editing
   // the README moves this test rather than needing the test edited with it.
-  const help = rigger('--help');
+  const shown = rigger('--help');
 
-  assert.equal(help.code, 0, `\`rigger --help\` failed: ${help.err}`);
-  assert.deepEqual(helpVerbs(help.out), usageVerbs(read('README.md'), manifest.name));
+  assert.equal(shown.code, 0, `\`rigger --help\` failed: ${shown.err}`);
+  assert.deepEqual(helpVerbs(shown.out), usageVerbs(read('README.md'), manifest.name));
 });
 
 test('a verb whose milestone has not landed says so and exits non-zero', () => {
@@ -128,4 +130,56 @@ test('the command with no verb at all asks for one, and lists them', () => {
   assert.notEqual(ran.code, 0);
   assert.doesNotMatch(ran.err, /undefined/);
   assert.deepEqual(helpVerbs(ran.err), usageVerbs(read('README.md'), manifest.name));
+});
+
+/**
+ * A README shaped like Rigger's, listing verbs that are not Rigger's.
+ *
+ * The verbs here are invented precisely so that this is not a second copy of the real list: what
+ * it proves is that the reader reports whatever the document says. The `rigger` line in the prose
+ * is the shape the real README has in Prerequisites and Status, where a verb is named outside the
+ * block and is not part of the contract.
+ */
+function readmeListing(verbs, comment = (verb) => `what ${verb} does`) {
+  return [
+    '## Prerequisites',
+    '',
+    '- `rigger loose` is named in prose, and prose is not the contract.',
+    '',
+    '## Install and usage',
+    '',
+    '> The commands below are the target interface.',
+    '',
+    '```bash',
+    ...verbs.map((verb) => `npx @williacj/rigger ${verb}   # ${comment(verb)}`),
+    '```',
+    '',
+    '## Configuration',
+    '',
+    'One config file names the repository.',
+  ].join('\n');
+}
+
+test('the verbs are read out of the README, so a README listing others reports those', () => {
+  // This is the item that decides the design: the check reads the block rather than holding a
+  // copy of what it says. The defects it catches are a reader that answers with a list of its
+  // own whatever it is given, and one that takes a verb the README names in prose, where the
+  // real README names `setup-board` and `report` outside the contract.
+  assert.deepEqual(usageVerbs(readmeListing(['beta', 'alpha']), '@williacj/rigger'), ['beta', 'alpha']);
+});
+
+test('changing a verb help text moves neither side of the check', () => {
+  // The acceptance puts help text outside the match, and both sides carry some: the `#` comment
+  // beside each invocation in the README, and the summary beside each verb in `--help`. The
+  // defect this catches is either reader matching on the line rather than extracting the verb,
+  // which would make a reworded description a build failure.
+  const verbs = ['beta', 'alpha'];
+  const rewritten = (verb) => `${verb} does something else entirely now`;
+  assert.deepEqual(
+    usageVerbs(readmeListing(verbs, rewritten), '@williacj/rigger'),
+    usageVerbs(readmeListing(verbs), '@williacj/rigger'),
+  );
+
+  const summaries = VERBS.map(([verb]) => [verb, rewritten(verb)]);
+  assert.deepEqual(helpVerbs(help(summaries)), usageVerbs(read('README.md'), manifest.name));
 });
