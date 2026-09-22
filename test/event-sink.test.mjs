@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -49,4 +49,32 @@ test('an event carries when it happened, its run, its layer, and the card and di
     exit: 0,
     ms: 734120,
   }]);
+});
+
+test('the state directory holds one stream, one event to a line, in the order they were emitted', () => {
+  const directory = stateDir();
+  const sink = openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14, AT_14_19]) });
+  const execution = sink.emitter({ layer: 'L1', card: 1412, dispatch: 'd-01' });
+  const substrate = sink.emitter({ layer: 'L0', card: 1412 });
+
+  execution.emit('dispatch.end', { exit: 0 });
+  substrate.emit('survivor.killed', { name: 'rust-analyzer-proc-macro-srv' });
+
+  assert.deepEqual(readdirSync(directory), ['events.jsonl']);
+  const lines = readFileSync(join(directory, 'events.jsonl'), 'utf8').split('\n');
+  assert.deepEqual(lines.slice(-1), [''], 'the stream does not end with a newline');
+  assert.deepEqual(lines.slice(0, -1).map((line) => JSON.parse(line)), [
+    { ts: '2026-09-13T14:14:45.882Z', run: 'r-8f21', layer: 'L1', event: 'dispatch.end', card: 1412, dispatch: 'd-01', exit: 0 },
+    { ts: '2026-09-13T14:19:03.005Z', run: 'r-8f21', layer: 'L0', event: 'survivor.killed', card: 1412, name: 'rust-analyzer-proc-macro-srv' },
+  ]);
+});
+
+test('the envelope is written in the order ARCHITECTURE.md shows, ahead of the layer own fields', () => {
+  const directory = stateDir();
+  openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14]) })
+    .emitter({ layer: 'L1', card: 1412, dispatch: 'd-01' })
+    .emit('dispatch.end', { role: 'engineer', exit: 0 });
+
+  const [event] = readEvents(directory);
+  assert.deepEqual(Object.keys(event), ['ts', 'run', 'layer', 'event', 'card', 'dispatch', 'role', 'exit']);
 });
