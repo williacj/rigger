@@ -17,33 +17,44 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
 // file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
 //
-// The split is by case, and it is the runner's, not a convention of ours. From Node 22 the runner
-// matches one brace alternation with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
+// The split is by case, and it is the runner's, not a convention of ours. From Node 21 the runner
+// matches its default pattern with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
 // component holding glob magic is matched without regard to case, and a wholly literal one is
-// compared exactly. Brace-expanding the alternation leaves `test.mjs` literal, so that spelling
-// alone answers to its exact case; every other alternative keeps a `*` or a character class.
+// compared exactly. From Node 22 that pattern spells the extension as a brace list, so expanding
+// `{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs,ts,mts,cts}` leaves `test.mjs` wholly literal
+// and it alone answers to its exact case; every other alternative keeps a `*` or a character
+// class. Node 21 spells the extension as the extglob `?(c|m)js`, which is magic, so there no
+// alternative is literal and the runner folds `TEST.mjs` too.
 const TEST_LITERAL = /^test\.(?:m|c)?js$/;
 const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
 const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // Whether the runner folds is the runner's answer, and it turns on two things. Which Node is
-// running, because only from 22 does the runner match by glob at all. And which platform, because
-// that glob sets `nocase` for Windows and macOS and for nowhere else — on the platform, not on
-// the filesystem, so a case-sensitive volume on either still folds.
+// running, because the runner only began matching by glob in 21. And which platform, because that
+// glob sets `nocase` for Windows and macOS and for nowhere else — on the platform, not on the
+// filesystem, so a case-sensitive volume on either still folds.
 //
 // Measured, not reasoned, each name in a directory of its own so that a case-insensitive
 // filesystem folded none of them onto another. `node --test` ran, of `a.TEST.mjs`, `TEST-b.mjs`,
 // `b-TEST.mjs` and `c_Test.mjs`:
 //
-//   Windows 11 10.0.26200, NTFS:  none under Node 20.20.2; all four under 22.23.2, 23.11.1
-//                                 and 24.18.0
-//   macOS macos-latest, APFS:     none under Node 20.20.2; all of them under 24.20.0
+//   Windows 11 10.0.26200, NTFS:  none under Node 20.20.2; all but `b-TEST.mjs` under 21.7.3;
+//                                 all four under 22.23.2, 23.11.1 and 24.18.0
+//   macos-latest, `darwin`:       none under Node 20.20.2; all of them under 24.20.0. The CI log
+//                                 names the platform and the Node version, so the filesystem
+//                                 there is not measured.
 //
-// `TEST.mjs` was declined by every one of those, which is the literal alternative above.
+// `TEST.mjs` was declined by all of those but Node 21, which has no literal alternative.
 //
-// Where this answer can differ from the runner's. Linux is taken not to fold on node's own
-// `nocase: isWindows || isMacOS` rather than on a measurement, because D13 makes macOS v0's only
-// host and CI runs nowhere else. Node 21 is taken not to fold, unmeasured. Either one, if wrong,
-// charges a test rather than passing over production code — an overcount, which leaves the gate
+// Where this answer differs from the runner's, and where it is reasoned rather than measured.
+//
+// Node 21 folds and this does not, so a case-varied spelling is charged there. That is an
+// overcount and never an undercount, and closing it is not this check's job: node 21's matcher
+// differs from 22's in ways that have nothing to do with case, spelling the class as the range
+// `[.-_]`, which under `nocase` also runs `latest.mjs`. Agreeing with it is its own card.
+//
+// Linux is reasoned from node's own `nocase: isWindows || isMacOS` and not measured, because D13
+// makes macOS v0's only host and CI runs nowhere else. If that reasoning is wrong it charges a
+// test rather than passing over production code — again an overcount, which leaves the gate
 // stricter than ARCHITECTURE.md's Budgets section and never able to admit a package that is over
 // budget. Nor would it pass quietly: the relation test in `test/package-budget.test.mjs` asks the
 // real runner, in both directions, on whatever host the suite runs, and reds there.
