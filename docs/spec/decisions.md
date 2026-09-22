@@ -52,6 +52,7 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
+| D17 | A requirement older than this decision is a counted gap | Ratified |
 
 ## D1 — Redo over resume
 
@@ -466,3 +467,76 @@ answering it.
 What would reverse this is drift the reader sees: `report` showing judges filing findings against
 diagrams that disagree with what they depict, or the owner reading a diagram the document has
 outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.
+
+## D17 — A requirement older than this decision is a counted gap
+
+**Status:** Ratified.
+
+### Rule
+
+1. A requirement no test claims reds the build, unless it is a counted gap. `AGENTS.md`, under
+   "When you write a decision or a requirement", holds that red for a requirement being added,
+   and this decision neither widens nor narrows it.
+2. A **counted gap** is a requirement `docs/spec/requirements.md` held when this decision bound,
+   and that no test has claimed since. The test matrix `docs/v0-build-plan.md` requires at M0
+   names it, the count of requirements with no test includes it, and the build does not red.
+3. The set of counted gaps never gains a member. A requirement leaves it when a test claims it,
+   or when the owner withdraws it, and it never returns. Deleting the test that claimed a
+   requirement therefore reds the build.
+4. `checked by` records what *would* catch a violation, never what a test has done
+   (`docs/spec/requirements.md`, preamble). Editing a row's `checked by` moves no requirement
+   into the set or out of it, and changes the count by nothing.
+5. A requirement the owner withdraws leaves the set with its row, and the count falls by one.
+   That fall is not a test written. Only the owner withdraws a requirement
+   (`docs/spec/requirements.md`, preamble), so the set loses a member that way only where the
+   owner has decided Rigger need not do the thing.
+6. Three things shrink the set, and they run at once:
+   1. The card that makes a requirement true claims it with a test in the same work. The card's
+      acceptance says so (`R-CARD-1`), the maker finishes against that acceptance (`R-LOOP-1`),
+      and every judge rules on it (`R-LOOP-5`).
+   2. A milestone closes only when a test claims every requirement its exit list cites.
+   3. v0 ships with the set empty. `docs/v0-build-plan.md`'s M8 holds that, and this decision
+      ends there.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. A milestone whose exit list cites the requirement returns it by that milestone's close, and M8 returns every one still open. |
+
+### Notes
+
+The claim that a requirement no test claims reds the build was written in four places, and only
+`AGENTS.md`'s was satisfiable. Every requirement in the register was unclaimed when this decision
+was drafted. Redding on every unclaimed row would therefore have redded the build on the commit
+that landed the check, and forced tests written to move a number.
+
+Counting every unclaimed row and redding on none is the other failure. It makes the gap visible
+and leaves nothing acting on it, and a number nobody is obliged to move does not move. Rule 6 is
+the answer: the set carries a closing schedule, and its three parts bite at three distances.
+
+Dating the set is what makes both halves true at once. A requirement added from here is added by
+someone who can write its test, because the behaviour is being built in the same work. A
+requirement the register already held waits on code that does not exist, and no test could claim
+it honestly. The date is the only line that separates those two.
+
+Rule 4 closes the route that would otherwise open. `checked by` is prospective, and an author
+edits it freely, so a set defined by that column could be emptied by editing cells. Membership is
+by id, and the column says nothing about it.
+
+Rule 5 closes the other one. A withdrawal moves the number with no test written, and that is
+honest: a requirement that binds nothing has nothing left to prove. Only the owner withdraws one,
+so the set cannot be shrunk that way by the maker whose card it would flatter.
+
+This decision names no escalation category and opens no route to the owner (`D3` rule 1). Rule 5
+cites a withdrawal the owner already performs, and rule 6 cites a judge already ruling on an
+acceptance item.
+
+Two signals would reverse it. One: the count does not fall across a milestone's close, so rule 6's
+schedule is not what closes the set, and the owner is reading a number nothing acts on. Two: the
+count falls while the suite proves no more than before, because cards close with tests written to
+claim a row rather than to prove a behaviour. CI's printed count shows the first, and `report`
+shows the second as work that came back (`R-RECORD-3`).
+
+This decision holds one lifespan. It begins with the set and ends when the set is empty. The red
+it names for a requirement being added lives in `AGENTS.md`, which outlives it.
