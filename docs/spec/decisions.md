@@ -486,10 +486,8 @@ outgrown. On that evidence a later decision withdraws the admission, and the pro
 
 ### Notes
 
-The corpus had written this rule twice and left one direction out. `D8` covers code to document:
-a fact the code owns is generated, never typed. `AGENTS.md`, under "Documents own their facts",
-covers document to document: a fact owned elsewhere is written as a reference and never retyped.
-Neither reaches code that restates what a tool would have answered.
+The gap: `D8` covers code to document, `AGENTS.md`'s "Documents own their facts" covers document
+to document, and neither reaches code that restates what a tool answers.
 
 An authority is a tool or command, and this entry reaches no other kind.
 `scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a budget number
@@ -497,20 +495,9 @@ out of `ARCHITECTURE.md`. That read depends on a document that owns a fact rathe
 tool that answers for one, so no rule here reaches that dependency. What the same files take
 from a tool is bound as any other code is.
 
-Two defects in `scripts/package-budget.mjs` lived in that gap, and no lens in
-`.claude/skills/code-review/` asked the question that would have caught either. `docs/journal.md`
-records both. In each, a green suite proved nothing, because code asserting a fact it does not own
-agrees with itself.
-
 Rule 3 is the half an author drops first, and dropping it leaves rule 1 reading as licence to
-depend on anything. An authority's behaviour arrives with its undefined edges attached.
-`node --test` decides what a test is by filename, and on one case-insensitive filesystem it runs
-`a.TEST.mjs` and declines `TEST.mjs`, which `docs/journal.md` records. No filename pattern tracks
-that everywhere, so the code carrying one says where it stops.
-
-This decision sits beside `D8` rather than replacing it, and changes nothing `D8` says. `D8`
-governs a document an author would otherwise type. This governs code that would otherwise restate
-what a tool answers. Neither reads onto the other's subject.
+depend on anything: an authority's behaviour arrives with its undefined edges attached.
+`docs/journal.md` records what produced this entry.
 
 Two signals would reverse it, and `report` shows both. One: cards come back because a test that
 asks a tool could not run it, or because the tool answered differently between runs, more often
