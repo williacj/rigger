@@ -13,6 +13,9 @@
     "url": "https://github.com/williacj/rigger/issues"
   },
   "type": "module",
+  "bin": {
+    "rigger": "src/cli/rigger.mjs"
+  },
   "engines": {
     "node": ">=20"
   },
