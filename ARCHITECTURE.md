@@ -56,6 +56,42 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    any layer, and its proposals are themselves telemetry, so the report shows whether they
    helped.
 
+## The layer map
+
+The eight layers as one diagram: which layer hands what to which. The edges carry the
+vocabularies boundary rule 2 names, the exit code rule 1 names, and the events, signals,
+proposals and escalations the layer table states. Every layer but L7 reads some part of L4, and
+the edge drawn is the one boundary rule 2 names.
+
+```mermaid
+flowchart TB
+  L5["L5 Observation<br/>records what every layer emits and derives signals"]
+  L6["L6 Improvement<br/>turns signals into proposals"]
+  L7["L7 Owner<br/>decides what only the owner can"]
+  L4["L4 Quality<br/>the consumer's definition of the work and of good"]
+  subgraph below["The layers below L4"]
+    L3["L3 Scheduling<br/>which card is next, and when anything runs"]
+    L2["L2 Workflow<br/>what to do with a card, from its stage and observable facts"]
+    L1["L1 Execution<br/>runs one dispatch in an isolated workspace"]
+    L0["L0 Substrate<br/>talks to GitHub, git, the OS, and the agent CLIs"]
+  end
+  %% Invisible links, carrying nothing but the order of the stack.
+  L3 ~~~ L2 ~~~ L1 ~~~ L0
+  L4 -->|names, procedures and settings| below
+  L2 -->|next actions| L3
+  L3 -->|dispatches| L1
+  L1 -->|exit codes and output| L2
+  L0 -->|exit code| L1
+  L0 -.->|events| L5
+  L1 -.->|events| L5
+  L2 -.->|events| L5
+  L3 -.->|events| L5
+  L6 -.->|events| L5
+  L5 -->|signals| L6
+  L6 -->|proposals| L7
+  L2 -->|escalations| L7
+```
+
 ## Scenario binding
 
 A scenario is defined entirely in L4. Rigger's loops are scenario-neutral machinery that L4
