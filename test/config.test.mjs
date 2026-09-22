@@ -141,3 +141,64 @@ test('a declaration Rigger does not offer is refused wherever it sits, and the r
 test('what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions', async () => {
   assert.deepEqual(unique(offered()), unique(declared(await publishedShape())));
 });
+
+/** This repository's config with one kind of work altered, which is what these rules bind. */
+const withKind = (change) => ({
+  ...rigger,
+  kinds: { ...rigger.kinds, change: { ...rigger.kinds.change, ...change } },
+});
+
+/** The one refusal this config earns, or a readable failure naming however many it earned. */
+function refusal(config) {
+  const refusals = validate(config);
+  assert.equal(refusals.length, 1, `expected one refusal, got ${refusals.length}: ${refusals.join('; ') || 'none'}`);
+  return refusals[0];
+}
+
+test('a kind whose maker is no role the config declares is refused, and the refusal names it', () => {
+  const earned = refusal(withKind({ maker: 'architect' }));
+  assert.match(earned, /`kinds\.change\.maker`/);
+  assert.match(earned, /architect/);
+});
+
+test('a kind whose judge is neither a declared role nor the owner is refused, and the refusal names it', () => {
+  const earned = refusal(withKind({ judges: ['reviewer', 'adjudicator'] }));
+  assert.match(earned, /`kinds\.change\.judges`/);
+  assert.match(earned, /adjudicator/);
+});
+
+test('a kind that names no judge at all is refused, because no work is delivered unjudged', () => {
+  assert.match(refusal(withKind({ judges: [] })), /`kinds\.change\.judges`/);
+});
+
+test('a kind whose judges are not an ordered list is refused, because their order is the rule', () => {
+  assert.match(refusal(withKind({ judges: 'reviewer' })), /`kinds\.change\.judges`/);
+});
+
+test('a kind naming the owner anywhere but last is refused, and the refusal names the position', () => {
+  // None of these names `engineer`, which is this kind's maker: a fixture that named it would
+  // earn the separation refusal too, and pass this test for the wrong rule.
+  for (const judges of [['owner', 'reviewer'], ['reviewer', 'owner', 'pm'], ['owner', 'owner']]) {
+    const earned = refusal(withKind({ judges }));
+    assert.match(earned, /`kinds\.change\.judges`/, judges.join(', '));
+    assert.match(earned, /owner/, judges.join(', '));
+  }
+});
+
+test('a kind naming the owner last is accepted, and so is one naming the owner not at all', () => {
+  assert.deepEqual(validate(withKind({ judges: ['reviewer', 'owner'] })), []);
+  assert.deepEqual(validate(withKind({ judges: ['reviewer'] })), []);
+});
+
+test('a kind naming one role as both its maker and a judge is refused, and the refusal names it', () => {
+  for (const judges of [['engineer'], ['reviewer', 'engineer'], ['engineer', 'owner']]) {
+    const earned = refusal(withKind({ maker: 'engineer', judges }));
+    assert.match(earned, /`kinds\.change`/, judges.join(', '));
+    assert.match(earned, /engineer/, judges.join(', '));
+  }
+});
+
+test('a role called owner is refused, because the owner is the one judge that is not a role', () => {
+  const declared = { ...rigger, roles: { ...rigger.roles, owner: { agent: 'a.md', provider: 'claude', tier: 'high' } } };
+  assert.match(refusal(declared), /`roles\.owner`/);
+});

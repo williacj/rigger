@@ -69,6 +69,12 @@ export const SHAPES = {
   },
 };
 
+/**
+ * The owner, who judges a kind of work last if at all and is never dispatched (`R-LOOP-11`). It
+ * is the one judge that is not a role, which is why a kind may name it and `roles` may not.
+ */
+const OWNER = 'owner';
+
 /** Where a key sits, written as a reader of a refusal would look for it in the file. */
 const at = (path, key) => (path ? `${path}.${key}` : key);
 
@@ -94,9 +100,51 @@ function readShape(value, shape, path, refusals) {
   }
 }
 
+/**
+ * What each kind of work may name: one maker role, and the judges that review it.
+ *
+ * The names a kind uses are the ones the config declares under `roles`, so a kind naming anything
+ * else names something Rigger cannot dispatch (`R-SCHED-10`).
+ */
+function readKinds(config, refusals) {
+  const roles = config.roles ?? {};
+  if (Object.hasOwn(roles, OWNER)) {
+    refusals.push(`\`roles.${OWNER}\` is reserved: \`${OWNER}\` names the owner, who is never dispatched`);
+  }
+  for (const [name, kind] of Object.entries(config.kinds ?? {})) {
+    const where = `kinds.${name}`;
+    if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
+      refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
+    }
+    if (kind?.judges === undefined) continue;
+    if (!Array.isArray(kind.judges) || kind.judges.length === 0) {
+      // One maker and at least one judge, in the order they judge in (`README.md`, "The
+      // guarantee"). A kind naming none would deliver work no judge ruled on.
+      refusals.push(`\`${where}.judges\` must be an ordered list naming at least one judge`);
+      continue;
+    }
+    // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
+    // that could approve its own work would be a faster way to merge mistakes.
+    if (kind.judges.includes(kind.maker)) {
+      refusals.push(`\`${where}\` names \`${kind.maker}\` as both its maker and one of its judges, and no judge is the maker`);
+    }
+    kind.judges.forEach((judge, position) => {
+      if (judge !== OWNER && !Object.hasOwn(roles, judge)) {
+        refusals.push(`\`${where}.judges\` names \`${judge}\`, which is no role the config declares`);
+      }
+      // The owner judges last if at all (`R-LOOP-11`), so the owner is asked once every agent
+      // judge is satisfied rather than before one of them.
+      if (judge === OWNER && position !== kind.judges.length - 1) {
+        refusals.push(`\`${where}.judges\` names \`${OWNER}\` at position ${position + 1} of ${kind.judges.length}, and the owner judges last`);
+      }
+    });
+  }
+}
+
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
   readShape(config, 'config', '', refusals);
+  readKinds(config, refusals);
   return refusals;
 }
