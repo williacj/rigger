@@ -63,11 +63,12 @@ helpers: a test that asks the code what the answer should be agrees with the cod
 construction, and passes just as happily once the code is wrong. Failing first does not catch
 this one, because such a test fails before the code exists and passes for ever after.
 
-**Derive what a double returns, too.** A double returning what the assertion expects agrees with
-your assumption by construction, exactly as a computed expectation agrees with the code. Take the
-value from the real collaborator — a recorded response, a shape its interface guarantees, a
-literal you read from the real thing — and never from what makes the test pass. Failing first
-misses this one for the same reason it misses the last one.
+**Derive what a double returns, too.** "Derive the expected value independently" is the rule
+above; this is its other half. A double returning what the assertion expects agrees with your
+assumption by construction, and the argument there carries over unchanged. Take the value from
+the real collaborator — a recorded response, a shape its interface guarantees, a literal you
+read from the real thing — and never from what makes the test pass. Failing first misses this
+one for the reason it gives there.
 
 **Something exercises the real wiring.** A suite where every unit is green against doubles can
 compose into software that has never run, and each unit test will go on passing while it does.
