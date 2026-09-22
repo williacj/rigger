@@ -3,9 +3,14 @@ the rules for allocating, ratifying and retiring them.
 
 # Decision register
 
-**Ratified by the owner, 2026-09-17.** Every entry below binds from that date. A change to this
-register is ratified as a whole, and the date above moves with it. An amendment to one entry
-records its own date in that entry's status.
+**Every entry below binds**, so a reader never has to check a status before trusting one. A
+decision proposed and not yet ratified lives in its pull request, never here.
+`docs/spec/requirements.md` rules the same for a requirement, and its preamble carries the
+reasoning.
+
+The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
+entry binds once that pull request merges. A proposal is therefore written as it will read once
+ratified, and the pull request body is what says it is a proposal.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
@@ -21,13 +26,14 @@ is a requirement, and `docs/spec/requirements.md` holds those.
 A decision holds one lifespan. A permanent principle and a boundary that expires never share an
 entry, because retiring the entry would discard both.
 
-A decision is `Proposed`, then `Ratified`, then `Superseded by D#` when a later decision replaces
-it. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and its row stays in
-the table below so its id is never reused.
-
 A ratified decision may be amended when the change adds within its stated scope, and the amendment
 records its date in the entry's status. A change to what a ratified rule means is never an
 amendment: a later decision supersedes it, so the original stays readable.
+
+An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
+it. Those two openings are the only ones it takes, and an amendment adds its date after `Ratified`
+rather than a third. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and
+its row stays in the table below so its id is never reused.
 
 | id | decision | status |
 |---|---|---|
@@ -44,6 +50,8 @@ amendment: a later decision supersedes it, so the original stays readable.
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
 | D13 | macOS is v0's only host | Ratified |
+| D14 | Critical is what a maker revision cannot resolve | Ratified |
+| D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 
 ## D1 — Redo over resume
 
@@ -379,3 +387,82 @@ bug costs a stray process or a lost result.
 
 WSL2 is the cheaper route because it reuses the macOS model rather than adding a second one. The
 spike exists because that reuse is an assumption, not a finding.
+
+## D14 — Critical is what a maker revision cannot resolve
+
+**Status:** Ratified.
+
+### Rule
+
+1. A judge returns critical only where no maker revision could resolve the fault without an owner
+   decision. Every other fault that blocks the merge is needs revision. `R-VERDICT-6` holds it.
+2. The test is the loop behaviour the verdict triggers, never the subject matter of the fault. No
+   class of defect is critical by its kind.
+
+### Notes
+
+The two verdicts that block a merge differ only in what the loop then does. Needs revision spends a
+round. Critical spends none: the loop escalates the card at once, under `R-ESCALATE-6`. A judge
+choosing between them is choosing that behaviour, so the rule asks about the behaviour rather than
+about the defect.
+
+A subject-matter rule reads well and routes badly. Security is the tempting example: a judge met
+real holes in a permission surface, ruled needs revision, and two maker rounds closed them. Under a
+rule making security critical by its kind, that fault would have reached the owner on the first
+round, carrying a question the loop was already answering.
+
+This decision names no category beyond the three `R-ESCALATE-3` fixes. It says which fault reaches
+an existing category, and opens no further route to the owner.
+
+Two signals would reverse it, and `report` shows both. One: the loop escalates cards as critical,
+and a maker revision then closes them without an owner decision, so the rule sends too much. Two:
+rounds exhaust and the loop escalates as ambiguous over a fault the owner had to decide anyway, so
+the rule sends too little.
+## D15 — A diagram is admitted where prose cannot carry the shape
+
+**Status:** Ratified.
+
+### Rule
+
+1. An author draws a diagram for a subject only when both tests hold. The subject is a set of
+   things and the relations between them. No single passage states those relations, so a reader
+   assembles the shape from two or more passages or not at all.
+2. An author adds a diagram beside the prose and the rows it depicts, never in place of them.
+3. A diagram under `docs/spec/` owns nothing. It depicts only what the rows already state, it
+   cites the id of every row it depicts, and it loses to the row where the two disagree.
+4. A diagram in `ARCHITECTURE.md` owns the structure it depicts, as that document's prose does.
+   It may therefore depict a relation no sentence there states, and it owes no citation — both
+   denied to a diagram under `docs/spec/`. A diagram there and a sentence there that disagree
+   are a fault in the document, and the owner resolves it.
+5. An author draws in Mermaid, in a fenced `mermaid` block, and this decision admits no other
+   form.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A diagram form other than Mermaid | A consumer's forge does not render a fenced `mermaid` block, so a reader there sees source where the corpus shows a diagram. |
+| A check that a diagram under `docs/spec/` cites an id for everything it depicts | A judge files a finding for a citation that is missing or does not resolve, where the document-checking extension point could have caught it. |
+
+### Notes
+
+The corpus drew nothing until now, and prose is still the default. A diagram earns its place only
+on rule 1's tests, because every diagram is a second statement of something the document already
+holds, and the second statement is what goes stale.
+
+One decision covers two venues because a single rule would be wrong for one of them. Under
+`docs/spec/` the rows own the facts, so a diagram there refers to them and owns nothing. In
+`ARCHITECTURE.md` the document owns the structure, so a diagram there owns what it depicts. That
+is the "own it, refer to it" split in `AGENTS.md`, under "Documents own their facts", applied
+to a diagram.
+
+Mermaid is text. It diffs, a judge reads its source rather than an image, and the forge renders
+it, so the diagram reviews like the rest of the corpus. An image file would review as a blob.
+
+Whether the resolver checks a diagram's citations is declared at the document-checking extension
+point, and this decision does not declare it. The table above records the question rather than
+answering it.
+
+What would reverse this is drift the reader sees: `report` showing judges filing findings against
+diagrams that disagree with what they depict, or the owner reading a diagram the document has
+outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.

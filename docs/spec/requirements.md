@@ -2,8 +2,10 @@ ABOUTME: This is the core product requirements doc for Rigger. Each requirement 
 
 # Requirements
 
-**Ratified by the owner, 2026-09-17.** Every row below binds from that date. A change to
-this document is ratified as a whole, and the date above moves with it.
+**Every row in this file binds**, so a reader never has to check a column before trusting one — a
+row proposed and not yet ratified lives in its pull request, never here. The owner ratifies a
+proposed requirement by returning a sound verdict on its pull request, and the row binds once that
+pull request merges.
 
 A requirement states what must be true. It is observable from outside, and it names no mechanism;
 `ARCHITECTURE.md` holds the structure that implements it. A requirement survives a redesign where
@@ -64,10 +66,8 @@ id for each part. Rows merged into one withdraw and allocate a single new id.
 
 A withdrawn requirement leaves this document, and only the owner withdraws one. Its row moves to
 `docs/spec/requirements-retired.md`, which binds nothing and exists so that a citation to a
-withdrawn id still resolves and so that the id is never allocated again. Every row in this file
-binds, so a reader never has to check a column before trusting one — a row proposed and not yet
-ratified lives in its pull request, never here. The duplicate-id check reads both files. A group
-with no requirements yet is not written until it has one.
+withdrawn id still resolves and so that the id is never allocated again. The duplicate-id check
+reads both files. A group with no requirements yet is not written until it has one.
 
 ## R-CARD — what a card states
 
@@ -146,6 +146,7 @@ with no requirements yet is not written until it has one.
 | R-VERDICT-3 | A verdict that is not sound names what would make it sound. | the role prompt | the gate | |
 | R-VERDICT-4 | A verdict leaving an acceptance item unmet is not sound. | the role prompt | the gate | D2 |
 | R-VERDICT-5 | A verdict is bound to the work it ruled on and to the acceptance it ruled against, so a later reader can tell what it covered. | the engine | the event record, by what each verdict names | D2 |
+| R-VERDICT-6 | A judge returns critical, the verdict for a fault that must not merge, only where no maker revision could resolve that fault without an owner decision. A fault a maker revision could resolve is needs revision. | the role prompt | nothing yet | D14 |
 
 ## R-GATE — what admits a merge
 

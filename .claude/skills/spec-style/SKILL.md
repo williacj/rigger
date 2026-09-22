@@ -1,0 +1,82 @@
+---
+name: spec-style
+description: The register Rigger's binding documents are written in — four form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
+---
+
+ABOUTME: The four form rules Rigger's binding documents are written under, and the test behind
+each, for anyone drafting or reviewing a delta to them.
+
+# The Rigger register
+
+Four rules. They constrain **form only**. Content is never negotiable: every bound, exception and
+gate survives an edit made under them. Where form and meaning pull apart, keep the meaning and
+flag the sentence.
+
+They describe how the corpus is already written, so that a delta written under them reads like
+what is already there. That is the whole of the job — a reader should not be able to pick your
+row out of the ones around it.
+
+## The four rules
+
+### 1. One term per concept
+
+Rigger's vocabulary is small, and keeping it small is what stops a reader wondering whether two
+words name two mechanisms. A card is **escalated** — never bubbled, parked or forwarded. A role
+is **dispatched**. A judge returns a **verdict**, never an approval or a sign-off. Name a new
+concept once, then reuse the name.
+
+The converse binds as hard: where two words already name two things, never collapse them. A
+**judge** is the slot in the loop that returns a verdict; a **reviewer** is one of the roles that
+can fill it (`ARCHITECTURE.md`, `judges: ['reviewer']`). Editing either into the other destroys a
+distinction the configuration depends on.
+
+### 2. Sentences of about 25 words, and never past 40
+
+Split a compound. Use an em-dash aside sparingly, and never nested. A sentence carrying an
+ordered sequence wants to be a list — that is rule 4.
+
+The ceiling is not a preference about prose. A requirement is a thing a judge rules on and a
+maker builds against, and a 40-word sentence hides its own conditions.
+
+### 3. Active voice, actor named
+
+The engine, the gate, the maker, the judge, the owner, the consumer, the role. Passive only where
+the actor is genuinely unknown, or genuinely does not matter.
+
+Where authority is the subject — who may merge, who may ratify, who may withdraw a row — an
+ambiguous "it" is a defect rather than a style choice. `docs/spec/requirements.md` splits `made
+true by` from `checked by` for this reason: two actors, two columns, nothing left to infer.
+
+### 4. Structure that matches the meaning
+
+A sequence of more than three steps, or a rule with three or more conditions, becomes a numbered
+or bulleted list. State the discriminating test before the list it governs, so that a reader
+knows what they are sorting by before they start sorting.
+
+`docs/spec/requirements.md`'s `checked by` passage is one exemplar: it says the two columns differ
+and why, then gives the five forms as a numbered list. `docs/spec/decisions.md`'s **Deferred, and
+what returns it** tables are the other — one row per deferred thing, one column for the evidence
+that returns it, and no prose carrying what the table holds better.
+
+A structure that neither a list nor a table carries — a set of things and the relations between
+them — becomes a diagram. `docs/spec/decisions.md`'s `D15` holds when a diagram is admitted, what
+it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map is the exemplar.
+
+## What this skill is not
+
+- **Not a rewrite licence.** Never improve a ratified clause's meaning while restyling it. Where
+  a rule here and a clause's meaning conflict, keep the meaning and say so in the proposal.
+- **Not the register's mechanics.** Allocating, amending, retiring and ratifying an id belong to
+  each register's preamble, which is the authority; `AGENTS.md`'s "When you write a decision or a
+  requirement" states what proposing one obliges you to do. Read the preamble of the file you are
+  changing before you draft.
+- **Not a lint.** Nothing checks these mechanically. They hold because an author applies them and
+  a reviewer reads for them.
+
+## Before you hand it off
+
+1. Does every concept use the corpus's existing word, and does every existing distinction survive?
+2. Is any sentence past 40 words? Are most nearer 25 than 35?
+3. Does every sentence about authority name its actor?
+4. Is anything ordered or conditional still buried in prose?
+5. Did you change what a ratified clause means? That is a proposal, not a restyle.
