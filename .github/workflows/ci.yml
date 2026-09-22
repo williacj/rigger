@@ -28,3 +28,4 @@ jobs:
       - run: npm run lint:spec-style
       - run: npm run check:references
       - run: npm run check:paths
+      - run: npm run check:ids
