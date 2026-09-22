@@ -63,6 +63,20 @@ helpers: a test that asks the code what the answer should be agrees with the cod
 construction, and passes just as happily once the code is wrong. Failing first does not catch
 this one, because such a test fails before the code exists and passes for ever after.
 
+**Derive what a double returns, too.** "Derive the expected value independently" is the rule
+above; this is its other half. A double returning what the assertion expects agrees with your
+assumption by construction, and that argument carries over unchanged. Take the value from the
+real collaborator — a recorded response, a shape its interface guarantees, a literal you read
+from the real thing — never from what makes the test pass. Failing first misses this one for the
+same reason.
+
+**Something exercises the real wiring.** A suite green against doubles everywhere can compose
+into software that has never run, and every unit test goes on passing while it does.
+"Prefer real collaborators" is a preference; this is the floor under it. Where you substitute
+across a boundary, one test crosses it for real, in the same work rather than a follow-up. Where
+it cannot be crossed in a test, say so where the substitute is defined, so the next reader knows
+what is unproven.
+
 ## A bug fix
 
 Every bug fix starts with the failing test (`AGENTS.md`). Reproduce the bug as a test first,
