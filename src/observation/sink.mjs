@@ -6,6 +6,10 @@ import { join } from 'node:path';
 
 const STREAM = 'events.jsonl';
 
+// The envelope's own keys. The sink stamps every one of them, so a layer supplying one would be
+// writing a fact about the run or the card that it is not the layer to know.
+const ENVELOPE = ['ts', 'run', 'layer', 'event', 'card', 'dispatch'];
+
 /** The one stream L5 owns, inside the state directory the consumer named. */
 const streamPath = (directory) => join(directory, STREAM);
 
@@ -22,6 +26,10 @@ export function openSink({ directory, run, now }) {
     /** An emitter for one layer, and the card and dispatch its events arise under. */
     emitter: ({ layer, card, dispatch }) => ({
       emit(event, fields) {
+        const stamped = Object.keys(fields ?? {}).filter((key) => ENVELOPE.includes(key));
+        if (stamped.length > 0) {
+          throw new Error(`${event} supplied ${stamped.join(', ')}, which the sink stamps`);
+        }
         const record = {
           ts: new Date(now()).toISOString(),
           run,

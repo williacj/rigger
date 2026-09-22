@@ -78,3 +78,34 @@ test('the envelope is written in the order ARCHITECTURE.md shows, ahead of the l
   const [event] = readEvents(directory);
   assert.deepEqual(Object.keys(event), ['ts', 'run', 'layer', 'event', 'card', 'dispatch', 'role', 'exit']);
 });
+
+test('the sink stamps the card, so two emitters make the same call and record different cards', () => {
+  const directory = stateDir();
+  const sink = openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14, AT_14_19]) });
+  // Detached from the emitter that made them, so what each call records can only have come
+  // from the sink: the emitting code holds a function and nothing else.
+  const { emit: emitFor1412 } = sink.emitter({ layer: 'L0', card: 1412, dispatch: 'd-01' });
+  const { emit: emitFor1500 } = sink.emitter({ layer: 'L0', card: 1500, dispatch: 'd-02' });
+
+  emitFor1412('survivor.killed', { name: 'rust-analyzer-proc-macro-srv' });
+  emitFor1500('survivor.killed', { name: 'rust-analyzer-proc-macro-srv' });
+
+  assert.deepEqual(
+    readEvents(directory).map(({ card, dispatch, run, name }) => ({ card, dispatch, run, name })),
+    [
+      { card: 1412, dispatch: 'd-01', run: 'r-8f21', name: 'rust-analyzer-proc-macro-srv' },
+      { card: 1500, dispatch: 'd-02', run: 'r-8f21', name: 'rust-analyzer-proc-macro-srv' },
+    ],
+  );
+});
+
+test('an emitting layer that supplies an envelope field is refused, and told which one', () => {
+  const directory = stateDir();
+  const emitter = openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14]) })
+    .emitter({ layer: 'L0', card: 1412 });
+
+  assert.throws(
+    () => emitter.emit('survivor.killed', { card: 9999, name: 'rust-analyzer-proc-macro-srv' }),
+    /card/,
+  );
+});
