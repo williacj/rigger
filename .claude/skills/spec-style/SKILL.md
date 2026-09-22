@@ -70,7 +70,10 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
   each register's preamble, which is the authority; `AGENTS.md`'s "When you write a decision or a
   requirement" states what proposing one obliges you to do. Read the preamble of the file you are
   changing before you draft.
-- **Not a lint.** Nothing checks these mechanically. They hold because an author applies them and
+- **Not all of it lintable.** `scripts/spec-style-lint.mjs` reads rules 1 and 2 off this file and
+  applies them to the documents the description above names: a ruled-out term is a finding, and so
+  is a sentence past the ceiling. Rules 3 and 4 ask whether an actor matters and whether a
+  structure fits its meaning. Those are judgments, so they hold because an author applies them and
   a reviewer reads for them.
 
 ## Before you hand it off
