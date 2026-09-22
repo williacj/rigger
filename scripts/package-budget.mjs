@@ -12,10 +12,15 @@ import { fileURLToPath } from 'node:url';
 // outside `src/` is one of those, which is why the walk starts there.
 const SOURCES = 'src';
 const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
-const TEST_SUFFIX = /(?:\.|-|_)test\.(?:m|c)?js$/;
-// A template is outside the budget wherever it sits, rather than only at the root, so a
-// directory of them under `src/` does not quietly start counting.
-const SHIPPED = 'templates';
+// A test is whatever `npm test` runs, and `npm test` is `node --test`, so these are that
+// command's own default patterns: `test.js`, `test-*.js`, and the `.test.`, `-test.` and
+// `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
+// file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
+const TEST_FILE = /(?:^|[.\-_])test\.(?:m|c)?js$|^test-.*\.(?:m|c)?js$/;
+// Directories the budget never charges for, wherever they sit rather than only at the root: a
+// directory of templates under `src/` is still templates, and `node --test` runs every file
+// under a `test` directory whatever it is called.
+const UNCHARGED = new Set(['templates', 'test']);
 
 /**
  * The package's line budget, read from ARCHITECTURE.md's Budgets table rather than typed here,
@@ -115,9 +120,9 @@ export function productionFiles(root) {
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .flatMap((entry) => {
         const path = join(dir, entry.name);
-        if (entry.isDirectory()) return entry.name === SHIPPED ? [] : walk(path);
+        if (entry.isDirectory()) return UNCHARGED.has(entry.name) ? [] : walk(path);
         if (!SOURCE_SUFFIX.test(entry.name)) return [];
-        if (TEST_SUFFIX.test(entry.name)) return [];
+        if (TEST_FILE.test(entry.name)) return [];
         return [path];
       });
   };

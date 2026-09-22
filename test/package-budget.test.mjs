@@ -3,9 +3,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 import {
   check,
@@ -101,6 +102,62 @@ test('the walk takes production sources and leaves tests out', () => {
   writeFileSync(join(root, 'src', 'notes.md'), 'not source\n');
 
   assert.deepEqual(productionFiles(root), [join(root, 'src', 'substrate', 'git.mjs')]);
+});
+
+// Every spelling `node --test` executes as a test, and three near misses that it does not.
+// `npm test` is `node --test`, so this list is what this repository means by "a test", and the
+// budget charges for none of it. The near misses are here because an exclusion wide enough to
+// catch `testing.mjs` would stop charging for production code.
+const RUN_AS_TESTS = [
+  'src/scheduling/test.mjs',
+  'src/scheduling/test-tick.mjs',
+  'src/scheduling/tick.test.mjs',
+  'src/scheduling/tick-test.mjs',
+  'src/scheduling/tick_test.mjs',
+  'src/scheduling/test/helper.mjs',
+];
+const NOT_TESTS = ['src/scheduling/latest.mjs', 'src/scheduling/testing.mjs', 'src/workflow/real.mjs'];
+
+/** A repository holding every shape above, each file a test the runner can really run. */
+function everyShape() {
+  const root = mkdtempSync(join(tmpdir(), 'rigger-shapes-'));
+  for (const path of [...RUN_AS_TESTS, ...NOT_TESTS]) {
+    mkdirSync(join(root, dirname(path)), { recursive: true });
+    writeFileSync(join(root, path), `import { test } from 'node:test';\ntest('${path}', () => {});\n`);
+  }
+  return root;
+}
+
+test('no spelling the test runner executes is charged to the budget', () => {
+  const root = everyShape();
+
+  assert.deepEqual(productionFiles(root), NOT_TESTS.map((path) => join(root, path)));
+});
+
+test('what the check calls a test is what the test runner runs', () => {
+  // The two definitions have to move together, and only the runner can say what it runs. This
+  // asks it, on whichever Node is running the suite, rather than trusting the patterns copied
+  // into the list above.
+  const root = everyShape();
+  const counted = productionFiles(root);
+
+  // `NODE_TEST_CONTEXT` marks a process as already inside a test run, and a child that inherits
+  // it refuses to look for files at all. This run has to be the outer one.
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  const ran = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+  });
+  const executed = [...ran.stdout.matchAll(/^# Subtest: (\S+)$/gm)].map(([, path]) => path);
+
+  assert.ok(executed.length > 0, `the runner ran nothing:\n${ran.stdout}${ran.stderr}`);
+  for (const path of executed) {
+    assert.ok(
+      !counted.includes(join(root, path)),
+      `${path} runs as a test and is charged to the production budget`,
+    );
+  }
 });
 
 test('a template, and a check Rigger ships for a consumer, are not counted', () => {
