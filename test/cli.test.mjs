@@ -136,19 +136,24 @@ test('the command with no verb at all asks for one, and lists them', () => {
  * A README shaped like Rigger's, listing verbs that are not Rigger's.
  *
  * The verbs here are invented precisely so that this is not a second copy of the real list: what
- * it proves is that the reader reports whatever the document says. The `rigger` line in the prose
- * is the shape the real README has in Prerequisites and Status, where a verb is named outside the
- * block and is not part of the contract.
+ * it proves is that the reader reports whatever the document says.
+ *
+ * Two invocations are named where the contract is not. `loose` sits in another section, as the
+ * real README names `setup-board` in Prerequisites and `report` in Status, and `stray` sits in
+ * this section but outside the command block. A reader scoped to the document takes the first,
+ * and one scoped to the section takes the second, so the fixture holds the scope to the block.
  */
 function readmeListing(verbs, comment = (verb) => `what ${verb} does`) {
   return [
     '## Prerequisites',
     '',
-    '- `rigger loose` is named in prose, and prose is not the contract.',
+    'npx @williacj/rigger loose runs in another section, which is not the contract.',
     '',
     '## Install and usage',
     '',
     '> The commands below are the target interface.',
+    '',
+    'npx @williacj/rigger stray is named in a note beside the block, not in it.',
     '',
     '```bash',
     ...verbs.map((verb) => `npx @williacj/rigger ${verb}   # ${comment(verb)}`),
@@ -162,9 +167,9 @@ function readmeListing(verbs, comment = (verb) => `what ${verb} does`) {
 
 test('the verbs are read out of the README, so a README listing others reports those', () => {
   // This is the item that decides the design: the check reads the block rather than holding a
-  // copy of what it says. The defects it catches are a reader that answers with a list of its
-  // own whatever it is given, and one that takes a verb the README names in prose, where the
-  // real README names `setup-board` and `report` outside the contract.
+  // copy of what it says. The defects it catches are a reader that answers with a list of its own
+  // whatever it is given, and one whose scope is wider than the block, which would make a verb
+  // named anywhere in the README part of the contract.
   assert.deepEqual(usageVerbs(readmeListing(['beta', 'alpha']), '@williacj/rigger'), ['beta', 'alpha']);
 });
 
