@@ -4,9 +4,62 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { declarationsIn, register, render } from '../scripts/build-test-matrix.mjs';
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { check, declarationsIn, register, render } from '../scripts/build-test-matrix.mjs';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Run the generator as CI runs it, against a fixture repository rather than this one. What the
+ * acceptance names is an exit code and what the run prints, and nothing short of the command
+ * observes either.
+ */
+const run = (dir, ...args) =>
+  spawnSync(process.execPath, [join(root, 'scripts', 'build-test-matrix.mjs'), ...args, dir], {
+    encoding: 'utf8',
+  });
 
 const lines = (...rows) => rows.join('\n');
+
+/** A fixture repository holding the files a run reads, and nothing else. */
+function fixture(files) {
+  const dir = mkdtempSync(join(tmpdir(), 'rigger-matrix-'));
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(join(dir, dirname(path)), { recursive: true });
+    writeFileSync(join(dir, path), content);
+  }
+  return dir;
+}
+
+/** A register of requirements, written the way `docs/spec/requirements.md` writes one. */
+const registerOf = (...rows) => lines(
+  'ABOUTME: a fixture register.',
+  '',
+  '## R-ONE — a group',
+  '',
+  '| id | requirement | made true by | checked by | from |',
+  '|---|---|---|---|---|',
+  ...rows.map(([id, checkedBy]) => `| ${id} | a thing | the engine | ${checkedBy} | |`),
+  '',
+);
+
+/** A register of withdrawn requirements, written the way `requirements-retired.md` writes one. */
+const retiredOf = (...ids) => lines(
+  'ABOUTME: a fixture register of withdrawn requirements.',
+  '',
+  '| id | requirement | from | withdrawn | replaced by |',
+  '|---|---|---|---|---|',
+  ...ids.map((id) => `| ${id} | a thing | | 2026-01-01 | |`),
+  '',
+);
+
+/** A test file carrying one declaration and the test it speaks for. */
+const proving = (declaration, title) => `${declaration}\ntest('${title}', () => {});\n`;
 
 /** The one row a rendered matrix gives a requirement, whole, so its cells can be read. */
 const rowFor = (document, id) =>
@@ -147,4 +200,145 @@ test('a test claiming a requirement the register records as unchecked is named a
   );
 
   assert.equal(rowFor(document, 'R-ONE-1'), '| R-ONE-1 | `test/first.test.mjs` the first thing holds |');
+});
+
+test('a run reads the register and the tests off disk, and counts what no test claims', () => {
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite'], ['R-ONE-2', 'the gate']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/first.test.mjs': proving('// proves R-ONE-1', 'the first thing holds'),
+  });
+
+  const report = check(dir);
+
+  assert.equal(
+    rowFor(report.document, 'R-ONE-1'),
+    '| R-ONE-1 | `test/first.test.mjs` the first thing holds |',
+  );
+  assert.equal(rowFor(report.document, 'R-ONE-2'), '| R-ONE-2 | **gap** |');
+  assert.equal(report.total, 2);
+  assert.equal(report.untested, 1);
+});
+
+test('a test declaring a requirement that does not exist is refused, naming the id', () => {
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/first.test.mjs': proving('// proves R-ONE-2', 'the first thing holds'),
+  });
+
+  assert.throws(() => check(dir), (error) => {
+    assert.match(error.message, /R-ONE-2/);
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    return true;
+  });
+});
+
+test('a test declaring a withdrawn requirement is refused, and told that it is withdrawn', () => {
+  // The retired register keeps a withdrawn id allocated, so the id resolves. What it no longer
+  // does is bind, and a test claiming to prove it claims something the register does not say.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf('R-ONE-2'),
+    'test/first.test.mjs': proving('// proves R-ONE-2', 'the first thing holds'),
+  });
+
+  assert.throws(() => check(dir), (error) => {
+    assert.match(error.message, /R-ONE-2/);
+    assert.match(error.message, /withdrawn/);
+    return true;
+  });
+});
+
+/** A fixture repository with two requirements, one of them proved by a test. */
+const repository = () => fixture({
+  'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite'], ['R-ONE-2', 'the gate']),
+  'docs/spec/requirements-retired.md': retiredOf(),
+  'test/first.test.mjs': proving('// proves R-ONE-1', 'the first thing holds'),
+});
+
+test('a written matrix regenerates byte for byte, and the check admits it', () => {
+  const dir = repository();
+  const matrix = join(dir, 'docs', 'derived', 'test-matrix.md');
+
+  const written = run(dir, '--write');
+  assert.equal(written.status, 0, written.stderr);
+  const first = readFileSync(matrix);
+
+  // Nothing in the document may come from the clock or from the order a directory happened to
+  // be read in: a second run over an unchanged repository has nothing new to say.
+  assert.equal(run(dir, '--write').status, 0);
+  assert.deepEqual(readFileSync(matrix), first);
+  assert.equal(run(dir).status, 0, 'the check refuses the matrix its own write produced');
+});
+
+test('a matrix edited by hand fails the check, naming the file', () => {
+  const dir = repository();
+  run(dir, '--write');
+  appendFileSync(join(dir, 'docs', 'derived', 'test-matrix.md'), '| R-ONE-2 | by hand |\n');
+
+  const edited = run(dir);
+
+  assert.equal(edited.status, 1);
+  assert.match(edited.stderr, /docs\/derived\/test-matrix\.md/);
+});
+
+test('a matrix that no longer matches the tests fails the check', () => {
+  const dir = repository();
+  run(dir, '--write');
+  writeFileSync(join(dir, 'test', 'second.test.mjs'), proving('// proves R-ONE-2', 'the second thing holds'));
+
+  const stale = run(dir);
+
+  assert.equal(stale.status, 1);
+  assert.match(stale.stderr, /docs\/derived\/test-matrix\.md/);
+});
+
+test('a file under docs/derived that no tool writes fails the check, naming it', () => {
+  // D8 rule 1: everything under that directory is generated. A hand-written file there is the
+  // edit rule 2 refuses, whether it arrived by editing the matrix or by adding a second file.
+  const dir = repository();
+  run(dir, '--write');
+  writeFileSync(join(dir, 'docs', 'derived', 'notes.md'), 'typed by hand\n');
+
+  const strayed = run(dir);
+
+  assert.equal(strayed.status, 1);
+  assert.match(strayed.stderr, /notes\.md/);
+});
+
+test('a run refuses to write a matrix over a claim that cannot be true', () => {
+  // The exit code is what fails the build, and a matrix written from a claim the register does
+  // not recognise would record that claim as evidence.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/first.test.mjs': proving('// proves R-ONE-2', 'the first thing holds'),
+  });
+
+  const { status, stdout, stderr } = run(dir, '--write');
+
+  assert.notEqual(status, 0, 'the run carried on over a requirement that does not exist');
+  assert.match(stdout + stderr, /R-ONE-2/);
+  assert.throws(() => readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md')));
+});
+
+test('this repository holds a matrix that is current, and nothing else under docs/derived', () => {
+  // Every run above reads a fixture. This one reads the register this repository authors, the
+  // tests it actually has — this file among them — and the matrix committed beside them, so a
+  // declaration added without regenerating is caught here rather than only in CI.
+  const report = check(root);
+
+  assert.equal(report.stale, false, 'the committed matrix is not what the tests say: run `npm run matrix`');
+  assert.deepEqual(report.strays, []);
+});
+
+test('every run prints how many requirements no test claims', () => {
+  const dir = repository();
+
+  for (const args of [['--write'], []]) {
+    const printed = run(dir, ...args);
+    assert.equal(printed.status, 0, printed.stderr);
+    assert.match(printed.stdout, /1 of 2 requirements have no test/);
+  }
 });

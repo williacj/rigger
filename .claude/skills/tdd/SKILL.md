@@ -108,6 +108,13 @@ Each test declares the requirement it proves. A tool builds `docs/derived/test-m
 those declarations, so the matrix is generated and never hand-edited (`D8`), and a requirement
 no test claims reds the build (`AGENTS.md`; `docs/v0-build-plan.md`, M0).
 
+A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
+for, naming as many ids as that test proves, separated by commas. It is a whole line, so a
+declaration quoted inside a string claims nothing, and one standing above no test is refused.
+`npm run matrix` rebuilds the matrix and `npm run matrix:check` refuses one that has gone stale,
+so the declarations a piece of work adds are regenerated and committed with it. A declaration
+naming an id `docs/spec/requirements.md` does not hold is refused by name.
+
 So when you add a requirement, the test that claims it is part of the same work. And when you
 write a test, name the requirement it proves rather than leaving the matrix to guess.
 

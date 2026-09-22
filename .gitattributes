@@ -2,3 +2,7 @@
 # CRLF fails on its own shebang, so the hooks are pinned to LF wherever they are cloned.
 
 .githooks/* text eol=lf
+
+# A generated document is compared with what its tool produces, byte for byte, so the bytes in
+# the working tree have to be the bytes the tool writes on every platform.
+docs/derived/* text eol=lf
