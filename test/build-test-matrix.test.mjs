@@ -173,6 +173,38 @@ test('a declaration above a test that is commented out is refused, because that 
   assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), /stands above no test/);
 });
 
+test('a comment opener inside a string opens no comment, so what follows is still read', () => {
+  // `test/package-budget.test.mjs` holds this shape — a fixture in a single-line string carrying
+  // a comment opener — and a scan reading that as a comment dropped every declaration after it
+  // without a word. A dropped claim reads exactly like a requirement no test claims, in the one
+  // document whose job is to tell those two apart.
+  const source = lines(
+    'const source = [\'const s = "/*";\', \'const a = 1;\'].join(String.fromCharCode(10));',
+    '// proves R-ONE-1',
+    "test('the first thing holds', () => {});",
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), [
+    { ids: ['R-ONE-1'], title: 'the first thing holds' },
+  ]);
+});
+
+test('a block comment the scan never sees close is refused, not swallowed', () => {
+  // Source that parses cannot leave a block comment open, so the scan has misread something.
+  // What that costs is this refusal, never the rest of a file going quietly unread.
+  const source = lines(
+    '/* a comment that never closes',
+    '// proves R-ONE-1',
+    "test('the first thing holds', () => {});",
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /never closes/);
+    return true;
+  });
+});
+
 test('a test commented out in a block claims nothing, declaration and all', () => {
   // The same shape as a call commented out with two slashes, and it has to end the same way.
   // Here the declaration is commented out with it, so there is nothing to refuse: what the file
@@ -400,6 +432,27 @@ test('a file under docs/derived that no tool writes fails the check, naming it',
 
   assert.equal(strayed.status, 1);
   assert.match(strayed.stderr, /notes\.md/);
+});
+
+test('a claim that cannot be true is refused in a file that carries a comment opener too', () => {
+  // The shape reported on this repository's own `test/package-budget.test.mjs`: a bogus id in a
+  // file whose fixtures quote a comment opener. The scan lost the declaration, so the run wrote
+  // a matrix and exited 0 over a claim that could not be true.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/first.test.mjs': lines(
+      'const source = [\'const s = "/*";\', \'const a = 1;\'].join(String.fromCharCode(10));',
+      '// proves R-NOPE-9',
+      "test('a test naming a requirement that does not exist', () => {});",
+      '',
+    ),
+  });
+
+  const { status, stdout, stderr } = run(dir, '--write');
+
+  assert.notEqual(status, 0, 'the run carried on over a requirement that does not exist');
+  assert.match(stdout + stderr, /R-NOPE-9/);
 });
 
 test('a run refuses to write a matrix over a claim that cannot be true', () => {

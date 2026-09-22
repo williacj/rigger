@@ -119,10 +119,12 @@ The scan reads lines, not syntax, which is what a fixture in a test has to work 
 declaration is a whole line, so one written inside a single-line string claims nothing: that is
 the shape a fixture takes here, with `\n` escapes where it needs more than one line. Write the
 same fixture as a template literal spanning lines and its lines are lines like any other, so the
-declaration in it is refused where it sits rather than read as a claim. What the scan cannot see
-is a quoted run, so a backtick, or either half of a block-comment marker, inside a string shifts
-its reading of where that literal or comment ends — one more reason a fixture goes in a
-single-line string, where no such shift arises.
+declaration in it is refused where it sits rather than read as a claim. The scan does read quoted
+runs, so a comment marker inside a string is text and opens no comment. What it cannot see is
+syntax: a stray backtick in a string counts towards whether a template literal is open, so a
+declaration below one is refused by name — if you meet that refusal, look above it for the
+backtick — and a comment marker inside a regular expression reads as a marker, which refuses the
+file when the comment it opens never closes.
 
 So when you add a requirement, the test that claims it is part of the same work. And when you
 write a test, name the requirement it proves rather than leaving the matrix to guess.

@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TEST_FILE } from './package-budget.mjs';
+import { endOfQuoted, TEST_FILE } from './package-budget.mjs';
 
 /** The cells of one markdown table row, trimmed. */
 function cells(line) {
@@ -55,7 +55,14 @@ function backticks(line) {
   return (line.match(BACKTICK) ?? []).filter((token) => token === '`').length;
 }
 
-/** Whether a block comment is open at the end of a line, given whether one was open before it. */
+/**
+ * Whether a block comment is open at the end of a line, given whether one was open before it.
+ *
+ * The scan reads quoted runs, so a marker inside one opens and closes nothing: a fixture written
+ * as a single-line string holds the text of a comment opener, not an opener.
+ * `scripts/package-budget.mjs` reads a quoted run the same way for the same reason, and this
+ * asks it where one ends rather than keeping a second answer.
+ */
 function commenting(line, open) {
   let at = 0;
   while (at < line.length) {
@@ -64,13 +71,19 @@ function commenting(line, open) {
       if (close < 0) return true;
       open = false;
       at = close + 2;
-    } else {
-      const start = line.indexOf('/*', at);
-      const slashes = line.indexOf('//', at);
-      // Two slashes first, and the rest of the line is a comment that opens no block.
-      if (start < 0 || (slashes >= 0 && slashes < start)) return false;
+    } else if (line[at] === '"' || line[at] === "'" || line[at] === '`') {
+      const close = endOfQuoted(line, at + 1, line[at]);
+      // A run the line never closes carries on past its end, where a marker is text as well.
+      if (close < 0) return open;
+      at = close;
+    } else if (line[at] === '/' && line[at + 1] === '/') {
+      // Two slashes, and the rest of the line is a comment that opens no block.
+      return open;
+    } else if (line[at] === '/' && line[at + 1] === '*') {
       open = true;
-      at = start + 2;
+      at += 2;
+    } else {
+      at += 1;
     }
   }
   return open;
@@ -85,13 +98,13 @@ function commenting(line, open) {
  * literal is open and the line may be the text of a fixture rather than a claim. A declaration
  * inside a block comment is read as commented out, along with the test beneath it.
  *
- * What the scan cannot see is a quoted run, so a backtick, or either half of a block-comment
- * marker, inside a string shifts its reading of where that literal or comment ends. A fixture
- * written as a single-line string carries no such shift, which is the shape a fixture takes
- * here for that reason. Where one does shift the reading, it costs a declaration refused by
- * name, or a claim never made, or — where the shift falls inside a fixture that already spans
- * lines — a claim naming a line of that fixture. Reading those apart for certain needs a
- * parser, and this is a scan.
+ * What the scan cannot see is syntax. It reads quoted runs, so a comment marker inside a string
+ * is text and opens nothing; what it still cannot tell apart is a backtick inside a string from
+ * one opening a template literal, or a comment marker inside a regular expression from one
+ * opening a comment. A backtick costs a declaration after it refused by name. A marker costs
+ * the file refused where the comment it opens never closes, and a declaration between it and
+ * whatever does close it going unread where something does. Reading either apart for certain
+ * needs a parser, and this is a scan.
  */
 export function declarationsIn(source, file) {
   const lines = source.split(/\r?\n/);
@@ -124,6 +137,16 @@ export function declarationsIn(source, file) {
     }
     if (!commented && backticks(line) % 2 === 1) quoting = !quoting;
     commented = commenting(line, commented);
+  }
+  if (commented) {
+    // Source that parses cannot leave a block comment open, so the scan has misread a marker
+    // somewhere — inside a regular expression, or inside a fixture that spans lines. Everything
+    // after it went unread, and a claim nobody hears about is worse than a refusal.
+    throw new Error(
+      `${file}: a block comment opens and never closes, so the scan lost the rest of the file ` +
+      'and any declaration in it. Source that parses does not end inside a comment, so a marker ' +
+      'in it has been read as one; putting that text in a single-line string clears it.',
+    );
   }
   return found;
 }

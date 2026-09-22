@@ -34,8 +34,13 @@ export function packageBudget(architecture) {
   return Number(row[1].replace(/,/g, ''));
 }
 
-/** Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on. */
-function endOfQuoted(line, start, quote) {
+/**
+ * Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on.
+ *
+ * Exported because `scripts/build-test-matrix.mjs` has the same reason to read a quoted run:
+ * a comment opener inside one opens no comment, whichever scan is looking at it.
+ */
+export function endOfQuoted(line, start, quote) {
   for (let i = start; i < line.length; i++) {
     if (line[i] === '\\') i++;
     else if (line[i] === quote) return i + 1;
