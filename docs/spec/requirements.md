@@ -99,6 +99,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-SCHED-8 | A trigger missed while Rigger was down fires once when it returns, or not at all, as that trigger's own catch-up setting says. It never fires once for each occurrence missed. | the engine | the event record, by firings after a restart | |
 | R-SCHED-9 | Two cards never merge at the same moment. | the engine | the event record, by overlapping merge intervals | |
 | R-SCHED-10 | Rigger refuses a configuration naming anything it does not offer, and says what it refused. | the config validator | the test suite | |
+| R-SCHED-11 | Rigger never pulls a ready card no kind of work selects, never reports it as a card it refused, and leaves it on the board. Work the consumer marked as an epic is selected by no kind, so Rigger never pulls an epic and never reports one as refused. | the engine, and the consumer's configuration for what each kind selects | the test suite | |
 
 ## R-WORK — isolation and exclusivity
 
