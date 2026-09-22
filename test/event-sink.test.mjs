@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -157,4 +157,29 @@ test('an event recorded before the writing process is killed is still there afte
   assert.equal(killed.stderr, '', 'the child failed before it was killed');
   assert.notEqual(killed.status, 0, 'the child exited normally, so nothing was killed');
   assert.deepEqual(readEvents(directory).map((event) => event.queueDepth), [7, 6]);
+});
+
+test('a reader recovers every event that was emitted, in the order they were emitted', () => {
+  const directory = stateDir();
+  const emitted = Array.from({ length: 1000 }, (unused, index) => index);
+  const sink = openSink({ directory, run: 'r-8f21', now: clockOver(emitted.map(() => AT_14_14)) });
+  const { emit } = sink.emitter({ layer: 'L3', card: 1412 });
+
+  for (const queueDepth of emitted) emit('pull', { queueDepth });
+
+  assert.deepEqual(readEvents(directory).map((event) => event.queueDepth), emitted);
+});
+
+test('a torn line is refused rather than passed over, and the reader says which line', () => {
+  // What a machine that lost power mid-append would leave. The sink does not repair it, and
+  // the point of this test is that a reader does not quietly return the events either side of
+  // the damage as though the record were whole.
+  const directory = stateDir();
+  openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14]) })
+    .emitter({ layer: 'L3', card: 1412 })
+    .emit('pull', { queueDepth: 7 });
+  const whole = readFileSync(join(directory, 'events.jsonl'));
+  writeFileSync(join(directory, 'events.jsonl'), whole.subarray(0, whole.length - 8));
+
+  assert.throws(() => readEvents(directory), /events\.jsonl line 1 is not a recorded event/);
 });

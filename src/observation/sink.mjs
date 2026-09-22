@@ -45,10 +45,25 @@ export function openSink({ directory, run, now }) {
   };
 }
 
-/** Every event in a state directory's stream, in the order it was recorded. */
+/**
+ * Every event in a state directory's stream, in the order it was recorded.
+ *
+ * Anything that is not one event on one line is refused, named by the line it sits on. A reader
+ * that passed over it would return the events either side of the damage as though the record
+ * were whole, and R-RECORD-6 is the claim that it is.
+ */
 export function readEvents(directory) {
-  return readFileSync(streamPath(directory), 'utf8')
-    .split('\n')
-    .filter((line) => line !== '')
-    .map((line) => JSON.parse(line));
+  const path = streamPath(directory);
+  const lines = readFileSync(path, 'utf8').split('\n');
+  const events = [];
+  for (const [index, line] of lines.entries()) {
+    // Every event ends in a newline, so the split's last piece is empty on a whole stream.
+    if (line === '' && index === lines.length - 1) continue;
+    try {
+      events.push(JSON.parse(line));
+    } catch (cause) {
+      throw new Error(`${path} line ${index + 1} is not a recorded event`, { cause });
+    }
+  }
+  return events;
 }
