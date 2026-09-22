@@ -27,3 +27,4 @@ jobs:
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
       - run: npm run check:references
+      - run: npm run check:paths
