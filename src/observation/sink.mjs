@@ -1,6 +1,13 @@
 // ABOUTME: L5's event sink: it stamps every event with the envelope and appends it to one JSONL
 // ABOUTME: stream in the consumer's state directory, and reads that stream back.
 
+// What this buys, and what it does not. One event is one synchronous append of one line, so the
+// stream only ever grows and a process killed outright loses no event whose call had already
+// returned; `test/event-sink.test.mjs` kills one and reads the stream back. Nothing is flushed
+// to the disk, so a machine that loses power can still lose the tail, and a torn line is then
+// refused by the reader rather than repaired here. Two processes appending to one stream at once
+// is not measured, and nothing emits yet, so nothing has needed either.
+
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
