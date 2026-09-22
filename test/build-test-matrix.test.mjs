@@ -258,6 +258,45 @@ test('a test claiming a requirement the register records as unchecked is named a
   assert.equal(rowFor(document, 'R-ONE-1'), '| R-ONE-1 | `test/first.test.mjs` the first thing holds |');
 });
 
+test('a declaration is read out of every file the test runner runs, wherever it sits', () => {
+  // `npm test` is `node --test`, which runs a name it recognises wherever that file sits and
+  // every JavaScript file under a directory named `test`. A scan reading less than the runner
+  // runs drops a claim a real test made, and lets a claim that cannot be true through with it.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite'], ['R-ONE-2', 'the gate']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'src/beside-the-code.test.mjs': proving('// proves R-ONE-1', 'the first thing holds'),
+    'test/helpers.mjs': proving('// proves R-ONE-2', 'the second thing holds'),
+  });
+
+  const report = check(dir);
+
+  assert.equal(
+    rowFor(report.document, 'R-ONE-1'),
+    '| R-ONE-1 | `src/beside-the-code.test.mjs` the first thing holds |',
+  );
+  assert.equal(
+    rowFor(report.document, 'R-ONE-2'),
+    '| R-ONE-2 | `test/helpers.mjs` the second thing holds |',
+  );
+  assert.equal(report.untested, 0);
+});
+
+test('a declaration in a package the runner never runs is left where it lies', () => {
+  // `node --test` does not descend into `node_modules`, and CI has one. A claim found there
+  // would be a claim about somebody else's tests, and a bogus id there would red this build.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'node_modules/somebody-else/first.test.mjs': proving('// proves R-OTHER-9', 'their test'),
+  });
+
+  const report = check(dir);
+
+  assert.equal(report.untested, 1);
+  assert.equal(rowFor(report.document, 'R-ONE-1'), '| R-ONE-1 | **gap** |');
+});
+
 test('a run reads the register and the tests off disk, and counts what no test claims', () => {
   const dir = fixture({
     'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite'], ['R-ONE-2', 'the gate']),
@@ -426,6 +465,15 @@ test('no run writes a matrix naming a test that is a fixture, or one commented o
       `${shape} left a matrix behind`,
     );
   }
+});
+
+test('CI runs the check, which is what turns its exit code into a failed build', () => {
+  // Every refusal above is an exit code. An exit code fails the build only where something runs
+  // the command, so the step in the workflow is the link between the two, and it is load-bearing
+  // for every one of them.
+  const workflow = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+  assert.match(workflow, /^\s*- run: npm run matrix:check$/m);
 });
 
 test('this repository holds a matrix that is current, and nothing else under docs/derived', () => {

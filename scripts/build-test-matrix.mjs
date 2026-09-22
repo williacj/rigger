@@ -5,6 +5,8 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { TEST_FILE } from './package-budget.mjs';
+
 /** The cells of one markdown table row, trimmed. */
 function cells(line) {
   return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
@@ -172,6 +174,12 @@ export function render(requirements, claims) {
 const REQUIREMENTS = 'docs/spec/requirements.md';
 const RETIRED = 'docs/spec/requirements-retired.md';
 const TESTS = 'test';
+// Directories no run reads: the one npm installs into, which `node --test` does not descend
+// into either, and git's own.
+const UNREAD = new Set(['node_modules', '.git']);
+// Inside a directory named `test` the runner runs any JavaScript file, whatever it is called,
+// so the spelling is all there is left to ask about there.
+const JAVASCRIPT = /\.(?:m|c)?js$/;
 // D8 rule 4: this directory exists only while it holds a generated document, so the write below
 // creates it. Everything in it is written here, which is what makes a file the tool does not
 // recognise a hand edit rather than a mystery.
@@ -194,17 +202,37 @@ function filesUnder(root, directory, prefix = '') {
 }
 
 /**
- * Every claim the tests in a repository make, in file order and then in line order.
+ * Every file in a repository that `node --test` would run, as repository-relative paths in a
+ * stable order.
  *
- * `npm test` is `node --test`, which runs every file under the test directory whatever that file
- * is named, so the test directory is what the scan reads rather than a set of names of its own.
+ * `npm test` is `node --test`, which runs a name it recognises wherever that file sits and every
+ * JavaScript file under a directory named `test`. Both are read, because a declaration in a file
+ * the runner runs is a claim a test made whatever directory holds it — and a declaration the
+ * scan never reaches is a claim nothing checks. `scripts/package-budget.mjs` owns the names,
+ * having the same question to answer about its budget.
  */
+export function testFiles(root, directory = '', tests = false) {
+  let entries;
+  try {
+    entries = readdirSync(join(root, directory), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .flatMap((entry) => {
+      const path = directory === '' ? entry.name : `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        return UNREAD.has(entry.name) ? [] : testFiles(root, path, tests || entry.name === TESTS);
+      }
+      return JAVASCRIPT.test(entry.name) && (tests || TEST_FILE.test(entry.name)) ? [path] : [];
+    });
+}
+
+/** Every claim the tests in a repository make, in file order and then in line order. */
 export function declarations(root) {
-  return filesUnder(root, TESTS).flatMap((name) => {
-    const file = `${TESTS}/${name}`;
-    return declarationsIn(readFileSync(join(root, file), 'utf8'), file)
-      .map((declaration) => ({ file, ...declaration }));
-  });
+  return testFiles(root).flatMap((file) => declarationsIn(readFileSync(join(root, file), 'utf8'), file)
+    .map((declaration) => ({ file, ...declaration })));
 }
 
 /** What a run finds in one repository. */
