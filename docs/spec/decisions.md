@@ -52,6 +52,7 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
+| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
 
 ## D1 — Redo over resume
 
@@ -466,3 +467,45 @@ answering it.
 What would reverse this is drift the reader sees: `report` showing judges filing findings against
 diagrams that disagree with what they depict, or the owner reading a diagram the document has
 outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.
+
+## D16 — Code asks the tool that owns the fact, and says where it can disagree
+
+**Status:** Ratified.
+
+### Rule
+
+1. Where a tool or command outside Rigger owns a fact, that tool decides it and Rigger's code
+   never decides it instead. `npm test` is `node --test`, so what counts as a test is that
+   command's answer rather than a list of spellings a script thought of.
+2. Code carrying a copy of an authority's answer — a pattern, a threshold, a list — ties that copy
+   to the authority with a test that asks it. The copy is never what decides.
+3. Code depending on an authority records where the authority's answer can differ from its own,
+   beside the code that depends on it. The record is measured, never estimated, because a bound
+   nobody measured is a guess carrying a number.
+
+### Notes
+
+The corpus had written this rule twice and left one direction out. `D8` covers code to document:
+a fact the code owns is generated, never typed. `AGENTS.md`, under "Documents own their facts",
+covers document to document: a fact owned elsewhere is written as a reference and never retyped.
+Neither reaches code that restates what a tool would have answered.
+
+Two defects in `scripts/package-budget.mjs` lived in that gap, and no lens in
+`.claude/skills/code-review/` asked the question that would have caught either. `docs/journal.md`
+records both. In each, a green suite proved nothing, because code asserting a fact it does not own
+agrees with itself.
+
+Rule 3 is the half an author drops first, and dropping it leaves rule 1 reading as licence to
+depend on anything. An authority's behaviour arrives with its undefined edges attached.
+`node --test` decides what a test is by filename, and on one case-insensitive filesystem it runs
+`a.TEST.mjs` and declines `TEST.mjs`, which `docs/journal.md` records. No filename pattern tracks
+that everywhere, so the code carrying one says where it stops.
+
+This decision sits beside `D8` rather than replacing it, and changes nothing `D8` says. `D8`
+governs a document an author would otherwise type. This governs code that would otherwise restate
+what a tool answers. Neither reads onto the other's subject.
+
+Two signals would reverse it, and `report` shows both. One: cards come back because a test that
+asks a tool could not run it, or because the tool answered differently between runs, more often
+than a restated fact was ever found wrong. Two: a tool changes its answer under code tied to it,
+on an upgrade a restated fact would have survived.
