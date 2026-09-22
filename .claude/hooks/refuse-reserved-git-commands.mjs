@@ -61,7 +61,7 @@ const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 // And one disagreement it does not settle by refusing, because it never did: the gate reads
 // inside no command substitution and no subshell as commands, so `$(git push --force)`, its
 // backtick spelling, and `( git push --force )` are all permitted and all run. That predates this
-// lexer, is its own card, and nothing here widens or narrows it.
+// lexer, is card #84, and nothing here widens or narrows it.
 
 /** Where bash ends an unquoted word: a blank, or one of the characters that begin an operator. */
 const METACHARACTER = /[ \t\n|&;()<>]/;
