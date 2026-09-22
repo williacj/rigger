@@ -78,6 +78,11 @@ export const RESERVED_SPELLINGS = [
   'bash -c "git push --force"',
   'sh -lc \'git commit --no-verify\'',
   'echo ready && git push --force',
+  // Reserved commands that themselves open a here-document, or stand beside one. Skipping the
+  // body must cost neither the words before it nor the words after it on the same line.
+  lines("git push --force <<'EOF'", "a note that's beside the point", 'EOF'),
+  lines('git commit -m << EOF --no-verify', 'a message', 'EOF'),
+  lines("cat > notes.md <<'EOF'", "don't", 'EOF', 'git branch -D topic'),
 ];
 
 /** Commands the gate cannot read, which it refuses rather than guess at. */
@@ -123,6 +128,10 @@ test('a here-document inside a command substitution is read as a here-document',
   refuses(
     lines("git commit -m \"$(cat <<'EOF'", 'a message', 'EOF', ')" --no-verify'),
     'a commit that skips the hooks, written after a substituted here-document',
+  );
+  refuses(
+    'git commit -m "$(echo a; echo b)" --no-verify',
+    'a commit that skips the hooks, written after a substitution containing an operator',
   );
 });
 

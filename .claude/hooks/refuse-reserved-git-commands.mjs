@@ -56,14 +56,12 @@ const METACHARACTER = /[ \t\n|&;()<>]/;
  * Read the delimiter word of a here-document, from the first character after `<<` or `<<-`.
  *
  * Bash ends that word at an unquoted metacharacter and removes its quoting to get the delimiter,
- * so `<<'EOF'`, `<<"EOF"` and `<<\EOF` all close on a line reading `EOF`. The word may be
- * separated from the operator by blanks, and `spaced` reports that so the caller can keep the
- * tokens apart the way the rest of the lexer would have.
+ * so `<<'EOF'`, `<<"EOF"` and `<<\EOF` all close on a line reading `EOF`. Blanks may separate the
+ * word from the operator.
  */
 function delimiterAt(text, start) {
   let i = start;
   while (text[i] === ' ' || text[i] === '\t') i++;
-  const spaced = i > start;
   let word = '';
 
   for (; i < text.length; i++) {
@@ -84,7 +82,7 @@ function delimiterAt(text, start) {
   }
 
   if (!word) throw new Unreadable('a here-document names no delimiter');
-  return { word, spaced, end: i };
+  return { word, end: i };
 }
 
 /**
@@ -217,14 +215,11 @@ function commandsIn(text) {
         continue;
       }
       const stripTabs = text[i + 2] === '-';
-      const { word, spaced, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
+      const { word, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
       pending.push({ word, stripTabs });
-      // The redirection stays in the token list exactly as it lexed before, because a word
-      // removed here is a word an option that takes a value would swallow from further along.
-      token += stripTabs ? '<<-' : '<<';
-      open = true;
-      if (spaced) endToken();
-      token += word;
+      // The redirection stays in the token list rather than being dropped, because a word removed
+      // here is a word an option that takes a value would swallow from further along the command.
+      token += (stripTabs ? '<<-' : '<<') + word;
       open = true;
       i = end - 1;
       continue;
