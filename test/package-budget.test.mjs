@@ -155,11 +155,23 @@ test('where the runner folds a filename’s case, a test spelled in another case
   assert.deepEqual(productionFiles(root, true), [join(root, 'src', 'casing', 'TEST.mjs')]);
 });
 
-test('what the check calls a test is what the test runner runs', () => {
+test('where the runner does not fold case, a name differing only by case is charged', () => {
+  // The opposite error, and the dangerous one. A match wide enough to take `a.TEST.mjs`
+  // everywhere would stop charging these where the runner does not run them, and production code
+  // left uncharged is the direction that lets a package over its budget through the gate.
+  const root = everyShape(CASE_VARIED);
+
+  assert.deepEqual(productionFiles(root, false), CASE_VARIED.map((path) => join(root, path)));
+});
+
+test('what the check calls a test is what the test runner runs', (t) => {
   // The two definitions have to move together, and only the runner can say what it runs. This
-  // asks it, on whichever Node is running the suite, rather than trusting the patterns copied
-  // into the list above.
-  const root = everyShape([...RUN_AS_TESTS, ...NOT_TESTS, ...CASE_VARIED]);
+  // asks it, on whichever Node and whichever platform is running the suite, rather than trusting
+  // the patterns copied into the list above. The case-varied spellings are here because the
+  // runner's answer for them differs by platform, so this is the only place that can settle it,
+  // and the diagnostic puts what it answered into the log of every host the suite runs on.
+  const fixture = [...RUN_AS_TESTS, ...NOT_TESTS, ...CASE_VARIED];
+  const root = everyShape(fixture);
   const counted = productionFiles(root);
 
   // `NODE_TEST_CONTEXT` marks a process as already inside a test run, and a child that inherits
@@ -173,10 +185,21 @@ test('what the check calls a test is what the test runner runs', () => {
   const executed = [...ran.stdout.matchAll(/^# Subtest: (\S+)$/gm)].map(([, path]) => path);
 
   assert.ok(executed.length > 0, `the runner ran nothing:\n${ran.stdout}${ran.stderr}`);
+  t.diagnostic(`${process.platform}, node ${process.version}, runner ran: ${executed.join(' ')}`);
   for (const path of executed) {
     assert.ok(
       !counted.includes(join(root, path)),
       `${path} runs as a test and is charged to the production budget`,
+    );
+  }
+  // And the other direction, which is what makes this a measurement rather than half of one: a
+  // file the runner passed over is production and has to be charged. Without it, a check that
+  // called every file a test would sit here green.
+  for (const path of fixture) {
+    if (executed.includes(path)) continue;
+    assert.ok(
+      counted.includes(join(root, path)),
+      `${path} is not run as a test and is not charged to the production budget either`,
     );
   }
 });
