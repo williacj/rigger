@@ -60,9 +60,23 @@ export function paragraphs(text) {
  * A sentence ends at a full stop, question mark or exclamation, once whatever closes the sentence
  * is past — a quote, a bracket, a backtick, an emphasis marker. The next word settles whether the
  * stop ended a sentence or abbreviated a word: a capital or a digit says it ended one, through
- * whatever opens the next word. Where the next word is neither, the stop is read as an
- * abbreviation and the sentence runs on, rather than splitting `ex. a product manager` in half.
- * That counts two sentences as one and never one as two, so it errs toward a finding.
+ * whatever opens the next word.
+ *
+ * That test is wrong in both directions, and a reader of a finding needs both.
+ *
+ * It **merges** where a sentence genuinely ends and the next word is lowercase — `take. v0 buys`
+ * — and reads the two as one. The count comes out high, so a merge can only add a finding.
+ *
+ * It **splits** where a full stop abbreviates a word and the next word is capitalised — `e.g.
+ * Rigger` — and reads the one as two. The count comes out low, so a split can hide a sentence
+ * that is past the ceiling. A green run therefore says that no sentence the splitter reads is
+ * past the ceiling, which is a narrower claim than no sentence being past it.
+ *
+ * Telling an abbreviation from a full stop needs a list of abbreviations, and no document here
+ * owns one. A shape rule would catch `e.g.` and leave `vs.`, narrowing the bias without removing
+ * it, and a narrower bias is harder to state than this one. So the bias is disclosed instead,
+ * and `test/spec-style-lint.test.mjs` pins both directions, which makes changing either a
+ * decision someone took rather than a drift.
  */
 export function sentences(paragraph) {
   const found = [];

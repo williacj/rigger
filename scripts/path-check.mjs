@@ -43,7 +43,14 @@ function exempt(root, path, exemptions) {
   return Object.keys(exemptions).some((prefix) => path.startsWith(prefix) && !existsSync(join(root, prefix)));
 }
 
-/** Every backticked path in every checked document that exists nowhere and no exemption covers. */
+/**
+ * Every backticked path in every checked document that exists nowhere and no exemption covers.
+ *
+ * The fail level belongs to the resolver, and this check reads past it: a missing path fails the
+ * build wherever it sits, a `soft` document included. A pointer at a line is a form to rewrite,
+ * and a level says when the rewrite is due. A path nothing answers to is wrong now, so what
+ * excuses one here is an exemption naming its reason, never a level.
+ */
 export function check(root) {
   const { documents, exempt: exemptions } = documentChecking(root);
   const findings = Object.keys(documents).flatMap((document) =>

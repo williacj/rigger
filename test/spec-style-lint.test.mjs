@@ -14,6 +14,7 @@ import {
   lintFiles,
   ruledOutTerms,
   sentenceCeiling,
+  sentences,
 } from '../scripts/spec-style-lint.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,7 +80,7 @@ test('a ruled-out term is matched at word boundaries, so launchd is not launch',
 /** A run of n plain words ending in a full stop: one sentence of exactly n words. */
 const sentenceOf = (n) => `${Array.from({ length: n }, () => 'word').join(' ')}.`;
 
-test('a sentence past the ceiling names the line it starts on and its word count', () => {
+test('a sentence past the ceiling names its word count and the line its paragraph starts on', () => {
   const document = ['A short sentence.', '', sentenceOf(41), ''].join('\n');
   assert.deepEqual(
     findings(document, under([])).map((f) => ({ rule: f.rule, line: f.line, words: f.words })),
@@ -109,6 +110,28 @@ test('a paragraph broken across lines is read as the sentences it holds, not as 
 
 /** A run of n plain words with no full stop, so anything that joins them makes one sentence. */
 const wordsOf = (n) => Array.from({ length: n }, () => 'word').join(' ');
+
+test('the splitter reads a full stop wrongly in both directions, and neither way is silent', () => {
+  // A capital after the stop ends the sentence, so an abbreviation splits one into two.
+  assert.deepEqual(sentences('A maker, e.g. Rigger, reads the card.'), [
+    'A maker, e.g.',
+    'Rigger, reads the card.',
+  ]);
+  // A lowercase word after the stop does not, so two sentences run on as one.
+  assert.deepEqual(sentences('The card is pulled. v0 dispatches a maker.'), [
+    'The card is pulled. v0 dispatches a maker.',
+  ]);
+});
+
+test('an abbreviation can carry a sentence past the ceiling without a finding', () => {
+  // The cost of the split above, stated as what it hides. The two documents differ by one word,
+  // `e.g.` against `from`, and both hold one sentence of forty-one words.
+  const abbreviated = `${wordsOf(5)} e.g. Rigger ${wordsOf(34)}.`;
+  const control = abbreviated.replace('e.g.', 'from');
+
+  assert.deepEqual(findings(`${abbreviated}\n`, under([])), []);
+  assert.deepEqual(findings(`${control}\n`, under([])).map((f) => f.words), [41]);
+});
 
 test('a bulleted list produces no sentence finding, however many words its items hold together', () => {
   const document = ['- ', '- ', '- '].map((bullet) => bullet + wordsOf(20)).join('\n');
