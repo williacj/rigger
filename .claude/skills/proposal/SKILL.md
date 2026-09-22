@@ -81,6 +81,22 @@ entry in `docs/spec/decisions.md` binds, so yours waits in the pull request unti
 ratifies it (each register's preamble). Write it as it will read once ratified, and let the pull
 request body say it is a proposal.
 
+## Run every check you specify
+
+A check a proposal names — a lint, a grep, the rule a gate would apply — is a claim about data
+that already exists. `AGENTS.md`, "How we work", has you read the current code before
+recommending a change to it, and a specified check is that same claim in executable form.
+
+- **Run it against the files it would run on**, before it reaches the draft.
+- **Write down what it returns today**: how many entries it passes, how many it fails, and which
+  ones. A check whose present result the proposal leaves out is one the owner cannot ratify,
+  because a clean run and an unrun check read the same on the page.
+- **Where the run fails something a register's preamble permits, the check is wrong.** Correct it,
+  or propose the row that makes the register match it.
+
+An observation about what the corpus currently says is the same claim, and takes the same run. An
+unrun check reads as a finding, and the owner ratifies it as one.
+
 ## What the argument carries
 
 Scale each to the delta. A one-row proposal wants a paragraph per heading; a proposal that reshapes
@@ -139,11 +155,12 @@ mode 1 in `.claude/agents/pm.md`.
 5. Does every row carry `made true by`, `checked by`, and the test you expect to claim it?
 6. Do every proposed row and every proposed decision sit in the pull request, each written as it
    will read once ratified?
-7. Does the draft name the structural delta rather than writing it?
-8. Where the subject has a shape, is it drawn, and does every fact in the drawing also appear in a
+7. Does every check or observation the draft specifies carry what it returns today?
+8. Does the draft name the structural delta rather than writing it?
+9. Where the subject has a shape, is it drawn, and does every fact in the drawing also appear in a
    row?
-9. Is every gap marked inline, an assumption with what would falsify it or an open question with
-   who resolves it?
-10. Does out of scope name what a reader would expect and not find, each with its reason?
-11. Does the draft say what ratifying it costs?
-12. Does anything in the draft change what a ratified decision means?
+10. Is every gap marked inline, an assumption with what would falsify it or an open question with
+    who resolves it?
+11. Does out of scope name what a reader would expect and not find, each with its reason?
+12. Does the draft say what ratifying it costs?
+13. Does anything in the draft change what a ratified decision means?
