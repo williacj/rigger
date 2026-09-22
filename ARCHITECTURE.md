@@ -148,7 +148,7 @@ export default {
     change:   { select: { labels: ['type:change'] },   maker: 'engineer',      judges: ['reviewer'],
                 provisioning: ['npm-ci'] },
     // The panel case: two agent judges concurrently, the owner last.
-    decision: { select: { labels: ['type:decision'] }, maker: 'pm',            judges: ['reviewer', 'engineer', 'owner'],
+    spec:     { select: { labels: ['type:spec'] },     maker: 'pm',            judges: ['reviewer', 'engineer', 'owner'],
                 rounds: 2, provisioning: ['npm-ci'] },
     spike:    { select: { labels: ['type:spike'] },    maker: 'spikeEngineer', judges: ['reviewer'],
                 provisioning: ['npm-ci'] },

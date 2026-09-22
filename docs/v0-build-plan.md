@@ -249,7 +249,7 @@ Exit:
 - L2 composes a review packet for each judge dispatch and L1 delivers it. `R-EVIDENCE` states
   what it carries.
 - Rigger binds three kinds of work against its own board: a code change (maker engineer, judge
-  reviewer), a decision proposal (maker PM, judges reviewer and engineer, then owner), and a spike
+  reviewer), a spec proposal (maker PM, judges reviewer and engineer, then owner), and a spike
   (maker spike-engineer, judge reviewer). The proposal is the panel case — two agent judges
   running concurrently, with the owner last.
 
