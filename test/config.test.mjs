@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { SHAPES, validate } from '../src/config/validate.mjs';
+import rigger from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -63,19 +64,78 @@ function declared(value, shape = 'config', path = '') {
 
 const unique = (paths) => [...new Set(paths)].sort();
 
-test('a config that names none of the required keys is refused, and each refusal names its key', () => {
-  const refusals = validate({});
-  assert.ok(refusals.some((refusal) => refusal.includes('`repo`')), refusals.join('\n'));
+/** Every declaration the validator requires, as dotted paths, a `*` standing for any name. */
+function requiredOf(shape = 'config', path = '') {
+  return Object.entries(SHAPES[shape]).flatMap(([key, rule]) => {
+    const here = at(path, key);
+    const under = rule.keys ? requiredOf(rule.keys, here) : rule.entries ? requiredOf(rule.entries, `${here}.*`) : [];
+    return rule.required ? [here, ...under] : under;
+  });
+}
+
+/** One dotted path against a config, with every `*` expanded to the names that config holds. */
+function expand(value, parts) {
+  if (parts.length === 0) return [[]];
+  const [head, ...rest] = parts;
+  const names = head === '*' ? Object.keys(value ?? {}) : value && head in value ? [head] : [];
+  return names.flatMap((name) => expand(value[name], rest).map((tail) => [name, ...tail]));
+}
+
+/** Every place in a config where the validator reads a value's keys against a shape. */
+function shapeSites(value, shape = 'config', path = '') {
+  const sites = [path];
+  for (const [key, held] of Object.entries(value)) {
+    const rule = SHAPES[shape]?.[key];
+    if (rule?.keys) sites.push(...shapeSites(held, rule.keys, at(path, key)));
+    if (rule?.entries) {
+      for (const [name, entry] of Object.entries(held)) {
+        sites.push(...shapeSites(entry, rule.entries, at(at(path, key), name)));
+      }
+    }
+  }
+  return sites;
+}
+
+/** The value one dotted path names inside a config. */
+const walkTo = (config, parts) => parts.reduce((held, part) => held[part], config);
+
+/** This config, with the value at one dotted path taken out. */
+function without(config, parts) {
+  const copy = structuredClone(config);
+  delete walkTo(copy, parts.slice(0, -1))[parts.at(-1)];
+  return copy;
+}
+
+test("the validator accepts this repository's own config unchanged", () => {
+  assert.deepEqual(validate(rigger), []);
 });
 
-test('a declaration Rigger does not offer is refused, and the refusal names it', () => {
-  const refusals = validate({ worktreeRoot: '/tmp/worktrees' });
-  assert.ok(refusals.some((refusal) => refusal.includes('`worktreeRoot`')), refusals.join('\n'));
+test('every key the validator requires is refused when missing, and the refusal names it', () => {
+  const paths = requiredOf().flatMap((path) => expand(rigger, path.split('.')));
+  assert.ok(paths.length > 0, 'the validator requires nothing, so nothing was checked');
+  for (const parts of paths) {
+    const named = parts.join('.');
+    const refusals = validate(without(rigger, parts));
+    assert.ok(
+      refusals.some((refusal) => refusal.includes(`\`${named}\``) && refusal.includes('required')),
+      `taking \`${named}\` out earned no refusal naming it: ${refusals.join('; ') || 'none'}`,
+    );
+  }
 });
 
-test('a kind that names no maker is refused, and the refusal names that kind`s maker', () => {
-  const refusals = validate({ kinds: { change: { judges: ['reviewer'] } } });
-  assert.ok(refusals.some((refusal) => refusal.includes('`kinds.change.maker`')), refusals.join('\n'));
+test('a declaration Rigger does not offer is refused wherever it sits, and the refusal names it', () => {
+  const sites = shapeSites(rigger);
+  assert.ok(sites.length > 1, 'the config reaches no nested shape, so only the top level was checked');
+  for (const site of sites) {
+    const config = structuredClone(rigger);
+    walkTo(config, site ? site.split('.') : [])['fixedByRiggerAndNotTheConsumer'] = true;
+    const named = at(site, 'fixedByRiggerAndNotTheConsumer');
+    const refusals = validate(config);
+    assert.ok(
+      refusals.some((refusal) => refusal.includes(`\`${named}\``)),
+      `\`${named}\` earned no refusal naming it: ${refusals.join('; ') || 'none'}`,
+    );
+  }
 });
 
 test('what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions', async () => {
