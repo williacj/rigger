@@ -36,6 +36,70 @@ class Unreadable extends Error {}
 
 const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 
+/** Where bash ends an unquoted word: a blank, or one of the characters that begin an operator. */
+const METACHARACTER = /[ \t\n|&;()<>]/;
+
+/**
+ * Read the delimiter word of a here-document, from the first character after `<<` or `<<-`.
+ *
+ * Bash ends that word at an unquoted metacharacter and removes its quoting to get the delimiter,
+ * so `<<'EOF'`, `<<"EOF"` and `<<\EOF` all close on a line reading `EOF`. The word may be
+ * separated from the operator by blanks, and `spaced` reports that so the caller can keep the
+ * tokens apart the way the rest of the lexer would have.
+ */
+function delimiterAt(text, start) {
+  let i = start;
+  while (text[i] === ' ' || text[i] === '\t') i++;
+  const spaced = i > start;
+  let word = '';
+
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'" || ch === '"') {
+      const close = text.indexOf(ch, i + 1);
+      if (close === -1) throw new Unreadable('the command has an unbalanced quote');
+      word += text.slice(i + 1, close);
+      i = close;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < text.length) {
+      word += text[++i];
+      continue;
+    }
+    if (METACHARACTER.test(ch)) break;
+    word += ch;
+  }
+
+  if (!word) throw new Unreadable('a here-document names no delimiter');
+  return { word, spaced, end: i };
+}
+
+/**
+ * Skip the bodies the here-documents on the line just ended will be fed. A body is data on
+ * standard input: it ends at a line that is exactly the delimiter, nothing in it is ever run, and
+ * so nothing in it is read as shell text. `<<-` strips leading tabs from the body lines and from
+ * that closing line.
+ *
+ * A body with no closing line is unreadable rather than skipped. Bash ends such a body at end of
+ * input and runs the command anyway; refusing instead is the safe half of that disagreement,
+ * because a `<<` this gate reads and bash does not cannot then swallow the commands after it.
+ */
+function skipBodies(text, start, pending) {
+  let i = start;
+  for (const { word, stripTabs } of pending) {
+    for (;;) {
+      if (i >= text.length) throw new Unreadable('a here-document has no closing delimiter');
+      const breakAt = text.indexOf('\n', i);
+      const end = breakAt === -1 ? text.length : breakAt;
+      const line = stripTabs ? text.slice(i, end).replace(/^\t+/, '') : text.slice(i, end);
+      i = breakAt === -1 ? end : breakAt + 1;
+      if (line === word) break;
+      if (breakAt === -1) throw new Unreadable('a here-document has no closing delimiter');
+    }
+  }
+  return i;
+}
+
 /**
  * Split a command line into the separate commands it runs, each as a token list, honouring quotes
  * and backslash escapes. An unbalanced quote is unreadable rather than a guess.
@@ -46,6 +110,7 @@ function commandsIn(text) {
   let token = '';
   let open = false; // a token is open even when it lexed to the empty string, as "" does
   let quote = null;
+  const pending = []; // the here-documents opened on the line being read, in the order bash feeds them
 
   const endToken = () => {
     if (open) tokens.push(token);
@@ -83,8 +148,35 @@ function commandsIn(text) {
       open = true;
       continue;
     }
+    // A here-string carries its data on this line, so it opens no body and skips nothing.
+    if (ch === '<' && text[i + 1] === '<' && text[i + 2] === '<') {
+      token += '<<<';
+      open = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '<' && text[i + 1] === '<') {
+      const stripTabs = text[i + 2] === '-';
+      const { word, spaced, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
+      pending.push({ word, stripTabs });
+      // The redirection stays in the token list exactly as it lexed before, because a word
+      // removed here is a word an option that takes a value would swallow from further along.
+      token += stripTabs ? '<<-' : '<<';
+      open = true;
+      if (spaced) endToken();
+      token += word;
+      open = true;
+      i = end - 1;
+      continue;
+    }
     if (ch === ' ' || ch === '\t' || ch === '\r') {
       endToken();
+      continue;
+    }
+    if (ch === '\n' && pending.length) {
+      i = skipBodies(text, i + 1, pending) - 1;
+      pending.length = 0;
+      endCommand();
       continue;
     }
     if (OPERATORS.includes(text.slice(i, i + 2))) {
@@ -102,6 +194,7 @@ function commandsIn(text) {
   }
 
   if (quote) throw new Unreadable('the command has an unbalanced quote');
+  if (pending.length) throw new Unreadable('a here-document has no closing delimiter');
   endCommand();
   return commands;
 }
