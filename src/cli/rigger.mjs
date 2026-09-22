@@ -39,7 +39,16 @@ export function help(verbs = VERBS) {
 
 /** What the command prints for these arguments, and the status it exits with. */
 export function run(argv) {
-  return { text: help(), code: 0 };
+  const [first] = argv;
+  if (first === '--help') return { text: help(), code: 0 };
+  if (!VERBS.some(([verb]) => verb === first)) {
+    const said = first === undefined ? 'rigger: a verb is required' : `rigger ${first}: no such verb`;
+    return { text: `${said}\n\n${help()}`, code: 1 };
+  }
+  // Nothing behind any verb has landed yet. Each one gains its behaviour with its own milestone,
+  // and until then saying so and failing is the honest answer: a zero exit would read to whoever
+  // called it as work that was done.
+  return { text: `rigger ${first}: not yet implemented`, code: 1 };
 }
 
 // A bin is reached through a symlink once it is installed, so the two paths are compared after

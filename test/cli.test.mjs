@@ -95,3 +95,37 @@ test('--help lists exactly the verbs the README lists, in that order and no othe
   assert.equal(help.code, 0, `\`rigger --help\` failed: ${help.err}`);
   assert.deepEqual(helpVerbs(help.out), usageVerbs(read('README.md'), manifest.name));
 });
+
+test('a verb whose milestone has not landed says so and exits non-zero', () => {
+  // Nothing behind any verb has landed yet, so every verb the README lists takes this path. The
+  // defect it catches is a verb that exits zero, or prints nothing, and so reads to whoever
+  // called it as work that was done.
+  for (const verb of usageVerbs(read('README.md'), manifest.name)) {
+    const ran = rigger(verb);
+
+    assert.notEqual(ran.code, 0, `\`rigger ${verb}\` exited 0 without doing anything`);
+    assert.match(ran.err, /not yet implemented/);
+    assert.match(ran.err, new RegExp(verb));
+  }
+});
+
+test('an argument that is no verb is refused rather than answered as a future verb', () => {
+  // The verbs are the whole surface, so anything else has no milestone to wait for. The defect
+  // this catches is the branch above answering for everything: a typo told that it is coming in
+  // a later milestone is told something untrue.
+  const ran = rigger('banana');
+
+  assert.notEqual(ran.code, 0);
+  assert.doesNotMatch(ran.err, /not yet implemented/);
+  assert.match(ran.err, /banana/);
+});
+
+test('the command with no verb at all asks for one, and lists them', () => {
+  // The defect this catches is a missing argument read as a word: the branch above names what it
+  // was given, and with nothing given it names the absence rather than `undefined`.
+  const ran = rigger();
+
+  assert.notEqual(ran.code, 0);
+  assert.doesNotMatch(ran.err, /undefined/);
+  assert.deepEqual(helpVerbs(ran.err), usageVerbs(read('README.md'), manifest.name));
+});
