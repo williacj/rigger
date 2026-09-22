@@ -1,5 +1,5 @@
-# ABOUTME: The workflow that runs Rigger's suite, its package budget check and its
-# ABOUTME: instruction-file word budget check, on every push and every pull request.
+# ABOUTME: The workflow that runs Rigger's suite, its two budget checks and its document
+# ABOUTME: checks, on every push and every pull request.
 
 name: CI
 
@@ -25,3 +25,7 @@ jobs:
       - run: npm test
       - run: npm run budget:package
       - run: npm run budget:instructions
+      - run: npm run lint:spec-style
+      - run: npm run check:references
+      - run: npm run check:paths
+      - run: npm run check:ids

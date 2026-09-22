@@ -8,9 +8,9 @@ entry says what taught us. `AGENTS.md` holds when an entry is committed.
 
 ## 2026-09-22 — Three probes that passed, and proved nothing
 
-Card #27 taught the command gate to skip a here-document body. A judge then found the gate
-permitted a reserved command bash runs, whenever a `<<` sat where bash reads no command word — in
-a comment, or in an arithmetic command. Asking bash for the whole set of such regions turned up
+Card #71 taught the command gate that card #28 built to skip a here-document body. A judge then
+found it permitted a reserved command bash runs, whenever a `<<` sat where bash reads no command
+word — in a comment, or in an arithmetic command. Asking bash for the whole set of regions turned up
 five more: a backtick substitution, three spellings of parameter expansion, and the old `$[ ]`
 form. Seven live spellings, not two.
 
@@ -35,3 +35,24 @@ own. Redone from a script file with no shell quoting, the numbers changed — fi
 from "refused" to "permitted", which was the finding. A measurement that no other measurement
 disagrees with is not thereby correct, and a harness that reshapes its own input is the quietest
 way to be confidently wrong.
+
+## 2026-09-22 — The lint arrived after the corpus, and the corpus barely cleared it
+
+Writing `spec-style-lint` against documents already written showed how little headroom the
+sentence ceiling has: the longest sentence the lint reads is 39 words against a ceiling of 40.
+The next compound sentence anyone writes into the README or the register reds the build.
+
+Two of the four register rules turned out to be unlintable, and the reason is worth keeping.
+Rule 3 asks whether an actor is genuinely unknown and rule 4 asks whether a structure fits its
+meaning. Both are judgments about intent, and a lint that guessed at either would file findings
+an author has to argue with rather than fix.
+
+The sentence splitter asks the word after a full stop whether the stop ended a sentence, and it
+is wrong both ways. A lowercase word keeps two sentences joined, as `v0 buys` does, and the
+count comes out high. A capital after an abbreviation splits one sentence into two, the way
+`e.g. Rigger` does, and the count comes out low.
+
+The second of those cost a review round, because this entry first claimed it could not happen.
+A bias in a check is worth disclosing, and a bias described as absent is worse than one nobody
+mentioned: a reader then draws a conclusion the check cannot support. A green lint says no
+sentence the splitter reads is past the ceiling, which is narrower than it sounds.
