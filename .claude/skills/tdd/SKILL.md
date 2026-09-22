@@ -65,17 +65,17 @@ this one, because such a test fails before the code exists and passes for ever a
 
 **Derive what a double returns, too.** "Derive the expected value independently" is the rule
 above; this is its other half. A double returning what the assertion expects agrees with your
-assumption by construction, and the argument there carries over unchanged. Take the value from
-the real collaborator — a recorded response, a shape its interface guarantees, a literal you
-read from the real thing — and never from what makes the test pass. Failing first misses this
-one for the reason it gives there.
+assumption by construction, and that argument carries over unchanged. Take the value from the
+real collaborator — a recorded response, a shape its interface guarantees, a literal you read
+from the real thing — never from what makes the test pass. Failing first misses this one for the
+same reason.
 
-**Something exercises the real wiring.** A suite where every unit is green against doubles can
-compose into software that has never run, and each unit test will go on passing while it does.
-Preferring real collaborators is the rule above; this is its floor. Where you substitute across a
-boundary, one test crosses that boundary for real, and it belongs to the same work rather than to
-a follow-up. Where the boundary cannot be crossed in a test, say so where the substitute is
-defined, so that the next reader knows what is unproven rather than discovering it in production.
+**Something exercises the real wiring.** A suite green against doubles everywhere can compose
+into software that has never run, and every unit test goes on passing while it does.
+"Prefer real collaborators" is a preference; this is the floor under it. Where you substitute
+across a boundary, one test crosses it for real, in the same work rather than a follow-up. Where
+it cannot be crossed in a test, say so where the substitute is defined, so the next reader knows
+what is unproven.
 
 ## A bug fix
 
