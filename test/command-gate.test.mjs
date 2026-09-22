@@ -48,3 +48,14 @@ test('an apostrophe in a here-document body does not make the command unreadable
     'an apostrophe inside a here-document body is prose, not a quote',
   );
 });
+
+test('an arithmetic expansion is not a here-document, however it is spaced', () => {
+  // `<<` inside `$(( ))` is bash's left shift. Reading it as a redirection would take the rest of
+  // the command for a body, which is how skipping a body could come to hide a command.
+  permits('echo $((1<<2)) && echo done', 'a left shift written closed up');
+  permits('echo $(( 1 << 2 )) && echo done', 'a left shift written with blanks around it');
+  refuses(
+    'echo $(( 1 << 2 )) && git push --force',
+    'a force push after an arithmetic expansion is still a force push',
+  );
+});

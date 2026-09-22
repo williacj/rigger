@@ -101,6 +101,21 @@ function skipBodies(text, start, pending) {
 }
 
 /**
+ * The index of the closing parenthesis of the arithmetic expansion that starts at `$((`.
+ *
+ * `<<` inside one is bash's left shift rather than a redirection, so the expansion is taken whole
+ * and nothing inside it is lexed as a redirection. One that never closes is unreadable.
+ */
+function arithmeticEnd(text, start) {
+  let depth = 0;
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')' && --depth === 0) return i;
+  }
+  throw new Unreadable('the command has an unclosed arithmetic expansion');
+}
+
+/**
  * Split a command line into the separate commands it runs, each as a token list, honouring quotes
  * and backslash escapes. An unbalanced quote is unreadable rather than a guess.
  */
@@ -125,6 +140,16 @@ function commandsIn(text) {
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+
+    // Read before the quote state, because an arithmetic expansion is itself inside double quotes
+    // as often as it is outside them, and it is not shell text in either place.
+    if ((quote === null || quote === '"') && text.startsWith('$((', i)) {
+      const end = arithmeticEnd(text, i);
+      token += text.slice(i, end + 1);
+      open = true;
+      i = end;
+      continue;
+    }
 
     if (quote) {
       if (ch === '\\' && quote === '"' && i + 1 < text.length) {
