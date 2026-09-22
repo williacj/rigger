@@ -82,10 +82,10 @@ tool or command outside it, `D16` has that tool decide the fact and the code car
 The test that ties the two asks the tool and asserts the relation between its answer and the
 code's. A test pinning the answer the tool gives today goes stale the moment the tool changes it,
 and it goes stale green. Nothing in such a test is tied to the tool, so it agrees with the copy it
-was written beside for ever. `test/package-budget.test.mjs` runs both kinds. One test lists the spellings
-`node --test` executes and asserts the budget charges for none of them. The other spawns
-`node --test` over the same fixture and fails if anything it ran is charged. The list is the
-readable one; the spawn is what keeps the two definitions moving together.
+was written beside for ever. `test/package-budget.test.mjs` runs both kinds. One test lists the
+spellings `node --test` executes and asserts the budget charges for none of them. The other
+spawns `node --test` over the same fixture and fails if anything it ran is charged. The list is
+the readable one; the spawn is what keeps the two definitions moving together.
 
 ## A bug fix
 

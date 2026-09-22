@@ -474,9 +474,10 @@ outgrown. On that evidence a later decision withdraws the admission, and the pro
 
 ### Rule
 
-1. Where a tool or command outside Rigger owns a fact, that tool decides it and Rigger's code
-   never decides it instead. `npm test` is `node --test`, so what counts as a test is that
-   command's answer rather than a list of spellings a script thought of.
+1. A tool or command outside Rigger is an authority for a fact it owns, and this entry binds that
+   class alone. An authority decides the fact it owns, and Rigger's code never decides it instead.
+   `npm test` is `node --test`, so what counts as a test is that command's answer rather than a
+   list of spellings a script thought of.
 2. Code carrying a copy of an authority's answer — a pattern, a threshold, a list — ties that copy
    to the authority with a test that asks it. The copy is never what decides.
 3. Code depending on an authority records where the authority's answer can differ from its own,
@@ -489,6 +490,11 @@ The corpus had written this rule twice and left one direction out. `D8` covers c
 a fact the code owns is generated, never typed. `AGENTS.md`, under "Documents own their facts",
 covers document to document: a fact owned elsewhere is written as a reference and never retyped.
 Neither reaches code that restates what a tool would have answered.
+
+An authority is a tool or command, and this entry reaches no other kind.
+`scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a number out of
+`ARCHITECTURE.md`, which is a document that owns a fact rather than a tool that answers for one,
+so no rule here binds either.
 
 Two defects in `scripts/package-budget.mjs` lived in that gap, and no lens in
 `.claude/skills/code-review/` asked the question that would have caught either. `docs/journal.md`
