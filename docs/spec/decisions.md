@@ -21,13 +21,22 @@ is a requirement, and `docs/spec/requirements.md` holds those.
 A decision holds one lifespan. A permanent principle and a boundary that expires never share an
 entry, because retiring the entry would discard both.
 
-A decision is `Proposed`, then `Ratified`, then `Superseded by D#` when a later decision replaces
-it. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and its row stays in
-the table below so its id is never reused.
+A decision proposed and not yet ratified lives in its pull request, never here. Every entry below
+binds, so a reader never has to check a status before trusting one. `docs/spec/requirements.md`
+rules the same for a requirement, and its preamble carries the reasoning.
+
+The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
+entry binds once that pull request merges. A proposal is therefore written as it will read once
+ratified, and the pull request body is what says it is a proposal.
 
 A ratified decision may be amended when the change adds within its stated scope, and the amendment
 records its date in the entry's status. A change to what a ratified rule means is never an
 amendment: a later decision supersedes it, so the original stays readable.
+
+An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
+it. Those two openings are the only ones it takes, and an amendment adds its date after `Ratified`
+rather than a third. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and
+its row stays in the table below so its id is never reused.
 
 | id | decision | status |
 |---|---|---|

@@ -92,9 +92,9 @@ Never edit these:
    architecture disagree, the requirement is right (`AGENTS.md`, "What binds"). A requirement
    says what must be true; the structure underneath it is what changes to make it so.
 4. **You file a proposal where only ratified work lives.** Every row in
-   `docs/spec/requirements.md` binds, so a proposed requirement waits in its pull request
-   (`docs/spec/requirements.md`, preamble). A proposed decision is the opposite: it goes into
-   `docs/spec/decisions.md` with its status set to `Proposed`.
+   `docs/spec/requirements.md` and every entry in `docs/spec/decisions.md` binds, so a proposal
+   waits in its pull request (each register's preamble). Write it as it will read once ratified,
+   and let the pull request body say it is a proposal.
 
 ## What you never do
 

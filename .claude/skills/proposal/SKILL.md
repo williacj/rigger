@@ -76,10 +76,10 @@ mean. Read it there. What the proposal owes beyond it:
   holds the rule and the words it bars. A row is read the same way an acceptance item is, by
   someone who cannot ask you, and it fails the same way.
 
-**A proposed requirement never lands in the file.** Every row in `docs/spec/requirements.md` binds,
-so yours waits in the pull request until the owner ratifies it (preamble). A proposed decision is
-the opposite: it goes into `docs/spec/decisions.md` at `Status: Proposed` (`docs/spec/decisions.md`,
-preamble).
+**A proposal never lands in either register.** Every row in `docs/spec/requirements.md` and every
+entry in `docs/spec/decisions.md` binds, so yours waits in the pull request until the owner
+ratifies it (each register's preamble). Write it as it will read once ratified, and let the pull
+request body say it is a proposal.
 
 ## What the argument carries
 
@@ -137,8 +137,8 @@ mode 1 in `.claude/agents/pm.md`.
 3. Does every row trace to a part of the problem the draft states?
 4. Is every row observable from outside, naming no mechanism?
 5. Does every row carry `made true by`, `checked by`, and the test you expect to claim it?
-6. Do the proposed requirements sit in the pull request, and any proposed decision at
-   `Status: Proposed`?
+6. Do every proposed row and every proposed decision sit in the pull request, each written as it
+   will read once ratified?
 7. Does the draft name the structural delta rather than writing it?
 8. Where the subject has a shape, is it drawn, and does every fact in the drawing also appear in a
    row?
