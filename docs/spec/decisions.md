@@ -50,7 +50,7 @@ its row stays in the table below so its id is never reused.
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
 | D13 | macOS is v0's only host | Ratified |
-| D14 | Critical is what a maker revision cannot resolve | Proposed |
+| D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 
 ## D1 — Redo over resume
@@ -390,7 +390,7 @@ spike exists because that reuse is an assumption, not a finding.
 
 ## D14 — Critical is what a maker revision cannot resolve
 
-**Status:** Proposed.
+**Status:** Ratified.
 
 ### Rule
 
