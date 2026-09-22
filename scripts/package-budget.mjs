@@ -17,28 +17,39 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
 // file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
 //
-// The split is by case, and it is the runner's, not a convention of ours. Node spells its
-// default pattern as one brace alternation, and on some platforms it matches an alternative
-// carrying glob magic without regard to case while comparing a wholly literal one by string
-// equality. `test.mjs` brace-expands to a literal, so only that spelling is declined-or-run on
-// its exact case; every other alternative keeps a `*` or a character class and folds.
+// The split is by case, and it is the runner's, not a convention of ours. From Node 22 the runner
+// matches one brace alternation with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
+// component holding glob magic is matched without regard to case, and a wholly literal one is
+// compared exactly. Brace-expanding the alternation leaves `test.mjs` literal, so that spelling
+// alone answers to its exact case; every other alternative keeps a `*` or a character class.
 const TEST_LITERAL = /^test\.(?:m|c)?js$/;
 const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
 const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
-// Whether the runner folds is the runner's answer, and it turns on the platform rather than on
-// the filesystem: node keys its glob matcher on the platform, so a case-sensitive directory on
-// Windows still folds and a case-insensitive filesystem elsewhere still does not.
+// Whether the runner folds is the runner's answer, and it turns on two things. Which Node is
+// running, because only from 22 does the runner match by glob at all. And which platform, because
+// that glob sets `nocase` for Windows and macOS and for nowhere else — on the platform, not on
+// the filesystem, so a case-sensitive volume on either still folds.
 //
-// Measured, not reasoned. On Windows 11 10.0.26200, NTFS, Node v24.18.0, `node --test` ran
-// `a.TEST.mjs`, `TEST-b.mjs` and `c_Test.mjs` and declined `TEST.mjs`.
+// Measured, not reasoned, each name in a directory of its own so that a case-insensitive
+// filesystem folded none of them onto another. `node --test` ran, of `a.TEST.mjs`, `TEST-b.mjs`,
+// `b-TEST.mjs` and `c_Test.mjs`:
 //
-// Where this answer can differ from the runner's: every platform but win32 is taken not to fold,
-// and that is measured only where this repository's CI runs. On an unmeasured platform whose
-// runner does fold, a test spelled in another case is charged — an overcount, which leaves the
-// gate stricter than ARCHITECTURE.md's Budgets section and never able to admit a package that is
-// over budget. It does not pass silently either: the relation test in
-// `test/package-budget.test.mjs` asks the real runner on whatever host it runs, and reds there.
-const RUNNER_FOLDS_CASE = process.platform === 'win32';
+//   Windows 11 10.0.26200, NTFS:  none under Node 20.20.2; all four under 22.23.2, 23.11.1
+//                                 and 24.18.0
+//   macOS macos-latest, APFS:     none under Node 20.20.2; all of them under 24.20.0
+//
+// `TEST.mjs` was declined by every one of those, which is the literal alternative above.
+//
+// Where this answer can differ from the runner's. Linux is taken not to fold on node's own
+// `nocase: isWindows || isMacOS` rather than on a measurement, because D13 makes macOS v0's only
+// host and CI runs nowhere else. Node 21 is taken not to fold, unmeasured. Either one, if wrong,
+// charges a test rather than passing over production code — an overcount, which leaves the gate
+// stricter than ARCHITECTURE.md's Budgets section and never able to admit a package that is over
+// budget. Nor would it pass quietly: the relation test in `test/package-budget.test.mjs` asks the
+// real runner, in both directions, on whatever host the suite runs, and reds there.
+const RUNNER_FOLDS_CASE =
+  Number(process.versions.node.split('.')[0]) >= 22 &&
+  (process.platform === 'win32' || process.platform === 'darwin');
 
 /** Whether `node --test` runs a file of this name, where `foldsCase` says how it matches. */
 function runsAsTest(name, foldsCase) {
