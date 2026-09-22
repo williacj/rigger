@@ -32,9 +32,8 @@ refuses outright (`R-CARD-8`). Work these out before you write any:
 - **The proof.** What observable change shows it was reached? That is what the items assert.
 - **The constraints that already bind.** Where something outside the card fixes part of the
   answer, cite it: a requirement id, a `D#`, an `AGENTS.md` section. A constraint with no source
-  behind it is you prescribing the implementation. Open each source where it lives as you write
-  the citation down. A half-remembered id does not reach the maker as uncertainty — it reaches
-  them as an instruction, and `R-LOOP-1` has them build against it faithfully.
+  behind it is you prescribing the implementation. Write each citation as `AGENTS.md`,
+  "Documents own their facts", requires.
 - **The boundary and failure states that apply.** Empty input, invalid input, limits,
   permissions, a dependency failing, partial completion. Consider each; carry over only the ones
   this card can actually reach. A documentation card owes no error criterion, and one invented to
@@ -134,7 +133,7 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 ## Before you file
 
 1. Did you start from the outcome, the proof, the constraints and the failure states that apply?
-2. Did you open every source you cite, where that source lives?
+2. Did you write every citation as `AGENTS.md`, "Documents own their facts", requires?
 3. Can a judge rule on each item without asking you (`R-CARD-2`)?
 4. Is each one condition (`R-CARD-2`)?
 5. Does each stand on its own?
