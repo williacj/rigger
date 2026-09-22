@@ -84,6 +84,11 @@ say it** — neither owned nor referenceable. A binding document has no business
 count or a grep result. An unresolvable reference reds the build wherever the resolver is set
 strict, exactly like a broken import.
 
+A citation is a claim about its source, so open the source where it lives as you write the
+citation down. A reference can resolve while the claim attached to it is invented, so the
+resolver passing is no evidence the citation is sound. An unverified citation reaches the maker
+as an instruction rather than a doubt, and `R-LOOP-1` has them build against it.
+
 Instruction files take the same split. This file holds what is true whatever you touch; a
 directory's `AGENTS.md` holds what is true only in that directory; anything else takes the
 third treatment.
