@@ -1,0 +1,27 @@
+# ABOUTME: The workflow that runs Rigger's suite, its package budget check and its
+# ABOUTME: instruction-file word budget check, on every push and every pull request.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    # macOS is v0's only host (D13), and Node 20 is the floor the README's Prerequisites set.
+    # Both ends of "20 or later" run, so neither end of the promise goes unproven.
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm test
+      - run: npm run budget:package
+      - run: npm run budget:instructions

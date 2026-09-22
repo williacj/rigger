@@ -5,6 +5,7 @@ while you do something else.** Agents pull cards from your board and do the work
 Different agents review it against a procedure you define, and nothing merges without their verdict.
 A feature, writing a doc, website change or even deep analysis: the loop is the same.
 
+[![CI](https://github.com/williacj/rigger/actions/workflows/ci.yml/badge.svg)](https://github.com/williacj/rigger/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg)](#status)
 

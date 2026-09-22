@@ -1,0 +1,25 @@
+{
+  "name": "@williacj/rigger",
+  "version": "0.0.0",
+  "description": "The engine that lets your AI agents deliver work you defined, to a standard you set, while you do something else.",
+  "license": "MIT",
+  "author": "CJ Williams",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/williacj/rigger.git"
+  },
+  "homepage": "https://github.com/williacj/rigger#readme",
+  "bugs": {
+    "url": "https://github.com/williacj/rigger/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "budget:package": "node scripts/package-budget.mjs",
+    "budget:instructions": "node scripts/instruction-budget.mjs",
+    "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
+  }
+}
