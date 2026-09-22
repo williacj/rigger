@@ -146,6 +146,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-VERDICT-3 | A verdict that is not sound names what would make it sound. | the role prompt | the gate | |
 | R-VERDICT-4 | A verdict leaving an acceptance item unmet is not sound. | the role prompt | the gate | D2 |
 | R-VERDICT-5 | A verdict is bound to the work it ruled on and to the acceptance it ruled against, so a later reader can tell what it covered. | the engine | the event record, by what each verdict names | D2 |
+| R-VERDICT-6 | A judge returns critical, the verdict for a fault that must not merge, only where no maker revision could resolve that fault without an owner decision. A fault a maker revision could resolve is needs revision. | the role prompt | nothing yet | D14 |
 
 ## R-GATE — what admits a merge
 

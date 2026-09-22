@@ -50,6 +50,7 @@ its row stays in the table below so its id is never reused.
 | D11 | v0 runs one engine against one repository | Ratified |
 | D12 | A provisioning step says whether the work needs it | Ratified |
 | D13 | macOS is v0's only host | Ratified |
+| D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 
 ## D1 — Redo over resume
@@ -387,6 +388,36 @@ bug costs a stray process or a lost result.
 WSL2 is the cheaper route because it reuses the macOS model rather than adding a second one. The
 spike exists because that reuse is an assumption, not a finding.
 
+## D14 — Critical is what a maker revision cannot resolve
+
+**Status:** Ratified.
+
+### Rule
+
+1. A judge returns critical only where no maker revision could resolve the fault without an owner
+   decision. Every other fault that blocks the merge is needs revision. `R-VERDICT-6` holds it.
+2. The test is the loop behaviour the verdict triggers, never the subject matter of the fault. No
+   class of defect is critical by its kind.
+
+### Notes
+
+The two verdicts that block a merge differ only in what the loop then does. Needs revision spends a
+round. Critical spends none: the loop escalates the card at once, under `R-ESCALATE-6`. A judge
+choosing between them is choosing that behaviour, so the rule asks about the behaviour rather than
+about the defect.
+
+A subject-matter rule reads well and routes badly. Security is the tempting example: a judge met
+real holes in a permission surface, ruled needs revision, and two maker rounds closed them. Under a
+rule making security critical by its kind, that fault would have reached the owner on the first
+round, carrying a question the loop was already answering.
+
+This decision names no category beyond the three `R-ESCALATE-3` fixes. It says which fault reaches
+an existing category, and opens no further route to the owner.
+
+Two signals would reverse it, and `report` shows both. One: the loop escalates cards as critical,
+and a maker revision then closes them without an owner decision, so the rule sends too much. Two:
+rounds exhaust and the loop escalates as ambiguous over a fault the owner had to decide anyway, so
+the rule sends too little.
 ## D15 — A diagram is admitted where prose cannot carry the shape
 
 **Status:** Ratified.
