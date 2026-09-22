@@ -48,8 +48,9 @@ The actor in `made true by` is never the entry in `checked by`. Rigger doing a t
 check that Rigger did it.
 
 `checked by` names what *would* catch a violation. Which tests actually do is
-`docs/derived/test-matrix.md`, which a tool builds from the tests themselves, and CI reds on a
-requirement no test claims.
+`docs/derived/test-matrix.md`, which a tool builds from the tests themselves. `D17` states which
+requirement with no test reds the build and which is a counted gap. Editing a row's `checked by`
+moves no requirement between the two.
 
 **Ids and lifespan.** Ids group by subject, and an id is never reused. A new requirement takes a
 new id in its group.
