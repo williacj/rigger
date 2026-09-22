@@ -20,12 +20,19 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // The split is by case, and it is the runner's, not a convention of ours. From Node 21 the runner
 // matches its default pattern with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
 // component holding glob magic is matched without regard to case, and a wholly literal one is
-// compared exactly. From Node 22 that pattern spells the extension as a brace list, so expanding
-// `{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs,ts,mts,cts}` leaves `test.mjs` wholly literal
-// and it alone answers to its exact case; every other alternative keeps a `*` or a character
-// class. Node 21 spells the extension as the extglob `?(c|m)js`, which is magic, so there no
-// alternative is literal and the runner folds `TEST.mjs` too.
+// compared exactly. Which alternatives are literal changed once, at Node 22.10, and only in how
+// the extension is spelled:
+//
+//   21.0.0 to 22.9.x    `**/{test,test/**/*,test-*,*[._-]test}.?(c|m)js`
+//   22.10.0 onwards     `**/{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs}`, the list growing
+//                       to `{js,mjs,cjs,ts,mts,cts}` by 22.23.2
+//
+// The extglob `?(c|m)js` is magic, so before 22.10 no alternative is wholly literal and the
+// runner folds `TEST.mjs` along with the rest. The brace list expands to plain `test.mjs`, so
+// from 22.10 that one alternative alone answers to its exact case, while every other keeps a `*`
+// or a character class. Hence two regexes and two answers rather than one.
 const TEST_LITERAL = /^test\.(?:m|c)?js$/;
+const TEST_LITERAL_FOLDED = new RegExp(TEST_LITERAL.source, 'i');
 const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
 const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // Whether the runner folds is the runner's answer, and it turns on two things. Which Node is
@@ -34,37 +41,47 @@ const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // filesystem, so a case-sensitive volume on either still folds.
 //
 // Measured, not reasoned, each name in a directory of its own so that a case-insensitive
-// filesystem folded none of them onto another. `node --test` ran, of `a.TEST.mjs`, `TEST-b.mjs`,
-// `b-TEST.mjs` and `c_Test.mjs`:
+// filesystem folded none of them onto another. Of `a.TEST.mjs`, `TEST-b.mjs` and `c_Test.mjs`,
+// `node --test` ran:
 //
-//   Windows 11 10.0.26200, NTFS:  none under Node 20.20.2; all but `b-TEST.mjs` under 21.7.3;
-//                                 all four under 22.23.2, 23.11.1 and 24.18.0
-//   macos-latest, `darwin`:       none under Node 20.20.2; all of them under 24.20.0. The CI log
-//                                 names the platform and the Node version, so the filesystem
-//                                 there is not measured.
+//   Windows 11 10.0.26200, NTFS:  none under 20.20.2; all three under 21.7.3, 22.9.0, 22.10.0,
+//                                 22.23.2, 23.11.1 and 24.18.0
+//   macos-latest, `darwin`:       none under 20.20.2; all three under 24.20.0. The CI log names
+//                                 the platform and the Node version, so neither the filesystem
+//                                 nor any other Node version is measured there.
 //
-// `TEST.mjs` was declined by all of those but Node 21, which has no literal alternative.
+// `TEST.mjs` ran under 21.7.3 and 22.9.0 and was declined under 20.20.2, 22.10.0, 22.23.2,
+// 23.11.1 and 24.18.0, which is the extension respelling above.
 //
 // Where this answer differs from the runner's, and where it is reasoned rather than measured.
 //
-// Node 21 folds and this does not, so a case-varied spelling is charged there. That is an
-// overcount and never an undercount, and closing it is not this check's job: node 21's matcher
-// differs from 22's in ways that have nothing to do with case, spelling the class as the range
-// `[.-_]`, which under `nocase` also runs `latest.mjs`. Agreeing with it is its own card.
+// Node 21 folds and this does not, so a case-varied spelling is charged there: an overcount, and
+// never an undercount. Closing it is not this check's job, because 21's matcher differs from
+// 22's in ways that have nothing to do with case — it spells the class as the range `[.-_]`,
+// 0x2E to 0x5F, so under `nocase` it also runs `latest.mjs` and does not run `b-TEST.mjs`.
+// Agreeing with 21 is its own card, and the suite reds there on `645eeec` too.
 //
 // Linux is reasoned from node's own `nocase: isWindows || isMacOS` and not measured, because D13
 // makes macOS v0's only host and CI runs nowhere else. If that reasoning is wrong it charges a
-// test rather than passing over production code — again an overcount, which leaves the gate
-// stricter than ARCHITECTURE.md's Budgets section and never able to admit a package that is over
-// budget. Nor would it pass quietly: the relation test in `test/package-budget.test.mjs` asks the
-// real runner, in both directions, on whatever host the suite runs, and reds there.
+// test rather than passing over production code, which is the safe way to be wrong: this check
+// overcounting cannot admit a package that is over budget, where undercounting could. Nor would
+// it pass quietly — the relation test in `test/package-budget.test.mjs` asks the real runner, in
+// both directions, on whatever host the suite runs, and reds there.
+const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map(Number);
 const RUNNER_FOLDS_CASE =
-  Number(process.versions.node.split('.')[0]) >= 22 &&
-  (process.platform === 'win32' || process.platform === 'darwin');
+  NODE_MAJOR >= 22 && (process.platform === 'win32' || process.platform === 'darwin');
+// Before 22.10 the extension is still an extglob, so the bare `test` alternative folds as well.
+const RUNNER_FOLDS_BARE_TEST = RUNNER_FOLDS_CASE && NODE_MAJOR === 22 && NODE_MINOR < 10;
 
-/** Whether `node --test` runs a file of this name, where `foldsCase` says how it matches. */
-function runsAsTest(name, foldsCase) {
-  return TEST_LITERAL.test(name) || (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name);
+/**
+ * Whether `node --test` runs a file of this name. `foldsCase` says whether it folds the
+ * alternatives carrying glob magic, and `foldsBareTest` whether the bare `test` one folds too.
+ */
+function runsAsTest(name, foldsCase, foldsBareTest) {
+  return (
+    (foldsBareTest ? TEST_LITERAL_FOLDED : TEST_LITERAL).test(name) ||
+    (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name)
+  );
 }
 // Directories the budget never charges for, wherever they sit rather than only at the root: a
 // directory of templates under `src/` is still templates, and `node --test` runs every file
@@ -157,7 +174,7 @@ export function countProductionLines(source) {
 }
 
 /** Every production source file under a repository root, in a stable order. */
-export function productionFiles(root, foldsCase = RUNNER_FOLDS_CASE) {
+export function productionFiles(root, foldsCase = RUNNER_FOLDS_CASE, foldsBareTest = RUNNER_FOLDS_BARE_TEST) {
   const walk = (dir) => {
     let entries;
     try {
@@ -171,7 +188,7 @@ export function productionFiles(root, foldsCase = RUNNER_FOLDS_CASE) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) return UNCHARGED.has(entry.name) ? [] : walk(path);
         if (!SOURCE_SUFFIX.test(entry.name)) return [];
-        if (runsAsTest(entry.name, foldsCase)) return [];
+        if (runsAsTest(entry.name, foldsCase, foldsBareTest)) return [];
         return [path];
       });
   };

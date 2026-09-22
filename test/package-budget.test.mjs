@@ -147,12 +147,21 @@ test('no spelling the test runner executes is charged to the budget', () => {
 test('where the runner folds a filename’s case, a test spelled in another case is not charged', () => {
   // `node --test` matches most of its default pattern case-insensitively on some platforms, and
   // there it runs `a.TEST.mjs`. Charging it would put a file the runner executes into a budget
-  // ARCHITECTURE.md's Budgets section keeps tests out of. The exception is the bare `test` name:
-  // node spells that alternative with no glob magic in it, and the runner declines `TEST.mjs`
-  // even where it accepts `a.TEST.mjs`, so that one is production and is charged.
+  // ARCHITECTURE.md's Budgets section keeps tests out of. The exception is the bare `test` name,
+  // where the runner spells that alternative with no glob magic left in it: there it declines
+  // `TEST.mjs` even while it accepts `a.TEST.mjs`, so that one is production and is charged.
   const root = everyShape(CASE_VARIED);
 
-  assert.deepEqual(productionFiles(root, true), [join(root, 'src', 'casing', 'TEST.mjs')]);
+  assert.deepEqual(productionFiles(root, true, false), [join(root, 'src', 'casing', 'TEST.mjs')]);
+});
+
+test('where the runner has no literal alternative, the bare test spelling folds too', () => {
+  // The runner spells the extension of its default pattern as the extglob `?(c|m)js` before Node
+  // 22.10, and that is magic, so `test.?(c|m)js` is no more literal than the rest and the runner
+  // runs `TEST.mjs` as well. Charging it there charges a file the runner executes.
+  const root = everyShape(CASE_VARIED);
+
+  assert.deepEqual(productionFiles(root, true, true), []);
 });
 
 test('where the runner does not fold case, a name differing only by case is charged', () => {
@@ -161,7 +170,7 @@ test('where the runner does not fold case, a name differing only by case is char
   // left uncharged is the direction that lets a package over its budget through the gate.
   const root = everyShape(CASE_VARIED);
 
-  assert.deepEqual(productionFiles(root, false), CASE_VARIED.map((path) => join(root, path)));
+  assert.deepEqual(productionFiles(root, false, false), CASE_VARIED.map((path) => join(root, path)));
 });
 
 test('what the check calls a test is what the test runner runs', (t) => {
