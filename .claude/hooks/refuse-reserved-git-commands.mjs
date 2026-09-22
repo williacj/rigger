@@ -36,6 +36,19 @@ class Unreadable extends Error {}
 
 const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 
+// Bash owns what a here-document is. This is a copy of the part of that rule the gate needs, and
+// a copy can disagree with the thing it copies, so here is where this one can. Each disagreement
+// is settled by refusing, because a refusal costs a message written through a file and the other
+// answer costs a reserved command run without anyone deciding to.
+//
+//   - A body bash would end at end of input this gate calls unreadable. Bash warns and runs the
+//     command; there is no warning to give here, and the alternative is skipping to the end.
+//   - An arithmetic *command*, `(( x << y ))`, is not the arithmetic *expansion* `$(( ))` the
+//     lexer knows, so its `<<` reads as a redirection, finds no closing delimiter, and refuses.
+//   - A line ending is a line feed. A body whose closing delimiter carries a carriage return
+//     does not close, here or in bash, and refuses rather than running with a warning.
+//   - `$( (subshell) )` pairs its first `)` with the `$(`. Nothing is skipped either way.
+
 /** Where bash ends an unquoted word: a blank, or one of the characters that begin an operator. */
 const METACHARACTER = /[ \t\n|&;()<>]/;
 
@@ -126,6 +139,8 @@ function commandsIn(text) {
   let open = false; // a token is open even when it lexed to the empty string, as "" does
   let quote = null;
   const pending = []; // the here-documents opened on the line being read, in the order bash feeds them
+  const suspended = []; // the quote each open `$(` interrupted, restored when it closes
+  let quotedSubst = 0; // how many of those quotes were real, so the text is inside one after all
 
   const endToken = () => {
     if (open) tokens.push(token);
@@ -151,6 +166,19 @@ function commandsIn(text) {
       continue;
     }
 
+    // `$( )` is a command in its own right, and stays one inside double quotes, so a `<<` in it
+    // opens a real here-document. Its text is still collected into the word being built, because
+    // the words around a substitution belong to the command that wrote it.
+    if ((quote === null || quote === '"') && ch === '$' && text[i + 1] === '(') {
+      suspended.push(quote);
+      if (quote !== null) quotedSubst++;
+      quote = null;
+      token += '$(';
+      open = true;
+      i++;
+      continue;
+    }
+
     if (quote) {
       if (ch === '\\' && quote === '"' && i + 1 < text.length) {
         token += text[++i];
@@ -163,6 +191,13 @@ function commandsIn(text) {
       continue;
     }
 
+    if (ch === ')' && suspended.length) {
+      quote = suspended.pop();
+      if (quote !== null) quotedSubst--;
+      token += ')';
+      open = true;
+      continue;
+    }
     if (ch === "'" || ch === '"') {
       quote = ch;
       open = true;
@@ -173,14 +208,14 @@ function commandsIn(text) {
       open = true;
       continue;
     }
-    // A here-string carries its data on this line, so it opens no body and skips nothing.
-    if (ch === '<' && text[i + 1] === '<' && text[i + 2] === '<') {
-      token += '<<<';
-      open = true;
-      i += 2;
-      continue;
-    }
     if (ch === '<' && text[i + 1] === '<') {
+      // A here-string carries its data on this line, so it opens no body and skips nothing.
+      if (text[i + 2] === '<') {
+        token += '<<<';
+        open = true;
+        i += 2;
+        continue;
+      }
       const stripTabs = text[i + 2] === '-';
       const { word, spaced, end } = delimiterAt(text, i + (stripTabs ? 3 : 2));
       pending.push({ word, stripTabs });
@@ -194,14 +229,21 @@ function commandsIn(text) {
       i = end - 1;
       continue;
     }
-    if (ch === ' ' || ch === '\t' || ch === '\r') {
-      endToken();
-      continue;
-    }
     if (ch === '\n' && pending.length) {
       i = skipBodies(text, i + 1, pending) - 1;
       pending.length = 0;
-      endCommand();
+      if (!quotedSubst) endCommand();
+      continue;
+    }
+    // A substitution written inside double quotes stands where one word does, so its blanks and
+    // its operators divide nothing: the words on either side of it are the same command's words.
+    if (quotedSubst) {
+      token += ch;
+      open = true;
+      continue;
+    }
+    if (ch === ' ' || ch === '\t' || ch === '\r') {
+      endToken();
       continue;
     }
     if (OPERATORS.includes(text.slice(i, i + 2))) {
@@ -219,6 +261,7 @@ function commandsIn(text) {
   }
 
   if (quote) throw new Unreadable('the command has an unbalanced quote');
+  if (suspended.length) throw new Unreadable('the command has an unclosed command substitution');
   if (pending.length) throw new Unreadable('a here-document has no closing delimiter');
   endCommand();
   return commands;
