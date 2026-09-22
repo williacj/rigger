@@ -323,6 +323,18 @@ test('a run refuses to write a matrix over a claim that cannot be true', () => {
   assert.throws(() => readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md')));
 });
 
+test('the committed matrix holds the ids the register holds, in the order it holds them', () => {
+  // The ids are taken off the register's text rather than through the reader the generator uses,
+  // so a reader that quietly dropped a group — a table it failed to recognise, say — would not
+  // be agreeing with itself here.
+  const ids = (text) => [...text.matchAll(/^\| (R-[A-Z]+-\d+) \|/gm)].map(([, id]) => id);
+  const registered = ids(readFileSync(join(root, 'docs', 'spec', 'requirements.md'), 'utf8'));
+  const matrix = readFileSync(join(root, 'docs', 'derived', 'test-matrix.md'), 'utf8');
+
+  assert.ok(registered.length > 0, 'the register states no requirements to match against');
+  assert.deepEqual(ids(matrix), registered);
+});
+
 test('this repository holds a matrix that is current, and nothing else under docs/derived', () => {
   // Every run above reads a fixture. This one reads the register this repository authors, the
   // tests it actually has — this file among them — and the matrix committed beside them, so a
