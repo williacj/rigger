@@ -128,8 +128,19 @@ const CASE_VARIED = [
   'src/casing/a.TEST.mjs',
   'src/casing/c_Test.mjs',
 ];
+const PRODUCTION_NAMES = [
+  'src/extensions/a.MJS',
+  'src/extensions/a.JS',
+  'src/extensions/b.Mjs',
+  'src/dotfiles/.test.mjs',
+];
 
-/** A repository holding each of the shapes given, every file a test the runner can really run. */
+test('a test-shaped name with an extension Node cannot load is charged', () => {
+  const root = everyShape(['src/extensions/a.TEST.MJS']);
+  assert.deepEqual(productionFiles(root, true, false), [join(root, 'src', 'extensions', 'a.TEST.MJS')]);
+});
+
+/** A repository holding each file at its given path. */
 function everyShape(paths) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-shapes-'));
   for (const path of paths) {
@@ -180,7 +191,7 @@ test('what the check calls a test is what the test runner runs', (t) => {
   // the patterns copied into the list above. The case-varied spellings are here because the
   // runner's answer for them differs by platform, so this is the only place that can settle it,
   // and the diagnostic puts what it answered into the log of every host the suite runs on.
-  const fixture = [...RUN_AS_TESTS, ...NOT_TESTS, ...CASE_VARIED];
+  const fixture = [...RUN_AS_TESTS, ...NOT_TESTS, ...CASE_VARIED, ...PRODUCTION_NAMES];
   const root = everyShape(fixture);
   const counted = productionFiles(root);
 

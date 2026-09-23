@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 // consumer's own CI, blank lines and comment lines are all outside the count. Everything
 // outside `src/` is one of those, which is why the walk starts there.
 const SOURCES = 'src';
-const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
+const SOURCE_SUFFIX = /\.(?:m|c)?js$/i;
+const RUNNABLE_SUFFIX = /\.(?:m|c)?js$/;
 // A test is whatever `npm test` runs, and `npm test` is `node --test`, so these are that
 // command's own default patterns: `test.js`, `test-*.js`, and the `.test.`, `-test.` and
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
@@ -46,7 +47,7 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // class, and what that costs is recorded below.
 const TEST_LITERAL = /^test\.(?:m|c)?js$/;
 const TEST_LITERAL_FOLDED = new RegExp(TEST_LITERAL.source, 'i');
-const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
+const TEST_PATTERNED = /^(?!\.)(?:.*[.\-_]test|test-.*)\.(?:m|c)?js$/;
 const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // Whether the runner folds is the runner's answer, and it turns on two things. Which Node is
 // running, because the runner only began matching by glob in 21. And which platform, because that
@@ -106,6 +107,8 @@ const RUNNER_FOLDS_BARE_TEST = RUNNER_FOLDS_CASE && NODE_MAJOR === 22 && NODE_MI
  * alternatives carrying glob magic, and `foldsBareTest` whether the bare `test` one folds too.
  */
 function runsAsTest(name, foldsCase, foldsBareTest) {
+  // A folded glob can select `a.TEST.MJS`, but Node cannot load its uppercase extension.
+  if (foldsCase && !foldsBareTest && !RUNNABLE_SUFFIX.test(name)) return false;
   return (
     (foldsBareTest ? TEST_LITERAL_FOLDED : TEST_LITERAL).test(name) ||
     (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name)
