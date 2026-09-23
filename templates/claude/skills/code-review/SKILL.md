@@ -98,6 +98,12 @@ Then the rules that bind every change in this repository, whatever it touches:
 - **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
   implementation, does it declare the requirement it proves, does it sleep, and was a failing
   test deleted or weakened (`AGENTS.md`; the `tdd` skill)?
+- **Mutation claims.** Where an acceptance item rests on a mutation, whether the maker's or your
+  own, does the claim show what the `tdd` skill's "A mutation claim" requires — that the mutation
+  applied, that it did what it meant, and which tests failed on which assertion? An unguarded
+  mutation reports either answer regardless of the truth, so a claim missing that is not evidence
+  for the item it stands behind, and an item you cannot otherwise rule on is unmet
+  (`R-LOOP-5`).
 - **Smallest reasonable change.** Is it shaped like what is already there, or is it a parallel
   second way of doing something the repository already does? Is anything copy-pasted?
 - **File rules** (`AGENTS.md`, "Any role"). Does every new file meet the `ABOUTME:` rule,
