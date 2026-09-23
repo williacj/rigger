@@ -537,8 +537,13 @@ const TIME_OPTIONS = new Set(['-p', '--']);
  *
  * The operators are ordered longest first. A two-character one read as its first character would
  * take `>| out` for a redirection whose target is already in this word and stop before `out`.
+ *
+ * `<<` and `<<-` are absent because only their length could matter here and neither can reach it:
+ * the lexer above never leaves a bare `<<` or `<<-` token, since it reads the delimiter into the
+ * same word and refuses a here-document that names none. A `<<EOF` word is matched by `<` and
+ * stepped over as a word carrying its own target, which is what it is.
  */
-const REDIRECTION = /^(\{[A-Za-z_][A-Za-z0-9_]*\}|\d*)(<<<|<<-|<<|<&|>&|<>|>>|>\||<|>)/;
+const REDIRECTION = /^(\{[A-Za-z_][A-Za-z0-9_]*\}|\d*)(<<<|<&|>&|<>|>>|>\||<|>)/;
 
 /**
  * Step over the words bash's grammar puts between the start of a command and the program it runs:

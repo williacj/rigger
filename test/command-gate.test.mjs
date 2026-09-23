@@ -527,6 +527,13 @@ export const REDIRECTION_PAYLOADS = [
   ['a brace group and `<in`', '{ </dev/null git push --force; }', 'a force push'],
   ['an explicit file descriptor', '{ 1>/dev/null git push --force; }', 'a force push'],
   ['a here-string', '{ <<<x git push --force; }', 'a force push'],
+  // Each operator below is written with a blank as well as closed up. Only the spaced spelling
+  // leaves the operator as a word of its own, and only then does its length decide whether the
+  // target is this word or the next — so the closed-up form alone pins none of them.
+  ['a here-string with a blank', '{ <<< x git push --force; }', 'a force push'],
+  ['an input redirection with a blank', '{ < /dev/null git push --force; }', 'a force push'],
+  ['a descriptor duplication on standard input', '{ <&0 git push --force; }', 'a force push'],
+  ['a descriptor duplication on standard input, spaced', '{ <& 0 git push --force; }', 'a force push'],
   ['`2>&1` after then', 'if true; then 2>&1 git push --force; fi', 'a force push'],
   ['a case body', 'case x in x) >/dev/null git push --force;; esac', 'a force push'],
   ['a target in the next word', '{ > /dev/null git push --force; }', 'a force push'],
