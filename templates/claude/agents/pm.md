@@ -76,9 +76,9 @@ Never edit these:
 - Load `.claude/skills/proposal/` when the owner hands you the need, before you draft a row. It
   holds what to establish first, how to sort a requirement from a decision from a structure, and
   what the argument around the rows carries.
-- Load `.claude/skills/spec-style/` before you draft. It holds the form the corpus is written in.
-  It governs form only: where it and a ratified clause's meaning pull apart, keep the meaning and
-  say so in the proposal.
+- Load `.claude/skills/spec-style/` before you draft. It holds the form the binding documents
+  are written in. It governs form only: where it and a ratified clause's meaning pull apart,
+  keep the meaning and say so in the proposal.
 - Load `.claude/skills/acceptance/` before you write the acceptance of a card you file
   (`R-CARD-4`).
 

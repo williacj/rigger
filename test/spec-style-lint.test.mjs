@@ -1,5 +1,5 @@
 // ABOUTME: Tests spec-style-lint: where its ceiling and its ruled-out terms come from, what it
-// ABOUTME: reads, what it declines to say, and that the current corpus passes it.
+// ABOUTME: reads, what it declines to say, and that the binding documents pass it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 const under = (terms, ceiling = 40) => ({ ceiling, terms: new Set(terms) });
 
 // A skill shaped like the real one, written out here so each expectation below is derived from
-// the form the lint reads rather than from whatever the corpus happens to say today.
+// the form the lint reads rather than from whatever the binding documents happen to say today.
 const SKILL = [
   '---',
   'name: spec-style',
@@ -54,7 +54,7 @@ test('the ruled-out terms are read from the skill, not typed into the lint', () 
 });
 
 test('only the one-term rule supplies terms, so a `never` elsewhere in the skill supplies none', () => {
-  // Rule 2 forbids nesting an aside, which is not a word the corpus may not use.
+  // Rule 2 forbids nesting an aside, which is not a word the binding documents may not use.
   assert.ok(!ruledOutTerms(SKILL).has('nest'));
 });
 
@@ -201,10 +201,11 @@ test('which documents the lint reads is the skill, so a scope it does not name i
   assert.deepEqual(lintFiles(root, narrowed), ['README.md']);
 });
 
-test('the current corpus passes the lint', () => {
-  // The lint guards documents it did not write. A finding here is a claim about the corpus,
-  // which only the owner may change, so a red here means the lint is wrong until they say
-  // otherwise. The message carries every finding, because one at a time would cost a round each.
+test('the binding documents pass the lint', () => {
+  // The lint guards documents it did not write. A finding here is a claim about the binding
+  // documents, which only the owner may change, so a red here means the lint is wrong until they
+  // say otherwise. The message carries every finding, because one at a time would cost a round
+  // each.
   const reported = check(repository).findings
     .map((f) => `${f.path}:${f.line}  ${f.rule}  ${f.term ?? `${f.words} words`}  ${f.text}`);
   assert.deepEqual(reported, []);

@@ -59,12 +59,13 @@ way is a role the prompt has not described.
 
 ## The form
 
-A role prompt is written in the same four rules as the rest of the corpus: one term per concept,
+A role prompt is written in the same four rules as the binding documents: one term per concept,
 sentences near 25 words and none past 40, active voice with the actor named, and structure that
 matches the meaning. `.claude/skills/spec-style/` holds them, and the test behind each.
 
-Write in English rather than in the corpus's vocabulary. A role reads its prompt on dispatch, with
-nobody to ask. Where a term of art earns its place, the sentence around it says what it means.
+Write in English rather than in the binding documents' vocabulary. A role reads its prompt on
+dispatch, with nobody to ask. Where a term of art earns its place, the sentence around it says
+what it means.
 
 ## Before you hand it off
 

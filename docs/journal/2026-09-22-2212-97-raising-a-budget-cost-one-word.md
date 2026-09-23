@@ -24,9 +24,9 @@ No recorded decision governs that read, and `D16` says so itself. Its Notes name
 of `D16` reaches the dependency, because a document owns the fact rather than a tool. The
 arrangement is easy to credit to `D16` and is not its.
 
-Neither figure is derived. Nothing in the corpus says why two thousand rather than one or three,
-and 2,500 is a judgement in the same way. The card was explicit that it could not compute a
-replacement and should not pretend to.
+Neither figure is derived. Nothing in the binding documents says why two thousand rather than one
+or three, and 2,500 is a judgement in the same way. The card was explicit that it could not
+compute a replacement and should not pretend to.
 
 What can be measured is the property the budget rests on, so it was run rather than asserted.
 Appending 600 words to `AGENTS.md` took the check to 2,577 against 2,500 and exit 1, and moving
