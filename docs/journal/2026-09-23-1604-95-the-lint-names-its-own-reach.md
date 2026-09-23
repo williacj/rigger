@@ -7,3 +7,7 @@ The owner chose to correct the plan to the four files the lint reports. The exit
 compares the lint's reported scope with that statement, and authors and reviewers remain
 responsible for form rules outside it. A green lint run proves nothing about a document it does
 not name.
+
+The skill's description named `docs/spec/` as a directory, while the lint leaves retired
+registers out of that directory. The skill now states that limit in its description and lint
+explanation; its four form rules and the lint's parser are unchanged.

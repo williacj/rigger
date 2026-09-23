@@ -1,6 +1,6 @@
 ---
 name: spec-style
-description: The register Rigger's binding documents are written in — four form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
+description: The register Rigger's binding documents are written in — four form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. In docs/spec/, the lint reads the live decisions and requirements registers; retired registers keep their historical text. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
 ---
 
 ABOUTME: The four form rules Rigger's binding documents are written under, and the test behind
@@ -71,10 +71,11 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
   requirement" states what proposing one obliges you to do. Read the preamble of the file you are
   changing before you draft.
 - **Not all of it lintable.** `scripts/spec-style-lint.mjs` reads rules 1 and 2 off this file and
-  applies them to the documents the description above names: a ruled-out term is a finding, and so
-  is a sentence past the ceiling. Rules 3 and 4 ask whether an actor matters and whether a
-  structure fits its meaning. Those are judgments, so they hold because an author applies them and
-  a reviewer reads for them.
+  applies them to `README.md`, `ARCHITECTURE.md`, `docs/spec/decisions.md`, and
+  `docs/spec/requirements.md`. It skips the retired registers, whose historical text is kept.
+  A ruled-out term is a finding, and so is a sentence past the ceiling. Rules 3 and 4 ask whether
+  an actor matters and whether a structure fits its meaning. Those are judgments, so they hold
+  because an author applies them and a reviewer reads for them.
 
 ## Before you hand it off
 
