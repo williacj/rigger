@@ -9,9 +9,10 @@ future users. The config now names every tracked Markdown prompt and skill under
 `templates/claude/`. A test compares that list with git's tracked files, so adding another such
 instruction file without listing it is a failing test.
 
-Widening the scan first exposed two JavaScript members in the TDD skill as false paths. A root
-file now needs a source or document extension to be treated as a path; a path with a slash or a
-dotfile is still read. The scan also found `docs/spikes/` in the spike engineer prompts. The
+Widening the scan first exposed two JavaScript members in the TDD skill as false paths. Those
+two spans are excluded by name; a root file with any short extension remains a path. The first
+review caught the distinction with `missing.js`, which a narrower classifier missed. The scan
+also found `docs/spikes/` in the spike engineer prompts. The
 build plan puts the future WSL2 report there, but no report has landed, so the config exempts that
 directory with the reason and stops exempting it once it exists.
 

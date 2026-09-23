@@ -9,19 +9,20 @@ import { CONFIG, documentChecking } from './doc-reference-check.mjs';
 
 /** A backticked span, which a checked document uses for a path, an id, a column name and a command alike. */
 const SPAN = /`([^`\n]+)`/g;
+const CODE_MEMBERS = new Set(['String.raw', 'process.exit']);
 
 /**
  * Whether a backticked span names something on disk.
  *
  * A checked document backticks far more than paths, so this asks what a path looks like rather
  * than what exists: a span that exists is a path either way, and a span that does not is the whole
- * point. A path carries no whitespace and names a directory, a dotfile, or a file with a source
- * or document extension. An id, column, command, or JavaScript member does not become a file
- * merely because it has a dot.
+ * point. A path carries no whitespace and names a directory, a dotfile, or a file with a short
+ * extension. The checked instructions also name two JavaScript members whose dots name no files.
  */
 function looksLikePath(span) {
+  if (CODE_MEMBERS.has(span)) return false;
   if (!/^\.?[\w@][\w.@/-]*$/.test(span)) return false;
-  return span.includes('/') || /\.(?:md|mjs|json|yml|yaml)$/i.test(span) || /^\.[\w-]+$/.test(span);
+  return span.includes('/') || /\.[A-Za-z]{1,6}$/.test(span) || /^\.[\w-]+$/.test(span);
 }
 
 /** Every backticked repository path in one document, with the line it sits on. */

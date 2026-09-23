@@ -35,6 +35,15 @@ test('a dotted JavaScript member is not a repository path', () => {
   assert.deepEqual(backtickedPaths(document), [{ line: 1, path: 'README.md' }]);
 });
 
+test('a missing root file keeps its path status across short extensions', () => {
+  const document = 'Read `missing.js`, `missing.cjs`, and `missing.sh` before dispatch.';
+  assert.deepEqual(backtickedPaths(document), [
+    { line: 1, path: 'missing.js' },
+    { line: 1, path: 'missing.cjs' },
+    { line: 1, path: 'missing.sh' },
+  ]);
+});
+
 /** A repository whose checked document holds the given line, plus whatever files are named. */
 function repositoryOf(line, { exempt = {}, files = [], directories = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-paths-'));
