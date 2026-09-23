@@ -11,7 +11,7 @@
 // the roles and the kinds of work are starting points rather than answers: change them to match
 // your board, and run `rigger doctor` to check what you changed.
 export default {
-  repo: 'williacj/rigger',
+  repo: 'OWNER/REPOSITORY',
   board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } },
   concurrency: 3,
   roles: {
