@@ -20,17 +20,30 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // The split is by case, and it is the runner's, not a convention of ours. From Node 21 the runner
 // matches its default pattern with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
 // component holding glob magic is matched without regard to case, and a wholly literal one is
-// compared exactly. Which alternatives are literal changed once, at Node 22.10, and only in how
-// the extension is spelled:
+// compared exactly. What that pattern is, dumped from each interpreter rather than read off a
+// changelog:
 //
-//   21.0.0 to 22.9.x    `**/{test,test/**/*,test-*,*[._-]test}.?(c|m)js`
-//   22.10.0 onwards     `**/{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs}`, the list growing
-//                       to `{js,mjs,cjs,ts,mts,cts}` by 22.23.2
+//   20.20.2                    no such export; the runner matches by its own predicate
+//   21.0.0, 21.7.3, 22.0.0     `**/{test,test/**/*,test-*,*[.-_]test}.?(c|m)js`
+//   22.9.0                     `**/{test,test/**/*,test-*,*[._-]test}.?(c|m)js`
+//   22.10.0                    `**/{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs}`
+//   22.23.2, 24.18.0           the same, the extension list grown to `{js,mjs,cjs,ts,mts,cts}`
+//   23.11.1                    two patterns rather than one, the `{js,mjs,cjs}` spelling above
+//                              and `**/test/**/*{-,.,_}test.{cts,mts,ts}` beside it
 //
-// The extglob `?(c|m)js` is magic, so before 22.10 no alternative is wholly literal and the
-// runner folds `TEST.mjs` along with the rest. The brace list expands to plain `test.mjs`, so
-// from 22.10 that one alternative alone answers to its exact case, while every other keeps a `*`
-// or a character class. Hence two regexes and two answers rather than one.
+// Once glob matching is there, two things moved, at different times, and only one of them is
+// what this file keys on.
+//
+// The extension is the one that matters here, and it is measured at both ends. The extglob
+// `?(c|m)js` is magic, so through 22.9.0 no alternative is wholly literal and the runner folds
+// `TEST.mjs` along with the rest. The brace list expands to plain `test.mjs`, so from 22.10.0
+// that one alternative alone answers to its exact case while every other keeps a `*` or a
+// character class. Hence two regexes and two answers rather than one.
+//
+// The character class moved too, from the range `[.-_]` to the set `[._-]`, and **where it moved
+// is unmeasured**: 22.0.0 still has the range and 22.9.0 has the set, so it happened somewhere in
+// 22.1 to 22.8 and no interpreter in that window has been run. This file does not key on it, and
+// what that costs is recorded below rather than guessed at.
 const TEST_LITERAL = /^test\.(?:m|c)?js$/;
 const TEST_LITERAL_FOLDED = new RegExp(TEST_LITERAL.source, 'i');
 const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
@@ -44,22 +57,31 @@ const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // filesystem folded none of them onto another. Of `a.TEST.mjs`, `TEST-b.mjs` and `c_Test.mjs`,
 // `node --test` ran:
 //
-//   Windows 11 10.0.26200, NTFS:  none under 20.20.2; all three under 21.7.3, 22.9.0, 22.10.0,
-//                                 22.23.2, 23.11.1 and 24.18.0
+//   Windows 11 10.0.26200, NTFS:  none under 20.20.2; all three under 21.0.0, 21.7.3, 22.0.0,
+//                                 22.9.0, 22.10.0, 22.23.2, 23.11.1 and 24.18.0
 //   macos-latest, `darwin`:       none under 20.20.2; all three under 24.20.0. The CI log names
 //                                 the platform and the Node version, so neither the filesystem
 //                                 nor any other Node version is measured there.
 //
-// `TEST.mjs` ran under 21.7.3 and 22.9.0 and was declined under 20.20.2, 22.10.0, 22.23.2,
-// 23.11.1 and 24.18.0, which is the extension respelling above.
+// `TEST.mjs` ran under 21.0.0, 21.7.3, 22.0.0 and 22.9.0, and was declined under 20.20.2,
+// 22.10.0, 22.23.2, 23.11.1 and 24.18.0, which is the extension respelling above.
 //
 // Where this answer differs from the runner's, and where it is reasoned rather than measured.
 //
 // Node 21 folds and this does not, so a case-varied spelling is charged there: an overcount, and
-// never an undercount. Closing it is not this check's job, because 21's matcher differs from
-// 22's in ways that have nothing to do with case — it spells the class as the range `[.-_]`,
-// 0x2E to 0x5F, so under `nocase` it also runs `latest.mjs` and does not run `b-TEST.mjs`.
-// Agreeing with 21 is its own card, and the suite reds there on `645eeec` too.
+// never an undercount. The suite reds there on `645eeec` as well, so it predates this check, and
+// agreeing with 21 is its own card.
+//
+// The range class is not Node 21's alone, and against it this check undercounts rather than
+// overcounts, which is the direction that matters. 22.0.0 spells the same range, so it too runs
+// `latest.mjs` and `notatest.mjs` and declines `b-TEST.mjs` — and `b-test.mjs`, because `-` at
+// 0x2D sits below the range's `.` at 0x2E. That is a difference in what the runner matches at
+// all rather than in how it treats case, so it costs nothing to fold and cannot be fixed by
+// folding. Against such a runner this file calls a `-test` name a test and charges nothing for
+// it, where the runner would not have run it. That holds wherever the range does: 21.x, 22.0.0,
+// and as far into 22.1 to 22.8 as the range survives, which is unmeasured. It is not silent —
+// the budget suite reds on 21.0.0 and 22.0.0 for `645eeec` as much as for this file, and is
+// green there on 22.9.0 — and following the class is its own card rather than this one's.
 //
 // Linux is reasoned from node's own `nocase: isWindows || isMacOS` and not measured, because D13
 // makes macOS v0's only host and CI runs nowhere else. If that reasoning is wrong it charges a

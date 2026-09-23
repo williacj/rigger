@@ -77,6 +77,18 @@ across a boundary, one test crosses it for real, in the same work rather than a 
 it cannot be crossed in a test, say so where the substitute is defined, so the next reader knows
 what is unproven.
 
+**Assert the relation to an authority, not the answer it gives today.** Where code depends on a
+tool or command outside it, `D16` has that tool decide the fact and the code carry at most a copy.
+Write the test that ties the two so that it asks the tool and asserts the relation between its
+answer and the code's. A test pinning the answer the tool gives today goes stale the moment the
+tool changes it, and it goes stale green. Nothing in such a test is tied to the tool, so it agrees
+with the copy it was written beside for ever.
+
+For a worked example, read `test/package-budget.test.mjs`, which covers one fact both ways. Look
+for the difference the two kinds make. A test that pins the tool's answer is the readable one and
+says what that answer is today, while a test that asks the tool is the one that fails when the
+answer moves.
+
 ## A bug fix
 
 Every bug fix starts with the failing test (`AGENTS.md`). Reproduce the bug as a test first,
