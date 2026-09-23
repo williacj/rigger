@@ -94,6 +94,12 @@ citation down. A reference can resolve while the claim attached to it is invente
 resolver passing is no evidence the citation is sound. An unverified citation reaches the maker
 as an instruction rather than a doubt, and `R-LOOP-1` has them build against it.
 
+When a session asserts a figure in prose, it says whether the figure is a measurement or a
+judgment. A measured figure names the tool or source that produced it, the ref or date and scope
+measured, and the result. A claim about the present state is measured on the state it describes.
+A historical figure names its historical state. A judgment names its premise and is not dressed
+as a measurement.
+
 Instruction files take the same split. This file holds what is true whatever you touch; a
 directory's `AGENTS.md` holds what is true only in that directory; anything else takes the
 third treatment.
