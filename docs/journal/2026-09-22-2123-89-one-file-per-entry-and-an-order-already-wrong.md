@@ -31,7 +31,7 @@ deleting the file reds `check:paths` at that line. The card's table listed four 
 that one. Grepping for the string rather than reading the table found it in a second, which is
 the cheaper order. A measured list in a card is evidence about the moment it was measured, and
 this one had drifted twice over: the card counts three entries at `0df465b` where that commit
-holds four, and the branch it lands on holds seven.
+holds four, the file held seven when the work started, and eight by the time it was mergeable.
 
 The fix there is a one-word path, and it is still a diff inside `docs/spec/`. A reference that
 resolves is not the same as a claim that holds: leaving `docs/journal.md` in place as a stub
@@ -39,9 +39,17 @@ would have kept `check:paths` green while making `D16`'s last sentence false, an
 failure `AGENTS.md` names when it says the resolver passing is no evidence the citation is
 sound. Green was available and wrong.
 
-The entries were moved by a script and checked by a second one, because seven hand-moves are
-seven chances to reflow a paragraph. The checker asserts each new file's body appears verbatim
-in `docs/journal.md` as it stood at `5083fb9`, and it failed all seven on the first run: the
+The split had to survive one more conflict on the file it was deleting, and the shape of that
+one is worth recording because it is the shape every card open at the cut will meet. Card #91
+merged an entry into `docs/journal.md` while this branch had already deleted it, so `git` raised
+a modify/delete rather than a text conflict: it left `main`'s whole file in the tree and refused
+to guess. That is the right refusal, because the resolution is not mechanical — the incoming
+entry has to be migrated into the new form, with its own measured time, before the file goes.
+The cost is one migration per branch and it is paid once, which is the trade this card is for.
+
+The entries were moved by a script and checked by a second one, because eight hand-moves are
+eight chances to reflow a paragraph. The checker asserts each new file's body appears verbatim
+in `docs/journal.md` as it stood before the split, and it failed every one on its first run: the
 working tree is CRLF under `core.autocrlf`, `git show` hands out LF, and the comparison was
 between the two. The entry at `2026-09-22-1700-36-a-generated-document-and-crlf.md` is about
 that exact difference costing a check a false red. It cost this one too, four hours later,

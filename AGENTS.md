@@ -49,6 +49,11 @@ permission first.
 - **Honest disagreement beats fake consensus.** Call out bad ideas — the owner depends on it.
   Give a technical reason, or say it is intuition. If you are uncomfortable pushing back, say
   "Strange things are afoot at the Circle K."
+- **Write to be acted on.** A paragraph states one thing: what to do, a fact needed to do it,
+  or — in the decision register and the journal — the reasoning those documents exist to hold.
+  A paragraph doing two of those is split. Where a passage is a set a reader looks one thing up
+  in, write it as a list or a table; where it is an argument, write it as prose, because a list
+  asserts its items are independent.
 
 ## What binds
 
