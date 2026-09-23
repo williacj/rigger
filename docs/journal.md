@@ -14,9 +14,9 @@ them and never saw it red, and the two who saw it reached for different mechanis
 contention under `node --test`, and something about nesting the suite under `npm run`. No report
 isolated either one, so the cause was still open when the card was filed.
 
-It was never intermittent. On `main`, on this host, `npm test` passed five of five and `npm test
---silent` failed five of five. The variable was the invocation, not the machine and not the
-moment.
+It was never intermittent. On a clone of `main` at `dc8bf6b`, on this host, `npm test` passed
+six of six, `npm test --silent` failed six of six, and bare `node --test` passed. The variable
+was the invocation, not the machine and not the moment.
 
 npm exports its own config into the environment of a script it runs, as `npm_config_*`. Three
 spellings put `npm_config_loglevel=silent` there — `--silent`, `-s` and `--loglevel=silent` —
