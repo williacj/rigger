@@ -165,8 +165,8 @@ says what broke. Never log a secret (`AGENTS.md`).
 
 Each test declares the requirement it proves. A tool builds `docs/derived/test-matrix.md` from
 those declarations, so the matrix is generated and never hand-edited (`D8`). A requirement the
-register gains needs a test that claims it, or the build reds (`AGENTS.md`, "When you write a
-decision or a requirement"). A judge enforces that, so expect no check to catch it for you. One
+register gains needs a test that claims it (`D17` rule 1). A judge enforces that (`D17` rule 7),
+so expect no check to catch it for you. One
 the register already held is a counted gap, which the matrix counts and the build does not red
 on, and `D17` holds the difference and when each gap closes.
 

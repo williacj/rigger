@@ -69,8 +69,8 @@ mean. Read it there. What the proposal owes beyond it:
 
 - **Fill both columns.** `made true by` names who or what satisfies the row; `checked by` takes one
   of the five forms the preamble lists.
-- **Name the test you expect to claim the row**, because a new row with none reds the build
-  (`AGENTS.md`, "When you write a decision or a requirement"). Where no test exists yet, `checked
+- **Name the test you expect to claim the row.** A judge enforces the test obligation for each new
+  requirement (`D17` rules 1 and 7). Where no test exists yet, `checked
   by` is `nothing yet`, and the proposal names the card that closes it.
 - **Write it so a judge can rule on it.** `.claude/skills/acceptance/`, under "Write each item",
   holds the rule and the words it bars. A row is read the same way an acceptance item is, by
