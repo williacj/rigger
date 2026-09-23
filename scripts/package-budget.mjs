@@ -15,8 +15,10 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // A test is whatever `npm test` runs, and `npm test` is `node --test`, so these are that
 // command's own default patterns: `test.js`, `test-*.js`, and the `.test.`, `-test.` and
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
-// file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
-const TEST_FILE = /(?:^|[.\-_])test\.(?:m|c)?js$|^test-.*\.(?:m|c)?js$/;
+// file the runner executes to a budget that ARCHITECTURE.md puts tests outside of. Exported
+// because `scripts/build-test-matrix.mjs` asks the same question of a file name, and a second
+// copy of the answer is a second place for it to drift.
+export const TEST_FILE = /(?:^|[.\-_])test\.(?:m|c)?js$|^test-.*\.(?:m|c)?js$/;
 // Directories the budget never charges for, wherever they sit rather than only at the root: a
 // directory of templates under `src/` is still templates, and `node --test` runs every file
 // under a `test` directory whatever it is called.
@@ -32,8 +34,13 @@ export function packageBudget(architecture) {
   return Number(row[1].replace(/,/g, ''));
 }
 
-/** Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on. */
-function endOfQuoted(line, start, quote) {
+/**
+ * Where a quoted run ends on this line, just past its closing quote, or -1 if it runs on.
+ *
+ * Exported because `scripts/build-test-matrix.mjs` has the same reason to read a quoted run:
+ * a comment opener inside one opens no comment, whichever scan is looking at it.
+ */
+export function endOfQuoted(line, start, quote) {
   for (let i = start; i < line.length; i++) {
     if (line[i] === '\\') i++;
     else if (line[i] === quote) return i + 1;
