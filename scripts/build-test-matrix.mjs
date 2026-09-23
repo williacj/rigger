@@ -37,10 +37,10 @@ export function register(text) {
 /**
  * Whether a character ends a line for JavaScript. All four count, not just the two a text editor
  * shows: a line comment ends at any of them, so a scan that knows only `\n` reads whatever follows
- * a ` ` as part of the comment above it.
+ * a `\u2028` as part of the comment above it.
  */
 const terminates = (character) =>
-  character === '\n' || character === '\r' || character === ' ' || character === ' ';
+  character === '\n' || character === '\r' || character === '\u2028' || character === '\u2029';
 
 /** Whitespace between tokens, which carries nothing and ends nothing. */
 const SPACING = new Set([' ', '\t', '\v', '\f', ' ', '﻿']);

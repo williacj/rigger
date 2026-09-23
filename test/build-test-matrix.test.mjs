@@ -88,6 +88,61 @@ const NEVER_RUN = {
   ),
 };
 
+// The other direction: sources whose declaration does speak for a test the runner runs, each with
+// the titles the scan has to report from it. The titles are read off the source by hand, never
+// taken from what the scan returns, and each is distinct so that the runner's answer for one shape
+// cannot stand in for another's. Every shape here is one that defeated a scan reading lines: a
+// backtick or a comment marker it counted where the language does not.
+const ALSO_RUN = {
+  'a declaration above a plain call': {
+    source: lines('// proves R-ONE-1', "test('a plain call', () => {});", ''),
+    claims: ['a plain call'],
+  },
+  'a backtick inside a line comment above it': {
+    source: lines('// the ` character', '// proves R-ONE-1', "test('a call under a comment', () => {});", ''),
+    claims: ['a call under a comment'],
+  },
+  'a backtick inside a regular expression above it': {
+    source: lines('const tick = /`/;', '// proves R-ONE-1', "test('a call under a backtick', () => {});", ''),
+    claims: ['a call under a backtick'],
+  },
+  'a block-comment opener inside a regular expression above it': {
+    source: lines('const marker = /[/*]/;', '// proves R-ONE-1', "test('a call under a marker', () => {});", ''),
+    claims: ['a call under a marker'],
+  },
+  'a fixture in a single-line string above it': {
+    source: lines(
+      "const fixture = '// proves R-ONE-1\\ntest(\"nothing\", () => {});';",
+      '// proves R-ONE-1',
+      "test('a call under a fixture', () => {});",
+      '',
+    ),
+    claims: ['a call under a fixture'],
+  },
+  'a declaration a line separator divides from its call': {
+    // U+2028 ends a line for JavaScript, so the comment ends there and the call is the next line.
+    // A scan that split on `\n` alone read both as one line and dropped the claim without a word.
+    source: `// proves R-ONE-1 test('a call after a line separator', () => {});\n`,
+    claims: ['a call after a line separator'],
+  },
+  'a declaration above an awaited call': {
+    source: lines('// proves R-ONE-1', "await test('an awaited call', () => {});", ''),
+    claims: ['an awaited call'],
+  },
+  'two declarations, and a division between them': {
+    source: lines(
+      '// proves R-ONE-1',
+      "test('a call before a division', () => {});",
+      'const half = (1 + 3) / 2;',
+      '// proves R-ONE-1',
+      "test('a call after a division', () => {});",
+      'export { half };',
+      '',
+    ),
+    claims: ['a call before a division', 'a call after a division'],
+  },
+};
+
 /** A fixture repository holding the files a run reads, and nothing else. */
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), 'rigger-matrix-'));
@@ -606,4 +661,155 @@ test('every run prints how many requirements no test claims', () => {
     assert.equal(printed.status, 0, printed.stderr);
     assert.match(printed.stdout, /1 of 2 requirements have no test/);
   }
+});
+
+/**
+ * Every shape in one repository, each source its own test file, so one runner run answers for all
+ * of them. The declaration in each names `R-ONE-1`, which the fixture register holds.
+ */
+function everyShape(sources) {
+  const files = {
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+  };
+  const paths = sources.map((source, at) => {
+    files[`test/shape-${at}.test.mjs`] = `import { test } from 'node:test';\n${source}`;
+    return `test/shape-${at}.test.mjs`;
+  });
+  return { dir: fixture(files), paths };
+}
+
+/**
+ * Every test name `node --test` reports running in a repository, and how many of its runs failed.
+ *
+ * This is the authority (`D16` rule 1): `npm test` is `node --test`, so whether a title names a
+ * test at all is that command's answer and not a shape a script recognised. The failure count is
+ * the guard on the fixtures — a source that does not parse, or one whose import is wrong, runs no
+ * test for a reason that has nothing to do with what is being measured, and it would read as a
+ * test the runner declines.
+ */
+function executed(dir) {
+  // `NODE_TEST_CONTEXT` marks a process as already inside a test run, and a child that inherits
+  // it refuses to look for files at all. This run has to be the outer one.
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  const ran = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], {
+    cwd: dir,
+    env,
+    encoding: 'utf8',
+  });
+  return {
+    names: [...ran.stdout.matchAll(/^\s*# Subtest: (.+)$/gm)].map(([, name]) => name.trim()),
+    failed: Number(/^# fail (\d+)$/m.exec(ran.stdout)?.[1] ?? -1),
+    said: ran.stdout + ran.stderr,
+  };
+}
+
+test('every declaration the scan reports names a test the runner really runs', (t) => {
+  // The whole bar of card #85, tied to the only thing that can settle it. Each source goes to the
+  // real runner and to the scan, and the assertion is the relation between the two answers rather
+  // than either one written down: a title the scan reports has to be a title the runner reported
+  // running. Nothing here pins what the runner does, so the day it changes what it executes this
+  // fails rather than agreeing for ever with a list typed beside it.
+  const shapes = [
+    ...Object.entries(NEVER_RUN).map(([shape, source]) => [shape, source, []]),
+    ...Object.entries(ALSO_RUN).map(([shape, { source, claims }]) => [shape, source, claims]),
+  ];
+  const { dir, paths } = everyShape(shapes.map(([, source]) => source));
+  const runner = executed(dir);
+
+  assert.equal(runner.failed, 0, `a fixture broke rather than being declined:\n${runner.said}`);
+  assert.ok(runner.names.length > 0, `the runner ran nothing:\n${runner.said}`);
+  t.diagnostic(`node ${process.version} ran: ${runner.names.join(' | ')}`);
+
+  for (const [at, [shape, source, claims]] of shapes.entries()) {
+    let reported;
+    try {
+      reported = declarationsIn(source, paths[at]).map((claim) => claim.title);
+    } catch (refusal) {
+      // A refusal claims nothing, which is the safe side of the bar. That it names where it sits
+      // is asserted below, by the test that owns that half.
+      assert.deepEqual(claims, [], `${shape} was refused: ${refusal.message}`);
+      continue;
+    }
+    assert.deepEqual(reported, claims, `${shape} was not read as its source says`);
+    for (const title of reported) {
+      assert.ok(
+        runner.names.includes(title),
+        `${shape}: the scan claims \`${title}\`, which the runner never ran. It ran: ${runner.names.join(' | ')}`,
+      );
+    }
+  }
+});
+
+test('the runner runs no test that any shape above only pretends to declare', () => {
+  // The other half of the relation, and the one that catches a scan agreeing with itself. Every
+  // source in `NEVER_RUN` names its dead test the same, so this asks the runner whether it ran a
+  // test by that name anywhere in a repository made of nothing but those files. A shape that
+  // turned out to be live — a fixture that does run, so no evidence of anything — reds here.
+  const { dir } = everyShape(Object.values(NEVER_RUN));
+  const runner = executed(dir);
+
+  assert.equal(runner.failed, 0, `a fixture broke rather than being declined:\n${runner.said}`);
+  assert.ok(
+    !runner.names.includes('a test nobody runs'),
+    `a source in NEVER_RUN declares a test the runner does run:\n${runner.said}`,
+  );
+});
+
+test('a line the scan cannot classify is refused, naming the file and the line', () => {
+  // `R-CARD` aside, this is the honest half of reading source as syntax: where the language leaves
+  // a character ambiguous, or where the source says nothing about whether the runner reaches a
+  // call, the scan says so and names where. A refusal costs a run; a guess costs a claim in a
+  // document nobody reads back.
+  // Each shape names the line it is refused at and the reason the refusal has to give. The reason
+  // is here because a refusal is only useful if it says what could not be classified: a scan that
+  // threw for some other reason at the same line would satisfy the line alone, and did.
+  const refused = {
+    'a slash after a closing brace, which is a division or a regular expression': {
+      source: lines(
+        'const object = { a: 1 };',
+        'const ratio = { b: 2 }/2;',
+        '// proves R-ONE-1',
+        "test('a real test', () => {});",
+        'export { object, ratio };',
+        '',
+      ),
+      line: 2,
+      reason: /division/,
+    },
+    'a declaration above a call the file nests': {
+      source: lines(
+        'function disabled() {',
+        '  // proves R-ONE-1',
+        "  test('a test nobody runs', () => {});",
+        '}',
+        '',
+      ),
+      line: 2,
+      reason: /top level/,
+    },
+    'a block comment that never closes': {
+      source: lines('/* a comment that never closes', '// proves R-ONE-1', "test('a real test', () => {});", ''),
+      line: 1,
+      reason: /never closes/,
+    },
+  };
+
+  for (const [shape, { source, line, reason }] of Object.entries(refused)) {
+    assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+      assert.match(error.message, /test\/first\.test\.mjs/, shape);
+      assert.match(error.message, new RegExp(`line ${line}\\b`), shape);
+      assert.match(error.message, reason, shape);
+      return true;
+    }, `${shape} was not refused`);
+  }
+});
+
+test('a declaration with code before it on the line is a note, and claims nothing', () => {
+  // A declaration is a line comment of its own. One trailing a statement is a note about that
+  // statement, and reading it as a claim would have any comment on any line speak for whatever
+  // the next line happened to hold.
+  const source = lines('const a = 1; // proves R-ONE-1', "test('a real test', () => {});", 'export { a };');
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
 });
