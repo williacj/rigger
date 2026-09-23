@@ -1,5 +1,7 @@
-// ABOUTME: The CLI surface: the verbs Rigger accepts, what `--help` lists for them, and what a
-// ABOUTME: verb whose milestone has not landed answers. Decides nothing about the process.
+// ABOUTME: The CLI surface: the verbs Rigger accepts, which of them have landed, what `--help`
+// ABOUTME: lists for them, and what one whose milestone has not landed answers.
+
+import { init } from './init.mjs';
 
 /**
  * Every verb, in the order the README's "Install and usage" block lists them, each with the help
@@ -21,6 +23,15 @@ export const VERBS = [
   ['report', 'derive the signals from the event stream'],
 ];
 
+/**
+ * The verbs whose milestone has landed, each with what running it does.
+ *
+ * A verb is here or it is not, and the answer for one that is not is below. Exported because
+ * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
+ * the test would drift from this one the day a verb lands.
+ */
+export const LANDED = { init };
+
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
   const width = Math.max(...verbs.map(([verb]) => verb.length));
@@ -41,8 +52,8 @@ export function run(argv) {
     const said = first === undefined ? 'rigger: a verb is required' : `rigger ${first}: no such verb`;
     return { text: `${said}\n\n${help()}`, code: 1 };
   }
-  // Nothing behind any verb has landed yet. Each one gains its behaviour with its own milestone,
-  // and until then saying so and failing is the honest answer: a zero exit would read to whoever
-  // called it as work that was done.
+  if (Object.hasOwn(LANDED, first)) return LANDED[first]();
+  // The rest gain their behaviour with their own milestone, and until then saying so and failing
+  // is the honest answer: a zero exit would read to whoever called it as work that was done.
   return { text: `rigger ${first}: not yet implemented`, code: 1 };
 }

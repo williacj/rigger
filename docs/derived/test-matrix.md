@@ -111,5 +111,5 @@ reports no gap of its own; the register carries the reason.
 | R-SAFE-3 | **gap** |
 | R-SAFE-4 | **gap** |
 | R-SAFE-5 | **gap** |
-| R-SAFE-6 | **gap** |
+| R-SAFE-6 | `test/init.test.mjs` every role the written config names reads its prompt out of the consumer repository<br>`test/init.test.mjs` the command forks the assets into the repository it is run in, from the package alone |
 | R-OPTION-1 | **gap** |

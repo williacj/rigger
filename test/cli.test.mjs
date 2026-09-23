@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { VERBS, help } from '../src/cli/verbs.mjs';
+import { LANDED, VERBS, help } from '../src/cli/verbs.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -99,10 +99,21 @@ test('--help lists exactly the verbs the README lists, in that order and no othe
 });
 
 test('a verb whose milestone has not landed says so and exits non-zero', () => {
-  // Nothing behind any verb has landed yet, so every verb the README lists takes this path. The
-  // defect it catches is a verb that exits zero, or prints nothing, and so reads to whoever
-  // called it as work that was done.
-  for (const verb of usageVerbs(read('README.md'), manifest.name)) {
+  // Every verb but the landed ones takes this path. The defect it catches is a verb that exits
+  // zero, or prints nothing, and so reads to whoever called it as work that was done.
+  //
+  // A landed verb is excluded by name, and the names are read out of the CLI rather than kept
+  // here, so a verb landing moves this test with it. It is excluded at all because running one
+  // would run it against this checkout: `rigger()` above inherits this process's directory, and
+  // `init` is a verb that writes (`R-SAFE-5`). `test/init.test.mjs` runs it, from a copy of the
+  // package against a scratch repository.
+  const listed = usageVerbs(read('README.md'), manifest.name);
+  for (const verb of Object.keys(LANDED)) {
+    assert.ok(listed.includes(verb), `\`${verb}\` has landed, and the README's block lists no such verb`);
+  }
+  const unlanded = listed.filter((verb) => !Object.hasOwn(LANDED, verb));
+  assert.ok(unlanded.length > 0, 'every verb has landed, so this test holds nothing');
+  for (const verb of unlanded) {
     const ran = rigger(verb);
 
     assert.notEqual(ran.code, 0, `\`rigger ${verb}\` exited 0 without doing anything`);
