@@ -36,6 +36,16 @@ import { fileURLToPath } from 'node:url';
 //   remain say what they used to say. Only reading the pairs does that, and the report
 //   exists to make the pairs short enough to read.
 
+// ---------------------------------------------------------------------------
+// The accepted invocations. Two of them, and every other argument vector is
+// refused: a vector matching neither used to fall off the end of this module,
+// and Node exited 0 having compared nothing. A caller read that as the check
+// having passed.
+// ---------------------------------------------------------------------------
+const INVOCATIONS = `absorption-check accepts two invocations, and no other:
+  --self-test                     run the built-in cases
+  <source.md> <destination.md>    report what each source clause became`;
+
 const STOP = new Set(`a an and are as at be been before both but by can for from has have if in
 into is it its may must never no not of on only or other over own same so than that the their then
 there these this those to under until up upon was what when where whether which while who whom
@@ -183,16 +193,6 @@ function selfTest() {
   return failed;
 }
 
-// ---------------------------------------------------------------------------
-// The accepted invocations. Two of them, and every other argument vector is
-// refused: a vector matching neither used to fall off the end of this module,
-// and Node exited 0 having compared nothing. A caller read that as the check
-// having passed.
-// ---------------------------------------------------------------------------
-const INVOCATIONS = `absorption-check accepts two invocations, and no other:
-  --self-test                     run the built-in cases
-  <source.md> <destination.md>    report what each source clause became`;
-
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
 
@@ -202,8 +202,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   if (args.length === 2) {
     const [archPath, reqPath] = args;
-    const invariants = bullets(archPath, '## Invariants that hold across every layer');
-    const destRows = rows(reqPath);
+    // A document short of the heading, or absent altogether, is a failure of the invocation and
+    // not of the comparison. It reads as one line, because an unhandled throw here reached the
+    // top level and printed a trace into node:internal instead of saying what was missing.
+    let invariants;
+    let destRows;
+    try {
+      invariants = bullets(archPath, '## Invariants that hold across every layer');
+      destRows = rows(reqPath);
+    } catch (error) {
+      console.error(`absorption-check: ${error.message}`);
+      process.exit(2);
+    }
     console.log(`${invariants.length} source clauses, ${destRows.length} destination rows\n`);
     let orphaned = 0;
     for (const r of report(invariants, destRows)) {
