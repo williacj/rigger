@@ -161,6 +161,13 @@ export function init({ target = process.cwd(), templates = TEMPLATES } = {}) {
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
       ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from.`]),
+      // Said only where the config was written, because a run that skipped it would be claiming
+      // something about a file that is the consumer's by then and that `init` never read.
+      ...(wrote.includes(CONFIG)
+        ? [`\`${CONFIG}\` names \`${PLACEHOLDER.project}\` as its board, because a board number is `
+          + `GitHub's and nothing here names it. Set \`board.project\` to the number your board's `
+          + 'URL ends in: Rigger refuses this config until you do.']
+        : []),
     ].join('\n'),
     code: 0,
   };

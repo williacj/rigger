@@ -253,6 +253,25 @@ test('init writes every file it planned, and names each one it wrote', () => {
   }
 });
 
+test('init names the board number as the one thing it left for the consumer, and only where it wrote the config', () => {
+  // `init` fills `repo` and can fill nothing else, so naming a board is the one thing a consumer
+  // has to do before anything runs. The defect this catches is the silent hand-off: a config
+  // written with a name where the number belongs, a report that never mentions it, and a first
+  // `doctor` refusing a field its owner never knew was theirs.
+  //
+  // The second run is the other half. It wrote no config, so the file it would have said this
+  // about is the consumer's own by then, and repeating it would be a claim about a file `init`
+  // did not read.
+  const consumer = repository('https://github.com/acme/widgets.git');
+
+  const first = init({ target: consumer });
+  const second = init({ target: consumer });
+
+  assert.match(first.text, /`board\.project`/);
+  assert.match(first.text, /PROJECT_NUMBER/);
+  assert.doesNotMatch(second.text, /PROJECT_NUMBER/);
+});
+
 /**
  * What `init` would write into this repository, asking git for the name it goes by and this
  * repository's own config for the board it works.
