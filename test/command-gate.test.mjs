@@ -669,6 +669,18 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   ['flock --com=, an unambiguous abbreviation', "flock --com='git push --force' /tmp/l", 'a force push'],
   ['flock -nc, the option clustered behind a flag', "flock -nc 'git push --force' /tmp/l", 'a force push'],
   ['flock --command deleting a branch', "flock /tmp/l --command 'git branch -D topic'", 'deleting a branch'],
+  // A `--` word leaves an empty long-option name, which every option name begins with. Matching it
+  // would have the reader return the word after the `--` as the command text and stop, leaving the
+  // real option further along unread — a *narrowing*, which is the direction that trades a refusal
+  // for a bypass. These two rows are what the non-empty test on that name is for, and they are
+  // refusals round 3 already gave.
+  //
+  // Bash runs nothing for either, and says why: `env: '-Sgit push --force': No such file or
+  // directory` for the first, because `--` ends option parsing and `env` takes the next word as a
+  // program name, and `env: ambiguous option --` for the second. So both are the fail-closed
+  // direction, and the pull request reports them as over-refusals as well as here.
+  ['a bare -- before the real option', "env -- -S'git push --force'", 'a force push'],
+  ['an empty long-option name before the real option', "env --=x -S'git push --force'", 'a force push'],
 ];
 
 /**
