@@ -510,3 +510,153 @@ test('a keyword construct carrying nothing reserved is still permitted', () => {
     permits(command, `${shape}, which bash runs no reserved git command from`);
   }
 });
+
+/**
+ * A reserved git spelling behind a **redirection word**. Bash allows a redirection wherever it
+ * reads a command's words, before the program as freely as after it, so the program is not word
+ * one in any of these and bash runs the reserved command in every one — measured under bash from
+ * a file with `git` shadowed by a marker on `PATH`.
+ *
+ * The two rows that name `env` and an assignment are the sharpest: `env git push --force` and
+ * `X=1 git push --force` were refused before this table existed, and inserting a redirection
+ * between the prefix and the program defeated that. So a redirection is not a family beside the
+ * words already stepped over — it is a gap in the middle of them.
+ */
+export const REDIRECTION_PAYLOADS = [
+  ['a brace group and `>out`', '{ >/dev/null git push --force; }', 'a force push'],
+  ['a brace group and `<in`', '{ </dev/null git push --force; }', 'a force push'],
+  ['an explicit file descriptor', '{ 1>/dev/null git push --force; }', 'a force push'],
+  ['a here-string', '{ <<<x git push --force; }', 'a force push'],
+  ['`2>&1` after then', 'if true; then 2>&1 git push --force; fi', 'a force push'],
+  ['a case body', 'case x in x) >/dev/null git push --force;; esac', 'a force push'],
+  ['a target in the next word', '{ > /dev/null git push --force; }', 'a force push'],
+  ['a descriptor and a target in the next word', '{ 2> /dev/null git push --force; }', 'a force push'],
+  ['the append form', '{ >> /dev/null git push --force; }', 'a force push'],
+  ['a descriptor duplication', '{ >&2 git push --force; }', 'a force push'],
+  ['a descriptor duplication, spaced', '{ >& 2 git push --force; }', 'a force push'],
+  ['the read-write form', '{ <> /dev/null git push --force; }', 'a force push'],
+  ['the clobber form', '{ >| /dev/null git push --force; }', 'a force push'],
+  ['the clobber form, closed up', '{ >|/dev/null git push --force; }', 'a force push'],
+  ['a descriptor named in braces', '{ {fd}>/dev/null git push --force; }', 'a force push'],
+  ['after env', 'env >/dev/null git push --force', 'a force push'],
+  ['after an assignment', 'X=1 >/dev/null git push --force', 'a force push'],
+  ['before an assignment', '{ >/dev/null X=1 git push --force; }', 'a force push'],
+  ['no keyword at all', '>/dev/null git push --force', 'a force push'],
+  ['two redirections', '{ <<<x >/dev/null git push --force; }', 'a force push'],
+  ['a for body', 'for x in 1; do >/dev/null git branch -D t; done', 'deleting a branch'],
+  ['a while body', 'while true; do >/dev/null git push -f; break; done', 'a force push'],
+  ['an until body', 'until false; do >/dev/null git push -f; break; done', 'a force push'],
+  ['after negation', '! >/dev/null git push --force', 'a force push'],
+  ['after time', 'time >/dev/null git push --force', 'a force push'],
+];
+
+/**
+ * A reserved git spelling behind a **program that runs a command named in its arguments**. `env`
+ * was the only one the gate stepped over, and its own options defeated even that.
+ *
+ * Each option grammar here is the program's own rather than bash's, so the gate reads every word
+ * after the prefix as a possible command start instead of modelling any of them. That reads more
+ * words than bash runs and can only add a refusal, because it objects only where the words from
+ * one of them on spell a reserved command — which is why `nohup echo git status` stays permitted.
+ *
+ * `eval` is the exception: it joins its arguments and runs the result as shell text, so no one
+ * word is the command and the text is re-read the way a shell's `-c` argument already is.
+ *
+ * Which of these bash could be watched running git is a fact about this host, not about the gate.
+ * The pull request records, with bash's own message for each, the ones that were absent here, and
+ * the two whose prefix resets `PATH` so that bash reported `git: command not found` — proof it
+ * resolved the prefix and went looking for git.
+ */
+export const PREFIX_PROGRAM_PAYLOADS = [
+  ['command', '{ command git push --force; }', 'a force push'],
+  ['command -p', '{ command -p git push --force; }', 'a force push'],
+  ['eval, single-quoted', "{ eval 'git push --force'; }", 'a force push'],
+  ['eval, double-quoted', '{ eval "git push --force"; }', 'a force push'],
+  ['eval, unquoted', '{ eval git push --force; }', 'a force push'],
+  ['eval of a brace group', "eval '{ git push --force; }'", 'a force push'],
+  ['exec', '{ exec git push --force; }', 'a force push'],
+  ['nohup', '{ nohup git push --force; }', 'a force push'],
+  ['nice', '{ nice git push --force; }', 'a force push'],
+  ['nice -n, whose option takes a value', '{ nice -n 10 git push --force; }', 'a force push'],
+  ['timeout, whose first operand is a duration', 'timeout 5 git push --force', 'a force push'],
+  ['timeout in a brace group', '{ timeout 5 git push --force; }', 'a force push'],
+  ['stdbuf -o0', 'stdbuf -o0 git push --force', 'a force push'],
+  ['stdbuf -o 0', 'stdbuf -o 0 git push --force', 'a force push'],
+  ['env -u, whose option takes a value', 'env -u FOO git push --force', 'a force push'],
+  ['env -i, which resets PATH', 'env -i git push --force', 'a force push'],
+  ['xargs fed a word', 'echo origin | xargs git push --force', 'a force push'],
+  ['a chain of three prefixes', 'nohup env nice git push --force', 'a force push'],
+  ['setsid', 'setsid git push --force', 'a force push'],
+  ['sudo', 'sudo git push --force', 'a force push'],
+  ['sudo of a shell', "sudo bash -c 'git push --force'", 'a force push'],
+  ['flock, whose first operand is a lock file', 'flock /tmp/rigger.lock git push --force', 'a force push'],
+  ['ionice', 'ionice git push --force', 'a force push'],
+  ['taskset -c, whose option takes a value', 'taskset -c 0 git push --force', 'a force push'],
+  ['time as a program rather than the keyword', '/usr/bin/time git push --force', 'a force push'],
+  ['chrt -f, whose option takes a value', 'chrt -f 1 git push --force', 'a force push'],
+  ['doas', 'doas git push --force', 'a force push'],
+  ['unbuffer', 'unbuffer git push --force', 'a force push'],
+  // A prefix is not a shell, so a chain of them must not spend the budget for reading inside one.
+  // Three prefixes and then a shell is the shape that says so: counting each prefix against that
+  // budget leaves the script unread, and bash runs the push in it.
+  ['three prefixes and then a shell', "nohup env nice bash -c 'git push --force'", 'a force push'],
+];
+
+/**
+ * The floor under both tables above: a redirection or a prefix program beside a command carrying
+ * nothing reserved. Bash runs no reserved git command in any of these, measured the same way.
+ *
+ * The last three hold a `)` where the gate steps over one, and they are here because the rule that
+ * steps over a blank-separated `case` pattern reads the second word. They pin that it reads only
+ * that word: a `)` further along a command, or one in an argument to a program that is not a
+ * pattern, changes nothing.
+ */
+export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
+  ['a redirection before a clean git command', '{ >/dev/null git status; }'],
+  ['a descriptor duplication before a clean git command', '{ 2>&1 git log --oneline -1; }'],
+  ['git redirecting its own output', 'git log --oneline -1 > /dev/null'],
+  ['command -v, which prints a path rather than running it', 'command -v git'],
+  ['a prefix program whose argument mentions git', 'nohup echo git status'],
+  ['timeout of a command that is not git', 'timeout 5 echo npm test'],
+  ['nice of a command that is not git', 'nice -n 10 echo node x.js'],
+  ['env with no command after it', 'env | grep -c PATH'],
+  ['a quoted parenthesis as an argument', "echo ')' hello"],
+  ['a quoted parenthesis in a pattern', "echo x | grep ')' || true"],
+  ['a quoted parenthesis in a substitution', "echo x | sed 's/x/)/'"],
+];
+
+test('a reserved git spelling behind a redirection word is refused', () => {
+  // Bash reads a redirection wherever it reads a command's words. A gate that steps over the
+  // reserved words and the assignments but not the redirections has a gap between them, and that
+  // gap disables the step-overs on either side of it.
+  for (const [shape, command, spelling] of REDIRECTION_PAYLOADS) {
+    refuses(command, `a reserved spelling behind a redirection: ${shape}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${shape} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a reserved git spelling behind a prefix program is refused', () => {
+  // `env` was stepped over and nothing else was, so every other program that runs a command named
+  // in its arguments was a way through — including `env`'s own options.
+  for (const [shape, command, spelling] of PREFIX_PROGRAM_PAYLOADS) {
+    refuses(command, `a reserved spelling behind ${shape}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${shape} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a redirection or a prefix program beside nothing reserved is still permitted', () => {
+  // Reading more words than bash runs is what keeps the prefix rule free of each program's option
+  // grammar. It costs nothing while it objects only to the words that spell a reserved command,
+  // and these pin that.
+  for (const [shape, command] of PREFIX_WORDS_CARRYING_NOTHING_RESERVED) {
+    permits(command, `${shape}, which bash runs no reserved git command from`);
+  }
+});

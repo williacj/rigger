@@ -36,6 +36,13 @@ class Unreadable extends Error {}
 
 const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 
+/**
+ * Bash's two-character redirection operators whose second character is also the spelling of a
+ * control operator. Read as one token, or the operator list above claims the second character and
+ * divides a command where bash divides none.
+ */
+const REDIRECTION_OPERATOR = new Set(['<&', '>&', '>|']);
+
 // Bash owns what a here-document is. This is a copy of the part of that rule the gate needs, so
 // this is where the copy can disagree with bash, and what it does about each disagreement.
 //
@@ -275,6 +282,24 @@ function commandsIn(text) {
       add(text[++i]);
       continue;
     }
+    // `<&`, `>&` and `>|` are single redirection operators to bash, so the `&` or `|` in one is no
+    // control operator and divides no commands. Read here, before the operator list below can
+    // split `2>&1` into `2>` and `1`, or `>| out` into `>` and `out`, and leave the program of
+    // `2>&1 git push --force` in a command of its own behind a bare descriptor. The operators
+    // written out of operator characters entirely — `<<`, `>>`, `<>` — never had the problem.
+    //
+    // This narrows what counts as an operator, so text that was two commands becomes one and the
+    // words of the second become trailing words of the first. That can hide nothing: a command's
+    // program is its first word, and none of these operators had a program after it in any
+    // spelling — measured, and the pull request reports what bash ran for each. The one other
+    // effect is that such a word is no longer empty where a `<<` follows it, so `2>&1<<EOF` turns
+    // from a here-document this gate honours into one it cannot place and refuses. That is the
+    // direction that skips no text.
+    if (REDIRECTION_OPERATOR.has(text.slice(i, i + 2))) {
+      add(text.slice(i, i + 2));
+      i++;
+      continue;
+    }
     if (ch === '<' && text[i + 1] === '<') {
       // A here-string carries its data on this line, so it opens no body and skips nothing.
       if (text[i + 2] === '<') {
@@ -505,8 +530,24 @@ const KEYWORDS_A_COMMAND_MAY_FOLLOW = new Set([
 const TIME_OPTIONS = new Set(['-p', '--']);
 
 /**
- * Step over the reserved words, environment assignments and `env` between the start of a command
- * and the program it runs. Returns the words from the program on, which may be none.
+ * A redirection where bash reads a command's words. Bash reads one before the program as freely as
+ * after it, so `>out git push --force` runs git and the program sits after the redirection. The
+ * descriptor is a number or, in bash, a name in braces; the target is in this word or the next one,
+ * which is what says how many words to step over.
+ *
+ * The operators are ordered longest first. A two-character one read as its first character would
+ * take `>| out` for a redirection whose target is already in this word and stop before `out`.
+ */
+const REDIRECTION = /^(\{[A-Za-z_][A-Za-z0-9_]*\}|\d*)(<<<|<<-|<<|<&|>&|<>|>>|>\||<|>)/;
+
+/**
+ * Step over the words bash's grammar puts between the start of a command and the program it runs:
+ * assignments, reserved words, redirections, and the `case` pattern or `NAME()` header that
+ * introduces a body. Returns the words from the program on, which may be none.
+ *
+ * Everything here is bash's grammar. A program that runs another program named in its arguments is
+ * not — `env`, `nohup` and the rest are handled where the program is read, because each has its
+ * own option grammar and none of them is the shell's.
  */
 function programWords(given) {
   let words = given;
@@ -545,18 +586,62 @@ function programWords(given) {
       words = words.slice(1);
       continue;
     }
-    // The same pattern with the `)` set off by a blank, which lexes as its own word.
+    // The same pattern with the `)` set off by a blank, which lexes as its own word. Only the
+    // second word is read, so a `)` further along a command is not a pattern: `echo ')' hello`,
+    // `grep ')'` and `sed 's/x/)/'` are all left alone. The cost is `echo ')' git push --force`,
+    // where the second word lexes to exactly `)` once its quoting is removed and this steps over
+    // both — a refusal of text bash runs `echo` for, and the only one this rule costs.
     if (words[1] === ')') {
       words = words.slice(2);
       continue;
     }
-    if (basename(first) === 'env') {
-      words = words.slice(1);
+    // A redirection, which may be written before the program as freely as after it. Written
+    // `>out` the target is in this word; written `> out` it is the next one.
+    const redirection = REDIRECTION.exec(first);
+    if (redirection) {
+      words = words.slice(redirection[0].length === first.length ? 2 : 1);
       continue;
     }
     return words;
   }
 }
+
+/**
+ * Programs that run a command named in their arguments. Stepping over one is not enough, because
+ * each has its own options and some take an operand before the command — `timeout 5 git …`,
+ * `nice -n 10 git …`, `env -u FOO git …`. Rather than carry an option grammar per program, every
+ * word after the prefix is read as a possible start of a command.
+ *
+ * That reads more words than bash runs, which can only add a refusal: it objects only where the
+ * words from one of them on spell a reserved command, so `nohup echo git status` and
+ * `command -v git` are untouched while `nohup git push --force` is refused. What it costs is a
+ * command whose arguments spell a reserved git command that bash passes to something else, as
+ * `nohup echo git push --force` does.
+ *
+ * `env` was the one name here before this list, and stepping over it was defeated by its own
+ * options. These are programs rather than shell grammar, so which of them exists is a fact about
+ * the host: a name absent from the host runs nothing, and the pull request records which were
+ * watched running git here and which bash reported absent.
+ */
+const PREFIX_PROGRAMS = new Set([
+  'chrt',
+  'command',
+  'doas',
+  'env',
+  'exec',
+  'flock',
+  'ionice',
+  'nice',
+  'nohup',
+  'setsid',
+  'stdbuf',
+  'sudo',
+  'taskset',
+  'time',
+  'timeout',
+  'unbuffer',
+  'xargs',
+]);
 
 /** Inspect one command. Returns the reason to refuse, or null. */
 function objectionTo(given, depth) {
@@ -577,6 +662,28 @@ function objectionTo(given, depth) {
         const objection = objectionTo(inner, depth + 1);
         if (objection) return objection;
       }
+    }
+    return null;
+  }
+
+  // `eval` joins its arguments with a blank and runs the result as shell text, so no one word is
+  // the command it runs and the text is re-read the way a shell's `-c` argument is.
+  if (program === 'eval' && depth < 2) {
+    for (const inner of commandsIn(words.slice(1).join(' '))) {
+      const objection = objectionTo(inner, depth + 1);
+      if (objection) return objection;
+    }
+    return null;
+  }
+
+  // A program that runs a command named in its arguments. Every word after it is read as a
+  // possible command, and each read is of a strictly shorter list, so a chain of prefixes ends.
+  // The depth is passed on unchanged, because a prefix is not a shell and must not spend the
+  // budget for looking inside one: `sudo bash -c '…'` has to reach the script.
+  if (PREFIX_PROGRAMS.has(program)) {
+    for (let at = 1; at < words.length; at++) {
+      const objection = objectionTo(words.slice(at), depth);
+      if (objection) return objection;
     }
     return null;
   }
