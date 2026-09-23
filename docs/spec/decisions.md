@@ -498,7 +498,7 @@ from a tool is bound as any other code is.
 
 Rule 3 is the half an author drops first, and dropping it leaves rule 1 reading as licence to
 depend on anything: an authority's behaviour arrives with its undefined edges attached.
-`docs/journal.md` records what produced this entry.
+`docs/journal/` records what produced this entry.
 
 Two signals would reverse it, and `report` shows both. One: cards come back because a test that
 asks a tool could not run it, or because the tool answered differently between runs, more often
