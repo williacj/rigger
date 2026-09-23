@@ -121,3 +121,31 @@ command it runs, so each name on it can still carry its own way of hiding one.
 **And the list being a list is itself a limit.** Seventeen names close seventeen ways in; a prefix
 program not named there is fail-open, whatever the rule around it does. That is worth stating at
 the list rather than leaving the next reader to infer a closed family from a long one.
+
+## Round four — complete at its own level, four times
+
+Each round of this card enumerated something to exhaustion and was then defeated one level down.
+
+| round | enumerated to exhaustion | what defeated it |
+|---|---|---|
+| one | bash's reserved words | redirections, and programs that run a named command |
+| two | the names of those programs | an *option* of a listed name, carrying the command in one word |
+| three | that option's spellings | `getopt_long`'s abbreviation rule, so `--s=` is `--split-string=` |
+| four | that rule, and the second program holding it | — |
+
+No round was careless and every fix was correct; each closed more than it was asked to. What the
+sequence says is about the method rather than about any round of it. **A gate that reads command
+text has to model bash's grammar *and* the option grammar of every program bash can be asked to
+run a command through, and the second of those is not a closed set** — it is one grammar per
+program, each with its own abbreviation rule, and a program absent from the list is fail-open
+whatever the rule around it does. Card #117's closing paragraph already puts that question to the
+owner. This entry records that four rounds of measurement are the evidence for it, because nothing
+else will.
+
+**Two rules came out of it that are worth keeping whatever the answer.** A figure or a verdict is
+re-measured at the head it is reported at; carrying one forward is how round 2 came to assert a
+`time` row that a commit of its own had already made false. And a green mutation is read rather
+than passed over: it fired four times across the card, three times finding a redundant rule element
+and once, in round 4, finding an element that was load-bearing but pinned by no test — every long
+option name begins with the empty string, so a bare `--` would have matched the option and left the
+real one further along unread.
