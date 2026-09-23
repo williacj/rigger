@@ -29,6 +29,31 @@ crashed on a `null`. A site derivation that walks the values a config holds can 
 sites that config nests, and the class the test names is wider than that. Deriving the sites
 from the shape table instead reaches every one of them, whatever a config happens to hold.
 
+An exhaustive walk over a single probe is still a single probe. With every site reached, the
+test grew a key nobody offers at each one and asserted a refusal — and the key it grew was
+`fixedByRiggerAndNotTheConsumer`, which nothing can inherit. The check behind it asked
+`key in shape`, which answers yes to every name `Object.prototype` carries, so `toString`,
+`constructor` and nine others were offered as declarations at all twenty sites, and the
+required-key check answered the same way: a config declaring nothing and inheriting all four
+required keys was accepted outright. Changing that one expression moved no test either way.
+The probe set is now every name the runtime says an object carries, asked for rather than
+listed, plus the one name nothing carries as a control. Coverage of the sites and coverage of
+the values are two separate questions, and a walk that is exhaustive in one direction reads as
+though it were exhaustive in both.
+
+The matrix is what made that expensive rather than merely wrong. The test carried
+`// proves R-SCHED-10`, so a generated binding document recorded a requirement as proved by a
+test that could not tell the two behaviours apart. A declaration is a claim about a test's
+discriminating power, not about its subject, and nothing checks it: the cheapest thing that
+does is to break the behaviour on purpose and watch that test, and only that test, go red.
+
+Two claims in this card's own commit messages turned out not to match the code, in consecutive
+rounds. One said a rule lived in the read itself when it did not, for three keys. The other
+attached a refusal count to `roles: null`, where the count belongs to a string, a list or a
+number — `null` throws without the guard the same commit added. Both were true of the substance
+and wrong in the detail, and a detail in a commit message is read later as evidence. Running
+the claim before writing it down costs one command.
+
 Three tests could not have failed first, because each generalises a test that already had. Each
 was instead watched failing with its own defect mutated into the validator: the required-key
 refusal stubbed out, the unknown-key sweep stubbed out, and a key the architecture does not

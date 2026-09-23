@@ -112,8 +112,13 @@ function readShape(value, shape, path, refusals) {
     refusals.push(holdsNothing(path, value));
     return;
   }
+  // Both questions below ask about an object's own keys, as `readKinds` does. A key an object
+  // inherits was written by nobody: read through the prototype chain, a required key is answered
+  // by `Object.prototype` rather than by the consumer, and every name that object carries —
+  // `toString`, `constructor`, `valueOf`, and a `__proto__` a JSON parse made own — reads as a
+  // declaration Rigger offers.
   for (const [key, rule] of Object.entries(rules)) {
-    if (!(key in value)) {
+    if (!Object.hasOwn(value, key)) {
       if (rule.required) {
         refusals.push(`\`${at(path, key)}\` is required, and the config does not name it`);
       }
@@ -133,7 +138,7 @@ function readShape(value, shape, path, refusals) {
     }
   }
   for (const key of Object.keys(value)) {
-    if (!(key in rules)) refusals.push(`\`${at(path, key)}\` is not a declaration Rigger offers`);
+    if (!Object.hasOwn(rules, key)) refusals.push(`\`${at(path, key)}\` is not a declaration Rigger offers`);
   }
 }
 
