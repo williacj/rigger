@@ -178,6 +178,22 @@ const ALSO_RUN = {
     ),
     claims: ['a call through an alias'],
   },
+  'a runner import written with a string import name': {
+    // ES2022 allows a string where an import name goes, which puts a string token inside the
+    // clause. Reading the module off the first string in the statement read that name as the
+    // module and refused this, while the runner runs the test.
+    source: lines(
+      "import { 'test' as t } from 'node:test';",
+      '// proves R-ONE-1',
+      "t('a call named by a string import', () => {});",
+      '',
+    ),
+    claims: ['a call named by a string import'],
+  },
+  'a plain template title': {
+    source: lines(IMPORT, '// proves R-ONE-1', 'test(`a call titled by a template`, () => {});', ''),
+    claims: ['a call titled by a template'],
+  },
 };
 
 /** A fixture repository holding the files a run reads, and nothing else. */
@@ -1015,4 +1031,127 @@ test('a title carrying an escape the scan cannot decode is refused', () => {
     assert.match(error.message, /escape/);
     return true;
   });
+});
+
+test('the module a name is bound to is the specifier, not the first string in the clause', () => {
+  // Round 3 on card #85. ES2022 lets an import name be a string, which puts a string token inside
+  // the clause, before the specifier. A reader taking the first string it meets reads the import
+  // name as the module — so a decoy whose string export name is spelled `node:test` had its
+  // default export accepted as the runner, and the runner registered nothing.
+  const source = lines(
+    "import def, { 'node:test' as alias } from './decoy.mjs';",
+    'void alias;',
+    '// proves R-ONE-1',
+    "def('a test nobody runs', () => {});",
+    '',
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /line 3\b/);
+    assert.match(error.message, /binds/);
+    return true;
+  });
+});
+
+test('a runner import written with a string import name is still the runner', () => {
+  // The same defect the other way round, and the unsafe direction is the one above: this call does
+  // reach the runner and the runner does run the test, so refusing it would drop a true claim.
+  const source = lines(
+    "import { 'test' as t } from 'node:test';",
+    '// proves R-ONE-1',
+    "t('a real test', () => {});",
+    '',
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), [
+    { ids: ['R-ONE-1'], title: 'a real test' },
+  ]);
+});
+
+test('a title a matrix row cannot carry is refused, naming the file and the line', () => {
+  // `docs/derived/test-matrix.md` is a pipe table, and a row is one line with `|` between its
+  // cells. A title holding either ends the row or the cell early: the document comes out malformed
+  // while `matrix:check` compares bytes and passes over it, which is a generated binding document
+  // nobody reads back (`D8`). Refusing is loud where a row nobody can parse is not.
+  //
+  // The four here are one fault in four spellings, and the runner registers a real title for each
+  // — the relation test asks it. A template break also differs from what the runner registers in a
+  // CRLF file, because the language folds a template's `\r\n` to a `\n` and a reader of raw bytes
+  // does not: that is the same row, measured, and the refusal covers it.
+  const unwritable = {
+    'a template title broken across lines with a line feed': `${IMPORT}\n// proves R-ONE-1\ntest(\`a real\ntest\`, () => {});\n`,
+    'a template title broken across lines with a carriage return and a line feed':
+      `${IMPORT}\r\n// proves R-ONE-1\r\ntest(\`a real\r\ntest\`, () => {});\r\n`,
+    'a quoted title carrying a newline escape':
+      lines(IMPORT, '// proves R-ONE-1', "test('a real\\ntest', () => {});", ''),
+    'a quoted title carrying a pipe':
+      lines(IMPORT, '// proves R-ONE-1', "test('a real | test', () => {});", ''),
+  };
+
+  for (const [shape, source] of Object.entries(unwritable)) {
+    assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+      assert.match(error.message, /test\/first\.test\.mjs/, shape);
+      assert.match(error.message, /line 2\b/, shape);
+      assert.match(error.message, /matrix row/, shape);
+      return true;
+    }, `${shape} was read as a title a row can carry`);
+  }
+});
+
+test('a plain template title is still read, because the runner registers exactly that string', () => {
+  // The boundary above is on titles a row cannot carry, not on template titles. One with no
+  // substitution and no break is the string it looks like, and the relation test asks the runner.
+  const source = lines(IMPORT, '// proves R-ONE-1', 'test(`a real test`, () => {});', '');
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), [
+    { ids: ['R-ONE-1'], title: 'a real test' },
+  ]);
+});
+
+test('no run writes a matrix over a call the runner reaches through a decoy', () => {
+  // The judge's shape, at the command that writes the document, because it takes two files: a
+  // module whose string export name is spelled `node:test`, and a test file importing its default
+  // through that name. The runner loads both cleanly and registers nothing.
+  const dir = fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/decoy.mjs': lines(
+      'const nothing = () => {};',
+      'export default nothing;',
+      "export { nothing as 'node:test' };",
+      '',
+    ),
+    'test/first.test.mjs': lines(
+      "import def, { 'node:test' as alias } from './decoy.mjs';",
+      'void alias;',
+      '// proves R-ONE-1',
+      "def('a test nobody runs', () => {});",
+      '',
+    ),
+  });
+
+  const { status, stdout, stderr } = run(dir, '--write');
+
+  assert.notEqual(status, 0, 'the decoy was read as the runner');
+  assert.match(stdout + stderr, /test\/first\.test\.mjs/);
+  assert.throws(() => readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md')));
+});
+
+test('every row the committed matrix holds is one line with the cells the format gives it', () => {
+  // The other half of what a title a row cannot carry costs, asserted on the document this
+  // repository commits rather than on a fixture. A row split across lines, or one carrying a cell
+  // the format did not put there, is a malformed generated document (`D8`) — and `matrix:check`
+  // compares bytes, so it agrees with a malformed document as readily as with a sound one.
+  const matrix = readFileSync(join(root, 'docs', 'derived', 'test-matrix.md'), 'utf8');
+  const rows = matrix.split(/\r?\n/).filter((line) => /^\| R-[A-Z]+-\d+ \|/.test(line));
+
+  assert.ok(rows.length > 0, 'the committed matrix holds no requirement rows');
+  for (const row of rows) {
+    assert.equal(
+      row.split('|').length,
+      4,
+      `this row does not hold exactly the two cells the format gives it: ${JSON.stringify(row)}`,
+    );
+  }
 });

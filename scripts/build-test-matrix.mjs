@@ -291,23 +291,35 @@ function bindings(tokens) {
     const token = tokens[at];
     if (token.depth > 0 || token.kind !== 'word') continue;
     if (token.value === 'import') {
-      let end = at + 1;
-      while (end < tokens.length && tokens[end].kind !== 'string') end++;
-      let clause = at + 1;
-      while (clause < end && !(tokens[clause].kind === 'word' && tokens[clause].value === 'from')) clause++;
+      // A dynamic `import(...)` and an `import.meta` bind nothing, and neither carries a `from`.
+      const next = tokens[at + 1];
+      if (next?.kind === 'punct' && (next.value === '(' || next.value === '.')) continue;
+      // The module is the specifier, which is the token after `from` — never the first string in
+      // the statement. An import name may itself be a string (`{ 'a' as b }`), so a reader taking
+      // the first string it meets reads that name as the module, and a module whose string export
+      // name is spelled `node:test` then passes for the runner.
+      let from = at + 1;
+      while (from < tokens.length && !(tokens[from].kind === 'word' && tokens[from].value === 'from')
+        && !(tokens[from].kind === 'punct' && tokens[from].value === ';')) from++;
+      const specifier = tokens[from]?.kind === 'word' ? tokens[from + 1] : null;
+      // A side-effect `import 'm'` binds nothing, and a specifier that is not a string is not
+      // source that parses; either way there is nothing here to bind.
+      if (specifier?.kind !== 'string') {
+        at = from;
+        continue;
+      }
       // The name each comma-separated group binds is its last word: `a` in `{ a }`, `b` in
-      // `{ a as b }`, `n` in `* as n`, and the whole of a default `x`. A dynamic `import(...)`
-      // reaches this with no words before its specifier, so it binds nothing here.
+      // `{ a as b }`, `b` again in `{ 'a' as b }`, `n` in `* as n`, and the whole of a default `x`.
       const groups = [[]];
-      for (const piece of tokens.slice(at + 1, clause)) {
+      for (const piece of tokens.slice(at + 1, from)) {
         if (piece.kind === 'punct' && piece.value === ',') groups.push([]);
         else if (piece.kind === 'word') groups[groups.length - 1].push(piece.value);
       }
       for (const group of groups) {
         const bound = group[group.length - 1];
-        if (bound) (tokens[end]?.value === RUNNER_MODULE ? runner : taken).add(bound);
+        if (bound) (specifier.value === RUNNER_MODULE ? runner : taken).add(bound);
       }
-      at = end;
+      at = from + 1;
     } else if (BINDERS.has(token.value)) {
       // A `function` or a `class` names one thing. A `const`, `let` or `var` may destructure, so
       // every name in the pattern counts, and the walk stops at the initialiser so that the keys
@@ -395,6 +407,10 @@ function decoded(raw) {
  *   a call to a name the file binds itself, or never binds       refused: that reaches no runner
  *   a title built from anything but one quoted run               refused: no plain quoted title
  *   a title carrying an escape with no decoding here             refused: the string is not known
+ *   a title carrying a line ending or a `|`                      refused: no matrix row carries it
+ *   a call reached any way but a plain name a `node:test`        refused: five such, all measured
+ *     import bound — a dynamic import, a `require`, a
+ *     namespace member, `?.()`, or a `String.raw` title
  *   a quoted run or a comment the source leaves open             refused: it does not tokenize
  *   a top-level call the module never finishes reaching          claimed all the same
  *
@@ -462,6 +478,15 @@ export function declarationsIn(source, file) {
       throw new Error(
         `${at} sits above a call whose title carries an escape this does not decode, so the `
         + `string the runner registers is not known here and nothing proves ${declaration[1]}.`,
+      );
+    }
+    const unwritable = [...registered].find((character) => terminates(character) || character === '|');
+    if (unwritable !== undefined) {
+      throw new Error(
+        `${at} sits above a call whose title carries ${terminates(unwritable) ? 'a line ending' : 'a `|`'}`
+        + `, which a matrix row cannot carry: a row is one line, and its cells are what the \`|\` `
+        + `characters divide. Rendering it would malform \`${MATRIX}\`, so nothing proves `
+        + `${declaration[1]} until the title loses it.`,
       );
     }
     found.push({

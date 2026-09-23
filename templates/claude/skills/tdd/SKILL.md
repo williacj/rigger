@@ -141,7 +141,7 @@ shape it takes, and no shape needs working around:
 | the text inside a block comment | a comment; claims nothing |
 | a run of line comments | a comment — except that a `// proves` line among them is still a declaration, and is refused for standing above a comment rather than above a call |
 
-Six shapes it refuses rather than reads, and each refusal names the file and the line:
+Eight shapes it refuses rather than reads, and each refusal names the file and the line:
 
 | Shape | Why it is refused |
 |---|---|
@@ -149,6 +149,8 @@ Six shapes it refuses rather than reads, and each refusal names the file and the
 | a call to a `test` or `it` the file binds itself, or never binds at all | `node --test` installs no global, so only a name imported from `node:test` reaches the runner |
 | a title the call builds from more than one quoted run — a `+`, a `${}` | the title is then not that string, and half a title names no test |
 | a title carrying an escape the scan does not decode | the string the runner registers is not known |
+| a title carrying a line ending or a `\|` | `docs/derived/test-matrix.md` is a pipe table: a row is one line, and its cells are what the `\|` characters divide, so no row can carry either |
+| a call reached any way but through a plain name a `node:test` import bound — a dynamic `import`, a `require`, a namespace member, `?.()`, or a `String.raw` title | reading those would take more of the grammar than this does; each is measured, and each costs a refusal rather than a claim |
 | a `/` directly after a `}` | a division after an object literal and a regular expression after a block are one token apart, and the grammar above them decides which |
 | a quoted run or a comment the source leaves open | it is not source that parses |
 
