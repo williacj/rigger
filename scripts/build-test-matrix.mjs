@@ -264,8 +264,112 @@ export function tokensIn(source, file) {
 // against a shape here: `docs/spec/requirements.md` says which ids exist, and a declaration naming
 // anything else is refused by name rather than passed over in silence.
 const DECLARATION = /^\/\/ proves (\S.*)$/;
-// What a declaration has to sit above: a call to the runner, carrying a quoted title.
-const RUNNER = new Set(['test', 'it']);
+// The module a call has to reach to be a test. `npm test` is `node --test`, which installs no
+// global of its own, so a call named `test` runs a test only where the file imported it from here
+// (`D16` rule 1). A file that binds the name itself, or never binds it at all, registers nothing
+// whatever it calls — and which name is bound to what is a question about the source.
+const RUNNER_MODULE = 'node:test';
+// What binds a name at the top level of a module, beside an import.
+const BINDERS = new Set(['const', 'let', 'var', 'function', 'class']);
+// The escapes a quoted title can carry, and the character each one stands for. `\0` is here and
+// the other digits are not: a legacy octal escape is a syntax error in a module, so no file the
+// runner loads holds one, and one met here is refused rather than decoded.
+const ESCAPED = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0' };
+
+/**
+ * Which names a source binds to the runner at its top level, and which names it has taken for
+ * something else.
+ *
+ * Only the top level matters: a call the runner reaches is one nothing encloses, which the reader
+ * already requires. A name in both sets is refused, because the later binding is the one in force
+ * at a line this cannot order without the grammar.
+ */
+function bindings(tokens) {
+  const runner = new Set();
+  const taken = new Set();
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (token.depth > 0 || token.kind !== 'word') continue;
+    if (token.value === 'import') {
+      let end = at + 1;
+      while (end < tokens.length && tokens[end].kind !== 'string') end++;
+      let clause = at + 1;
+      while (clause < end && !(tokens[clause].kind === 'word' && tokens[clause].value === 'from')) clause++;
+      // The name each comma-separated group binds is its last word: `a` in `{ a }`, `b` in
+      // `{ a as b }`, `n` in `* as n`, and the whole of a default `x`. A dynamic `import(...)`
+      // reaches this with no words before its specifier, so it binds nothing here.
+      const groups = [[]];
+      for (const piece of tokens.slice(at + 1, clause)) {
+        if (piece.kind === 'punct' && piece.value === ',') groups.push([]);
+        else if (piece.kind === 'word') groups[groups.length - 1].push(piece.value);
+      }
+      for (const group of groups) {
+        const bound = group[group.length - 1];
+        if (bound) (tokens[end]?.value === RUNNER_MODULE ? runner : taken).add(bound);
+      }
+      at = end;
+    } else if (BINDERS.has(token.value)) {
+      // A `function` or a `class` names one thing. A `const`, `let` or `var` may destructure, so
+      // every name in the pattern counts, and the walk stops at the initialiser so that the keys
+      // of an object on the right-hand side are not read as bindings.
+      if (token.value === 'function' || token.value === 'class') {
+        if (tokens[at + 1]?.kind === 'word') taken.add(tokens[at + 1].value);
+        continue;
+      }
+      for (let end = at + 1; end < tokens.length; end++) {
+        const piece = tokens[end];
+        if (piece.depth > token.depth + 1) continue;
+        if (piece.kind === 'punct' && (piece.value === '=' || piece.value === ';')) break;
+        if (piece.kind === 'word') taken.add(piece.value);
+      }
+    }
+  }
+  return { runner, taken };
+}
+
+/**
+ * The string a quoted run's raw text stands for, or `null` where it carries an escape this does
+ * not decode.
+ *
+ * The runner registers the string the language decodes, so a title is decoded the same way or not
+ * recorded at all. Dropping the backslash and keeping the letter — which is what a single
+ * substitution does — turns `\t` into a `t` and records a title no runner ever registered.
+ */
+function decoded(raw) {
+  let out = '';
+  for (let at = 0; at < raw.length; at++) {
+    if (raw[at] !== '\\') {
+      out += raw[at];
+      continue;
+    }
+    const escape = raw[++at];
+    if (escape === undefined) return null;
+    // A line continuation stands for nothing at all, and `\r\n` is one line ending in two
+    // characters.
+    if (escape === '\r') {
+      if (raw[at + 1] === '\n') at++;
+      continue;
+    }
+    if (escape === '\n' || escape === '\u2028' || escape === '\u2029') continue;
+    if (escape === 'x' || escape === 'u') {
+      const brace = escape === 'u' && raw[at + 1] === '{';
+      const close = brace ? raw.indexOf('}', at + 2) : at + (escape === 'x' ? 3 : 5);
+      if (brace && close < 0) return null;
+      const digits = raw.slice(at + (brace ? 2 : 1), close);
+      const wide = brace ? /^[0-9a-fA-F]{1,6}$/ : /^[0-9a-fA-F]+$/;
+      if (!wide.test(digits) || (!brace && digits.length !== (escape === 'x' ? 2 : 4))) return null;
+      const code = parseInt(digits, 16);
+      if (code > 0x10ffff) return null;
+      out += String.fromCodePoint(code);
+      at = brace ? close : close - 1;
+      continue;
+    }
+    if (escape >= '1' && escape <= '9') return null;
+    if (escape === '0' && raw[at + 1] >= '0' && raw[at + 1] <= '9') return null;
+    out += ESCAPED[escape] ?? escape;
+  }
+  return out;
+}
 
 /**
  * Every declaration in one test file's source, in the order they appear.
@@ -285,18 +389,27 @@ const RUNNER = new Set(['test', 'it']);
  *
  *   a marker or a quote inside a string, a template or a regex   the character it is; no claim
  *   a declaration or a call inside a comment of either kind      commented out; no claim
+ *   a `// proves` line commented out among other line comments   refused: it stands above a comment
  *   a `/` directly after a `}`                                   refused: the grammar decides it
  *   a declaration above a call the file nests, `describe` too    refused: reaching it is not tokens
- *   a title a template literal builds from a substitution        refused: no plain quoted title
+ *   a call to a name the file binds itself, or never binds       refused: that reaches no runner
+ *   a title built from anything but one quoted run               refused: no plain quoted title
+ *   a title carrying an escape with no decoding here             refused: the string is not known
  *   a quoted run or a comment the source leaves open             refused: it does not tokenize
- *   a top-level call the module throws before reaching           claimed all the same
+ *   a top-level call the module never finishes reaching          claimed all the same
  *
- * The last row is the boundary, and nothing read off a source can move it: whether a module
- * reaches its own top-level calls is a question about running it, not about reading it. Refusing
- * every file whose top level might throw would refuse every test file there is.
+ * The last row is the one wrong claim, and what puts it there is its kind rather than the length
+ * of the list above it: whether a module reaches its own top-level calls is a question about
+ * running it. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land there,
+ * because in each the source is complete and it is the run that stops, and refusing every file
+ * whose top level might not finish would refuse every test file there is. So the governing
+ * statement is not that the list is exhaustive: it is that what the source decides is decided
+ * here, and a shape the source decides that this reads wrongly is a defect in it rather than a
+ * limit of it.
  */
 export function declarationsIn(source, file) {
   const { tokens, comments } = tokensIn(source, file);
+  const bound = bindings(tokens);
   const found = [];
   for (const comment of comments) {
     if (comment.kind !== 'line' || !comment.startsLine) continue;
@@ -318,17 +431,42 @@ export function declarationsIn(source, file) {
       );
     }
     const first = comment.tokensBefore + (head.kind === 'word' && head.value === 'await' ? 1 : 0);
-    const [name, opener, title] = tokens.slice(first, first + 3);
-    if (!(name?.kind === 'word' && RUNNER.has(name.value)) || opener?.value !== '('
-      || title?.kind !== 'string') {
+    const [name, opener, title, after] = tokens.slice(first, first + 4);
+    if (!(name?.kind === 'word') || opener?.value !== '(' || title?.kind !== 'string') {
       throw new Error(
         `${at} stands above no test, so nothing proves ${declaration[1]}. A declaration goes ` +
         'on the line directly above the test it speaks for.',
       );
     }
+    if (!bound.runner.has(name.value) || bound.taken.has(name.value)) {
+      throw new Error(
+        `${at} sits above a call to \`${name.value}\`, which nothing at the top level of the file `
+        + (bound.taken.has(name.value)
+          ? `binds to the runner: the file binds it itself. A call to \`${name.value}\` runs a test `
+          : `binds at all. A call to \`${name.value}\` runs a test `)
+        + `only where the file imports it from \`${RUNNER_MODULE}\`, so nothing proves `
+        + `${declaration[1]}.`,
+      );
+    }
+    // The token after the title says whether the title is that string: an argument separator or
+    // the closing paren, and nothing else. A `+` after it is the same fact a `${}` inside it is.
+    if (!(after?.kind === 'punct' && (after.value === ',' || after.value === ')'))) {
+      throw new Error(
+        `${at} sits above a call whose title the source builds from more than one quoted run, so `
+        + 'the scan cannot say what the runner registers. A declaration goes above a call carrying '
+        + `a plain quoted title, and nothing proves ${declaration[1]} until it does.`,
+      );
+    }
+    const registered = decoded(title.value);
+    if (registered === null) {
+      throw new Error(
+        `${at} sits above a call whose title carries an escape this does not decode, so the `
+        + `string the runner registers is not known here and nothing proves ${declaration[1]}.`,
+      );
+    }
     found.push({
       ids: declaration[1].split(',').map((id) => id.trim()),
-      title: title.value.replace(/\\(.)/g, '$1'),
+      title: registered,
     });
   }
   return found;

@@ -25,6 +25,11 @@ const run = (dir, ...args) =>
   });
 
 const lines = (...rows) => rows.join('\n');
+// What every fixture source below opens with, because a call to `test` reaches the runner only
+// where the file imported it: `node --test` installs no global, so a source without this line
+// registers nothing whatever it calls. The scan reads that off the source rather than finding
+// out at run time, which is why the fixtures carry it rather than the harness adding it.
+const IMPORT = "import { test } from 'node:test';";
 
 // Sources whose only call to the runner the runner never executes, each one valid JavaScript, and
 // each carrying a declaration above that call. The name of the shape says what hides the call; the
@@ -32,6 +37,7 @@ const lines = (...rows) => rows.join('\n');
 // authority on the second half of that, and the relation test at the foot of this file asks it.
 const NEVER_RUN = {
   'a block comment a regular expression opened': lines(
+    IMPORT,
     "const quoted = /['\"]/; /* these tests are disabled for now",
     '// proves R-ONE-1',
     "test('a test nobody runs', () => {});",
@@ -39,6 +45,7 @@ const NEVER_RUN = {
     '',
   ),
   'a fixture that spans lines': lines(
+    IMPORT,
     'const fixture = `',
     '// proves R-ONE-1',
     "test('a test nobody runs', () => {});",
@@ -46,6 +53,7 @@ const NEVER_RUN = {
     '',
   ),
   'a fixture that spans lines, opened under a backtick inside a string': lines(
+    IMPORT,
     'const tick = "`";',
     'const fixture = `',
     '// proves R-ONE-1',
@@ -54,6 +62,7 @@ const NEVER_RUN = {
     '',
   ),
   'a fixture in a string continued onto the next line': lines(
+    IMPORT,
     "const fixture = '\\",
     '// proves R-ONE-1\\',
     'test("a test nobody runs", () => {}) \\',
@@ -61,11 +70,13 @@ const NEVER_RUN = {
     '',
   ),
   'a call commented out with two slashes': lines(
+    IMPORT,
     '// proves R-ONE-1',
     "// test('a test nobody runs', () => {});",
     '',
   ),
   'a call commented out in a block': lines(
+    IMPORT,
     '/*',
     '// proves R-ONE-1',
     "test('a test nobody runs', () => {});",
@@ -73,6 +84,7 @@ const NEVER_RUN = {
     '',
   ),
   'a call inside a function nobody calls': lines(
+    IMPORT,
     'function disabled() {',
     '  // proves R-ONE-1',
     "  test('a test nobody runs', () => {});",
@@ -80,6 +92,7 @@ const NEVER_RUN = {
     '',
   ),
   'a call behind a branch that is never taken': lines(
+    IMPORT,
     'if (Number(0)) {',
     '  // proves R-ONE-1',
     "  test('a test nobody runs', () => {});",
@@ -95,23 +108,24 @@ const NEVER_RUN = {
 // backtick or a comment marker it counted where the language does not.
 const ALSO_RUN = {
   'a declaration above a plain call': {
-    source: lines('// proves R-ONE-1', "test('a plain call', () => {});", ''),
+    source: lines(IMPORT, '// proves R-ONE-1', "test('a plain call', () => {});", ''),
     claims: ['a plain call'],
   },
   'a backtick inside a line comment above it': {
-    source: lines('// the ` character', '// proves R-ONE-1', "test('a call under a comment', () => {});", ''),
+    source: lines(IMPORT, '// the ` character', '// proves R-ONE-1', "test('a call under a comment', () => {});", ''),
     claims: ['a call under a comment'],
   },
   'a backtick inside a regular expression above it': {
-    source: lines('const tick = /`/;', '// proves R-ONE-1', "test('a call under a backtick', () => {});", ''),
+    source: lines(IMPORT, 'const tick = /`/;', '// proves R-ONE-1', "test('a call under a backtick', () => {});", ''),
     claims: ['a call under a backtick'],
   },
   'a block-comment opener inside a regular expression above it': {
-    source: lines('const marker = /[/*]/;', '// proves R-ONE-1', "test('a call under a marker', () => {});", ''),
+    source: lines(IMPORT, 'const marker = /[/*]/;', '// proves R-ONE-1', "test('a call under a marker', () => {});", ''),
     claims: ['a call under a marker'],
   },
   'a fixture in a single-line string above it': {
     source: lines(
+      IMPORT,
       "const fixture = '// proves R-ONE-1\\ntest(\"nothing\", () => {});';",
       '// proves R-ONE-1',
       "test('a call under a fixture', () => {});",
@@ -122,15 +136,16 @@ const ALSO_RUN = {
   'a declaration a line separator divides from its call': {
     // U+2028 ends a line for JavaScript, so the comment ends there and the call is the next line.
     // A scan that split on `\n` alone read both as one line and dropped the claim without a word.
-    source: `// proves R-ONE-1 test('a call after a line separator', () => {});\n`,
+    source: `${IMPORT}\n// proves R-ONE-1 test('a call after a line separator', () => {});\n`,
     claims: ['a call after a line separator'],
   },
   'a declaration above an awaited call': {
-    source: lines('// proves R-ONE-1', "await test('an awaited call', () => {});", ''),
+    source: lines(IMPORT, '// proves R-ONE-1', "await test('an awaited call', () => {});", ''),
     claims: ['an awaited call'],
   },
   'two declarations, and a division between them': {
     source: lines(
+      IMPORT,
       '// proves R-ONE-1',
       "test('a call before a division', () => {});",
       'const half = (1 + 3) / 2;',
@@ -140,6 +155,28 @@ const ALSO_RUN = {
       '',
     ),
     claims: ['a call before a division', 'a call after a division'],
+  },
+  'a title carrying escapes': {
+    // The escapes here decode to characters the TAP reporter passes through, which is what lets
+    // the relation test below compare the scan's title with the runner's. Measured: a real tab in
+    // a title comes back out of a `# Subtest:` line as a backslash and a `t`, so a tab belongs in
+    // a unit test that reads the decoded string, never here, where it would red on the reporter.
+    source: lines(
+      IMPORT,
+      '// proves R-ONE-1',
+      "test('a call whose title holds \\u00e9, \\x41 and it\\'s quote', () => {});",
+      '',
+    ),
+    claims: ["a call whose title holds é, A and it's quote"],
+  },
+  'an aliased import of the runner': {
+    source: lines(
+      "import { test as it } from 'node:test';",
+      '// proves R-ONE-1',
+      "it('a call through an alias', () => {});",
+      '',
+    ),
+    claims: ['a call through an alias'],
   },
 };
 
@@ -176,7 +213,8 @@ const retiredOf = (...ids) => lines(
 );
 
 /** A test file carrying one declaration and the test it speaks for. */
-const proving = (declaration, title) => `${declaration}\ntest('${title}', () => {});\n`;
+const proving = (declaration, title) =>
+  `${IMPORT}\n${declaration}\ntest('${title}', () => {});\n`;
 
 /** The one row a rendered matrix gives a requirement, whole, so its cells can be read. */
 const rowFor = (document, id) =>
@@ -304,6 +342,7 @@ test('a comment opener inside a string opens no comment, so what follows is stil
   // without a word. A dropped claim reads exactly like a requirement no test claims, in the one
   // document whose job is to tell those two apart.
   const source = lines(
+    IMPORT,
     'const source = [\'const s = "/*";\', \'const a = 1;\'].join(String.fromCharCode(10));',
     '// proves R-ONE-1',
     "test('the first thing holds', () => {});",
@@ -673,7 +712,7 @@ function everyShape(sources) {
     'docs/spec/requirements-retired.md': retiredOf(),
   };
   const paths = sources.map((source, at) => {
-    files[`test/shape-${at}.test.mjs`] = `import { test } from 'node:test';\n${source}`;
+    files[`test/shape-${at}.test.mjs`] = source;
     return `test/shape-${at}.test.mjs`;
   });
   return { dir: fixture(files), paths };
@@ -838,6 +877,7 @@ test('a call the module throws before reaching is claimed all the same, and read
   // This is the assertion to delete the day something can decide it. Until then it is the honest
   // boundary of what the docstring on `declarationsIn` claims.
   const source = lines(
+    IMPORT,
     "if (Number(1)) throw new Error('this module never finishes loading');",
     '// proves R-ONE-1',
     "test('a test nobody runs', () => {});",
@@ -856,4 +896,123 @@ test('a declaration with code before it on the line is a note, and claims nothin
   const source = lines('const a = 1; // proves R-ONE-1', "test('a real test', () => {});", 'export { a };');
 
   assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
+});
+
+test('a call to a name the file bound itself is not a call to the runner', () => {
+  // Round 2 on card #85. A declaration reports that the runner runs a test by the title recorded,
+  // and `test` reaches the runner only where the file imported it from `node:test`. A file that
+  // binds the name itself registers nothing, whatever it then calls — and the source says so, so
+  // this is not the run-time boundary below.
+  const shadowed = {
+    'a const taking the name': lines(
+      'const test = () => {};',
+      '// proves R-ONE-1',
+      "test('a test nobody runs', () => {});",
+      '',
+    ),
+    'a function of the file own': lines(
+      'function test(title, body) { return [title, body]; }',
+      '// proves R-ONE-1',
+      "test('a test nobody runs', () => {});",
+      'export { test };',
+      '',
+    ),
+    'a name the file imported from somewhere else': lines(
+      "import { test } from './helpers.mjs';",
+      '// proves R-ONE-1',
+      "test('a test nobody runs', () => {});",
+      '',
+    ),
+  };
+
+  for (const [shape, source] of Object.entries(shadowed)) {
+    assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+      assert.match(error.message, /test\/first\.test\.mjs/, shape);
+      assert.match(error.message, /line 2\b/, shape);
+      assert.match(error.message, /binds/, shape);
+      return true;
+    }, `${shape} was read as a call to the runner`);
+  }
+});
+
+test('a call in a file that never imported the runner is refused, not claimed', () => {
+  // `node --test` installs no global, so this file throws on its first statement and registers
+  // nothing. Which name is bound is a question about the source, not about the run.
+  const source = lines('// proves R-ONE-1', "test('a test nobody runs', () => {});", '');
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /line 1\b/);
+    assert.match(error.message, /node:test/);
+    return true;
+  });
+});
+
+test('an aliased import of the runner is still the runner', () => {
+  // The other direction, and the reason the rule is about what a name is bound to rather than
+  // about a spelling: `it` here is the runner's own `test`, and the runner runs what it declares.
+  const source = lines(
+    "import { test as it } from 'node:test';",
+    '// proves R-ONE-1',
+    "it('a real test', () => {});",
+    '',
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), [
+    { ids: ['R-ONE-1'], title: 'a real test' },
+  ]);
+});
+
+test('a title the call builds from more than a string is refused, not truncated', () => {
+  // The scan records a title, and a matrix row naming half a title names a test the runner does
+  // not run. A `+` after the quoted run is the same fact a `${}` inside one is: the title is not
+  // that string. The token after the title says which, and it has to be the comma or the paren.
+  const source = lines(
+    IMPORT,
+    '// proves R-ONE-1',
+    "test('a test nobody' + ' runs', () => {});",
+    '',
+  );
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /line 2\b/);
+    assert.match(error.message, /plain quoted title/);
+    return true;
+  });
+});
+
+test('a title carrying an escape is recorded as the string the language decodes', () => {
+  // `\t` is a tab, not a `t`. The old decoding dropped the backslash and kept the letter, so a
+  // row named a test by a title no runner registers. The relation test asks the runner about
+  // this same source; these are the strings read off the language's own rules by hand.
+  const source = lines(
+    IMPORT,
+    '// proves R-ONE-1',
+    "test('a title with a\\ttab', () => {});",
+    '// proves R-ONE-1',
+    "test('a title with a quote: it\\'s here', () => {});",
+    '// proves R-ONE-1',
+    "test('a title with a unit: \\u00e9 and \\x41', () => {});",
+    '',
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs').map((claim) => claim.title), [
+    'a title with a\ttab',
+    "a title with a quote: it's here",
+    'a title with a unit: é and A',
+  ]);
+});
+
+test('a title carrying an escape the scan cannot decode is refused', () => {
+  // A legacy octal escape is a syntax error in a module, so no file the runner loads holds one.
+  // What matters is the direction: an escape with no decoding is refused, never guessed at.
+  const source = lines(IMPORT, '// proves R-ONE-1', "test('a title with a \\9', () => {});", '');
+
+  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
+    assert.match(error.message, /test\/first\.test\.mjs/);
+    assert.match(error.message, /line 2\b/);
+    assert.match(error.message, /escape/);
+    return true;
+  });
 });

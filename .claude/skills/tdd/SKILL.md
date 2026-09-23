@@ -138,21 +138,27 @@ shape it takes, and no shape needs working around:
 | a single-line string, with `\n` escapes | one string token; claims nothing |
 | a template literal spanning lines | one token, lines and all; claims nothing |
 | a string continued with a trailing backslash | one token; claims nothing |
-| the text inside a comment, of either kind | a comment; claims nothing |
+| the text inside a block comment | a comment; claims nothing |
+| a run of line comments | a comment — except that a `// proves` line among them is still a declaration, and is refused for standing above a comment rather than above a call |
 
-Three shapes it refuses rather than reads, and each refusal names the file and the line:
+Six shapes it refuses rather than reads, and each refusal names the file and the line:
 
 | Shape | Why it is refused |
 |---|---|
 | a declaration above a call the file nests, a `describe` block included | whether the runner reaches an enclosed call is not a question about tokens |
+| a call to a `test` or `it` the file binds itself, or never binds at all | `node --test` installs no global, so only a name imported from `node:test` reaches the runner |
+| a title the call builds from more than one quoted run — a `+`, a `${}` | the title is then not that string, and half a title names no test |
+| a title carrying an escape the scan does not decode | the string the runner registers is not known |
 | a `/` directly after a `}` | a division after an object literal and a regular expression after a block are one token apart, and the grammar above them decides which |
-| a title a template literal builds from a `${}` | that is no plain quoted title |
+| a quoted run or a comment the source leaves open | it is not source that parses |
 
-One thing it gets wrong, and nothing read off a source can settle it: a declaration above a
-top-level call the module throws before reaching is claimed all the same. Whether a module reaches
-its own top-level calls is a question about running it. `scripts/build-test-matrix.mjs` states the
-same set beside the code, and `test/build-test-matrix.test.mjs` puts every row of it to a
-constructed input.
+What it gets wrong: a declaration above a top-level call the module never finishes reaching is
+claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land
+there, because in each the source is complete and it is the run that stops. That is a question
+about running the module rather than reading it; what the source decides is decided, and a shape
+the source decides that the scan reads wrongly is a defect rather than a limit.
+`scripts/build-test-matrix.mjs` states the same set beside the code, and
+`test/build-test-matrix.test.mjs` puts every row of it to a constructed input.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
