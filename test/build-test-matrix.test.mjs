@@ -793,6 +793,30 @@ test('a line the scan cannot classify is refused, naming the file and the line',
       line: 1,
       reason: /never closes/,
     },
+    'a declaration inside a describe block, whose call the runner does run': {
+      // The cost of asking for the top level, and the only one that falls on a shape somebody
+      // would write on purpose. The runner reaches this call; the scan cannot say so from the
+      // tokens, so it refuses rather than claiming. Grouping a declared test is what it costs.
+      source: lines(
+        "describe('a group', () => {",
+        '  // proves R-ONE-1',
+        "  test('a real test', () => {});",
+        '});',
+        '',
+      ),
+      line: 2,
+      reason: /top level/,
+    },
+    'a title built by a template literal, which is no plain title': {
+      source: lines(
+        'const what = "a thing";',
+        '// proves R-ONE-1',
+        'test(`a real test about ${what}`, () => {});',
+        '',
+      ),
+      line: 2,
+      reason: /stands above no test/,
+    },
   };
 
   for (const [shape, { source, line, reason }] of Object.entries(refused)) {
@@ -803,6 +827,26 @@ test('a line the scan cannot classify is refused, naming the file and the line',
       return true;
     }, `${shape} was not refused`);
   }
+});
+
+test('a call the module throws before reaching is claimed all the same, and reading cannot help', () => {
+  // The one limit left, stated here so that nobody has to find it. Whether the runner reaches a
+  // top-level call is a question about running the module, not about reading it: this one parses,
+  // its call sits at the top level, and the runner registers nothing because the module throws
+  // first. Refusing every file whose top level might throw would refuse every test file there is.
+  //
+  // This is the assertion to delete the day something can decide it. Until then it is the honest
+  // boundary of what the docstring on `declarationsIn` claims.
+  const source = lines(
+    "if (Number(1)) throw new Error('this module never finishes loading');",
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '',
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), [
+    { ids: ['R-ONE-1'], title: 'a test nobody runs' },
+  ]);
 });
 
 test('a declaration with code before it on the line is a note, and claims nothing', () => {

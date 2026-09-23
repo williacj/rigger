@@ -270,24 +270,30 @@ const RUNNER = new Set(['test', 'it']);
 /**
  * Every declaration in one test file's source, in the order they appear.
  *
- * What it reports is a claim that a test exists, so the bar is that `node --test` would execute
- * the test named. `tokensIn` above reads the source into its comments and tokens,
- * and every part of that bar is a question about those rather than about the shape of a line. A
- * declaration is a line comment, which no marker inside a string or a regular expression can
- * forge and no commented-out line can be. The test it speaks for is the run of tokens directly
- * after it, which the text of a call inside a fixture cannot be, because a fixture is one string
- * token. And the call sits at the top level of the file, because a call the runner reaches is one
- * nothing encloses.
+ * What this reports is a claim that a test exists, so the bar is that `node --test` would execute
+ * the test named. `tokensIn` above reads the source into the comments and tokens it holds, and
+ * every part of the bar is then a question about those rather than about the shape of a line. A
+ * declaration is a line comment of its own, which no marker inside a string or a regular
+ * expression can forge and no commented-out line can be. The test it speaks for is the run of
+ * tokens directly after it, which the text of a call inside a fixture cannot be, because a fixture
+ * is one string token however many lines it spans. And the call sits at the top level of the file,
+ * because a call the runner reaches is one that nothing encloses.
  *
- * Two things it does not tell apart, and both cost a refusal naming the line rather than a claim.
- * A `/` directly after a `}` is ambiguous in the language itself, so the reader refuses it. And a
- * declaration above a call the file nests — inside a function, a branch, a loop — is refused,
- * because whether the runner ever reaches that call is not a question about tokens.
+ * What it tells apart and what it does not, each row put to a constructed input in
+ * `test/build-test-matrix.test.mjs` rather than reasoned about. Every row but the last costs a
+ * refusal naming the file and the line, never a claim:
  *
- * What it still cannot see is a file that runs and throws before the runner registers anything,
- * or one whose top-level code decides at run time what to register. A declaration above a
- * top-level call is read as a claim there, and a run that never reaches the call makes it false.
- * Reading that apart needs the program run, not read.
+ *   a marker or a quote inside a string, a template or a regex   the character it is; no claim
+ *   a declaration or a call inside a comment of either kind      commented out; no claim
+ *   a `/` directly after a `}`                                   refused: the grammar decides it
+ *   a declaration above a call the file nests, `describe` too    refused: reaching it is not tokens
+ *   a title a template literal builds from a substitution        refused: no plain quoted title
+ *   a quoted run or a comment the source leaves open             refused: it does not tokenize
+ *   a top-level call the module throws before reaching           claimed all the same
+ *
+ * The last row is the boundary, and nothing read off a source can move it: whether a module
+ * reaches its own top-level calls is a question about running it, not about reading it. Refusing
+ * every file whose top level might throw would refuse every test file there is.
  */
 export function declarationsIn(source, file) {
   const { tokens, comments } = tokensIn(source, file);
