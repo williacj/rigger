@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { doctor, sameTree } from '../src/cli/doctor.mjs';
+import { PROVIDER_ASSETS } from '../src/cli/init.mjs';
+import { AGENT_CLI, agentAuth, doctor, ghAuth, nodeVersion, sameTree } from '../src/cli/doctor.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -111,4 +112,146 @@ test('the tree compared is the repository, not the directory the command was run
 
   assert.notEqual(ran.code, 0, ran.text);
   assert.match(ran.text, /source tree/);
+});
+
+/** A package directory declaring one `engines.node` and nothing else that matters here. */
+function packageDeclaring(engines) {
+  const where = mkdtempSync(join(tmpdir(), 'rigger-engines-'));
+  writeFileSync(join(where, 'package.json'), `${JSON.stringify({ name: 'x', engines: { node: engines } }, null, 2)}\n`);
+  return where;
+}
+
+test('the Node check reads its floor from `engines.node`, and carries no number of its own', () => {
+  // `D16` rule 2: a copy of an authority's answer is tied to the authority by a test that asks
+  // it. The floor is `package.json`'s to state — npm refuses an install against it — so the
+  // defect this catches is a major number typed into the check, which goes on answering for the
+  // floor this package declared the day it was typed.
+  //
+  // Measured against the running Node rather than a version written out, so nothing here pins
+  // what the check answers today: what is asserted is that moving the floor across the running
+  // version moves the verdict, and that the line names both numbers it compared.
+  const declared = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).engines.node;
+  const running = process.versions.node;
+  const [major] = running.split('.').map(Number);
+
+  const ours = nodeVersion({ packageRoot: root, running });
+
+  assert.ok(ours.detail.includes(declared), `the line names no floor: ${ours.detail}`);
+  assert.ok(ours.detail.includes(running), `the line names no running version: ${ours.detail}`);
+  assert.equal(nodeVersion({ packageRoot: packageDeclaring(`>=${major + 1}`), running }).ok, false);
+  assert.equal(nodeVersion({ packageRoot: packageDeclaring(`>=${major}`), running }).ok, true);
+  assert.equal(nodeVersion({ packageRoot: packageDeclaring(`>=${major - 1}`), running }).ok, true);
+});
+
+test('a floor written in a form this reader does not read is said to be unread, never guessed at', () => {
+  // The reader takes a single `>=` comparator, which is the form this package's own
+  // `engines.node` is written in. npm's range language is far wider, and a check that read
+  // `^20 || ^22` as a `20` floor would answer for a range nobody asked it about. The defect this
+  // catches is exactly that guess: a green line about a comparison that never happened.
+  for (const form of ['^20 || ^22', '20.x', '', '>=nonsense']) {
+    const said = nodeVersion({ packageRoot: packageDeclaring(form), running: process.versions.node });
+
+    assert.equal(said.ok, null, `\`${form}\` was read as a floor after all: ${said.detail}`);
+    assert.ok(said.detail.includes(form) || form === '', said.detail);
+  }
+});
+
+/** A runner that answers one recorded result and records what it was asked. */
+function answering(result) {
+  const asked = [];
+  const ask = (command, args) => { asked.push([command, ...args].join(' ')); return result; };
+  ask.asked = asked;
+  return ask;
+}
+
+test('the gh check answers what `gh auth status` answers, and asks it without the token', () => {
+  // `D16` rule 1: gh owns whether gh is authenticated, so the check asks it and carries no
+  // reading of its own. The relation is asserted against the real tool rather than the answer it
+  // gives here today, which would go stale green the moment the host logged in or out.
+  //
+  // Measured with gh 2.96.0: `gh auth status` exits 0 authenticated and 1 not, and a host with no
+  // gh at all answers a null status. The two recorded results below are those runs, and the
+  // asserted relation is what ties them to the tool.
+  //
+  // `--show-token` is the one argument that would put a credential in a report a consumer pastes
+  // into an issue, so the check is asserted never to pass it (`AGENTS.md`, never log a secret).
+  const tool = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
+
+  const here = ghAuth();
+
+  assert.equal(here.ok, tool.status === null ? null : tool.status === 0, here.detail);
+
+  const authenticated = answering({ status: 0, stdout: 'github.com\n  ✓ Logged in to github.com account williacj (keyring)\n', stderr: '' });
+  const not = answering({ status: 1, stdout: '', stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' });
+  assert.equal(ghAuth({ ask: authenticated }).ok, true);
+  assert.equal(ghAuth({ ask: not }).ok, false);
+  assert.deepEqual(authenticated.asked, ['gh auth status']);
+  assert.ok(ghAuth({ ask: not }).detail.includes('not logged into any GitHub hosts'), 'the line says nothing a consumer could act on');
+  // One line, so the masked token line gh prints under the account never rides along into a
+  // report a consumer pastes somewhere. The defect this catches is the whole of gh's output
+  // carried as the detail, which reads as one line until the line it is carrying has several.
+  for (const said of [ghAuth({ ask: authenticated }), ghAuth({ ask: not })]) {
+    assert.doesNotMatch(said.detail, /[\r\n]/, said.detail);
+  }
+});
+
+test('an authority this host cannot run at all is reported as unasked, never as a pass', () => {
+  // A check that reports a green it did not measure is worse than one that says it could not
+  // look. The defect this catches is the status read without the run: `spawnSync` answers a
+  // command it could not start with a null status, and `null === 0` is false, so a check reading
+  // `status === 0` calls a missing tool a failure and one reading `status !== 0` calls it a pass
+  // — neither of which anybody measured.
+  //
+  // Measured rather than reasoned: the runner is given the shape `spawnSync` really answers with
+  // when the command is not there, taken from a run below rather than written out.
+  const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
+  assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
+  assert.ok(missing.error, 'the run answered no error, so there is nothing to report');
+
+  for (const said of [ghAuth({ ask: () => missing }), agentAuth({ ask: () => missing })]) {
+    assert.equal(said.ok, null, said.detail);
+    assert.match(said.detail, /could not be run|not there|no such/i, said.detail);
+  }
+});
+
+test('the agent CLI check answers the `loggedIn` the CLI states, and asks every provider by name', () => {
+  // `D16` rules 1 and 2: Claude Code owns whether Claude Code is signed in. The relation is
+  // asserted against the real CLI rather than the answer it gives here today, and the expected
+  // value is parsed in this test rather than taken from the check's own reader, which would
+  // agree with it by construction.
+  //
+  // The two recorded answers below were measured with Claude Code 2.1.281: signed in it states
+  // `loggedIn: true` and exits 0, and pointed at an empty `CLAUDE_CONFIG_DIR` it states
+  // `loggedIn: false` and exits 1.
+  const [command, ...args] = AGENT_CLI.claude;
+  const tool = spawnSync(command, args, { encoding: 'utf8' });
+  let stated;
+  try {
+    stated = JSON.parse(tool.stdout).loggedIn;
+  } catch {
+    stated = undefined;
+  }
+
+  const here = agentAuth();
+
+  assert.equal(here.ok, typeof stated === 'boolean' ? stated : null, `${here.detail} against ${tool.stdout}`);
+
+  const signedIn = answering({ status: 0, stdout: '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}\n', stderr: '' });
+  const out = answering({ status: 1, stdout: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}\n', stderr: '' });
+  assert.equal(agentAuth({ ask: signedIn }).ok, true);
+  assert.equal(agentAuth({ ask: out }).ok, false);
+  assert.deepEqual(signedIn.asked, ['claude auth status --json']);
+
+  // An answer stating no `loggedIn` this can read is unread, never read as a refusal: a CLI that
+  // reworded itself would otherwise have a signed-in consumer told they are signed out.
+  const reworded = answering({ status: 0, stdout: '{\n  "authenticated": true\n}\n', stderr: '' });
+  assert.equal(agentAuth({ ask: reworded }).ok, null, agentAuth({ ask: reworded }).detail);
+});
+
+test('every provider Rigger forks assets for has a CLI this check knows how to ask', () => {
+  // `init` forks a provider's templates where that provider reads them, and `doctor` says whether
+  // that provider's CLI is signed in. The defect this catches is the second adapter added to one
+  // table and not the other: its assets land, its roles are dispatched, and the check that would
+  // have said its CLI was never signed in passes over it in silence.
+  assert.deepEqual(Object.keys(AGENT_CLI).sort(), Object.keys(PROVIDER_ASSETS).sort());
 });

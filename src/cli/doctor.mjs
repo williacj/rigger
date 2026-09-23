@@ -2,8 +2,8 @@
 // ABOUTME: at a time, and the source tree it refuses to run against.
 
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve, dirname } from 'node:path';
+import { readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Runs a command and hands back what it answered, which is every authority this verb asks. */
@@ -96,4 +96,159 @@ export async function doctor({ target = process.cwd(), packageRoot = PACKAGE, as
     };
   }
   return { text: '', code: 0 };
+}
+
+/**
+ * The one form of `engines.node` this reads: a single `>=` comparator over a dotted version.
+ *
+ * npm owns the range language, and this reads one comparator of it rather than restating the
+ * whole. Where npm's answer can differ from this one (`D16` rule 3), measured by writing the
+ * range and reading what comes back rather than reasoned about:
+ *
+ * - every other form npm accepts — `^20`, `20.x`, `>=20 <23`, `^20 || ^22` — is unread here, and
+ *   a check that cannot read its floor says so rather than answering for a comparison it never
+ *   made. `test/doctor.test.mjs` measures the four above;
+ * - npm reads a prerelease as below the release of the same numbers, where the comparison below
+ *   drops the tag, so a Node built as `25.0.0-pre` satisfies a `>=25` floor here and would not
+ *   under npm. Unmeasured against npm: no command it ships answers this question on its own, and
+ *   a guess about how it would answer is what `D16` rule 3 exists to refuse.
+ */
+const FLOOR = /^>=\s*(\d+(?:\.\d+)*)$/;
+
+/** Whether a dotted version reaches a floor, each segment the floor names compared in turn. */
+function reaches(running, floor) {
+  const has = running.split('-')[0].split('.').map(Number);
+  const wants = floor.split('.').map(Number);
+  for (const [index, want] of wants.entries()) {
+    const got = has[index] ?? 0;
+    if (got !== want) return got > want;
+  }
+  return true;
+}
+
+/**
+ * Whether the running Node reaches the floor this package declares.
+ *
+ * `package.json` owns the floor: it is what npm refuses an install against, so a number typed
+ * here would be a second answer to a question already answered (`D16` rule 1). Nothing is copied
+ * — the file is read at the moment the check runs — and the line names both numbers compared, so
+ * a consumer reads the floor rather than being told a verdict about it.
+ */
+export function nodeVersion({ packageRoot = PACKAGE, running = process.versions.node } = {}) {
+  const name = 'Node version';
+  const declared = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).engines?.node;
+  const floor = typeof declared === 'string' ? declared.trim().match(FLOOR) : null;
+  if (!floor) {
+    return {
+      name,
+      ok: null,
+      detail: `\`engines.node\` says \`${declared}\`, which is no \`>=\` floor this reads, so `
+        + `Node ${running} was compared against nothing`,
+    };
+  }
+  return {
+    name,
+    ok: reaches(running, floor[1]),
+    detail: `Node ${running} against the \`${declared}\` this package declares`,
+  };
+}
+
+/**
+ * What a command said, whichever stream it said it on, reduced to its first line.
+ *
+ * A report a consumer pastes into an issue carries this, so it is one line and it is the tool's
+ * own words rather than a reading of them.
+ */
+const firstLine = (said) => `${said.stdout ?? ''}\n${said.stderr ?? ''}`
+  .split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+
+/**
+ * Why a command answered no status.
+ *
+ * Measured rather than reasoned: `spawnSync` answers a command it could not start at all with a
+ * null status and an `error` carrying the code, where a command that ran and refused answers a
+ * number. `test/doctor.test.mjs` runs a name that is not there and asserts that shape before it
+ * relies on it. A status read without that distinction calls a tool nobody has as a tool that
+ * answered, which is the green no one measured.
+ */
+const reason = (said) => said.error?.code ?? said.error?.message ?? 'it answered no status at all';
+
+/**
+ * Whether `gh` is authenticated, which is `gh auth status`'s answer and not this code's.
+ *
+ * `D16` rule 1: gh owns the fact. Its exit status is the whole of what is read — measured with
+ * gh 2.96.0 as 0 authenticated and 1 not — and the line carries gh's own first line so a
+ * consumer reads what to do about it. `--show-token` is never passed: it is the one argument
+ * that would put a credential into a report (`AGENTS.md`, never log a secret).
+ */
+export function ghAuth({ ask = asked } = {}) {
+  const name = 'gh authentication';
+  const said = ask('gh', ['auth', 'status']);
+  if (said.status === null) {
+    return { name, ok: null, detail: `\`gh auth status\` could not be run here: ${reason(said)}` };
+  }
+  return { name, ok: said.status === 0, detail: `\`gh auth status\` exited ${said.status}: ${firstLine(said)}` };
+}
+
+/**
+ * How each provider's CLI is asked whether it is authenticated, one argv per provider.
+ *
+ * Keyed by provider, as `init.mjs`'s `PROVIDER_ASSETS` is, and `test/doctor.test.mjs` holds the
+ * two key sets to each other: a provider Rigger forks assets for and has no way to ask is a
+ * provider this check would pass over in silence.
+ */
+export const AGENT_CLI = { claude: ['claude', 'auth', 'status', '--json'] };
+
+/** What `loggedIn` a JSON answer states, or undefined where it states none this can read. */
+function states(output) {
+  try {
+    return JSON.parse(output).loggedIn;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The verdict a set of them folds to: unknown if any is, failed if any is, passed otherwise. */
+const folded = (verdicts) => {
+  if (verdicts.length === 0 || verdicts.includes(null)) return null;
+  return !verdicts.includes(false);
+};
+
+/**
+ * Whether each agent CLI is authenticated, which is that CLI's answer and not this code's.
+ *
+ * `D16` rule 1: Claude Code owns whether Claude Code is signed in, and `claude auth status
+ * --json` is the question it answers. The `loggedIn` it states is read rather than its exit
+ * status, because the statement is the fact and the status is a second telling of it that could
+ * drift from the first. Where its answer can differ (`D16` rule 3), measured with Claude Code
+ * 2.1.281 on this host:
+ *
+ * - signed in it states `loggedIn: true` and exits 0; pointed at an empty `CLAUDE_CONFIG_DIR` it
+ *   states `loggedIn: false` and exits 1. The two agreed in both runs, which is why either could
+ *   have been read and why the drift between them is worth guarding against;
+ * - `--json` is the default the command documents, and it is passed anyway, because a default is
+ *   the one part of a tool's answer that changes without notice;
+ * - an answer carrying no `loggedIn` this can read is reported unread. That is not a measured
+ *   version of this CLI but the shape a later one could take, and reading a missing key as
+ *   `false` would report a consumer signed out on a day the CLI merely reworded itself.
+ */
+export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
+  const name = 'agent CLI authentication';
+  const verdicts = [];
+  const lines = [];
+  for (const [command, ...args] of Object.values(clis)) {
+    const said = ask(command, args);
+    const spelled = `\`${[command, ...args].join(' ')}\``;
+    if (said.status === null) {
+      verdicts.push(null);
+      lines.push(`${spelled} could not be run here: ${reason(said)}`);
+    } else if (typeof states(said.stdout) !== 'boolean') {
+      verdicts.push(null);
+      lines.push(`${spelled} exited ${said.status} and stated no \`loggedIn\`, so nothing was read from it`);
+    } else {
+      verdicts.push(states(said.stdout));
+      lines.push(`${spelled} states \`loggedIn: ${states(said.stdout)}\``);
+    }
+  }
+  return { name, ok: folded(verdicts), detail: lines.join('; ') };
 }
