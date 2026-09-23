@@ -113,6 +113,48 @@ the runner does run that call. No test in this repository uses `describe` today,
 item ruled on the trade, so it stays as it is and the owner decides. It is a loss, not a wash, and
 this is where it is written down.
 
+## Round 3 — two shapes, and a document nobody would have noticed was broken
+
+**The import reader took the wrong string.** It scanned forward to the first string token in the
+statement and called that the module. ES2022 allows a string where an *import name* goes, and that
+string sits inside the clause, before the specifier — so a decoy module exporting
+`{ nothing as 'node:test' }` had its default export accepted as the runner. The runner loaded both
+files cleanly and registered nothing; the scan wrote the row. The same bug refused a genuine
+`import { 'test' as t } from 'node:test'`, which the runner does run. Wrong in both directions from
+one cause, and only one direction was safe. Reading the specifier as the token after `from` closed
+both at once, which is the shape a root-cause fix takes: the instance count goes down by two.
+
+**A title can malform the document without failing any check.** `docs/derived/test-matrix.md` is a
+pipe table — a row is one line, its cells divided by `|` — and a title carrying either character
+breaks the row. `matrix:check` compares bytes, so it agrees with a malformed document exactly as
+readily as with a sound one, and the ids test matched the first fragment of the split row and passed
+too. Two checks over a generated binding document (`D8`), both green, both blind to it. The lesson
+is not about titles: **a check that compares a generated document to what the generator produces
+says nothing about whether either is well formed.** So there is now a test that reads the committed
+matrix and asserts every row is one line holding the two cells the format gives it — and its own
+guard is a mutation of the *document*: write a split row, watch it red, restore.
+
+**Four spellings, one fault, and one of them was mine from round 2.** A template broken across
+lines, the same in a CRLF file, a `|` in a title — and a `\n` escape in a quoted title, which only
+became reachable when round 2 taught the reader to decode escapes properly. Closing a defect can
+open a shape that was unreachable before it; the fix and its new edges want measuring together, not
+just the fix.
+
+**The CRLF half is the one a Windows checkout meets.** The language folds a template literal's
+`<CR><LF>` to a `<LF>`; a reader of raw bytes does not. Measured off `run()` events: the runner
+registers `a real\ntest` from both endings, and the reader held `a real\r\ntest` from the CRLF
+file. Refusing the whole class covers it without a normalization rule nothing would then observe —
+had the reader normalized *and* refused, the normalization would have been code no test could reach.
+
+**And the harness lesson came back improved.** Round 2's entry says a reporter escapes what you
+compare. The judge hit exactly that with its own first escape probe — comparing TAP `# Subtest:`
+text, where a real tab returns as a backslash and a `t`, so a genuine agreement read as a
+disagreement and its earlier probe had been a false negative. It re-ran off `node:test`'s `run()`
+events and established the CRLF disagreement cleanly. Every title probe this round used `run()`, and
+the collector carries its own guard, because a stream nobody consumes emits nothing and never ends
+— which reads exactly like a runner that registered no tests. That was the first thing my own
+collector did, and the guard is what caught it rather than the silence being believed.
+
 **A harness lesson worth more than its size: the reporter escapes what you compare.** The relation
 test reads titles out of `# Subtest:` lines. A title carrying a real tab comes back out of one as a
 backslash and a `t`, so a tab-titled fixture reds on the reporter rather than on the scan — a
