@@ -216,6 +216,27 @@ test('a clause absorbed by nothing still reports as it did on 65a7de7, and still
   assert.equal(status, 1);
 });
 
+// The invocation this script was written for and has never been able to run: the eight
+// invariants as they stood before 755c809 dissolved them, against the register they became.
+// The ref is the point of it. A section in the working tree can dissolve again, as this one
+// did; `755c809^` cannot.
+const SOURCE_REF = '755c809^:ARCHITECTURE.md';
+const REGISTER = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'spec', 'requirements.md');
+
+// Counted by hand off `git show 755c809^:ARCHITECTURE.md`, where the section spans lines
+// 219-237: a heading, a blank line, and eight bullets. Not taken from bullets(), which would
+// agree with itself however wrong it was.
+const DISSOLVED_CLAUSES = 8;
+
+test('the two-document form reads its source from a git ref, not from the working tree', () => {
+  // ARCHITECTURE.md in the working tree has no such section. So a run that reads the ref and a
+  // run that reads the tree are told apart by this one exiting 0 rather than refusing.
+  const { status, stdout } = run(SOURCE_REF, REGISTER);
+
+  assert.equal(status, 0, `the intended invocation did not exit 0: ${stdout}`);
+  assert.match(stdout, new RegExp(`^${DISSOLVED_CLAUSES} source clauses, \\d+ destination rows`));
+});
+
 test('the file states its accepted invocations in the comment block, above its first export', () => {
   // So a caller learns what to pass by opening the file at the top, rather than reading to the
   // bottom for the dispatch. The preamble ends where the API begins, which is the first export.

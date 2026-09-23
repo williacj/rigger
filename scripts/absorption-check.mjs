@@ -1,6 +1,8 @@
 // ABOUTME: Reports which words a clause gained or lost when it moved between documents, and which clauses moved nowhere at all.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // A rephrase that changes meaning usually changes words. This finds the changed words
@@ -98,9 +100,30 @@ export function compare(source, destinations) {
   };
 }
 
-/** Pull the bullets out of a named section of a markdown file. */
+/**
+ * Read a source document, from the working tree or from a git ref.
+ *
+ * The section this check was written to read was dissolved by the same commit that added the
+ * check, so no path in the working tree holds it and none ever did. A `<ref>:<path>` spec does,
+ * and a ref cannot dissolve the way a section can. A file on disk wins, so a Windows path is
+ * never mistaken for a ref on the strength of its drive-letter colon.
+ */
+export function source(spec) {
+  if (existsSync(spec)) return readFileSync(spec, 'utf8');
+  try {
+    return execFileSync('git', ['show', spec], {
+      cwd: dirname(fileURLToPath(import.meta.url)),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
+    throw new Error(`no file and no git ref ${spec}`);
+  }
+}
+
+/** Pull the bullets out of a named section of a markdown document. */
 export function bullets(path, heading) {
-  const text = readFileSync(path, 'utf8');
+  const text = source(path);
   const i = text.indexOf(heading);
   if (i < 0) throw new Error(`no section ${heading} in ${path}`);
   const rest = text.slice(i + heading.length);
