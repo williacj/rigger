@@ -27,8 +27,7 @@ how Rigger does it, so it outlives the code underneath it.
 Everything you write is a **proposal** until the owner ratifies it. Deliver it as a pull request,
 so a judge rules on it first.
 
-A new requirement needs a test that claims it, or the build reds (`AGENTS.md`, "When you write a
-decision or a requirement").
+A new requirement needs a test that claims it; a judge enforces this (`D17` rules 1 and 7).
 
 ### Decisions are the exception
 

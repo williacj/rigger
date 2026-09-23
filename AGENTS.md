@@ -139,8 +139,8 @@ A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal**. It goes to th
 never ratify your own. A choice and what would reverse it is a decision; what must be true as a
 result is a requirement. Allocate its id as its own register says: neither reuses one, a
 retired id stays allocated, and a decision's row stays behind where a requirement's row leaves.
-A new requirement needs a test that claims it, or the build reds. Load the
-`.claude/skills/spec-style/` skill before you write. Resolve the ambiguity inside the delta or
+A new requirement needs a test that claims it; a judge enforces this (`D17` rules 1 and 7).
+Load the `.claude/skills/spec-style/` skill before you write. Resolve the ambiguity inside the delta or
 escalate it, never leave it for the implementer to guess.
 
 ## Ask the owner before
