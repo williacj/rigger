@@ -32,6 +32,10 @@ const RUNNABLE_SUFFIX = /\.(?:m|c)?js$/;
 //   23.11.1                    two patterns rather than one, the `{js,mjs,cjs}` spelling above
 //                              and `**/test/**/*{-,.,_}test.{cts,mts,ts}` beside it
 //
+// At v21.7.3, `lib/internal/test_runner/utils.js` defines the four-entry `kPatterns` array and
+// builds one brace-expanded `kDefaultPattern` string from it. `runner.js` gives the latter to
+// `Glob` as `[kDefaultPattern]`: both reported properties exist, but the string is the runner input.
+//
 // Once glob matching is there, two things moved, at different times, and only one of them is
 // what this file keys on.
 //
@@ -59,17 +63,17 @@ const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // `node --test` ran:
 //
 //   Windows 11 10.0.26200, NTFS:  none under 20.20.2; all three under 21.0.0, 21.7.3, 22.0.0,
-//                                 22.9.0, 22.10.0, 22.23.2, 23.11.1 and 24.18.0
+//                                 22.9.0, 22.10.0, 22.23.2, 23.11.1, 24.18.0, 24.21.0, 25.9.0 and 26.10.0
 //   macos-latest, `darwin`:       none under 20.20.2; all three under 24.20.0. The CI log names
 //                                 the platform and the Node version, so neither the filesystem
 //                                 nor any other Node version is measured there.
 //
 // `TEST.mjs` ran under 21.0.0, 21.7.3, 22.0.0 and 22.9.0, and was declined under 20.20.2,
-// 22.10.0, 22.23.2, 23.11.1 and 24.18.0, which is the extension respelling above.
+// 22.10.0, 22.23.2, 23.11.1, 24.18.0, 24.21.0, 25.9.0 and 26.10.0, which is the extension respelling above.
 //
 // Where this answer differs from the runner's. Each name was put to the real runner and to this
 // check under the same interpreter, on Windows 11 10.0.26200, NTFS. Under 20.20.2, 22.9.0,
-// 22.10.0, 22.23.2, 23.11.1 and 24.18.0 the two agree on every name below. Under the other four
+// 22.10.0, 22.23.2, 23.11.1, 24.18.0, 24.21.0, 25.9.0 and 26.10.0 the two agree on every name below. Under the other four
 // interpreters run, they do not:
 //
 //   21.0.0 and 21.7.3   charged, and the runner runs them:     `a.TEST.mjs`, `TEST-b.mjs`,
@@ -81,10 +85,10 @@ const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 //
 // Charged where the runner runs it is an overcount; excluded where the runner declines it is an
 // undercount. Neither is silent: the budget suite reds on 21.0.0 and 22.0.0 for `645eeec` as
-// much as for this file, and is green there on 22.9.0. Closing any of it belongs to the card
-// that owns the version axis rather than to this one.
+// much as for this file, and is green there on 22.9.0. This card records the versions
+// and directions while CI runs 20 and 24.
 //
-// Ten interpreters were put to that comparison, the six named above and the four in the table.
+// Thirteen interpreters were put to that comparison, the nine named above and the four in the table.
 // It is what was measured, not a range: no release between them was put to it.
 //
 // All of it was measured on Windows, where the runner folds. On a host where it does not fold
