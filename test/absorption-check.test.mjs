@@ -284,6 +284,19 @@ test('the two-document form reads its source from a git ref, not from the workin
   assert.match(stdout, new RegExp(`^${DISSOLVED_CLAUSES} source clauses, \\d+ destination rows`));
 });
 
+test('an unreachable ref is refused in one line, naming the spec, and never as a stack trace', () => {
+  // The cost of taking the source from a ref: a ref can be unreachable in ways a path cannot —
+  // a shallow clone, a ref that was never fetched, a rewritten history. git's own complaint
+  // goes to a pipe rather than to our stderr, so what a caller reads is this one line.
+  const { status, stdout, stderr } = run('nosuchref0109:ARCHITECTURE.md', REGISTER);
+
+  assert.equal(status, 2, `an unreachable ref did not refuse: ${stdout}${stderr}`);
+  assert.equal(stdout, '', `a report was printed from a ref that could not be read: ${stdout}`);
+  assert.match(stderr, /nosuchref0109:ARCHITECTURE\.md/, `the spec is unnamed: ${stderr}`);
+  assert.doesNotMatch(stderr, /^\s+at /m, `a stack frame reached stderr: ${stderr}`);
+  assert.doesNotMatch(stderr, /node:internal/);
+});
+
 /** Every `## ` section of every tracked markdown file, with its body. */
 function everySection() {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
