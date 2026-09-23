@@ -1,6 +1,7 @@
 // ABOUTME: Reports which words a clause gained or lost when it moved between documents, and which clauses moved nowhere at all.
 
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // A rephrase that changes meaning usually changes words. This finds the changed words
 // and shows them; a person decides whether the change was intended. It never decides.
@@ -182,32 +183,50 @@ function selfTest() {
   return failed;
 }
 
-if (process.argv[2] === '--self-test') {
-  process.exit(selfTest() === 0 ? 0 : 1);
-}
+// ---------------------------------------------------------------------------
+// The accepted invocations. Two of them, and every other argument vector is
+// refused: a vector matching neither used to fall off the end of this module,
+// and Node exited 0 having compared nothing. A caller read that as the check
+// having passed.
+// ---------------------------------------------------------------------------
+const INVOCATIONS = `absorption-check accepts two invocations, and no other:
+  --self-test                     run the built-in cases
+  <source.md> <destination.md>    report what each source clause became`;
 
-if (process.argv[2] && process.argv[3]) {
-  const [, , archPath, reqPath] = process.argv;
-  const invariants = bullets(archPath, '## Invariants that hold across every layer');
-  const destRows = rows(reqPath);
-  console.log(`${invariants.length} source clauses, ${destRows.length} destination rows\n`);
-  let orphaned = 0;
-  for (const r of report(invariants, destRows)) {
-    const head = r.source.slice(0, 84);
-    if (r.matches.length === 0) {
-      orphaned++;
-      console.log(`NOT ABSORBED  ${head}\n`);
-      continue;
-    }
-    console.log(`SOURCE  ${head}`);
-    const more = r.absorbedBy > r.matches.length ? ` +${r.absorbedBy - r.matches.length} more` : '';
-    console.log(`  became  ${r.matches.map((m) => `${m.id} (${m.s.toFixed(2)})`).join(', ')}${more}`);
-    if (r.addedScope.length) console.log(`  WIDER?  added scope words: ${r.addedScope.join(', ')}`);
-    if (r.droppedScope.length) console.log(`  NARROWER?  dropped scope words: ${r.droppedScope.join(', ')}`);
-    if (r.dropped.length) console.log(`  DROPPED: ${r.dropped.join(', ')}`);
-    if (r.droppedMechanism.length) console.log(`  (mechanism, expected: ${r.droppedMechanism.join(', ')})`);
-    console.log('');
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2);
+
+  if (args.length === 1 && args[0] === '--self-test') {
+    process.exit(selfTest() === 0 ? 0 : 1);
   }
-  console.log(`${orphaned} clause(s) matched nothing.`);
-  process.exit(orphaned === 0 ? 0 : 1);
+
+  if (args.length === 2) {
+    const [archPath, reqPath] = args;
+    const invariants = bullets(archPath, '## Invariants that hold across every layer');
+    const destRows = rows(reqPath);
+    console.log(`${invariants.length} source clauses, ${destRows.length} destination rows\n`);
+    let orphaned = 0;
+    for (const r of report(invariants, destRows)) {
+      const head = r.source.slice(0, 84);
+      if (r.matches.length === 0) {
+        orphaned++;
+        console.log(`NOT ABSORBED  ${head}\n`);
+        continue;
+      }
+      console.log(`SOURCE  ${head}`);
+      const more = r.absorbedBy > r.matches.length ? ` +${r.absorbedBy - r.matches.length} more` : '';
+      console.log(`  became  ${r.matches.map((m) => `${m.id} (${m.s.toFixed(2)})`).join(', ')}${more}`);
+      if (r.addedScope.length) console.log(`  WIDER?  added scope words: ${r.addedScope.join(', ')}`);
+      if (r.droppedScope.length) console.log(`  NARROWER?  dropped scope words: ${r.droppedScope.join(', ')}`);
+      if (r.dropped.length) console.log(`  DROPPED: ${r.dropped.join(', ')}`);
+      if (r.droppedMechanism.length) console.log(`  (mechanism, expected: ${r.droppedMechanism.join(', ')})`);
+      console.log('');
+    }
+    console.log(`${orphaned} clause(s) matched nothing.`);
+    process.exit(orphaned === 0 ? 0 : 1);
+  }
+
+  console.error(`absorption-check: no such invocation: ${args.join(' ') || '(no arguments)'}`);
+  console.error(INVOCATIONS);
+  process.exit(2);
 }
