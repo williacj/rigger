@@ -6,6 +6,25 @@ An entry records something learned or something that failed, dated, in as few li
 takes. It binds nothing — a rule that came out of an entry is written where rules live, and the
 entry says what taught us. `AGENTS.md` holds when an entry is committed.
 
+## 2026-09-22 — A fixture that proved nothing, in a test that passed
+
+The CLI check reads the README's command block for the verb list. Its fixture named a stray
+invocation outside the block, to prove the reader keeps to the block, and the stray was written
+as backticked prose. A line anchored on `npx` never matches backticked prose whatever its scope,
+so widening the reader to the whole document left the test green. The fixture was documenting an
+intention rather than testing one.
+
+What caught it was asking what implementation each line would fail. Writing the stray as a bare
+invocation, once in another section and once beside the block, made both scopings fail when
+widened, and both failures were watched. A fixture line that cannot fail is worth less than no
+line, because it reads as cover.
+
+This card also created `src/`, so the package budget moved from `0 production lines` to a real
+number for the first time. The CLI sits under it because the budget table gives the CLI a row and
+`scripts/package-budget.mjs` counts what is under `src/` and nothing else. That is a reading of
+two sections, not something either one states, and the layer table still names no directory for
+the CLI.
+
 ## 2026-09-22 — The lint arrived after the corpus, and the corpus barely cleared it
 
 Writing `spec-style-lint` against documents already written showed how little headroom the
