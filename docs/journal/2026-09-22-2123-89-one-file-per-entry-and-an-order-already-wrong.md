@@ -7,13 +7,22 @@ two words: keep both. Splitting the file per card removes the class outright, be
 then never name one file. What the split found on the way is the part worth keeping.
 
 The single file's order was already wrong, and nothing could have told a reader. Taking the
-commit that added each of the seven entries, the times run 16:52, 17:00, 17:25, 17:06, 18:39,
-18:51 and 19:59 against the order the file listed them in. One pair is inverted: the entry at
-17:06 sat below the entry at 17:25, put there by a hand resolving a conflict with no time to
-compare. So the newest-first rule those five conflicts were paid to preserve had already lost
-what it was preserving, in the one place a reader would have had to open the file to check. The
-file names now carry the time, which is measured from the commit rather than inferred from where
-an entry sat.
+commit that added each of the seven entries and reading the file upwards from its oldest, the
+times run 16:52, 17:00, 17:25, 17:06, 18:39, 18:51 and 19:59. One pair is inverted: the entry
+written at 17:06 sat **above** the entry written at 17:25, and the file was newest first, so it
+claimed the earlier of the two was the later one.
+
+Where that happened is on the record. `e3a6d15`, "Merge origin/main into m0/36-test-matrix",
+took a branch whose top entry was the 17:25 one and a `main` whose top entry was the 17:06 one,
+and resolved the conflict by putting `main`'s on top. The rule the resolution followed was
+"whatever arrives from `main` is newer", which is a claim about where a change came from and not
+about when it was written. Nineteen minutes of the order the file existed to keep were spent on
+that, and no reader could have caught it: every heading carries a date and no time, so the only
+record fine enough to contradict the order was the commit log.
+
+So the newest-first rule those five conflicts were paid to preserve had already lost a piece of
+what it was preserving. The file names now carry the time, measured from the commit that wrote
+each entry rather than inferred from where the entry sat.
 
 The migration surface the card measured was one reference short, and the check that would have
 caught it is the one the card named as its own falsifier. `docs/spec/decisions.md` ends `D16`
