@@ -3,12 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { backtickedPaths, check } from '../scripts/path-check.mjs';
+import { documentChecking } from '../scripts/doc-reference-check.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,6 +28,11 @@ test('a backticked span naming an id, a verb or a column is not a repository pat
   // these as one would demand a file for every id they cite.
   const document = 'Cite `R-SAFE-5` and `D15`, run `npm test`, and fill `checked by` with `nothing yet`.\n';
   assert.deepEqual(backtickedPaths(document), []);
+});
+
+test('a dotted JavaScript member is not a repository path', () => {
+  const document = 'The `String.raw` title and `process.exit` call are code, while `README.md` is a file.';
+  assert.deepEqual(backtickedPaths(document), [{ line: 1, path: 'README.md' }]);
 });
 
 /** A repository whose checked document holds the given line, plus whatever files are named. */
@@ -76,6 +83,16 @@ test('the exemption ends when the directory exists, so a missing file under it i
     directories: ['docs/derived'],
   });
   assert.deepEqual(check(root).findings.map((f) => f.missing), ['docs/derived/test-matrix.md']);
+});
+
+test('the document config checks every tracked agent prompt and skill, including template twins', () => {
+  const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', '.claude', 'templates/claude'], {
+    encoding: 'utf8',
+  }).split('\0').filter((path) => path.endsWith('.md')).sort();
+  const configured = Object.keys(documentChecking(repository).documents)
+    .filter((path) => path.startsWith('.claude/') || path.startsWith('templates/claude/'))
+    .sort();
+  assert.deepEqual(configured, tracked);
 });
 
 test('every backticked path in the checked documents exists or is exempt', () => {

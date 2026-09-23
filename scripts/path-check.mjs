@@ -15,12 +15,13 @@ const SPAN = /`([^`\n]+)`/g;
  *
  * A checked document backticks far more than paths, so this asks what a path looks like rather
  * than what exists: a span that exists is a path either way, and a span that does not is the whole
- * point. A path carries no whitespace, and it names a directory, a file with a short extension, or
- * a dotfile. An id, a column name, a status and a shell command all fail one of those.
+ * point. A path carries no whitespace and names a directory, a dotfile, or a file with a source
+ * or document extension. An id, column, command, or JavaScript member does not become a file
+ * merely because it has a dot.
  */
 function looksLikePath(span) {
   if (!/^\.?[\w@][\w.@/-]*$/.test(span)) return false;
-  return span.includes('/') || /\.[A-Za-z]{1,6}$/.test(span) || /^\.[\w-]+$/.test(span);
+  return span.includes('/') || /\.(?:md|mjs|json|yml|yaml)$/i.test(span) || /^\.[\w-]+$/.test(span);
 }
 
 /** Every backticked repository path in one document, with the line it sits on. */
