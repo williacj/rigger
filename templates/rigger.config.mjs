@@ -6,13 +6,16 @@
 // consumer's, in the spelling that document's published config shape gives them, and Rigger
 // refuses any declaration it does not offer.
 //
-// `rigger init` wrote this file, and filled `repo` in from this repository's `origin` remote.
-// Everything else arrives as the template had it, so the board number, the column display names,
-// the roles and the kinds of work are starting points rather than answers: change them to match
-// your board, and run `rigger doctor` to check what you changed.
+// `rigger init` wrote this file, and filled `repo` in from this repository's `origin` remote. It
+// left the board number as `PROJECT_NUMBER`, because a board number is GitHub's and nothing
+// `init` can read names it: set it to the number your board's URL ends in, and until you do
+// Rigger refuses this config rather than work a board nobody chose. Everything else arrives as
+// the template had it, so the column display names, the roles and the kinds of work are starting
+// points rather than answers: change them to match your board, and run `rigger doctor` to check
+// what you changed.
 export default {
   repo: 'OWNER/REPOSITORY',
-  board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } },
+  board: { project: 'PROJECT_NUMBER', columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } },
   concurrency: 3,
   roles: {
     engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard' },

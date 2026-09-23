@@ -6,11 +6,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PLACEHOLDER } from '../config/validate.mjs';
+
 /** The file a consumer's repository declares Rigger in. */
 export const CONFIG = 'rigger.config.mjs';
-
-/** The value the starter config carries where a repository names itself. */
-export const REPO_PLACEHOLDER = 'OWNER/REPOSITORY';
 
 /**
  * Where each provider reads its assets from, which is the whole of what decides a fork's
@@ -91,16 +90,37 @@ function forks(templates, provider, within = '') {
 }
 
 /**
+ * The starter config with each value the caller knows written in, and each it does not left
+ * holding the name the template ships.
+ *
+ * The placeholder is replaced with its quotes, and the value written back as the literal it is,
+ * so a board number lands as `project: 6` rather than `project: '6'`. The template has to carry
+ * it quoted either way: an unquoted name is no valid module, and a consumer's first `doctor` on a
+ * config that throws on import is a crash where a refusal naming the field belongs.
+ */
+const fill = (starter, values) =>
+  Object.entries(values).reduce(
+    (text, [key, value]) => (value === undefined || value === null
+      ? text
+      : text.replace(`'${PLACEHOLDER[key]}'`, typeof value === 'number' ? String(value) : `'${value}'`)),
+    starter,
+  );
+
+/**
  * Every file `init` would write, as a path relative to the consumer's repository, each with the
  * content it would be written with.
  *
  * The config comes first because it is what names the rest: the roles it declares name their
  * agent files by path, and those paths are the assets forked below it.
+ *
+ * `repo` is what git says `origin` points at, and `project` is the board number, which no caller
+ * inside `init` can know: nothing it reads names a board, so it passes none and the consumer
+ * answers it in the file.
  */
-export function plan({ templates = TEMPLATES, repo } = {}) {
+export function plan({ templates = TEMPLATES, repo, project } = {}) {
   const starter = readFileSync(join(templates, CONFIG), 'utf8');
   return [
-    { path: CONFIG, content: starter.replace(REPO_PLACEHOLDER, repo ?? REPO_PLACEHOLDER) },
+    { path: CONFIG, content: fill(starter, { repo, project }) },
     ...readdirSync(templates, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
@@ -140,7 +160,14 @@ export function init({ target = process.cwd(), templates = TEMPLATES } = {}) {
       `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
-      ...(repo ? [] : [`\`${CONFIG}\` names \`${REPO_PLACEHOLDER}\`, because git named no \`origin\` remote to read it from.`]),
+      ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from.`]),
+      // Said only where the config was written, because a run that skipped it would be claiming
+      // something about a file that is the consumer's by then and that `init` never read.
+      ...(wrote.includes(CONFIG)
+        ? [`\`${CONFIG}\` names \`${PLACEHOLDER.project}\` as its board, because a board number is `
+          + `GitHub's and nothing here names it. Set \`board.project\` to the number your board's `
+          + 'URL ends in: Rigger refuses this config until you do.']
+        : []),
     ].join('\n'),
     code: 0,
   };

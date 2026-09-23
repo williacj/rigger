@@ -192,6 +192,36 @@ test("the validator accepts this repository's own config unchanged", () => {
   assert.deepEqual(validate(rigger), []);
 });
 
+/**
+ * Every value the starter config carries where only the consumer can answer it, as the dotted
+ * path it sits at and the placeholder it arrives holding.
+ *
+ * Read off the shape table rather than listed here, so a third value that arrives as a name is
+ * watched by this suite from the moment its rule declares one.
+ */
+function placeholders(shape = 'config', path = '') {
+  return Object.entries(SHAPES[shape]).flatMap(([key, rule]) => {
+    const here = at(path, key);
+    if (rule.keys) return placeholders(rule.keys, here);
+    return rule.placeholder === undefined ? [] : [[here, rule.placeholder]];
+  });
+}
+
+test('a config still holding a starter placeholder is refused, and the refusal names the path and the placeholder', () => {
+  // A placeholder is a name where a value belongs, so a config still holding one has not been
+  // answered. The defect this catches is the quiet half: `board.project` cannot be filled from
+  // git or from anything else `init` can read, so a number left as it shipped would have Rigger
+  // work whatever board that number happens to name in the consumer's account.
+  const found = placeholders();
+  assert.ok(found.length > 0, 'the shape table declares no placeholder, so this checks nothing');
+
+  for (const [path, placeholder] of found) {
+    const refused = refusal(holding(rigger, path.split('.'), placeholder));
+    assert.ok(refused.includes(`\`${path}\``), `\`${path}\` holding its placeholder earned a refusal that does not name it: ${refused}`);
+    assert.ok(refused.includes(placeholder), `\`${path}\` holding \`${placeholder}\` earned a refusal that does not name it: ${refused}`);
+  }
+});
+
 test('a declaration that holds no declarations is refused wherever it sits, and the refusal names it', () => {
   // Every place the validator reads declarations, whether their keys are Rigger's or the
   // consumer's. The top level is one site among them and not a special case, which is the whole
