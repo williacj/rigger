@@ -541,7 +541,7 @@ function programWords(given) {
     // A word ending in `)` where a command may begin is a later `case` branch's pattern, or the
     // `NAME()` header of a function definition. Only the first word is tested: a scan further
     // along would step over `git push --force '--x)'` and reach nothing.
-    if (first !== ')' && first.endsWith(')')) {
+    if (first.endsWith(')')) {
       words = words.slice(1);
       continue;
     }
