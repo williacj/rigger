@@ -3,13 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'absorption-check.mjs');
+const { bullets, MIN_CLAUSES } = await import(pathToFileURL(script).href);
 
 /**
  * Run the script as a caller runs it, for the exit code and the two streams.
@@ -164,21 +165,28 @@ const REPORT_OUTPUT = [
   '',
 ].join('\n');
 
+// Two orphans rather than the one this fixture carried on 65a7de7. The clause floor this card
+// adds refuses a source of one clause, so a one-bullet fixture would now be refused before it
+// could be compared, and the behaviour under test here is the comparison's, not the floor's.
+// Each clause still renders exactly as it did on 65a7de7 — only the count line moves.
 const ORPHAN_SOURCE = `# Architecture
 
 ${HEADING}
 
 - Sole custody of a kitchen appliance belongs to whoever bought the toaster.
+- A bicycle left in the hallway belongs to whoever pumped its tyres.
 
 ## Something after
 `;
 
 const ORPHAN_OUTPUT = [
-  '1 source clauses, 2 destination rows',
+  '2 source clauses, 2 destination rows',
   '',
   'NOT ABSORBED  Sole custody of a kitchen appliance belongs to whoever bought the toaster.',
   '',
-  '1 clause(s) matched nothing.',
+  'NOT ABSORBED  A bicycle left in the hallway belongs to whoever pumped its tyres.',
+  '',
+  '2 clause(s) matched nothing.',
   '',
 ].join('\n');
 
@@ -216,6 +224,45 @@ test('a clause absorbed by nothing still reports as it did on 65a7de7, and still
   assert.equal(status, 1);
 });
 
+// A section with a heading and prose but no bullets. bullets() returns the prose between the
+// heading and the first bullet as a clause, so a section like this yields exactly one clause —
+// one blob of a whole section, which overlaps most of a register and is reported as absorbed.
+// Pointed at `## The gate` in the live ARCHITECTURE.md, that blob matched 81 of 99 rows and the
+// check exited 0 having compared nothing. Card #57 closed this false green on the argument
+// vector; this is the same false green one layer over, on the section.
+const BULLET_FREE_SOURCE = `# Architecture
+
+${HEADING}
+
+The gate is a git hook in the consumer's repository, reached through core.hooksPath. It reads
+verdict markers and nothing else. The gate holds no opinion, and refuses on anything missing,
+unreadable or stale.
+
+## Something after
+`;
+
+test('a bullet-free section is refused rather than compared as a single blob', () => {
+  const dir = documents(BULLET_FREE_SOURCE, DESTINATION);
+
+  const { status, stdout, stderr } = run(join(dir, 'source.md'), join(dir, 'destination.md'));
+
+  assert.notEqual(status, 0, 'a bullet-free section exited 0, which is the false green itself');
+  assert.equal(stdout, '', `a report was printed for a section with nothing to compare: ${stdout}`);
+});
+
+test('the refusal names the file, the heading and the clause count it found', () => {
+  // A caller who gets this needs to know which document, which section, and how little was
+  // there — without that, the refusal is indistinguishable from the missing-section one.
+  const dir = documents(BULLET_FREE_SOURCE, DESTINATION);
+
+  const { stderr } = run(join(dir, 'source.md'), join(dir, 'destination.md'));
+
+  assert.match(stderr, /source\.md/, `the file is unnamed: ${stderr}`);
+  assert.ok(stderr.includes(HEADING), `the heading is unnamed: ${stderr}`);
+  assert.match(stderr, /\b1\b/, `the count it found is unnamed: ${stderr}`);
+  assert.doesNotMatch(stderr, /^\s+at /m, `a stack frame reached stderr: ${stderr}`);
+});
+
 // The invocation this script was written for and has never been able to run: the eight
 // invariants as they stood before 755c809 dissolved them, against the register they became.
 // The ref is the point of it. A section in the working tree can dissolve again, as this one
@@ -235,6 +282,46 @@ test('the two-document form reads its source from a git ref, not from the workin
 
   assert.equal(status, 0, `the intended invocation did not exit 0: ${stdout}`);
   assert.match(stdout, new RegExp(`^${DISSOLVED_CLAUSES} source clauses, \\d+ destination rows`));
+});
+
+/** Every `## ` section of every tracked markdown file, with its body. */
+function everySection() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const files = execFileSync('git', ['ls-files', '*.md'], { cwd: root, encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  const found = [];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), 'utf8');
+    for (const line of text.split(/\r?\n/).filter((l) => /^## /.test(l))) {
+      const heading = line.trim();
+      const rest = text.slice(text.indexOf(heading) + heading.length);
+      const cut = rest.search(/\n## /);
+      found.push({ file, heading, body: cut < 0 ? rest : rest.slice(0, cut) });
+    }
+  }
+  return found;
+}
+
+test('the clause floor separates bullet-free sections from bulleted ones across this repository', () => {
+  // Why MIN_CLAUSES is 2 rather than a number someone liked. This asks the tracked markdown the
+  // threshold was measured against, rather than pinning the counts it gives today: a section that
+  // arrives with a single bullet, or a bullet-free one that somehow yields two clauses, breaks
+  // the separation the floor rests on, and this is what says so.
+  //
+  // Whether a section has a bullet is read straight off its body here, not taken from bullets(),
+  // so the two sides of the relation are established independently.
+  const sections = everySection();
+  assert.ok(sections.length > 100, `only ${sections.length} sections were read; the scan is wrong`);
+
+  const wrong = [];
+  for (const { file, heading, body } of sections) {
+    const count = bullets(join(dirname(fileURLToPath(import.meta.url)), '..', file), heading).length;
+    const bulleted = /\n- /.test(body);
+    if (bulleted && count < MIN_CLAUSES) wrong.push(`${file} ${heading}: has bullets, yields ${count}, would be refused`);
+    if (!bulleted && count >= MIN_CLAUSES) wrong.push(`${file} ${heading}: has no bullets, yields ${count}, would be compared`);
+  }
+
+  assert.deepEqual(wrong, [], `the floor of ${MIN_CLAUSES} no longer separates cleanly:\n${wrong.join('\n')}`);
 });
 
 test('the file states its accepted invocations in the comment block, above its first export', () => {

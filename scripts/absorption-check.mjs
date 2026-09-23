@@ -48,6 +48,18 @@ const INVOCATIONS = `absorption-check accepts two invocations, and no other:
   --self-test                     run the built-in cases
   <source.md> <destination.md>    report what each source clause became`;
 
+// The section the two-document form compares from. It lives at a ref rather than in the working
+// tree: 755c809 dissolved it, and the same commit added this script.
+const HEADING = '## Invariants that hold across every layer';
+
+// The fewest clauses worth comparing. Measured, not picked: across the 225 `## ` sections in the
+// 61 tracked markdown files at 2c8d49c, every section with no top-level bullet yielded exactly
+// one clause (162 of them, without exception), and every section with one yielded at least two.
+// So 2 is the lowest value that refuses every bullet-free section while admitting every real
+// list — 3 would refuse two genuine ones. Re-measure with `npm test`, which asserts the
+// separation still holds rather than trusting this number.
+export const MIN_CLAUSES = 2;
+
 const STOP = new Set(`a an and are as at be been before both but by can for from has have if in
 into is it its may must never no not of on only or other over own same so than that the their then
 there these this those to under until up upon was what when where whether which while who whom
@@ -234,10 +246,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     let invariants;
     let destRows;
     try {
-      invariants = bullets(archPath, '## Invariants that hold across every layer');
+      invariants = bullets(archPath, HEADING);
       destRows = rows(reqPath);
     } catch (error) {
       console.error(`absorption-check: ${error.message}`);
+      process.exit(2);
+    }
+    // A section with no bullets still yields one clause, because the prose between the heading
+    // and the first bullet is one. That blob carries a whole section's vocabulary, so it
+    // overlaps most of a register and reports as absorbed: the check exits 0 having compared
+    // nothing. Refusing below MIN_CLAUSES is what stops that reading as a pass.
+    if (invariants.length < MIN_CLAUSES) {
+      console.error(`absorption-check: ${HEADING} in ${archPath} yields ${invariants.length} clause(s), fewer than ${MIN_CLAUSES}`);
+      console.error('A section with no bullets is one blob of prose, and comparing it reports nothing.');
       process.exit(2);
     }
     console.log(`${invariants.length} source clauses, ${destRows.length} destination rows\n`);
