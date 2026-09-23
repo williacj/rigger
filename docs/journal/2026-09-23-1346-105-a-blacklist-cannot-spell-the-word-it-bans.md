@@ -38,3 +38,15 @@ nothing. Appending one to both `.claude/agents/engineer.md` and its template twi
 test` at 202 passing and `check:paths`, `check:references`, `lint:spec-style` and `check:words`
 all at exit 0, because `doc-references.json` names three documents and no agent prompt is among
 them. Appending it to one twin alone reds, but on the divergence rather than on the path.
+
+The review found the same shape one step over, and it is this entry's real lesson. Patterns
+instead of spellings keep the list from being its own first finding; nothing kept the pattern
+matching the word. Move the bracket one character right — `a[b]c` to `a[bc]` — and it becomes a
+class matching neither, and with the word put back into `AGENTS.md` the check reported 0 findings
+across 93 tracked files at exit 0 while the suite stayed green. Nothing noticed because both tests
+touching the real list were zero-claims: "the declaring line finds nothing" and "no tracked file
+carries a word" read identically whether the word is absent or the detector is dead. Every
+positive test ran against a fixture, so the real list had no positive test at all. A detector
+needs one assertion against its own configuration, and obfuscation takes away the eyeball check
+that would otherwise have stood in for it. The word is still never written: the test recovers it
+by unbracketing the pattern, then asserts the pattern matches it and the slipped pattern does not.
