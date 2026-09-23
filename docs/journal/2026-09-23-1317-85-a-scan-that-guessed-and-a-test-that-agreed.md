@@ -67,7 +67,55 @@ card's tree; the item waited for #33 rather than being worked around. Now that t
 cost is permanent and small: an edit to either copy is an edit to both, byte for byte, and
 `test/init.test.mjs` is what says so.
 
-**What is left, and it is not closable by reading.** A top-level call the module throws before
-reaching is claimed all the same. Whether a module reaches its own top-level calls is a question
-about running it, and refusing every file whose top level might throw would refuse every test file
-there is. There is a test that asserts it, so the limit is stated rather than waiting to be found.
+**What is left, and it is not closable by reading.** A top-level call the module never finishes
+reaching is claimed all the same — a `throw`, a `process.exit`, a rejected top-level `await`, a
+hang. Whether a module reaches its own top-level calls is a question about running it, and refusing
+every file whose top level might not finish would refuse every test file there is. There is a test
+that asserts it, so the limit is stated rather than waiting to be found.
+
+## Round 2 — the bar was not the technique, and three more shapes fell to it
+
+**A judge rejected both of my readings of the acceptance and ruled a third.** I had offered the
+literal reading and "the scan must not misread syntax". The second restates the technique as the
+bar, which the card had expressly refused, and it was not the bar the code implemented either: the
+docstring says "the bar is that `node --test` would execute the test named", and the load-bearing
+test asserts `runner.names.includes(title)`. The bar is therefore that a declaration speaks for a
+test the runner runs *by the title recorded*, wherever the source is what decides it. Writing the
+bar down in the code and then arguing a looser one in prose is a thing to notice: the code had
+already committed me, and the judge read it back.
+
+**Under that bar, three shapes the source decides were still claimed.** A call to a name the file
+binds itself — `const test = () => {}`, or its own `function test` — reaches no runner, because
+`node --test` installs no global and only a name imported from `node:test` is the runner. A title
+the call builds by concatenation was recorded truncated: `'a test nobody' + ' runs'` produced a row
+naming `a test nobody`. And the title decoding was one substitution that dropped a backslash and
+kept the letter, so `'a title with a\ttab'` was recorded as `a title with attab` where the runner
+registers a real tab.
+
+**The sharpest of the judge's points was that I already refused the identical case.** A title a
+template literal builds from a substitution was refused on the stated ground that it is "no plain
+quoted title", while a title built with `+` was accepted — and the information that tells them
+apart was already in the token stream, one token past the title. Two spellings of one fault, one
+refused and one claimed, is what an enumeration written shape by shape produces even when the
+enumeration is honest about being one.
+
+**And a completeness claim I did not have.** The docstring said "nothing read off a source can move
+it" of the run-time boundary, and both copies of the tdd skill said the same. Three shapes the
+source decides falsified it. The card itself draws this distinction — an incomplete enumeration
+under a true governing statement is one fault, a document asserting a property the code lacks is
+the one PR #74 spent three rounds on — and I had written the second kind while fixing the first.
+The restated claim is about the kind of thing left open rather than about the length of the list: a
+shape the source decides and the scan reads wrongly is a defect rather than a limit.
+
+**A behaviour loss against the base, on the record rather than fixed here.** Asking for the top
+level refuses a declaration inside a `describe` block, where the old line-oriented scan read it and
+the runner does run that call. No test in this repository uses `describe` today, and no acceptance
+item ruled on the trade, so it stays as it is and the owner decides. It is a loss, not a wash, and
+this is where it is written down.
+
+**A harness lesson worth more than its size: the reporter escapes what you compare.** The relation
+test reads titles out of `# Subtest:` lines. A title carrying a real tab comes back out of one as a
+backslash and a `t`, so a tab-titled fixture reds on the reporter rather than on the scan — a
+manufactured red again, in a third disguise. Measured before the shape was added, not after it
+failed. The escapes that belong in a relation test are the ones whose characters the reporter
+passes through; a tab belongs in a unit test that reads the decoded string directly.
