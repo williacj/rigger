@@ -1,6 +1,8 @@
 // ABOUTME: Reports which words a clause gained or lost when it moved between documents, and which clauses moved nowhere at all.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // A rephrase that changes meaning usually changes words. This finds the changed words
@@ -44,7 +46,23 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------------------
 const INVOCATIONS = `absorption-check accepts two invocations, and no other:
   --self-test                     run the built-in cases
-  <source.md> <destination.md>    report what each source clause became`;
+  <source.md> <destination.md>    report what each source clause became
+
+<source.md> may be a git <ref>:<path>, which is how the section this compares
+from is reached at all: 755c809 dissolved it from the working tree.
+  absorption-check '755c809^:ARCHITECTURE.md' docs/spec/requirements.md`;
+
+// The section the two-document form compares from. It lives at a ref rather than in the working
+// tree: 755c809 dissolved it, and the same commit added this script.
+const HEADING = '## Invariants that hold across every layer';
+
+// The fewest clauses worth comparing. Measured, not picked: across the 225 `## ` sections in the
+// 61 tracked markdown files at 2c8d49c, every section with no top-level bullet yielded exactly
+// one clause (162 of them, without exception), and every section with one yielded at least two.
+// So 2 is the lowest value that refuses every bullet-free section while admitting every real
+// list — 3 would refuse two genuine ones. Re-measure with `npm test`, which asserts the
+// separation still holds rather than trusting this number.
+export const MIN_CLAUSES = 2;
 
 const STOP = new Set(`a an and are as at be been before both but by can for from has have if in
 into is it its may must never no not of on only or other over own same so than that the their then
@@ -98,9 +116,30 @@ export function compare(source, destinations) {
   };
 }
 
-/** Pull the bullets out of a named section of a markdown file. */
+/**
+ * Read a source document, from the working tree or from a git ref.
+ *
+ * The section this check was written to read was dissolved by the same commit that added the
+ * check, so no path in the working tree holds it and none ever did. A `<ref>:<path>` spec does,
+ * and a ref cannot dissolve the way a section can. A file on disk wins, so a Windows path is
+ * never mistaken for a ref on the strength of its drive-letter colon.
+ */
+export function source(spec) {
+  if (existsSync(spec)) return readFileSync(spec, 'utf8');
+  try {
+    return execFileSync('git', ['show', spec], {
+      cwd: dirname(fileURLToPath(import.meta.url)),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch {
+    throw new Error(`no file and no git ref ${spec}`);
+  }
+}
+
+/** Pull the bullets out of a named section of a markdown document. */
 export function bullets(path, heading) {
-  const text = readFileSync(path, 'utf8');
+  const text = source(path);
   const i = text.indexOf(heading);
   if (i < 0) throw new Error(`no section ${heading} in ${path}`);
   const rest = text.slice(i + heading.length);
@@ -211,10 +250,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     let invariants;
     let destRows;
     try {
-      invariants = bullets(archPath, '## Invariants that hold across every layer');
+      invariants = bullets(archPath, HEADING);
       destRows = rows(reqPath);
     } catch (error) {
       console.error(`absorption-check: ${error.message}`);
+      process.exit(2);
+    }
+    // A section with no bullets still yields one clause, because the prose between the heading
+    // and the first bullet is one. That blob carries a whole section's vocabulary, so it
+    // overlaps most of a register and reports as absorbed: the check exits 0 having compared
+    // nothing. Refusing below MIN_CLAUSES is what stops that reading as a pass.
+    if (invariants.length < MIN_CLAUSES) {
+      console.error(`absorption-check: ${HEADING} in ${archPath} yields ${invariants.length} clause(s), fewer than ${MIN_CLAUSES}`);
+      console.error('A section with no bullets is one blob of prose, and comparing it reports nothing.');
       process.exit(2);
     }
     console.log(`${invariants.length} source clauses, ${destRows.length} destination rows\n`);

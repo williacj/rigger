@@ -18,6 +18,11 @@ jobs:
         node: ['20', '24']
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The suite reads a document at a git ref: absorption-check compares the invariants
+          # 755c809 dissolved against the register they became, and only history holds them.
+          # checkout defaults to a depth of 1, where that ref is unreachable and the test reds.
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
