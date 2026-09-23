@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, isAbsolute, relative, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validate } from '../src/config/validate.mjs';
 import { CONFIG, PROVIDER_ASSETS, REPO_PLACEHOLDER, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,6 +19,18 @@ const filesUnder = (dir) =>
   readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => join(relative(dir, entry.parentPath), entry.name).split(sep).join('/'));
+
+/** A real git repository, with the remote this test wants it to have. */
+function repository(url) {
+  const dir = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
+  const git = (...args) => {
+    const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+    assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
+  };
+  git('init', '-q');
+  if (url) git('remote', 'add', 'origin', url);
+  return dir;
+}
 
 /** The one file in a plan with this path, asserted to be there. */
 function planned(files, path) {
@@ -64,14 +77,33 @@ test('every provider template lands where that provider reads it, and nothing la
   }
 });
 
-test('a role prompt Claude Code reads is one of the files init writes there', () => {
-  // Read as a literal rather than derived, because the pair is the whole point: the starter
-  // config names `.claude/agents/engineer.md`, and that path has to be a file `init` puts in the
-  // consumer's repository. A check deriving both sides from one walk would agree with itself
-  // whatever the config said.
-  const file = planned(plan({ repo: 'acme/widgets' }), '.claude/agents/engineer.md');
+// proves R-SAFE-6
+test('every role the written config names reads its prompt out of the consumer repository', async () => {
+  // `R-SAFE-6`: the role prompts, skills and hooks a consumer uses live in the consumer's
+  // repository, and Rigger reads none of them from its own package. The config is where that is
+  // decided, because a role names its agent file by path and that path is what gets dispatched
+  // with, so the pairing asked about here is the config's own: every `agent` it names is a file
+  // `init` put in the repository, at a path that resolves there and nowhere in the package.
+  //
+  // What this does not prove is the dispatch. Nothing reads a role prompt yet — L1 lands at M2 —
+  // so what is shown is the path a config hands it, not a read that has happened.
+  const consumer = repository('https://github.com/acme/widgets.git');
+  init({ target: consumer });
+  const config = (await import(pathToFileURL(join(consumer, CONFIG)))).default;
 
-  assert.equal(file.content, readFileSync(join(TEMPLATES, 'claude', 'agents', 'engineer.md'), 'utf8'));
+  assert.ok(Object.keys(config.roles).length > 0, 'the starter config declares no roles');
+  for (const [name, role] of Object.entries(config.roles)) {
+    assert.ok(!isAbsolute(role.agent), `\`${name}\` names \`${role.agent}\`, which is absolute, so it names one machine`);
+    assert.ok(
+      existsSync(join(consumer, role.agent)),
+      `\`${name}\` names \`${role.agent}\`, which \`init\` did not put in the repository`,
+    );
+    assert.doesNotMatch(role.agent, /templates/, `\`${name}\` names \`${role.agent}\`, a path inside Rigger's own package`);
+    assert.ok(
+      Object.hasOwn(PROVIDER_ASSETS, role.provider),
+      `\`${name}\` names the provider \`${role.provider}\`, which Rigger forks no assets for`,
+    );
+  }
 });
 
 test('a template for a provider Rigger has no destination for is refused by name', () => {
@@ -85,18 +117,6 @@ test('a template for a provider Rigger has no destination for is refused by name
 
   assert.throws(() => plan({ templates, repo: 'acme/widgets' }), /codex/);
 });
-
-/** A real git repository, with the remote this test wants it to have. */
-function repository(url) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
-  const git = (...args) => {
-    const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
-    assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
-  };
-  git('init', '-q');
-  if (url) git('remote', 'add', 'origin', url);
-  return dir;
-}
 
 test('the repository a config names is the one git says the origin remote points at', () => {
   // Git owns what `origin` is, so it is asked rather than restated (`D16`). Both spellings are
@@ -152,6 +172,54 @@ test('init writes every file it planned, and names each one it wrote', () => {
   }
 });
 
+test('this repository holds exactly what init produces for it, and nothing else', () => {
+  // `templates/` is the source and this repository's own assets are what `init` forked from it,
+  // so the two are one artifact rather than two copies, and this is what refuses a divergence.
+  // The defect it catches is the ordinary one: a role prompt, a skill or a hook edited under
+  // `.claude/` and not in the template it came from, or the other way about, after which Rigger
+  // ships one thing and builds itself with another.
+  //
+  // Read rather than run. `init` against this checkout is what `R-SAFE-5` forbids, and it is not
+  // needed: `plan` answers what `init` would write without writing it.
+  const repo = repoSlug(root);
+  assert.ok(repo, 'this checkout has no `origin` remote, so there is no repository name to compare against');
+  const files = plan({ repo });
+  const fix = 'Templates are the source and these are the fork, so the two move together or not at all';
+
+  for (const file of files) {
+    const path = join(root, file.path);
+    assert.ok(existsSync(path), `\`${file.path}\` is a file \`init\` writes and this repository does not hold. ${fix}.`);
+    assert.equal(readFileSync(path, 'utf8'), file.content, `\`${file.path}\` is not what \`init\` would write here. ${fix}.`);
+  }
+
+  // The other direction, which the loop above cannot see: an asset here that no template ships
+  // is one `init` would never produce, so this repository would be running on something a
+  // consumer never receives.
+  for (const directory of Object.values(PROVIDER_ASSETS)) {
+    for (const within of filesUnder(join(root, directory))) {
+      const path = `${directory}/${within}`;
+      assert.ok(
+        files.some((file) => file.path === path),
+        `\`${path}\` is an asset no template ships, so \`init\` would not produce it. ${fix}.`,
+      );
+    }
+  }
+});
+
+test('the config init writes into a repository with none is one the validator accepts', async () => {
+  // The whole chain, end to end: the template read off disk, `repo` filled in from git, the file
+  // written, imported as the module a consumer's Rigger would import, and read by the validator
+  // that refuses anything Rigger does not offer. The defect this catches is a starter config that
+  // parses and is refused — a consumer's first command answering with a list of refusals.
+  const consumer = repository('https://github.com/acme/widgets.git');
+  init({ target: consumer });
+
+  const written = await import(pathToFileURL(join(consumer, CONFIG)));
+
+  assert.deepEqual(validate(written.default), []);
+  assert.equal(written.default.repo, 'acme/widgets');
+});
+
 /**
  * An installed copy of this package, holding what an install would have of it and nothing else.
  *
@@ -177,6 +245,7 @@ function rigger(from, target, ...args) {
   return { out: ran.stdout, err: ran.stderr, code: ran.status };
 }
 
+// proves R-SAFE-6
 test('the command forks the assets into the repository it is run in, from the package alone', () => {
   // This is the wiring test: the real bin, the real arguments, a real repository, and a package
   // that holds only what an install holds. The defects it catches are `init` still answering
@@ -189,6 +258,17 @@ test('the command forks the assets into the repository it is run in, from the pa
 
   assert.equal(ran.code, 0, `${ran.out}${ran.err}`);
   assert.doesNotMatch(ran.out + ran.err, /not yet implemented/);
+  // One of each thing the card asks to be forked, written out by hand rather than read back from
+  // the plan: a loop over `plan()` would pass on an empty plan, which is the defect it is meant
+  // to catch. `R-SAFE-6` names three kinds of asset and the config is the fourth file.
+  for (const path of [
+    CONFIG,
+    '.claude/agents/engineer.md',
+    '.claude/skills/code-review/SKILL.md',
+    '.claude/hooks/refuse-reserved-git-commands.mjs',
+  ]) {
+    assert.ok(existsSync(join(consumer, path)), `\`${path}\` is not in the repository the command ran in`);
+  }
   for (const file of plan({ repo: 'acme/widgets' })) {
     assert.equal(readFileSync(join(consumer, file.path), 'utf8'), file.content, file.path);
   }

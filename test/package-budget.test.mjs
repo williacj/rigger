@@ -4,9 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   check,
@@ -174,6 +175,24 @@ test('a template, and a check Rigger ships for a consumer, are not counted', () 
   writeFileSync(join(root, 'src', 'workflow', 'next-action.mjs'), 'const counted = 3;\n');
 
   assert.deepEqual(productionFiles(root), [join(root, 'src', 'workflow', 'next-action.mjs')]);
+});
+
+test('the templates this repository really ships are charged nothing', () => {
+  // The test above proves the rule against a fixture. This asks it of the tree that exists:
+  // `templates/` now holds a starter config and a provider's whole asset tree, and none of it
+  // runs a card, so the Budgets section puts every line of it outside the count. The defect this
+  // catches is the walk widened past `src/`, after which the figure a card reports would move
+  // with an edit to a role prompt.
+  const here = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const templates = join(here, 'templates');
+  assert.ok(existsSync(templates), 'this repository ships no templates, so there is nothing to leave out');
+
+  const charged = productionFiles(here);
+
+  assert.ok(charged.length > 0, 'nothing at all is charged, so this proves nothing about templates');
+  for (const path of charged) {
+    assert.ok(!path.startsWith(templates), `${path} is a template and the budget charges for it`);
+  }
 });
 
 test('a repository with no production sources yet walks to nothing', () => {
