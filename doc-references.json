@@ -2,10 +2,31 @@
   "documents": {
     "AGENTS.md": "soft",
     "docs/spec/decisions.md": "strict",
-    "docs/spec/requirements.md": "strict"
+    "docs/spec/requirements.md": "strict",
+    ".claude/agents/engineer.md": "strict",
+    ".claude/agents/pm.md": "strict",
+    ".claude/agents/reviewer.md": "strict",
+    ".claude/agents/spike-engineer.md": "strict",
+    ".claude/skills/acceptance/SKILL.md": "strict",
+    ".claude/skills/agent-style/SKILL.md": "strict",
+    ".claude/skills/code-review/SKILL.md": "strict",
+    ".claude/skills/proposal/SKILL.md": "strict",
+    ".claude/skills/spec-style/SKILL.md": "strict",
+    ".claude/skills/tdd/SKILL.md": "strict",
+    "templates/claude/agents/engineer.md": "strict",
+    "templates/claude/agents/pm.md": "strict",
+    "templates/claude/agents/reviewer.md": "strict",
+    "templates/claude/agents/spike-engineer.md": "strict",
+    "templates/claude/skills/acceptance/SKILL.md": "strict",
+    "templates/claude/skills/agent-style/SKILL.md": "strict",
+    "templates/claude/skills/code-review/SKILL.md": "strict",
+    "templates/claude/skills/proposal/SKILL.md": "strict",
+    "templates/claude/skills/spec-style/SKILL.md": "strict",
+    "templates/claude/skills/tdd/SKILL.md": "strict"
   },
   "exempt": {
     "paths": {
+      "docs/spikes/": "docs/v0-build-plan.md section 5 places the future WSL2 spike report here; this directory is absent until that report lands."
     }
   }
 }
