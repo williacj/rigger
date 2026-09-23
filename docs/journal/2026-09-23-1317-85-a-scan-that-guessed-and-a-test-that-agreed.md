@@ -38,19 +38,34 @@ asserts the reason as well. And a mutation that let a comment trailing a stateme
 declaration reddened nothing at all, because no test said a declaration is a line comment of its
 own. Both holes were found by running mutations rather than by reading the suite.
 
-**A mutation that hangs is not a mutation.** Disabling the template branch with `&& false` left a
-backtick falling through to the word reader, which stops at a backtick, so the index never advanced
-and the run never finished. `node --check` passed, the module loaded, and the guard that would have
-caught a broken mutant — that the file still parses — held. What caught it was the counts: `tests 1
-/ pass 0 / fail 1`, the whole file failing to load, which is the shape a manufactured red takes.
-The replacement mutation makes the reader answer wrongly rather than not answer, and reddens four
-tests.
+**A mutation that hangs is not a mutation, and no byte or parse guard can see it.** Disabling the
+template branch with `&& false` left a backtick falling through to the word reader, which stops at
+a backtick, so the index never advanced and the run never finished. Every guard held: the bytes on
+disk changed, `git diff` saw them, the mutated text was there, `node --check` passed, the module
+loaded and still exported what the tests import, and the restore came back to the original sha256.
+None of those can see a mutant that answers nothing at all, because each asks whether the mutation
+arrived and whether the file is still a program — never whether the run produced a verdict.
+
+What caught it was the counts: `tests 1 / pass 0 / fail 1`, the whole file failing to load, which
+is the shape a manufactured red takes. So a mutation run needs a third kind of guard beside the
+byte guard and the parse guard: the counts have to be read, and a run whose count is the file
+rather than its tests is no evidence either way. The replacement mutation makes the reader answer
+*wrongly* rather than not answer, and reddens four tests.
 
 **The suite told me where the code goes.** The reader started as `scripts/javascript-tokens.mjs`,
 and `test/package.test.mjs` reds on a script no npm script runs. Every file in `scripts/` is an
 entry point, and shared code lives in the entry point that first needed it — which is how
 `endOfQuoted` came to be exported from `scripts/package-budget.mjs`. Reading that convention off a
 failing test cost less than reading it off the directory would have.
+
+**A forked tree makes every edit under `.claude/` a pair of edits.** Two of this card's items ask
+for a passage in `.claude/skills/tdd/SKILL.md`, and card #33 landed
+`templates/claude/skills/tdd/SKILL.md` beside it with a check that reds on any divergence between
+the two trees, in either direction. From a base before that landed, writing one copy would have
+redded whichever pull request merged second, and writing the other would have been building another
+card's tree; the item waited for #33 rather than being worked around. Now that the fork exists, the
+cost is permanent and small: an edit to either copy is an edit to both, byte for byte, and
+`test/init.test.mjs` is what says so.
 
 **What is left, and it is not closable by reading.** A top-level call the module throws before
 reaching is claimed all the same. Whether a module reaches its own top-level calls is a question
