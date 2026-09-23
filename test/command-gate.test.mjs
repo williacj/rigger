@@ -642,6 +642,33 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   // looking inside a shell. This is the shape that says so: spend it here and the innermost
   // script goes unread, and bash runs the push.
   ['a shell inside the split text of an env inside a shell', 'bash -c "env -S\'bash -c \\"git push --force\\"\'"', 'a force push'],
+  // `env` parses with `getopt_long`, which takes any unambiguous abbreviation of a long option,
+  // and `split-string` is its only long option beginning with `s`. So `--s=` is `--split-string=`,
+  // and matching the option by its full spelling alone leaves every shorter one open. Measured
+  // under bash: all twelve ran the reserved command.
+  ['env --s=, the shortest abbreviation there is', "env --s='git push --force'", 'a force push'],
+  ['env --sp=', "env --sp='git push --force'", 'a force push'],
+  ['env --split=', "env --split='git push --force'", 'a force push'],
+  ['env --split-strin=, one letter short of the name', "env --split-strin='git push --force'", 'a force push'],
+  ['env --s, an abbreviation whose argument is the next word', "env --s 'git push --force'", 'a force push'],
+  ['env --split, an abbreviation whose argument is the next word', "env --split 'git push --force'", 'a force push'],
+  ['env --s= deleting a branch', "env --s='git branch -D topic'", 'deleting a branch'],
+  ['env --s= skipping the hooks', "env --s='git commit --no-verify -m x'", 'a commit that skips the hooks (--no-verify)'],
+  ['env --s= in a brace group', "{ env --s='git push --force'; }", 'a force push'],
+  ['env --s= after then', "if true; then env --s='git push --force'; fi", 'a force push'],
+  ['env --s= behind another prefix', "nohup env --s='git push --force'", 'a force push'],
+  ['env --s= named by its path', "/usr/bin/env --s='git push --force'", 'a force push'],
+  // `flock` carries a command in one word the same way, through `-c` / `--command`, which it hands
+  // to a shell. **No bash oracle for these exists on this host**: `flock` is absent here, so bash
+  // runs nothing and the marker is empty for every one. What is asserted is the gate's verdict,
+  // which is deterministic and needs no oracle — the same footing the seven prefix names absent
+  // from this host already stand on, and `templates/claude/` ships for the hosts that have it.
+  ['flock -c, the lock file first', "flock /tmp/l -c 'git push --force'", 'a force push'],
+  ['flock -c, the option first', "flock -c 'git push --force' /tmp/l", 'a force push'],
+  ['flock --command=', "flock --command='git push --force' /tmp/l", 'a force push'],
+  ['flock --com=, an unambiguous abbreviation', "flock --com='git push --force' /tmp/l", 'a force push'],
+  ['flock -nc, the option clustered behind a flag', "flock -nc 'git push --force' /tmp/l", 'a force push'],
+  ['flock --command deleting a branch', "flock /tmp/l --command 'git branch -D topic'", 'deleting a branch'],
 ];
 
 /**
@@ -669,6 +696,11 @@ export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
   ['split text carrying a clean git command', "env -S'git log --oneline -1'"],
   ['long-form split text carrying no git command', "env --split-string='echo hello'"],
   ['split text behind an option that takes a value, carrying a clean git command', "env -u FOO -S'git status'"],
+  ['an abbreviated split string carrying no git command', "env --s='echo hello'"],
+  ['an abbreviated split string carrying a clean git command', "env --s='git log --oneline -1'"],
+  ['a long option that is no abbreviation of split-string', "env --unset=FOO git status"],
+  ["flock's command carrying no git command", "flock /tmp/l -c 'echo hello'"],
+  ["flock's command carrying a clean git command", "flock /tmp/l -c 'git status'"],
 ];
 
 test('a reserved git spelling behind a redirection word is refused', () => {

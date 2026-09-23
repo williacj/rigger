@@ -653,25 +653,46 @@ const PREFIX_PROGRAMS = new Set([
 ]);
 
 /**
- * The text `env`'s `-S` / `--split-string` carries, or undefined where the option is absent. GNU
- * and BSD `env` take the whole command **inside that one word**, splitting it themselves, so no
- * word after the prefix is the program and the scan over the words reaches nothing.
+ * Programs on `PREFIX_PROGRAMS` that take an option carrying a **whole command inside one word**,
+ * and the option that carries it. The prefix scan reads every word after the prefix looking for a
+ * program, so a command written inside one of those words is a word that is no program and the
+ * scan reaches nothing. `env` splits the word itself; `flock` hands it to a shell.
  *
- * Six spellings, because `env` reads the option's argument from either this word or the next one:
- * `-S…` and `--split-string=…` carry it here, `-S …` and `--split-string …` in the next word, and
- * a short option may sit behind the flags that take no value, where `-S` ends the cluster because
+ * `letter` is the short option; `name` is the long one without its dashes.
+ */
+const COMMAND_CARRIED_IN_A_WORD = new Map([
+  ['env', { letter: /^-[A-Za-z0-9]*S/, name: 'split-string' }],
+  ['flock', { letter: /^-[A-Za-z0-9]*c/, name: 'command' }],
+]);
+
+/**
+ * The text that option carries, or undefined where the option is absent.
+ *
+ * The argument is in this word or the next one, which is what says where to read it: `-S…` and
+ * `--split-string=…` carry it here, `-S …` and `--split-string …` in the next word. A short option
+ * may sit behind the flags that take no value, where its letter ends the cluster because
  * everything after it is its argument.
  *
- * A cluster whose earlier letter takes a value spells something else — `-uS` unsets a variable
- * named `S` — and reading it as this option can only add a refusal, and only to text that spells
- * a reserved git command.
+ * **A long option is matched by any non-empty prefix of its name**, because both programs parse
+ * with `getopt_long`, which resolves an unambiguous abbreviation to the option it abbreviates. So
+ * `--s=` is `env`'s `--split-string=`, `split-string` being its only long option beginning with
+ * `s`, and `--com=` is `flock`'s `--command=`. Which abbreviations are *unambiguous* is the
+ * program's own question and is not asked here: a prefix the program would reject as ambiguous is
+ * read as this option anyway, which can only add a refusal, and only to text that spells a
+ * reserved git command. So can a cluster whose earlier letter takes a value — `-uS` unsets a
+ * variable named `S` — for the same reason.
  */
-function splitStringText(words) {
+function commandCarriedInAWord(words, option) {
   for (let at = 1; at < words.length; at++) {
     const word = words[at];
-    if (word.startsWith('--split-string=')) return word.slice('--split-string='.length);
-    if (word === '--split-string') return words[at + 1];
-    const short = /^-[A-Za-z0-9]*S/.exec(word);
+    if (word.startsWith('--')) {
+      const equals = word.indexOf('=');
+      const written = equals === -1 ? word.slice(2) : word.slice(2, equals);
+      if (written.length && option.name.startsWith(written)) {
+        return equals === -1 ? words[at + 1] : word.slice(equals + 1);
+      }
+    }
+    const short = option.letter.exec(word);
     if (short) return short[0].length === word.length ? words[at + 1] : word.slice(short[0].length);
   }
   return undefined;
@@ -710,15 +731,17 @@ function objectionTo(given, depth) {
     return null;
   }
 
-  // `env -S` carries the whole command inside one word, so the scan below reads a word that is no
-  // program. The word's own text is re-read instead, the way a shell's `-c` argument and `eval`'s
-  // joined arguments already are. `env` splits that text on blanks rather than running a shell, so
-  // reading it as shell text reads more than `env` runs, which can only add a refusal. The depth
-  // is passed on unchanged for the reason the prefix scan below passes it on: `env` is a prefix
-  // and not a shell, and `env -S'bash -c "…"'` has to reach the script. There is no early return,
-  // because `env` is also a prefix and `env -u FOO git push --force` is reached by the scan.
-  if (program === 'env') {
-    const text = splitStringText(words);
+  // `env -S` and `flock -c` carry the whole command inside one word, so the scan below reads a
+  // word that is no program. The word's own text is re-read instead, the way a shell's `-c`
+  // argument and `eval`'s joined arguments already are. `env` splits that text on blanks rather
+  // than running a shell, so reading it as shell text reads more than `env` runs, which can only
+  // add a refusal. The depth is passed on unchanged for the reason the prefix scan below passes it
+  // on: neither is a shell, and `env -S'bash -c "…"'` has to reach the script. There is no early
+  // return, because both are also ordinary prefixes and `env -u FOO git push --force` is reached
+  // by the scan.
+  const carrier = COMMAND_CARRIED_IN_A_WORD.get(program);
+  if (carrier) {
+    const text = commandCarriedInAWord(words, carrier);
     if (text !== undefined) {
       for (const inner of commandsIn(text)) {
         const objection = objectionTo(inner, depth);
