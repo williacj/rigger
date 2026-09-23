@@ -52,6 +52,7 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
+| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
 
 ## D1 — Redo over resume
 
@@ -466,3 +467,39 @@ answering it.
 What would reverse this is drift the reader sees: `report` showing judges filing findings against
 diagrams that disagree with what they depict, or the owner reading a diagram the document has
 outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.
+
+## D16 — Code asks the tool that owns the fact, and says where it can disagree
+
+**Status:** Ratified.
+
+### Rule
+
+1. A tool or command outside Rigger is an authority for a fact it owns, and this entry binds that
+   class alone. An authority decides the fact it owns, and Rigger's code never decides it instead.
+   `npm test` is `node --test`, so what counts as a test is that command's answer rather than a
+   list of spellings a script thought of.
+2. Code carrying a copy of an authority's answer — a pattern, a threshold, a list — ties that copy
+   to the authority with a test that asks it. The copy is never what decides.
+3. Code depending on an authority records where the authority's answer can differ from its own,
+   beside the code that depends on it. The record is measured, never estimated, because a bound
+   nobody measured is a guess carrying a number.
+
+### Notes
+
+The gap: `D8` covers code to document, `AGENTS.md`'s "Documents own their facts" covers document
+to document, and neither reaches code that restates what a tool answers.
+
+An authority is a tool or command, and this entry reaches no other kind.
+`scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a budget number
+out of `ARCHITECTURE.md`. That read depends on a document that owns a fact rather than on a
+tool that answers for one, so no rule here reaches that dependency. What the same files take
+from a tool is bound as any other code is.
+
+Rule 3 is the half an author drops first, and dropping it leaves rule 1 reading as licence to
+depend on anything: an authority's behaviour arrives with its undefined edges attached.
+`docs/journal.md` records what produced this entry.
+
+Two signals would reverse it, and `report` shows both. One: cards come back because a test that
+asks a tool could not run it, or because the tool answered differently between runs, more often
+than a restated fact was ever found wrong. Two: a tool changes its answer under code tied to it,
+on an upgrade a restated fact would have survived.
