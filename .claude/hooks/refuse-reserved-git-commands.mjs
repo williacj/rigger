@@ -466,21 +466,104 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** Inspect one command. Returns the reason to refuse, or null. */
-function objectionTo(given, depth) {
-  // A command may carry environment assignments before the program it runs, and `env` may carry
-  // them too: `GIT_AUTHOR_DATE=… git commit …` runs git, and the program to read is not word one.
+// A shell keyword is a word, not an operator, so `commandsIn` leaves it as the first word of the
+// command bash goes on to run and puts the program in the word after it. `{ git push --force; }`
+// is one command whose words are `{`, `git`, `push`, `--force`, and a rule reading word one reads
+// the brace. So the words below are stepped over to reach the program, the same way an
+// environment assignment already is.
+//
+// Stepping over a word can only surface a program this gate was not reading, so it adds refusals
+// and takes none away. The cost is the other direction: a word stepped over where bash reads no
+// command is a refusal bash would not have earned, which is why the list is bash's reserved words
+// rather than a guess, and why each entry was run under bash with `git` shadowed by a marker
+// before it was added.
+
+/**
+ * Bash's reserved words a command may follow directly. Absent, and why: `esac`, `fi`, `done` and
+ * `}` end a construct, so a command after one needs an operator first and is already word one;
+ * `for` and `select` are followed by a name rather than a command, and `for x in git push --force`
+ * is a word list bash runs no git from; `[[` opens a conditional bash runs no command inside. Each
+ * of those was measured rather than reasoned about, and the pull request reports what bash ran.
+ */
+const KEYWORDS_A_COMMAND_MAY_FOLLOW = new Set([
+  '!',
+  '{',
+  'coproc',
+  'do',
+  'elif',
+  'else',
+  'function',
+  'if',
+  'in',
+  'then',
+  'time',
+  'until',
+  'while',
+]);
+
+/** What bash's `time` takes before the pipeline it times. `--portability` is not one: bash rejects it. */
+const TIME_OPTIONS = new Set(['-p', '--']);
+
+/**
+ * Step over the reserved words, environment assignments and `env` between the start of a command
+ * and the program it runs. Returns the words from the program on, which may be none.
+ */
+function programWords(given) {
   let words = given;
   for (;;) {
     let start = 0;
     while (start < words.length && ASSIGNMENT.test(words[start])) start++;
     words = words.slice(start);
-    if (words.length && basename(words[0]) === 'env') {
+    if (!words.length) return words;
+    const first = words[0];
+
+    if (KEYWORDS_A_COMMAND_MAY_FOLLOW.has(first)) {
+      words = words.slice(1);
+      if (first === 'time') {
+        while (words.length && TIME_OPTIONS.has(words[0])) words = words.slice(1);
+      }
+      // `coproc NAME compound` and `function NAME compound` name the thing before its body, so
+      // the body's first command is a word further on. Bash reads a NAME only before a compound
+      // command: in `coproc c git push --force` the `c` is the program, and bash runs `c`.
+      if ((first === 'coproc' || first === 'function') && words[1] === '{') words = words.slice(1);
+      continue;
+    }
+    // `case WORD in` is a header that runs nothing, and a pattern ends at the `)` that introduces
+    // its body — on the same line as the body's first command, because `)` is no operator here.
+    // The scan runs to the first word ending in `)` rather than testing one word, because the
+    // pattern may be several words and may itself hold a `)`.
+    if (first === 'case') {
+      const pattern = words.findIndex((word, at) => at > 0 && word.endsWith(')'));
+      if (pattern === -1) return [];
+      words = words.slice(pattern + 1);
+      continue;
+    }
+    // A word ending in `)` where a command may begin is a later `case` branch's pattern, or the
+    // `NAME()` header of a function definition. Only the first word is tested: a scan further
+    // along would step over `git push --force '--x)'` and reach nothing.
+    if (first !== ')' && first.endsWith(')')) {
       words = words.slice(1);
       continue;
     }
-    break;
+    // The same pattern with the `)` set off by a blank, which lexes as its own word.
+    if (words[1] === ')') {
+      words = words.slice(2);
+      continue;
+    }
+    if (basename(first) === 'env') {
+      words = words.slice(1);
+      continue;
+    }
+    return words;
   }
+}
+
+/** Inspect one command. Returns the reason to refuse, or null. */
+function objectionTo(given, depth) {
+  // A command may carry environment assignments and shell keywords before the program it runs:
+  // `GIT_AUTHOR_DATE=… git commit …` and `{ git push --force; }` both run git, and neither has it
+  // as word one.
+  const words = programWords(given);
   if (!words.length) return null;
 
   // A shell asked to run a command string is that command string; look inside it once.

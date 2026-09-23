@@ -384,3 +384,116 @@ test('a command the gate cannot read is refused', () => {
     refuses(command, `the unreadable command \`${command}\``);
   }
 });
+
+/**
+ * A reserved git spelling reached through a shell keyword. `commandsIn` splits on operators, so a
+ * keyword is the first word of its command and the git invocation is the second or later word —
+ * and the rule that decides whether a command is git at all reads the first word. Bash runs the
+ * reserved command in every payload below: each was run under bash from a file with `git` replaced
+ * by a marker on `PATH`, and bash ran the marker in every one. The measurement is in the pull
+ * request, and the constructs the card names are the first six rows.
+ *
+ * The third column is the spelling the refusal must name, read off `AGENTS.md`'s three
+ * reservations rather than off the gate. A refusal that stopped naming what it found would still
+ * be a deny, so the deny alone is no test of it.
+ */
+export const KEYWORD_CONSTRUCT_PAYLOADS = [
+  ['a brace group', '{ git push --force; }', 'a force push'],
+  ['if / then', 'if true; then git push --force; fi', 'a force push'],
+  ['for / do', 'for x in 1; do git branch -D topic; done', 'deleting a branch'],
+  ['while / do', 'while true; do git push -f; break; done', 'a force push'],
+  ['case', 'case x in x) git push --force;; esac', 'a force push'],
+  ['a group after &&', 'true && { git commit --no-verify -m x; }', 'a commit that skips the hooks'],
+  // The rest of the keyword family, enumerated from bash's reserved words rather than from the
+  // card's table, because a keyword left out is a bypass this gate cannot see.
+  ['a git condition after if', 'if git push --force; then :; fi', 'a force push'],
+  ['if / else', 'if false; then :; else git push --force; fi', 'a force push'],
+  ['if / elif / then', 'if false; then :; elif true; then git push --force; fi', 'a force push'],
+  ['for / do, an arithmetic header', 'for ((i=0;i<1;i++)); do git push -f; done', 'a force push'],
+  ['a git condition after while', 'while git push -f; do break; done', 'a force push'],
+  ['until / do', 'until false; do git push -f; break; done', 'a force push'],
+  ['a git condition after until', 'until git push -f; do break; done', 'a force push'],
+  ['case, a later branch', 'case x in a) git status;; x) git push --force;; esac', 'a force push'],
+  ['case, a parenthesised pattern', 'case x in (x) git push --force;; esac', 'a force push'],
+  ['case, a pattern set off by blanks', 'case x in x ) git push --force ;; esac', 'a force push'],
+  ['case, an alternation', 'case x in a|x) git push --force;; esac', 'a force push'],
+  ['case, a quoted pattern', "case x in 'a)b') :;; x) git push -f;; esac", 'a force push'],
+  ['case, a fall-through pattern', 'case x in a) :;& x) git push --force;; esac', 'a force push'],
+  ['case on a substitution', 'case $(echo x) in x) git push --force;; esac', 'a force push'],
+  ['a group after ||', 'false || { git push -f; }', 'a force push'],
+  ['a group in a pipeline', '{ git push --force; } | cat', 'a force push'],
+  ['nested groups', '{ { git push --force; }; }', 'a force push'],
+  ['a group after then', 'if true; then { git push --force; }; fi', 'a force push'],
+  [
+    'a construct inside a loop',
+    'while :; do if true; then git push -f; fi; break; done',
+    'a force push',
+  ],
+  ['negation', '! git push --force', 'a force push'],
+  ['negation twice', '! ! git push --force', 'a force push'],
+  ['negation of a group', '! { git push --force; }', 'a force push'],
+  ['time', 'time git push --force', 'a force push'],
+  ['time -p', 'time -p git push --force', 'a force push'],
+  ['time --', 'time -- git push --force', 'a force push'],
+  ['time of a group', 'time { git push --force; }', 'a force push'],
+  ['coproc', 'coproc git push --force', 'a force push'],
+  ['coproc of a named group', 'coproc c { git push --force; }', 'a force push'],
+  ['a function definition', 'f() { git push --force; }', 'a force push'],
+  ['the function keyword', lines('function f { git push --force; }', 'f'), 'a force push'],
+  [
+    'the function keyword with parentheses',
+    lines('function f() { git push --force; }', 'f'),
+    'a force push',
+  ],
+  ['an assignment inside a group', '{ x=1 git push --force; }', 'a force push'],
+  ['env inside a construct', 'if true; then env git push --force; fi', 'a force push'],
+  ['a group inside bash -c', "bash -c '{ git push --force; }'", 'a force push'],
+];
+
+/**
+ * The other side of the same rule: keyword constructs the gate must go on permitting. Bash runs no
+ * reserved git command in any of these — measured the same way, with `git` shadowed by a marker —
+ * and two of them carry the *text* of a reserved spelling where bash reads a word list or an
+ * argument rather than a command. A rule wide enough to refuse those has stopped following bash,
+ * which is how card #71 traded refusals for bypasses.
+ */
+export const KEYWORD_CONSTRUCTS_CARRYING_NOTHING_RESERVED = [
+  ['a brace group', '{ git status; }'],
+  ['if / then', 'if true; then git status; fi'],
+  ['for / do', 'for x in 1; do git log --oneline -1; done'],
+  ['case', 'case x in x) git status;; esac'],
+  ['the case word spelled git', 'case git in git) echo ok;; esac'],
+  ['a for word list spelled like a force push', 'for x in git push --force; do :; done'],
+  ['a keyword written as an argument', 'echo then git push --force'],
+  ['an awk program in braces', "echo a | awk '{print $1}'"],
+  ['a jq program in braces', "echo {} | jq '{a:1}'"],
+  ['xargs with a brace placeholder', 'echo x | xargs -I{} echo {}'],
+  ['a git format string holding a parenthesis', "git log --format='%h) %s' -1"],
+  ['time of a command carrying nothing reserved', 'time git status'],
+  ['negation of a command carrying nothing reserved', '! git diff --quiet'],
+  ['a function definition carrying nothing reserved', 'f() { git status; }'],
+  ['a [[ ]] test beside a command carrying nothing reserved', '[[ -n x ]] && git status'],
+];
+
+test('a reserved git spelling inside a shell keyword construct is refused', () => {
+  // Every shape here was fail-open: the gate permitted and bash ran the reserved command. A
+  // keyword is the first word of the command the operator split, so the git invocation is never
+  // word one and the rule that reads word one never looks at it.
+  for (const [construct, command, spelling] of KEYWORD_CONSTRUCT_PAYLOADS) {
+    refuses(command, `a reserved spelling reached through ${construct}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${construct} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a keyword construct carrying nothing reserved is still permitted', () => {
+  // The floor under the fix. Reaching past a keyword must not become reaching past anything: bash
+  // runs no reserved git command in any of these, and neither a word list nor an argument that
+  // reads like one is a command.
+  for (const [shape, command] of KEYWORD_CONSTRUCTS_CARRYING_NOTHING_RESERVED) {
+    permits(command, `${shape}, which bash runs no reserved git command from`);
+  }
+});
