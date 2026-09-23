@@ -112,7 +112,7 @@ export function findings(text, { ceiling, terms }) {
     }
   }
   // Every line is read for a term, a table row and a fenced block included. Those two carry no
-  // sentence, but they do carry words, and rule 1 is about which words the corpus uses.
+  // sentence, but they do carry words, and rule 1 is about which words the binding documents use.
   for (const term of terms) {
     const boundary = new RegExp(`\\b${term}\\b`, 'i');
     lines.forEach((line, index) => {
@@ -163,10 +163,11 @@ export function check(root) {
 /**
  * The words the skill's one-term rule rules out, read from the skill rather than typed here.
  *
- * The rule names them the one way it can: a sentence saying what the corpus uses, then `never`
- * and the spellings it does not. Only that rule's own section is read, because `never` carries
- * other work elsewhere in the skill. A prohibition of more than one word rules out an act rather
- * than a spelling — "never collapse them" — and this returns spellings, so those are dropped.
+ * The rule names them the one way it can: a sentence saying what the binding documents use, then
+ * `never` and the spellings it does not. Only that rule's own section is read, because `never`
+ * carries other work elsewhere in the skill. A prohibition of more than one word rules out an act
+ * rather than a spelling — "never collapse them" — and this returns spellings, so those are
+ * dropped.
  */
 export function ruledOutTerms(skill) {
   const section = skill.split(/^###\s+/m).find((part) => /^1\./.test(part));

@@ -12,9 +12,9 @@ Four rules. They constrain **form only**. Content is never negotiable: every bou
 gate survives an edit made under them. Where form and meaning pull apart, keep the meaning and
 flag the sentence.
 
-They describe how the corpus is already written, so that a delta written under them reads like
-what is already there. That is the whole of the job — a reader should not be able to pick your
-row out of the ones around it.
+They describe how the binding documents are already written, so that a delta written under them
+reads like what is already there. That is the whole of the job — a reader should not be able to
+pick your row out of the ones around it.
 
 ## The four rules
 
@@ -78,7 +78,8 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
 
 ## Before you hand it off
 
-1. Does every concept use the corpus's existing word, and does every existing distinction survive?
+1. Does every concept use the binding documents' existing word, and does every existing
+   distinction survive?
 2. Is any sentence past 40 words? Are most nearer 25 than 35?
 3. Does every sentence about authority name its actor?
 4. Is anything ordered or conditional still buried in prose?

@@ -10,10 +10,11 @@
  * other, so a declaration the architecture does not spell is not offered here.
  *
  * A rule carries three things. `required` says Rigger can do nothing without the key and no
- * default is fixed anywhere in the corpus — which is why `repo` is required and `concurrency` is
- * not, the engine-settings row defaulting N to three. `keys` names the shape the value's own
- * keys are read against. `entries` names the shape each value under a consumer-named key is read
- * against, which is how `roles`, `kinds` and `provisioning` hold names Rigger never fixes.
+ * default is fixed anywhere in the binding documents — which is why `repo` is required and
+ * `concurrency` is not, the engine-settings row defaulting N to three. `keys` names the shape the
+ * value's own keys are read against. `entries` names the shape each value under a consumer-named
+ * key is read against, which is how `roles`, `kinds` and `provisioning` hold names Rigger never
+ * fixes.
  */
 export const SHAPES = {
   config: {

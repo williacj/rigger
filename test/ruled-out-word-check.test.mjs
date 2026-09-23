@@ -87,6 +87,14 @@ test('the check reads a file of every kind this repository holds', () => {
   }
 });
 
+test('no tracked file in this repository carries a ruled-out word', () => {
+  // The guard the removal leaves behind. A finding here is a claim about this repository, so it
+  // names the file and the line rather than a count.
+  const { names, findings: found } = check(repository);
+  assert.deepEqual(names.map((one) => `${one.path} ${one.match}`), []);
+  assert.deepEqual(found.map((one) => `${one.path}:${one.line} ${one.match}`), []);
+});
+
 test('a tracked name carrying a ruled-out word is a finding, contents or no contents', () => {
   // The word reached a file name as well as its prose, and a journal slug derives from its
   // heading. A check reading only contents would pass a file whose name still says it.

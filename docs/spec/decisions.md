@@ -443,14 +443,14 @@ the rule sends too little.
 
 | Deferred | Returns when |
 |---|---|
-| A diagram form other than Mermaid | A consumer's forge does not render a fenced `mermaid` block, so a reader there sees source where the corpus shows a diagram. |
+| A diagram form other than Mermaid | A consumer's forge does not render a fenced `mermaid` block, so a reader there sees source where the binding documents show a diagram. |
 | A check that a diagram under `docs/spec/` cites an id for everything it depicts | A judge files a finding for a citation that is missing or does not resolve, where the document-checking extension point could have caught it. |
 
 ### Notes
 
-The corpus drew nothing until now, and prose is still the default. A diagram earns its place only
-on rule 1's tests, because every diagram is a second statement of something the document already
-holds, and the second statement is what goes stale.
+The binding documents drew nothing until now, and prose is still the default. A diagram earns its
+place only on rule 1's tests, because every diagram is a second statement of something the
+document already holds, and the second statement is what goes stale.
 
 One decision covers two venues because a single rule would be wrong for one of them. Under
 `docs/spec/` the rows own the facts, so a diagram there refers to them and owns nothing. In
@@ -459,7 +459,8 @@ is the "own it, refer to it" split in `AGENTS.md`, under "Documents own their fa
 to a diagram.
 
 Mermaid is text. It diffs, a judge reads its source rather than an image, and the forge renders
-it, so the diagram reviews like the rest of the corpus. An image file would review as a blob.
+it, so the diagram reviews like the rest of the binding documents. An image file would review as a
+blob.
 
 Whether the resolver checks a diagram's citations is declared at the document-checking extension
 point, and this decision does not declare it. The table above records the question rather than

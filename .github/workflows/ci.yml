@@ -1,5 +1,5 @@
-# ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks and
-# ABOUTME: its test-matrix check, on every push and every pull request.
+# ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
+# ABOUTME: ruled-out-word check and its test-matrix check, on every push and every pull request.
 
 name: CI
 
@@ -29,4 +29,5 @@ jobs:
       - run: npm run check:references
       - run: npm run check:paths
       - run: npm run check:ids
+      - run: npm run check:words
       - run: npm run matrix:check

@@ -1,6 +1,6 @@
-ABOUTME: A journal entry from card #30: The lint arrived after the corpus, and the corpus barely cleared it
+ABOUTME: A journal entry from card #30: The lint arrived after the binding documents, and they barely cleared it
 
-## 2026-09-22 — The lint arrived after the corpus, and the corpus barely cleared it
+## 2026-09-22 — The lint arrived after the binding documents, and they barely cleared it
 
 Writing `spec-style-lint` against documents already written showed how little headroom the
 sentence ceiling has: the longest sentence the lint reads is 39 words against a ceiling of 40.

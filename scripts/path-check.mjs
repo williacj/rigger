@@ -7,16 +7,16 @@ import { fileURLToPath } from 'node:url';
 
 import { CONFIG, documentChecking } from './doc-reference-check.mjs';
 
-/** A backticked span, which the corpus uses for a path, an id, a column name and a command alike. */
+/** A backticked span, which a checked document uses for a path, an id, a column name and a command alike. */
 const SPAN = /`([^`\n]+)`/g;
 
 /**
  * Whether a backticked span names something on disk.
  *
- * The corpus backticks far more than paths, so this asks what a path looks like rather than what
- * exists: a span that exists is a path either way, and a span that does not is the whole point.
- * A path carries no whitespace, and it names a directory, a file with a short extension, or a
- * dotfile. An id, a column name, a status and a shell command all fail one of those.
+ * A checked document backticks far more than paths, so this asks what a path looks like rather
+ * than what exists: a span that exists is a path either way, and a span that does not is the whole
+ * point. A path carries no whitespace, and it names a directory, a file with a short extension, or
+ * a dotfile. An id, a column name, a status and a shell command all fail one of those.
  */
 function looksLikePath(span) {
   if (!/^\.?[\w@][\w.@/-]*$/.test(span)) return false;

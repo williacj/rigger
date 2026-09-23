@@ -23,13 +23,13 @@ test('a backticked span naming a file or a directory is a repository path', () =
 
 test('a backticked span naming an id, a verb or a column is not a repository path', () => {
   // The register and the instruction files backtick far more than paths. A check reading any of
-  // these as one would demand a file for every id the corpus cites.
+  // these as one would demand a file for every id they cite.
   const document = 'Cite `R-SAFE-5` and `D15`, run `npm test`, and fill `checked by` with `nothing yet`.\n';
   assert.deepEqual(backtickedPaths(document), []);
 });
 
 /** A repository whose checked document holds the given line, plus whatever files are named. */
-function corpus(line, { exempt = {}, files = [], directories = [] } = {}) {
+function repositoryOf(line, { exempt = {}, files = [], directories = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-paths-'));
   writeFileSync(join(root, 'doc-references.json'), JSON.stringify({
     documents: { 'AGENTS.md': 'soft' },
@@ -45,7 +45,7 @@ function corpus(line, { exempt = {}, files = [], directories = [] } = {}) {
 }
 
 test('a backticked path that does not exist fails the build, naming the path', () => {
-  const root = corpus('The roster is in `docs/derived/roster.md`.');
+  const root = repositoryOf('The roster is in `docs/derived/roster.md`.');
   const read = check(root);
 
   assert.equal(read.failing, true);
@@ -55,7 +55,7 @@ test('a backticked path that does not exist fails the build, naming the path', (
 });
 
 test('a backticked path that exists is no finding', () => {
-  const root = corpus('The rows are in `docs/spec/requirements.md`.', {
+  const root = repositoryOf('The rows are in `docs/spec/requirements.md`.', {
     files: ['docs/spec/requirements.md'],
   });
   assert.deepEqual(check(root).findings, []);
@@ -64,20 +64,20 @@ test('a backticked path that exists is no finding', () => {
 test('docs/derived/ is exempt while the directory does not exist', () => {
   // D8 rule 4: the directory is created by the first generated document, so until that document
   // lands there is nothing under it to find.
-  const root = corpus('The matrix is `docs/derived/test-matrix.md`.', {
+  const root = repositoryOf('The matrix is `docs/derived/test-matrix.md`.', {
     exempt: { 'docs/derived/': 'D8 rule 4.' },
   });
   assert.deepEqual(check(root).findings, []);
 });
 
 test('the exemption ends when the directory exists, so a missing file under it is found', () => {
-  const root = corpus('The matrix is `docs/derived/test-matrix.md`.', {
+  const root = repositoryOf('The matrix is `docs/derived/test-matrix.md`.', {
     exempt: { 'docs/derived/': 'D8 rule 4.' },
     directories: ['docs/derived'],
   });
   assert.deepEqual(check(root).findings.map((f) => f.missing), ['docs/derived/test-matrix.md']);
 });
 
-test('every backticked path in the current corpus exists or is exempt', () => {
+test('every backticked path in the checked documents exists or is exempt', () => {
   assert.deepEqual(check(repository).findings, []);
 });

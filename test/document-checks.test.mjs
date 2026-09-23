@@ -19,7 +19,7 @@ const CHECKS = { lint, references, paths, ids };
  * stating the rules, the documents the skill and the config name, and a register allocating one
  * id of each kind. Each defect below is one line added to it, and nothing else.
  */
-function corpus(defect = {}) {
+function repositoryOf(defect = {}) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-checks-'));
   const files = {
     '.claude/skills/spec-style/SKILL.md': [
@@ -85,23 +85,23 @@ const failures = (root) => Object.entries(CHECKS)
   .map(([name]) => name)
   .sort();
 
-test('a corpus with no defect passes all four checks', () => {
-  assert.deepEqual(failures(corpus()), []);
+test('a repository with no defect passes all four checks', () => {
+  assert.deepEqual(failures(repositoryOf()), []);
 });
 
 test('a sentence past the ceiling fails the lint and no other check', () => {
   const overlong = `${Array.from({ length: 41 }, () => 'word').join(' ')}.`;
-  assert.deepEqual(failures(corpus({ lint: `\n${overlong}` })), ['lint']);
+  assert.deepEqual(failures(repositoryOf({ lint: `\n${overlong}` })), ['lint']);
 });
 
 test('a path:line pointer fails the resolver and no other check', () => {
-  assert.deepEqual(failures(corpus({ references: '\nThe rule is at `ARCHITECTURE.md:233`.' })), ['references']);
+  assert.deepEqual(failures(repositoryOf({ references: '\nThe rule is at `ARCHITECTURE.md:233`.' })), ['references']);
 });
 
 test('a backticked path that does not exist fails the path check and no other check', () => {
-  assert.deepEqual(failures(corpus({ paths: '\nThe roster is in `docs/derived/roster.md`.' })), ['paths']);
+  assert.deepEqual(failures(repositoryOf({ paths: '\nThe roster is in `docs/derived/roster.md`.' })), ['paths']);
 });
 
 test('a second row carrying an allocated id fails the id check and no other check', () => {
-  assert.deepEqual(failures(corpus({ ids: '| D1 | Redo once more | Ratified |' })), ['ids']);
+  assert.deepEqual(failures(repositoryOf({ ids: '| D1 | Redo once more | Ratified |' })), ['ids']);
 });

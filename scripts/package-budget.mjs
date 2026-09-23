@@ -119,7 +119,7 @@ function runsAsTest(name, foldsCase, foldsBareTest) {
  * second copy of the answer is a second place for it to drift. It is built from the two halves
  * above rather than spelled a second time, so there is still one answer here. It does not fold:
  * folding is the runner's and varies by host, where what the matrix reads is this repository's
- * own corpus, whose names are all lower case.
+ * own files, whose names are all lower case.
  */
 export const TEST_FILE = new RegExp(`${TEST_LITERAL.source}|${TEST_PATTERNED.source}`);
 // Directories the budget never charges for, wherever they sit rather than only at the root: a

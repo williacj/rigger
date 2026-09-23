@@ -3,9 +3,9 @@ ABOUTME: A journal entry from card #31: The architecture already held the config
 ## 2026-09-22 — The architecture already held the config, so the validator had nothing to invent
 
 The config core looked like a design job and turned out to be a transcription job.
-`ARCHITECTURE.md` publishes a config shape under its extension-point table, and that shape is
-the only place the corpus spells any of these keys. Taking it as the offer left nothing for this
-card to name: the test runs that block as a module and compares its key paths against the
+`ARCHITECTURE.md` publishes a config shape under its extension-point table, and that shape is the
+only place the binding documents spell any of these keys. Taking it as the offer left nothing for
+this card to name: the test runs that block as a module and compares its key paths against the
 validator's, in both directions, so a key the architecture does not spell cannot be offered and
 one it does spell cannot be missed.
 

@@ -94,8 +94,8 @@ recommending a change to it, and a specified check is that same claim in executa
 - **Where the run fails something a register's preamble permits, the check is wrong.** Correct it,
   or propose the row that makes the register match it.
 
-An observation about what the corpus currently says is the same claim, and takes the same run. An
-unrun check reads as a finding, and the owner ratifies it as one.
+An observation about what the binding documents currently say is the same claim, and takes the
+same run. An unrun check reads as a finding, and the owner ratifies it as one.
 
 ## What the argument carries
 

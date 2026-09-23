@@ -48,7 +48,7 @@ test('the register is strict and the root instruction file is soft', () => {
 });
 
 /** A repository holding just the documents the checking config names, with the content given. */
-function corpus(content) {
+function repositoryOf(content) {
   const root = mkdtempSync(join(tmpdir(), 'rigger-refs-'));
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   writeFileSync(join(root, 'doc-references.json'), JSON.stringify({
@@ -61,7 +61,7 @@ function corpus(content) {
 }
 
 test('a pointer in a strict document fails the build, naming the file and the literal', () => {
-  const root = corpus({ decisions: 'D8 is at ARCHITECTURE.md:233.\n' });
+  const root = repositoryOf({ decisions: 'D8 is at ARCHITECTURE.md:233.\n' });
   const read = check(root);
 
   assert.equal(read.failing, true);
@@ -71,13 +71,13 @@ test('a pointer in a strict document fails the build, naming the file and the li
 });
 
 test('a pointer in a soft document is reported and does not fail the build', () => {
-  const root = corpus({ 'AGENTS.md': 'The rule is at ARCHITECTURE.md:233.\n' });
+  const root = repositoryOf({ 'AGENTS.md': 'The rule is at ARCHITECTURE.md:233.\n' });
   const read = check(root);
 
   assert.equal(read.failing, false);
   assert.deepEqual(read.findings.map((f) => [f.path, f.level]), [['AGENTS.md', 'soft']]);
 });
 
-test('the current corpus holds no path:line pointer at any fail level', () => {
+test('the checked documents hold no path:line pointer at any fail level', () => {
   assert.deepEqual(check(repository).findings, []);
 });
