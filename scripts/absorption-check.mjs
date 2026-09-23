@@ -46,7 +46,11 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------------------
 const INVOCATIONS = `absorption-check accepts two invocations, and no other:
   --self-test                     run the built-in cases
-  <source.md> <destination.md>    report what each source clause became`;
+  <source.md> <destination.md>    report what each source clause became
+
+<source.md> may be a git <ref>:<path>, which is how the section this compares
+from is reached at all: 755c809 dissolved it from the working tree.
+  absorption-check '755c809^:ARCHITECTURE.md' docs/spec/requirements.md`;
 
 // The section the two-document form compares from. It lives at a ref rather than in the working
 // tree: 755c809 dissolved it, and the same commit added this script.
