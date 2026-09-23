@@ -96,8 +96,8 @@ function lineOf(starts, index) {
  *
  * Each token carries `kind` — `word` for a run of name or number characters, `punct`, `string`,
  * `template` for one holding a `${}` substitution, or `regex` — the `line` it opens on, and the
- * `depth` of brackets open around it. A `string` also carries the `value` between its quotes,
- * with the escapes left as the source wrote them.
+ * `depth` of brackets open around it, and the `endLine` it reaches. A `string` also carries the
+ * `value` between its quotes, with the escapes left as the source wrote them.
  *
  * The one thing it cannot tell apart is a `/` directly after a `}`, which is a division after an
  * object literal and a regular expression after a block. Both need the grammar above the token,
@@ -174,7 +174,7 @@ export function tokensIn(source, file) {
   };
 
   const push = (kind, end, rest = {}) => {
-    tokens.push({ kind, line: lineOf(starts, index), depth: open.length, ...rest });
+    tokens.push({ kind, line: lineOf(starts, index), endLine: lineOf(starts, end - 1), depth: open.length, ...rest });
     index = end;
   };
 
