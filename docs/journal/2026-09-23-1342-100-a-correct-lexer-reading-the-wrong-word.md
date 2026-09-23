@@ -98,3 +98,26 @@ were against it, which is how `bash -c 'nohup bash -c "…"'` came to look permi
 refused. Nothing in the output said so; the contradiction with a trace I had done by hand is what
 caught it. A harness that can leave the thing under test modified has to restore on every exit, not
 only the happy one.
+
+## Round three — a figure nobody re-measured, and the third program of a kind
+
+Round two moved `time` out of the keyword list and into the prefix list, and the prefix list reads
+every word rather than a modelled option grammar. That change made `time --portability git push
+--force` refused. A table three sections away still said it was permitted, and the sentence beside
+a correct tool-produced line count still did arithmetic on a figure from before a deletion. Both
+were true when they were written. **A commit that moves what a figure counts stales every figure
+downstream of it, and nothing in a green suite says which ones.** The rule that follows is narrow
+and cheap: a number or a verdict in the pull request is re-measured at the head it is reported at,
+not carried forward from the round that first measured it.
+
+**The scan was of words, and the family is of programs that do not put the command in a word.** The
+gate held that shape twice before this round — a shell's `-c` argument, and `eval`, which joins its
+arguments and runs the result as text. `env -S` is the third, and it was on the prefix list the
+whole time: `env` was named, the scan ran over every word after it, and the command was inside one
+of those words rather than spread across them. **Being on the list is not the same as being read.**
+An enumeration answers "is this program a prefix" and says nothing about how that program finds the
+command it runs, so each name on it can still carry its own way of hiding one.
+
+**And the list being a list is itself a limit.** Seventeen names close seventeen ways in; a prefix
+program not named there is fail-open, whatever the rule around it does. That is worth stating at
+the list rather than leaving the next reader to infer a closed family from a long one.
