@@ -70,13 +70,18 @@ export function repoSlug(dir) {
  * landed where nothing reads them has a Rigger that dispatches an agent with no prompt.
  */
 function forks(templates, provider, within = '') {
-  const directory = PROVIDER_ASSETS[provider];
-  if (!directory) {
+  // Asked of the table's own keys, as `verbs.mjs` asks of `LANDED` and `readShape` of a
+  // consumer's declarations. A destination this table inherits was stated by nobody: read through
+  // the prototype chain, every name `Object.prototype` carries answers as a provider Rigger has a
+  // destination for, so the refusal below never fires for one and `constructor` forks the assets
+  // to `function Object() { [native code] }/` — the landing place this refusal exists to prevent.
+  if (!Object.hasOwn(PROVIDER_ASSETS, provider)) {
     throw new Error(
       `\`templates/${provider}/\` ships assets for \`${provider}\`, which is no provider Rigger ` +
       'reads assets for, so there is nowhere to fork them to.',
     );
   }
+  const directory = PROVIDER_ASSETS[provider];
   return readdirSync(join(templates, provider, within), { withFileTypes: true })
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .flatMap((entry) => {
