@@ -409,7 +409,13 @@ export const KEYWORD_CONSTRUCT_PAYLOADS = [
   ['a git condition after if', 'if git push --force; then :; fi', 'a force push'],
   ['if / else', 'if false; then :; else git push --force; fi', 'a force push'],
   ['if / elif / then', 'if false; then :; elif true; then git push --force; fi', 'a force push'],
+  [
+    'a git condition after elif',
+    'if false; then :; elif git push --force; then :; fi',
+    'a force push',
+  ],
   ['for / do, an arithmetic header', 'for ((i=0;i<1;i++)); do git push -f; done', 'a force push'],
+  ['select / do', "printf '1\\n' | { select x in 1; do git push -f; break; done; }", 'a force push'],
   ['a git condition after while', 'while git push -f; do break; done', 'a force push'],
   ['until / do', 'until false; do git push -f; break; done', 'a force push'],
   ['a git condition after until', 'until git push -f; do break; done', 'a force push'],
