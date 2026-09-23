@@ -567,7 +567,9 @@ export const REDIRECTION_PAYLOADS = [
  * one of them on spell a reserved command — which is why `nohup echo git status` stays permitted.
  *
  * `eval` is the exception: it joins its arguments and runs the result as shell text, so no one
- * word is the command and the text is re-read the way a shell's `-c` argument already is.
+ * word is the command and the text is re-read the way a shell's `-c` argument already is. `env -S`
+ * is the same exception for the same reason — it carries the whole command inside **one word**, so
+ * no word after the prefix is the program and reading every word reaches nothing.
  *
  * Which of these bash could be watched running git is a fact about this host, not about the gate.
  * The pull request records, with bash's own message for each, the ones that were absent here, and
@@ -610,6 +612,36 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   // from the outermost one and never needs the budget. Here the shell is already one level down,
   // so counting the prefix against the budget leaves the script unread and bash runs the push.
   ['a prefix inside a shell, before another shell', 'bash -c \'nohup bash -c "git push --force"\'', 'a force push'],
+  // `env -S` / `--split-string`. The option's argument is the whole command, so the words after
+  // the prefix are one word that is no program. Six spellings of the option, because each is a
+  // separate reading: the argument closed up against a short option, set off from it, after the
+  // long name's `=`, set off from the long name, clustered behind a flag that takes no value, and
+  // behind an option that takes one.
+  ['env -S, the command closed up in one word', "env -S'git push --force'", 'a force push'],
+  ['env -S, the command in the next word', "env -S 'git push --force'", 'a force push'],
+  ['env --split-string=', "env --split-string='git push --force'", 'a force push'],
+  ['env --split-string, the command in the next word', "env --split-string 'git push --force'", 'a force push'],
+  ['env -S clustered behind a flag', "env -vS'git push --force'", 'a force push'],
+  ['env -S behind an option that takes a value', "env -u FOO -S'git push --force'", 'a force push'],
+  ['env -S named by its path', "/usr/bin/env -S'git push --force'", 'a force push'],
+  // The card's six constructs, each around an `env -S` rather than around a bare git invocation,
+  // and each a measured bypass of its own: the construct is stepped over and the prefix reached,
+  // and the command is still inside one word.
+  ['env -S in a brace group', "{ env -S'git push --force'; }", 'a force push'],
+  ['env -S after then', "if true; then env -S'git push --force'; fi", 'a force push'],
+  ['env -S in a for body', "for x in 1; do env -S'git branch -D topic'; done", 'deleting a branch'],
+  ['env -S in a while body', "while true; do env -S'git push -f'; break; done", 'a force push'],
+  ['env -S in a case body', "case x in x) env -S'git push --force';; esac", 'a force push'],
+  ['env -S in a group after &&', "true && { env -S'git commit --no-verify -m x'; }", 'a commit that skips the hooks (--no-verify)'],
+  ['env --split-string= in a brace group', "{ env --split-string='git push --force'; }", 'a force push'],
+  ['env -S behind another prefix', "nohup env -S'git push --force'", 'a force push'],
+  // The split text is text, so everything the gate reads in a command it reads in there too.
+  ['a prefix program inside the split text', "env -S'nohup git push --force'", 'a force push'],
+  ['a shell inside the split text', 'env -S\'bash -c "git push --force"\'', 'a force push'],
+  // `env` is a prefix and not a shell, so reading its split text must not spend the budget for
+  // looking inside a shell. This is the shape that says so: spend it here and the innermost
+  // script goes unread, and bash runs the push.
+  ['a shell inside the split text of an env inside a shell', 'bash -c "env -S\'bash -c \\"git push --force\\"\'"', 'a force push'],
 ];
 
 /**
@@ -633,6 +665,10 @@ export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
   ['a quoted parenthesis as an argument', "echo ')' hello"],
   ['a quoted parenthesis in a pattern', "echo x | grep ')' || true"],
   ['a quoted parenthesis in a substitution', "echo x | sed 's/x/)/'"],
+  ['split text carrying no git command at all', "env -S'echo hello'"],
+  ['split text carrying a clean git command', "env -S'git log --oneline -1'"],
+  ['long-form split text carrying no git command', "env --split-string='echo hello'"],
+  ['split text behind an option that takes a value, carrying a clean git command', "env -u FOO -S'git status'"],
 ];
 
 test('a reserved git spelling behind a redirection word is refused', () => {

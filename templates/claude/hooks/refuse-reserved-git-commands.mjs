@@ -625,6 +625,12 @@ function programWords(given) {
  * options. These are programs rather than shell grammar, so which of them exists is a fact about
  * the host: a name absent from the host runs nothing, and the pull request records which were
  * watched running git here and which bash reported absent.
+ *
+ * **This is an enumeration, so a prefix program not named here is fail-open**: the gate reads its
+ * first word, finds a name it does not know, and steps aside while bash goes on to run the git
+ * command in its arguments. Nothing in the rule closes the family — the names close themselves.
+ * A name that belongs here is added here, and no host's list of such programs is knowable from
+ * this file.
  */
 const PREFIX_PROGRAMS = new Set([
   'chrt',
@@ -645,6 +651,31 @@ const PREFIX_PROGRAMS = new Set([
   'unbuffer',
   'xargs',
 ]);
+
+/**
+ * The text `env`'s `-S` / `--split-string` carries, or undefined where the option is absent. GNU
+ * and BSD `env` take the whole command **inside that one word**, splitting it themselves, so no
+ * word after the prefix is the program and the scan over the words reaches nothing.
+ *
+ * Six spellings, because `env` reads the option's argument from either this word or the next one:
+ * `-S…` and `--split-string=…` carry it here, `-S …` and `--split-string …` in the next word, and
+ * a short option may sit behind the flags that take no value, where `-S` ends the cluster because
+ * everything after it is its argument.
+ *
+ * A cluster whose earlier letter takes a value spells something else — `-uS` unsets a variable
+ * named `S` — and reading it as this option can only add a refusal, and only to text that spells
+ * a reserved git command.
+ */
+function splitStringText(words) {
+  for (let at = 1; at < words.length; at++) {
+    const word = words[at];
+    if (word.startsWith('--split-string=')) return word.slice('--split-string='.length);
+    if (word === '--split-string') return words[at + 1];
+    const short = /^-[A-Za-z0-9]*S/.exec(word);
+    if (short) return short[0].length === word.length ? words[at + 1] : word.slice(short[0].length);
+  }
+  return undefined;
+}
 
 /** Inspect one command. Returns the reason to refuse, or null. */
 function objectionTo(given, depth) {
@@ -677,6 +708,23 @@ function objectionTo(given, depth) {
       if (objection) return objection;
     }
     return null;
+  }
+
+  // `env -S` carries the whole command inside one word, so the scan below reads a word that is no
+  // program. The word's own text is re-read instead, the way a shell's `-c` argument and `eval`'s
+  // joined arguments already are. `env` splits that text on blanks rather than running a shell, so
+  // reading it as shell text reads more than `env` runs, which can only add a refusal. The depth
+  // is passed on unchanged for the reason the prefix scan below passes it on: `env` is a prefix
+  // and not a shell, and `env -S'bash -c "…"'` has to reach the script. There is no early return,
+  // because `env` is also a prefix and `env -u FOO git push --force` is reached by the scan.
+  if (program === 'env') {
+    const text = splitStringText(words);
+    if (text !== undefined) {
+      for (const inner of commandsIn(text)) {
+        const objection = objectionTo(inner, depth);
+        if (objection) return objection;
+      }
+    }
   }
 
   // A program that runs a command named in its arguments. Every word after it is read as a
