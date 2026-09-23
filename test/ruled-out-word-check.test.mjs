@@ -94,19 +94,40 @@ function unbracketed(pattern) {
   return pattern.replace(/\[(.)\]/, '$1');
 }
 
+// The spelling is encoded independently of the pattern and reversed so this file contains no
+// ruled-out word. A change to the word being banned is a deliberate edit in both places.
+const REVERSED_SPELLINGS = ['suproc'];
+
+function assertRightSlip(word, spelling) {
+  const slipped = { ...word, pattern: word.pattern.replace(/\[(.)\](.)/, '[$1$2]') };
+  assert.notEqual(
+    slipped.pattern, word.pattern,
+    `${word.pattern} has no character after its bracket, so the right-slip check cannot run`,
+  );
+  assert.deepEqual(findings(spelling, [slipped]), []);
+}
+
+test('a bracket in the last position explains why the right-slip check cannot run', () => {
+  assert.throws(
+    () => assertRightSlip({ pattern: 'widge[t]', instead: 'the part it names' }, 'widget'),
+    { message: /has no character after its bracket, so the right-slip check cannot run/ },
+  );
+});
+
 test('every pattern matches the word it names, and stops matching if its bracket slips', () => {
   // The test above says the list finds nothing in its own line, and the live-repository test
   // below says no tracked file carries a word. Both are zero-claims: each reads the same whether
   // the word is absent or the pattern matches nothing at all. This is the positive one. Moving a
   // bracket one character right, `a[b]c` to `a[bc]`, is the likeliest slip in this scheme and
   // leaves a pattern matching neither the word nor its own line, with every other test green.
-  for (const word of RULED_OUT) {
+  assert.equal(RULED_OUT.length, REVERSED_SPELLINGS.length, 'every pattern needs an independent spelling');
+  for (const [index, word] of RULED_OUT.entries()) {
     const spelling = unbracketed(word.pattern);
+    const independent = [...REVERSED_SPELLINGS[index]].reverse().join('');
+    assert.equal(spelling, independent, `${word.pattern} disagrees with its independent spelling`);
     assert.deepEqual(findings(spelling, [word]).map((one) => one.match), [spelling]);
 
-    const slipped = { ...word, pattern: word.pattern.replace(/\[(.)\](.)/, '[$1$2]') };
-    assert.notEqual(slipped.pattern, word.pattern);
-    assert.deepEqual(findings(spelling, [slipped]), []);
+    assertRightSlip(word, spelling);
   }
 });
 
