@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,6 +149,48 @@ test('init writes every file it planned, and names each one it wrote', () => {
   for (const file of written) {
     assert.equal(readFileSync(join(consumer, file.path), 'utf8'), file.content, file.path);
     assert.ok(ran.text.includes(file.path), `the report never names \`${file.path}\`:\n${ran.text}`);
+  }
+});
+
+/**
+ * An installed copy of this package, holding what an install would have of it and nothing else.
+ *
+ * `.claude/` is deliberately not among the three things copied, so an asset that arrived in the
+ * consumer's repository cannot have come from there: what `init` reads is `templates/`, and this
+ * is the only way to show it rather than argue it (`R-SAFE-6`). It is also how the command gets
+ * exercised from outside this checkout, which is the arrangement `R-SAFE-5` asks for.
+ */
+function installed() {
+  const dir = mkdtempSync(join(tmpdir(), 'rigger-package-'));
+  for (const part of ['package.json', 'src', 'templates']) {
+    cpSync(join(root, part), join(dir, part), { recursive: true });
+  }
+  assert.ok(!existsSync(join(dir, '.claude')), 'the installed copy carries a `.claude/` after all');
+  return dir;
+}
+
+/** What the command prints and exits with, run from an installed copy against a repository. */
+function rigger(from, target, ...args) {
+  const bin = JSON.parse(readFileSync(join(from, 'package.json'), 'utf8')).bin.rigger;
+  const ran = spawnSync(process.execPath, [join(from, bin), ...args], { cwd: target, encoding: 'utf8' });
+  assert.equal(ran.error, undefined);
+  return { out: ran.stdout, err: ran.stderr, code: ran.status };
+}
+
+test('the command forks the assets into the repository it is run in, from the package alone', () => {
+  // This is the wiring test: the real bin, the real arguments, a real repository, and a package
+  // that holds only what an install holds. The defects it catches are `init` still answering
+  // `not yet implemented`, a verb wired to something that writes nowhere, and an asset read out
+  // of the package's own `.claude/` — which there is none of here, so it could not be.
+  const from = installed();
+  const consumer = repository('https://github.com/acme/widgets.git');
+
+  const ran = rigger(from, consumer, 'init');
+
+  assert.equal(ran.code, 0, `${ran.out}${ran.err}`);
+  assert.doesNotMatch(ran.out + ran.err, /not yet implemented/);
+  for (const file of plan({ repo: 'acme/widgets' })) {
+    assert.equal(readFileSync(join(consumer, file.path), 'utf8'), file.content, file.path);
   }
 });
 
