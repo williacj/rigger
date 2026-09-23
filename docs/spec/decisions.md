@@ -52,6 +52,8 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
+| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
+| D17 | A requirement older than this decision is a counted gap | Ratified |
 
 ## D1 — Redo over resume
 
@@ -466,3 +468,135 @@ answering it.
 What would reverse this is drift the reader sees: `report` showing judges filing findings against
 diagrams that disagree with what they depict, or the owner reading a diagram the document has
 outgrown. On that evidence a later decision withdraws the admission, and the prose stands alone.
+
+## D16 — Code asks the tool that owns the fact, and says where it can disagree
+
+**Status:** Ratified.
+
+### Rule
+
+1. A tool or command outside Rigger is an authority for a fact it owns, and this entry binds that
+   class alone. An authority decides the fact it owns, and Rigger's code never decides it instead.
+   `npm test` is `node --test`, so what counts as a test is that command's answer rather than a
+   list of spellings a script thought of.
+2. Code carrying a copy of an authority's answer — a pattern, a threshold, a list — ties that copy
+   to the authority with a test that asks it. The copy is never what decides.
+3. Code depending on an authority records where the authority's answer can differ from its own,
+   beside the code that depends on it. The record is measured, never estimated, because a bound
+   nobody measured is a guess carrying a number.
+
+### Notes
+
+The gap: `D8` covers code to document, `AGENTS.md`'s "Documents own their facts" covers document
+to document, and neither reaches code that restates what a tool answers.
+
+An authority is a tool or command, and this entry reaches no other kind.
+`scripts/package-budget.mjs` and `scripts/instruction-budget.mjs` each read a budget number
+out of `ARCHITECTURE.md`. That read depends on a document that owns a fact rather than on a
+tool that answers for one, so no rule here reaches that dependency. What the same files take
+from a tool is bound as any other code is.
+
+Rule 3 is the half an author drops first, and dropping it leaves rule 1 reading as licence to
+depend on anything: an authority's behaviour arrives with its undefined edges attached.
+`docs/journal.md` records what produced this entry.
+
+Two signals would reverse it, and `report` shows both. One: cards come back because a test that
+asks a tool could not run it, or because the tool answered differently between runs, more often
+than a restated fact was ever found wrong. Two: a tool changes its answer under code tied to it,
+on an upgrade a restated fact would have survived.
+
+## D17 — A requirement older than this decision is a counted gap
+
+**Status:** Ratified.
+
+### Rule
+
+1. `AGENTS.md`, under "When you write a decision or a requirement", obliges whoever adds a
+   requirement to claim it with a test. This decision neither widens nor narrows that
+   obligation, and adds no check of its own.
+2. A **counted gap** is a requirement `docs/spec/requirements.md` held when this decision bound,
+   and that no test has claimed since. `docs/derived/test-matrix.md` marks it, the count its
+   generator prints includes it, and the build does not red.
+3. The set of counted gaps never gains a member. A requirement leaves the set when a test claims
+   it, or when the owner withdraws it, and it never returns.
+4. Editing a row's `checked by` moves no requirement into the set or out of it.
+   `docs/spec/requirements.md`'s preamble states that the column records what *would* catch a
+   violation, never what a test has done.
+5. A requirement the owner withdraws leaves the set with its row. Only the owner withdraws a
+   requirement (`docs/spec/requirements.md`, preamble), so the set loses a member that way only
+   where the owner has decided Rigger need not do the thing.
+6. Three things shrink the set, and they run at once:
+   1. The card that makes a requirement true claims it with a test in the same work. That
+      obligation is an acceptance item: the card's author writes it before the work starts
+      (`R-CARD-1`), the maker finishes against it (`R-LOOP-1`), and every judge rules on it
+      (`R-LOOP-5`).
+   2. A milestone closes only when a test claims every requirement its exit list cites.
+   3. v0 ships with the set empty. `docs/v0-build-plan.md`'s M8 holds that, and this decision
+      ends there.
+7. A judge enforces the rules above. No tool holds the set, and the notes record what the
+   generator answers instead.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. A milestone whose exit list cites the requirement returns it by that milestone's close, and M8 returns every one still open. |
+
+### Notes
+
+The claim that a requirement no test claims reds the build was written of every requirement in
+four places: `docs/v0-build-plan.md` twice, `docs/spec/requirements.md`'s preamble, and
+`.claude/skills/tdd/SKILL.md`, which cited `AGENTS.md` for it. `AGENTS.md` states it of a
+requirement being added, and that narrower rule is the only one an author could satisfy.
+
+Redding on every unclaimed row is the first failure. `npm run matrix:check` reported 99 of 99
+requirements with no test when this entry was drafted. A check redding on each would therefore
+have redded the build on the commit that landed it, and forced tests written to move a number.
+The generator owns the live figure (`D8`), and 99 is the measurement this reasoning rests on
+rather than a number the register keeps current.
+
+Counting every unclaimed row and redding on none is the other failure. It makes the gap visible
+and leaves nothing acting on it, and a number nobody is obliged to move does not move. Rule 6 is
+the answer: the set carries a closing schedule, and its three parts bite at three distances.
+
+Dating the set is what makes both halves true at once. A requirement added from here is added by
+someone who can write its test, because the behaviour is being built in the same work. A
+requirement the register already held waits on code that does not exist, and no test could claim
+it honestly. The date is the only line that separates those two.
+
+**What the generator answers, and where that differs from the set.** `D16` rule 3 asks for the
+difference to be measured rather than estimated. Running the generator over a scratch copy of the
+register measured four things.
+
+1. The printed count is every live requirement no declaration claims, and it holds no date. It
+   therefore counts a requirement added after this entry alongside a counted gap. Adding one
+   unclaimed row moved the count from 99 of 99 to 100 of 100 while the set gained no member.
+2. Retiring an unclaimed requirement moved the count from 99 of 99 to 98 of 98 and dropped the
+   row from the matrix. Both numbers fell by one, and no test was written.
+3. Editing a row's `checked by` left the count untouched in both directions. It did move how the
+   matrix marks the row: under `the test suite` the mark reads **gap**, and under `nothing yet`
+   it reads `nothing yet`. So the column moves the mark, while rule 4 holds the membership.
+4. Nothing records which requirements the set held. Deleting the test that claimed one redded
+   only the staleness check, and regenerating the matrix cleared that red and returned the row
+   to **gap**. Rule 3 is what forbids the return, and rule 7 names who holds it.
+
+Rule 4 closes the route that would otherwise open. `checked by` is prospective, and an author
+edits it freely, so a set defined by that column could be emptied by editing cells. Membership is
+by id, and the column says nothing about it.
+
+Rule 5 closes the other one. A withdrawal moves the number with no test written, and that is
+honest: a requirement that binds nothing has nothing left to prove. Only the owner withdraws one,
+so the set cannot be shrunk that way by the maker whose card it would flatter.
+
+This decision names no escalation category and opens no route to the owner (`D3` rule 1). Rule 5
+cites a withdrawal the owner already performs, and rule 6 cites a judge already ruling on an
+acceptance item.
+
+Two signals would reverse it. One: the count does not fall across a milestone's close, so rule 6's
+schedule is not what closes the set, and the owner is reading a number nothing acts on. Two: the
+count falls while the suite proves no more than before, because cards close with tests written to
+claim a row rather than to prove a behaviour. CI's printed count shows the first, and `report`
+shows the second as work that came back (`R-RECORD-3`).
+
+This decision holds one lifespan. It begins with the set and ends when the set is empty. The
+obligation `AGENTS.md` carries for a requirement being added outlives it.

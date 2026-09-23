@@ -77,6 +77,18 @@ across a boundary, one test crosses it for real, in the same work rather than a 
 it cannot be crossed in a test, say so where the substitute is defined, so the next reader knows
 what is unproven.
 
+**Assert the relation to an authority, not the answer it gives today.** Where code depends on a
+tool or command outside it, `D16` has that tool decide the fact and the code carry at most a copy.
+Write the test that ties the two so that it asks the tool and asserts the relation between its
+answer and the code's. A test pinning the answer the tool gives today goes stale the moment the
+tool changes it, and it goes stale green. Nothing in such a test is tied to the tool, so it agrees
+with the copy it was written beside for ever.
+
+For a worked example, read `test/package-budget.test.mjs`, which covers one fact both ways. Look
+for the difference the two kinds make. A test that pins the tool's answer is the readable one and
+says what that answer is today, while a test that asks the tool is the one that fails when the
+answer moves.
+
 ## A bug fix
 
 Every bug fix starts with the failing test (`AGENTS.md`). Reproduce the bug as a test first,
@@ -105,11 +117,34 @@ says what broke. Never log a secret (`AGENTS.md`).
 ## What a test declares
 
 Each test declares the requirement it proves. A tool builds `docs/derived/test-matrix.md` from
-those declarations, so the matrix is generated and never hand-edited (`D8`), and a requirement
-no test claims reds the build (`AGENTS.md`; `docs/v0-build-plan.md`, M0).
+those declarations, so the matrix is generated and never hand-edited (`D8`). A requirement the
+register gains needs a test that claims it, or the build reds (`AGENTS.md`, "When you write a
+decision or a requirement"). A judge enforces that, so expect no check to catch it for you. One
+the register already held is a counted gap, which the matrix counts and the build does not red
+on, and `D17` holds the difference and when each gap closes.
 
-So when you add a requirement, the test that claims it is part of the same work. And when you
-write a test, name the requirement it proves rather than leaving the matrix to guess.
+A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
+for, naming as many ids as that test proves, separated by commas. `npm run matrix` rebuilds the
+matrix and `npm run matrix:check` refuses one that has gone stale, so the declarations a piece of
+work adds are regenerated and committed with it. A declaration naming an id
+`docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
+test — a call that is commented out is not a test.
+
+The scan reads lines, not syntax, which is what a fixture in a test has to work around. A
+declaration is a whole line, so one written inside a single-line string claims nothing: that is
+the shape a fixture takes here, with `\n` escapes where it needs more than one line. Write the
+same fixture as a template literal spanning lines and its lines are lines like any other, so the
+declaration in it is refused where it sits rather than read as a claim. The scan does read quoted
+runs, so a comment marker inside a string is text and opens no comment. What it cannot see is
+syntax: a stray backtick in a string counts towards whether a template literal is open, so a
+declaration below one is refused by name — if you meet that refusal, look above it for the
+backtick — and a comment marker inside a regular expression reads as a marker, which refuses the
+file when the comment it opens never closes.
+
+So when you add a requirement, the test that claims it is part of the same work. Where your card
+is what makes an older requirement true, its test closes that requirement's counted gap in the
+same work (`D17` rule 6). And when you write a test, name the requirement it proves rather than
+leaving the matrix to guess.
 
 Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is not a
 licence to write more of them: every test costs execution time and maintenance, so each one
