@@ -89,10 +89,12 @@ test('the document config checks every tracked agent prompt and skill, including
   const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', '.claude', 'templates/claude'], {
     encoding: 'utf8',
   }).split('\0').filter((path) => path.endsWith('.md')).sort();
-  const configured = Object.keys(documentChecking(repository).documents)
+  const documents = documentChecking(repository).documents;
+  const configured = Object.keys(documents)
     .filter((path) => path.startsWith('.claude/') || path.startsWith('templates/claude/'))
     .sort();
   assert.deepEqual(configured, tracked);
+  for (const path of tracked) assert.equal(documents[path], 'strict', `${path} must fail on a pointer`);
 });
 
 test('every backticked path in the checked documents exists or is exempt', () => {
