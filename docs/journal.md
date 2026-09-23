@@ -6,6 +6,40 @@ An entry records something learned or something that failed, dated, in as few li
 takes. It binds nothing — a rule that came out of an entry is written where rules live, and the
 entry says what taught us. `AGENTS.md` holds when an entry is committed.
 
+## 2026-09-22 — Three of this card's own tests could not have failed
+
+`init` forks the templates, and this repository's `.claude/` is what it forked, so the card came
+down to one question: what refuses a divergence between the two. That part was easy to write and
+easy to trust once four kinds of divergence had each been made and watched red. The expensive part
+was the rest of the suite, where three tests were written that could not have moved.
+
+The first was a tautology. The second-run test compared the files on disk with the files on disk,
+and passed whatever `init` had done to them. Capturing the bytes before the second run and reading
+them back afterwards is what made it a test.
+
+The second passed vacuously. The end-to-end run looped over what `plan` said `init` would write
+and asserted each file had arrived. Deleting the fork entirely left `plan` naming the config and
+nothing else, and the loop agreed: one file, present, green. An expectation derived from the
+production algorithm agrees with that algorithm whatever it says. Four paths written out by hand
+fixed it, and those four are the ones the acceptance names.
+
+The third was a guard nothing could move. `repoSlug` reads git's status before its output, and
+removing that read moved no test either way: git run and refusing prints nothing, so the parse
+answers with nothing too. The guard earns its line for a case that is not that one — a host with
+no git to run answers with no stdout at all, which throws on being read — and reaching it needed
+`PATH` emptied. Two edges that look like one case, told apart only by asking.
+
+Two smaller things. A refusal written in the same breath as the walk it guards had to be removed
+again to see its test fail, which is the cost of writing more than the test demanded. And the
+report dropped its own count when the count was zero, because the heading was built with the list
+it headed; a second run said what it had skipped and never said it had written nothing.
+
+The standing consequence is a routing one, and it is the owner's to settle rather than this
+card's: an edit to a role prompt, a skill or a hook now belongs in `templates/`, and the copy
+under `.claude/` follows from it. Cards #76, #80, #85, #91 and #93 all edit assets under
+`.claude/`. Nothing about them was changed here, and the check names both files when they
+disagree.
+
 ## 2026-09-22 — Four sentences said the build reds, and no check did
 
 `D17` had to settle what a requirement no test claims does to the build. Four places said CI
