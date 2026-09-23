@@ -42,8 +42,11 @@ const SLUG = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/;
  * rule 1). Where its answer can differ from what is read here (`D16` rule 3), each measured by
  * asking it rather than reasoned about:
  *
- * - a directory that is no repository answers 128 with an empty stdout, and a repository with no
- *   `origin` answers 128 too, so both yield null;
+ * - a directory that is no repository answers 128; a repository with no `origin` answers 2, which
+ *   is what any absent remote name answers. Both write to stderr and leave stdout empty, so both
+ *   yield null here, and nothing reads the two apart. Whoever needs to tell them apart asks git
+ *   for the status rather than taking either number from this list, because a number in a
+ *   comment is only as good as the run behind it — these are from git 2.55.0;
  * - a host with no git to run answers with a null status and no stdout at all, which is why the
  *   status is read before the output: that case would otherwise throw on being read, where the
  *   two above would fall out of the parse as null anyway;

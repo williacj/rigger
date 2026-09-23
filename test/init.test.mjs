@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,17 +20,76 @@ const filesUnder = (dir) =>
     .filter((entry) => entry.isFile())
     .map((entry) => join(relative(dir, entry.parentPath), entry.name).split(sep).join('/'));
 
+/** Runs git in a repository, asserting that it answered. */
+function git(dir, ...args) {
+  const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
+  return ran.stdout;
+}
+
 /** A real git repository, with the remote this test wants it to have. */
 function repository(url) {
   const dir = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
-  const git = (...args) => {
-    const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
-    assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
-  };
-  git('init', '-q');
-  if (url) git('remote', 'add', 'origin', url);
+  git(dir, 'init', '-q');
+  if (url) git(dir, 'remote', 'add', 'origin', url);
   return dir;
 }
+
+/**
+ * Every file git says a repository holds under a directory, as repository-relative paths.
+ *
+ * Git owns what a repository holds, so it is asked rather than a directory walked (`D16` rule 1).
+ * The difference is the whole of what this answers: the working tree also carries files that are
+ * nobody's asset — `.claude/settings.local.json`, which Claude Code writes when a permission is
+ * approved, is the one that occurs here — and a walk reads those as assets. The index is asked
+ * rather than `HEAD`, so an asset staged for the next commit counts as held, which is what makes
+ * the answer true at the moment the commit hook runs.
+ */
+const heldUnder = (repoRoot, directory) =>
+  git(repoRoot, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
+
+/**
+ * Every way a repository and the templates it was forked from disagree, each naming the fix.
+ *
+ * Both directions, because each sees what the other cannot. A file `init` writes that is missing
+ * or different here is a template edited alone; a file the repository holds under a provider's
+ * directory that no template ships is an asset added alone, which would have this repository
+ * building itself on something a consumer never receives.
+ */
+function divergences(repoRoot, files) {
+  const fix = 'Templates are the source and these are the fork, so the two move together or not at all';
+  const found = [];
+  for (const file of files) {
+    const path = join(repoRoot, file.path);
+    if (!existsSync(path)) {
+      found.push(`\`${file.path}\` is a file \`init\` writes and this repository does not hold. ${fix}.`);
+    } else if (readFileSync(path, 'utf8') !== file.content) {
+      found.push(`\`${file.path}\` is not what \`init\` would write here. ${fix}.`);
+    }
+  }
+  for (const directory of Object.values(PROVIDER_ASSETS)) {
+    for (const path of heldUnder(repoRoot, directory)) {
+      if (!files.some((file) => file.path === path)) {
+        found.push(`\`${path}\` is an asset no template ships, so \`init\` would not produce it. ${fix}.`);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * One of each thing the card asks `init` to fork, written out by hand.
+ *
+ * `R-SAFE-6` names three kinds of asset — role prompts, skills and hooks — and the config is the
+ * fourth file. Written out rather than read back from a plan, because an expectation taken from
+ * the plan agrees with whatever the plan says, an empty one included.
+ */
+const FORKED = [
+  CONFIG,
+  '.claude/agents/engineer.md',
+  '.claude/skills/code-review/SKILL.md',
+  '.claude/hooks/refuse-reserved-git-commands.mjs',
+];
 
 /** The one file in a plan with this path, asserted to be there. */
 function planned(files, path) {
@@ -140,8 +199,8 @@ test('a repository with no origin remote gets the placeholder, and init says so'
 
 test('a host with no git to ask answers with the placeholder rather than a crash', () => {
   // Measured rather than reasoned: `spawnSync` answers a command it could not run at all with a
-  // null status and no output, where git run and refusing answers 128 with an empty stdout. Only
-  // the first would throw on being read, so the two are not one case. Git is taken off the PATH
+  // null status and no output at all, where git run and refusing answers 128 or 2 with an empty
+  // stdout. Only the first throws on being read, so the two are not one case. Git is off the PATH
   // here because that is the only seam there is — `repoSlug` spawns git itself, by design, so
   // there is no collaborator to substitute.
   const consumer = repository('https://github.com/acme/widgets.git');
@@ -160,8 +219,13 @@ test('init writes every file it planned, and names each one it wrote', () => {
   // The defect this catches is a fork that reports what it meant to do rather than what it did:
   // a directory it never created, a file it wrote empty, or a path missing from the report that
   // a consumer then never looks at.
+  //
+  // The loop below takes its expectation from `plan`, so on its own it would agree with a plan
+  // that had gone empty and report every one of nothing as written. `FORKED` is what stops that:
+  // four paths written out by hand, each asserted to be in the plan before the loop runs.
   const consumer = repository('https://github.com/acme/widgets.git');
   const written = plan({ repo: 'acme/widgets' });
+  for (const path of FORKED) planned(written, path);
 
   const ran = init({ target: consumer });
 
@@ -172,6 +236,13 @@ test('init writes every file it planned, and names each one it wrote', () => {
   }
 });
 
+/** What `init` would write into this repository, asking git for the name it goes by. */
+function forThisRepository() {
+  const repo = repoSlug(root);
+  assert.ok(repo, 'this checkout has no `origin` remote, so there is no repository name to compare against');
+  return plan({ repo });
+}
+
 test('this repository holds exactly what init produces for it, and nothing else', () => {
   // `templates/` is the source and this repository's own assets are what `init` forked from it,
   // so the two are one artifact rather than two copies, and this is what refuses a divergence.
@@ -181,29 +252,57 @@ test('this repository holds exactly what init produces for it, and nothing else'
   //
   // Read rather than run. `init` against this checkout is what `R-SAFE-5` forbids, and it is not
   // needed: `plan` answers what `init` would write without writing it.
-  const repo = repoSlug(root);
-  assert.ok(repo, 'this checkout has no `origin` remote, so there is no repository name to compare against');
-  const files = plan({ repo });
-  const fix = 'Templates are the source and these are the fork, so the two move together or not at all';
+  const files = forThisRepository();
 
-  for (const file of files) {
-    const path = join(root, file.path);
-    assert.ok(existsSync(path), `\`${file.path}\` is a file \`init\` writes and this repository does not hold. ${fix}.`);
-    assert.equal(readFileSync(path, 'utf8'), file.content, `\`${file.path}\` is not what \`init\` would write here. ${fix}.`);
-  }
+  assert.ok(files.length > 0, 'nothing is planned, so this compares nothing');
+  assert.deepEqual(divergences(root, files), []);
+});
 
-  // The other direction, which the loop above cannot see: an asset here that no template ships
-  // is one `init` would never produce, so this repository would be running on something a
-  // consumer never receives.
-  for (const directory of Object.values(PROVIDER_ASSETS)) {
-    for (const within of filesUnder(join(root, directory))) {
-      const path = `${directory}/${within}`;
-      assert.ok(
-        files.some((file) => file.path === path),
-        `\`${path}\` is an asset no template ships, so \`init\` would not produce it. ${fix}.`,
-      );
-    }
+test('a file under .claude that this repository does not hold is nobody\'s asset', () => {
+  // `.claude/settings.local.json` is written by Claude Code when a permission is approved for
+  // the project, and it is nobody's template. The defect this catches is the check above reading
+  // the directory rather than asking git: that file would red the suite, and a red suite is a
+  // commit and a push refused by `.githooks/pre-commit`, blaming a drift that does not exist.
+  //
+  // No ignore rule can be the answer, because a directory walk never consults one. The answer is
+  // that git decides what this repository holds, and the premise is asserted before the claim.
+  const local = join(root, '.claude', 'settings.local.json');
+  const ours = !existsSync(local);
+  try {
+    if (ours) writeFileSync(local, '{\n  "permissions": { "allow": [] }\n}\n');
+    assert.ok(existsSync(local), 'the file is not there, so this proves nothing about it');
+    assert.ok(
+      !heldUnder(root, '.claude').includes('.claude/settings.local.json'),
+      'git holds that file after all, so it is an asset and wants a template',
+    );
+
+    assert.deepEqual(divergences(root, forThisRepository()), []);
+  } finally {
+    if (ours) rmSync(local, { force: true });
   }
+});
+
+test('an asset a repository holds with no template behind it is still found', () => {
+  // The other half of the fix: asking git rather than walking must not cost the reverse
+  // direction its bite. Measured against a scratch repository rather than this one, so nothing
+  // here is mutated — `init` forks into it, git is given the result to hold, and then the two
+  // divergences that only the index can show are introduced.
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const files = plan({ repo: 'acme/widgets' });
+  init({ target: consumer });
+  git(consumer, 'add', '-A');
+  assert.deepEqual(divergences(consumer, files), []);
+
+  writeFileSync(join(consumer, '.claude', 'agents', 'stray.md'), 'ABOUTME: an agent with no template\n');
+  writeFileSync(join(consumer, '.claude', 'skills', 'tdd', 'SKILL.md'), 'ABOUTME: edited here alone\n');
+  git(consumer, 'add', '-A');
+
+  assert.deepEqual(divergences(consumer, files).sort(), [
+    '`.claude/agents/stray.md` is an asset no template ships, so `init` would not produce it. '
+      + 'Templates are the source and these are the fork, so the two move together or not at all.',
+    '`.claude/skills/tdd/SKILL.md` is not what `init` would write here. '
+      + 'Templates are the source and these are the fork, so the two move together or not at all.',
+  ].sort());
 });
 
 test('the config init writes into a repository with none is one the validator accepts', async () => {
@@ -258,15 +357,9 @@ test('the command forks the assets into the repository it is run in, from the pa
 
   assert.equal(ran.code, 0, `${ran.out}${ran.err}`);
   assert.doesNotMatch(ran.out + ran.err, /not yet implemented/);
-  // One of each thing the card asks to be forked, written out by hand rather than read back from
-  // the plan: a loop over `plan()` would pass on an empty plan, which is the defect it is meant
-  // to catch. `R-SAFE-6` names three kinds of asset and the config is the fourth file.
-  for (const path of [
-    CONFIG,
-    '.claude/agents/engineer.md',
-    '.claude/skills/code-review/SKILL.md',
-    '.claude/hooks/refuse-reserved-git-commands.mjs',
-  ]) {
+  // One of each thing the card asks to be forked, read from `FORKED` rather than from the plan,
+  // because a loop over the plan would pass on an empty one.
+  for (const path of FORKED) {
     assert.ok(existsSync(join(consumer, path)), `\`${path}\` is not in the repository the command ran in`);
   }
   for (const file of plan({ repo: 'acme/widgets' })) {
