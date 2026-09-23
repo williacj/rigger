@@ -125,7 +125,15 @@ function reaches(running, floor) {
  */
 export function nodeVersion({ packageRoot = PACKAGE, running = process.versions.node } = {}) {
   const name = 'Node version';
-  const declared = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).engines?.node;
+  let declared;
+  try {
+    declared = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).engines?.node;
+  } catch (threw) {
+    // A check that throws takes the whole report with it: the three checks below never run, and
+    // a consumer setting Rigger up sees a stack trace where a line per check belongs. Every other
+    // check here can say it could not look, and this one is no different.
+    return { name, ok: null, detail: `the floor could not be read from \`package.json\`: ${oneLine(threw.message)}` };
+  }
   const floor = typeof declared === 'string' ? declared.trim().match(FLOOR) : null;
   if (!floor) {
     return {

@@ -157,6 +157,26 @@ test('a floor written in a form this reader does not read is said to be unread, 
   }
 });
 
+test('a package.json the check cannot read is reported as unread, and never thrown', () => {
+  // Every other check answers where it could not look, and this one read its file as though it
+  // were always there. The defect this catches is the crash: a check that throws takes the whole
+  // report with it, so the three checks that would have answered never run and what a consumer
+  // sees is a stack trace where a line per check belongs.
+  //
+  // Found by a mutation that stopped `repoRoot` asking git, which pointed the check at a
+  // directory with no `package.json` and turned a refusal into an ENOENT.
+  const empty = mkdtempSync(join(tmpdir(), 'rigger-nopackage-'));
+  const malformed = mkdtempSync(join(tmpdir(), 'rigger-malformed-'));
+  writeFileSync(join(malformed, 'package.json'), '{ "engines": ');
+
+  for (const packageRoot of [empty, malformed]) {
+    const said = nodeVersion({ packageRoot, running: process.versions.node });
+
+    assert.equal(said.ok, null, said.detail);
+    assert.doesNotMatch(said.detail, /[\r\n]/, said.detail);
+  }
+});
+
 /**
  * What each authority really answered on this host, recorded so a test can hand it back.
  *
