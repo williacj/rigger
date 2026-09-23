@@ -8,8 +8,9 @@ entry says what taught us. `AGENTS.md` holds when an entry is committed.
 
 ## 2026-09-22 — A version boundary is a range, and a major number is not one
 
-Card #73 made the package budget agree with `node --test` about which filenames are tests. Five
-rounds, and each round a claim about node turned out to be narrower than it was written.
+Card #73 made the package budget agree with `node --test` about which filenames are tests. Six
+rounds, and each round the record claimed something wider than what had been run. Five of those
+were claims about node; the first was a bound on this check's own line scan.
 
 What the runner does changed three times, not once, and each move is independent of the others.
 Glob matching arrived in **21**, not 22 — Node 20 has no glob-shaped pattern at all, only
@@ -38,6 +39,20 @@ That was the fourth instance on this one card of a single mistake: a bound on th
 accuracy, then the brace-list boundary, then the set of versions the class covers, then the window
 its move was said to sit in. Every one was quantified over versions nobody had run, and every one
 read as measured.
+
+**Every finding was in the explanation, never in the statement.** A fifth followed: the record
+said both of its disagreements with the runner came from one cause and that neither was about
+case. Measured, the two have nothing in common. `*[.-_]test` spells a range from `.` at 0x2E to
+`_` at 0x5F. `b-test` is never matched, folded or not, because `-` at 0x2D falls below the range.
+`latest` and `notatest` are matched **only** when folded, because `a` at 0x61 falls above `_` and
+enters the range only as `A` at 0x41 — so that half of it is caused by case, and exists only where
+node sets `nocase`. One sentence of mechanism, and it was wrong about half the cases it covered.
+
+What the check's own record owes a reader is which names it and the runner disagree on, in which
+direction, on which versions, and what was measured on what. It owes no account of why. Five
+rounds of findings all landed in prose that answered a question nobody asked, and the sixth round
+deleted that prose rather than improving it. Where an explanation is worth having, it belongs
+somewhere that binds nothing — here, or on the card that owns the axis.
 
 Each wrong claim was found the same way: by running the real interpreter, not by reading a
 changelog or reasoning from the major number. Installing pinned interpreters (`npm i node@22.9.0`)

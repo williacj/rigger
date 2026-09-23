@@ -66,33 +66,35 @@ const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
 // `TEST.mjs` ran under 21.0.0, 21.7.3, 22.0.0 and 22.9.0, and was declined under 20.20.2,
 // 22.10.0, 22.23.2, 23.11.1 and 24.18.0, which is the extension respelling above.
 //
-// Where this answer differs from the runner's, and where it is reasoned rather than measured.
+// Where this answer differs from the runner's. Each name was put to the real runner and to this
+// check under the same interpreter, on Windows 11 10.0.26200, NTFS. Under 20.20.2, 22.9.0,
+// 22.10.0, 22.23.2, 23.11.1 and 24.18.0 the two agree on every name below. Under the other four
+// interpreters run, they do not:
 //
-// Node 21 folds and this does not, so a case-varied spelling is charged there: an overcount, so
-// far as case goes. The suite reds there on `645eeec` as well, so it predates this check, and
-// agreeing with 21 is its own card. The class below is a second disagreement on those same
-// versions, and that one does not run in a single direction.
+//   21.0.0 and 21.7.3   charged, and the runner runs them:     `a.TEST.mjs`, `TEST-b.mjs`,
+//                                                              `c_Test.mjs`, `TEST.mjs`,
+//                                                              `latest.mjs`, `notatest.mjs`
+//                       excluded, and the runner declines it:  `b-test.mjs`
+//   22.0.0 and 22.8.0   charged, and the runner runs them:     `latest.mjs`, `notatest.mjs`
+//                       excluded, and the runner declines them: `b-test.mjs`, `b-TEST.mjs`
 //
-// The range class is not Node 21's alone: it runs from 21.0.0 through 22.8.0, every release of
-// it. Against a runner spelling the class that way this file disagrees in both directions, and
-// neither is about case. It charges `latest.mjs` and `notatest.mjs`, which such a runner runs —
-// an overcount. And it calls `b-test.mjs` and `b-TEST.mjs` tests and charges nothing for them,
-// which such a runner declines — an undercount, and the direction that matters. Both follow from
-// `-` at 0x2D sitting below the range's `.` at 0x2E, so they are a difference in what the runner
-// matches at all rather than in how it treats case: folding neither causes nor cures them, and
-// `b-test.mjs` is affected in lower case. It is not silent — the budget suite reds on 21.0.0 and
-// 22.0.0 for `645eeec` as much as for this file, and is green there on 22.9.0 — and following
-// the class is its own card rather than this one's.
+// Charged where the runner runs it is an overcount; excluded where the runner declines it is an
+// undercount. Neither is silent: the budget suite reds on 21.0.0 and 22.0.0 for `645eeec` as
+// much as for this file, and is green there on 22.9.0. Closing any of it belongs to the card
+// that owns the version axis rather than to this one.
 //
-// Linux is reasoned from node's own predicate in `internal/fs/glob` rather than measured. That
-// predicate reads `nocase: isWindows || isOSX` at v21.0.0 and v22.0.0, and `nocase: isWindows ||
-// isMacOS` at v22.9.0 and v24.18.0 — one rule respelled, naming those two platforms and never a
-// third. Linux goes unmeasured because D13 makes macOS v0's only host and CI runs nowhere else.
-// If the reasoning is wrong it charges a test rather than passing over production code, which is
-// the safe way to be wrong: this check overcounting cannot admit a package that is over budget,
-// where undercounting could. Nor would it pass quietly — the relation test in
-// `test/package-budget.test.mjs` asks the real runner, in both directions, on whatever host the
-// suite runs, and reds there.
+// Ten interpreters were put to that comparison, the six named above and the four in the table.
+// It is what was measured, not a range: no release between them was put to it.
+//
+// All of it was measured on Windows, where the runner folds. On a host where it does not fold
+// these names were not measured, so this file says nothing about them there.
+//
+// Linux is measured by nobody. What stands in for it is node's own predicate in
+// `internal/fs/glob`: `nocase: isWindows || isOSX` at v21.0.0 and v22.0.0, and `nocase:
+// isWindows || isMacOS` at v22.9.0 and v24.18.0, read at those four tags. D13 makes macOS v0's
+// only host and CI runs nowhere else, which is why no Linux measurement exists. Nor would a
+// disagreement there pass quietly — the relation test in `test/package-budget.test.mjs` asks the
+// real runner, in both directions, on whatever host the suite runs, and reds there.
 const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map(Number);
 const RUNNER_FOLDS_CASE =
   NODE_MAJOR >= 22 && (process.platform === 'win32' || process.platform === 'darwin');
