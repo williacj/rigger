@@ -36,9 +36,16 @@ test('a single document path is refused, because one document compares against n
 test('--self-test carrying a further argument is refused rather than silently ignoring it', () => {
   // Two forms are accepted and this is neither. A caller who passed a document path alongside
   // --self-test asked for something the script does not do, and watched it self-test instead.
-  const { status } = run('--self-test', 'ARCHITECTURE.md');
+  //
+  // Two arguments is also the shape of the two-document form, so this vector is the one that
+  // tells whether the arity check alone is enough. An option is not a document path: read as
+  // one, it is refused for the wrong reason, as a file nothing answers to, and the caller is
+  // told nothing about what the script accepts.
+  const { status, stderr } = run('--self-test', 'ARCHITECTURE.md');
 
   assert.notEqual(status, 0);
+  assert.match(stderr, /no such invocation/);
+  assert.match(stderr, /<source\.md> <destination\.md>/);
 });
 
 test('three document paths are refused rather than comparing the first two', () => {
@@ -50,15 +57,31 @@ test('three document paths are refused rather than comparing the first two', () 
   assert.match(stderr, /no such invocation/);
 });
 
-test('a refusal names both accepted forms on stderr, so a caller never opens the file', () => {
-  // Derived from the acceptance rather than from the script: the two forms are `--self-test`
-  // and a pair of document paths, and a caller has to be able to read both off the refusal.
-  const { status, stdout, stderr } = run('--bogus');
+// Every shape of argument vector that is neither accepted form: too few, too many, an
+// unrecognised option, an option where a path belongs, and an option twice over.
+const REFUSED = [
+  [],
+  ['ARCHITECTURE.md'],
+  ['--bogus'],
+  ['--self-test', 'ARCHITECTURE.md'],
+  ['--bogus', '--bogus'],
+  ['ARCHITECTURE.md', 'docs/spec/requirements.md', 'README.md'],
+];
 
-  assert.notEqual(status, 0);
-  assert.match(stderr, /--self-test/);
-  assert.match(stderr, /<source\.md> <destination\.md>/);
-  assert.equal(stdout, '', 'a refusal says nothing on stdout, where a report would sit');
+test('every refused vector names both accepted forms on stderr, and says nothing on stdout', () => {
+  // Derived from the acceptance rather than from the script: the two forms are `--self-test`
+  // and a pair of document paths, and a caller has to be able to read both off the refusal
+  // whichever way the vector was wrong.
+  for (const vector of REFUSED) {
+    const { status, stdout, stderr } = run(...vector);
+    const named = `[${vector.join(' ')}]`;
+
+    assert.notEqual(status, 0, `${named} exited 0`);
+    assert.match(stderr, /no such invocation/, `${named} was refused for some other reason`);
+    assert.match(stderr, /--self-test/, `${named} left the self-test form unnamed`);
+    assert.match(stderr, /<source\.md> <destination\.md>/, `${named} left the two-document form unnamed`);
+    assert.equal(stdout, '', `${named} printed on stdout, where a report would sit`);
+  }
 });
 
 /** A pair of documents on disk: a source to read clauses out of, and a destination table. */

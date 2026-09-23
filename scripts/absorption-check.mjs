@@ -200,7 +200,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(selfTest() === 0 ? 0 : 1);
   }
 
-  if (args.length === 2) {
+  // An option is not a document path. Two arguments is the shape of this form, so without
+  // this an option alongside a path reads as a file, and the refusal names a missing file
+  // rather than the invocations the script accepts.
+  if (args.length === 2 && !args.some((a) => a.startsWith('-'))) {
     const [archPath, reqPath] = args;
     // A document short of the heading, or absent altogether, is a failure of the invocation and
     // not of the comparison. It reads as one line, because an unhandled throw here reached the
