@@ -258,7 +258,7 @@ package budget. The core is L1 plus L0's process adapter, so it spans two rows, 
 stray process or a lost result. The gate has a row of its own, carved from L2's, because L2 owns
 the rule and the hook enforces it.
 These bound Rigger's own production code — what runs while a card is being worked. L4 has no
-budget: the roles, review procedure, and provisioning steps are the consumer's, live in the
+production-line budget: the roles, review procedure, and provisioning steps are the consumer's, live in the
 consumer's repository, and are theirs to size. L7 is a person.
 
 Four things are not counted. Tests, the templates under `templates/`, and the checks Rigger ships
@@ -286,6 +286,11 @@ budget change.
 Instruction files carry one budget of their own, covering the root `AGENTS.md` and every nested
 one together, checked the same way: one number, one check. Moving text from the root file into a
 directory's file therefore changes nothing; only deleting does. The budget is 2,500 words.
+
+Rigger's live instruction pool covers its `.claude/` role prompts and skill instructions. Its
+budget is 13,000 words, separate from the `AGENTS.md` budget. The check counts each live file
+once. Distribution templates under `templates/claude/` do not spend this pool. Another consumer
+sizes its own L4 roles and procedures.
 
 ## Where to start reading
 

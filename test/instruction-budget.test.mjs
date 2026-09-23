@@ -62,7 +62,7 @@ test('moving text from the root file into a nested one spends nothing', () => {
   const total = (rootFile, nestedFile) => {
     const root = mkdtempSync(join(tmpdir(), 'rigger-words-'));
     mkdirSync(join(root, 'src'), { recursive: true });
-    writeFileSync(join(root, 'ARCHITECTURE.md'), 'The budget is 2,000 words.\n');
+    writeFileSync(join(root, 'ARCHITECTURE.md'), 'The budget is 2,000 words. Live instruction pool budget is 13,000 words.\n');
     writeFileSync(join(root, 'AGENTS.md'), rootFile);
     writeFileSync(join(root, 'src', 'AGENTS.md'), nestedFile);
     return check(root).total;
