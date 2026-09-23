@@ -6,7 +6,6 @@
   },
   "exempt": {
     "paths": {
-      "docs/derived/": "D8 rule 4: the directory is created by the first generated document and never stands empty, so nothing under it exists until the test matrix lands. This entry goes when it does."
     }
   }
 }
