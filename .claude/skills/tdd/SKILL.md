@@ -1,11 +1,11 @@
 ---
 name: tdd
-description: Write code test-first — a failing test, the minimal code that passes it, then refactor while green. Use before the first test body of any change to source, for every bug fix, and when deciding what a test must declare about the requirement it proves.
+description: Write code test-first — a failing test, the minimal code that passes it, then refactor while green. Use before the first test body of any change to source, for every bug fix, when claiming that a mutation shows a test discriminates, and when deciding what a test must declare about the requirement it proves.
 ---
 
 ABOUTME: The failing-test-first loop this repository requires, what counts as a real red, what
-makes a test worth keeping, what a test declares about the requirement it proves, and the rules
-on sleeps, deleted tests and spikes.
+makes a test worth keeping, what a mutation claim must show before it is evidence, what a test
+declares about the requirement it proves, and the rules on sleeps, deleted tests and spikes.
 
 # Test-driven development
 
@@ -88,6 +88,53 @@ For a worked example, read `test/package-budget.test.mjs`, which covers one fact
 for the difference the two kinds make. A test that pins the tool's answer is the readable one and
 says what that answer is today, while a test that asks the tool is the one that fails when the
 answer moves.
+
+## A mutation claim
+
+Deleting a line, flipping a condition or breaking a value and watching a test red is how you
+learn whether that test discriminates. Acceptance items in this repository have already been
+settled on such a claim, which makes the claim evidence — and **a mutation is evidence only once
+it is shown to have applied.** An unguarded mutation reports either answer regardless of the
+truth, and neither way it lies is visible in the output.
+
+- **A mutation that did not apply** runs the unmodified code and reports green. Read as a result
+  it says the test does not discriminate, which is the opposite of the truth, invented.
+- **A mutation that stops the run reaching a verdict** — a file it broke, an import that now
+  throws, a loop that never ends — is booked by `node --test` as one failing test named after the
+  file. Read as a result it says the test discriminates, when nothing was tested at all.
+
+A green suite after a mutation that never landed looks exactly like a green suite after one that
+landed uncaught, and a run that never reached a verdict looks exactly like a test failing for the
+reason you wanted. So show all of these, for each mutation, before you say what it proved:
+
+1. **The anchor was there.** The pattern you replaced occurred the number of times you expected.
+   Zero occurrences is a write that changed nothing and a run that reports green.
+2. **The replacement landed.** Read the bytes back off disk rather than trusting the edit, and
+   have `git diff` show them.
+3. **The mutant still runs.** The run reached a verdict on the tests you aimed at: it reported
+   the number of tests that target normally reports, and what it names are tests rather than the
+   file. `node --check` is a cheap pre-filter and not this check — a mutant that parses and loads
+   can still hang or end the test process another way, and the runner then books the whole file
+   as one failing test, named after the file with no assertion under it. That is the same output
+   a discriminating red has, so the count is what tells them apart.
+4. **The mutation did what it meant.** Read the mutated value or behaviour back and say what it
+   now is. A diff proves an edit, never an effect: a replacement can land, parse, and mutate
+   something other than what you meant.
+5. **The report names the tests and the assertions.** Which tests failed, and on which
+   assertion. A pass or fail count is the weakest signal there is, because both failures above
+   produce a plausible one, and reading the messages is what tells *redded for the right reason*
+   from *redded at all*.
+6. **The original is back.** Restored byte-exact, with `git status` for the file clean, before
+   the next mutation and before any commit.
+7. **A failed guard exits non-zero.** A guard that reports a result it could not vouch for is
+   itself the defect.
+
+One mutation removes one behaviour. Batching several reports the union and hides the gap.
+
+No check can tell whether you ran any of this, and none is coming: requirement 4 is a different
+question for every mutation, which is why there is no helper here to reach for.
+`test/mutation-claim.test.mjs` holds this bar in place and enforces nothing about its use, so it
+is a bar you hold yourself to and a judge reads your claim against.
 
 ## A bug fix
 
