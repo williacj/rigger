@@ -168,11 +168,14 @@ test('the lint reads the README, the architecture and the authored files under d
   const root = mkdtempSync(join(tmpdir(), 'rigger-lint-'));
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   mkdirSync(join(root, 'docs', 'derived'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'journal'), { recursive: true });
   for (const path of [
     ['README.md'],
     ['ARCHITECTURE.md'],
     ['AGENTS.md'],
-    ['docs', 'journal.md'],
+    // The journal's own README is the sharpest case: the scope entry is a root-relative path
+    // rather than a basename, so a nested `README.md` is not the one the lint reads.
+    ['docs', 'journal', 'README.md'],
     ['docs', 'v0-build-plan.md'],
     ['docs', 'derived', 'test-matrix.md'],
     ['docs', 'spec', 'decisions.md'],
