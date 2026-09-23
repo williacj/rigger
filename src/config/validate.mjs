@@ -1,5 +1,23 @@
 // ABOUTME: The config core: the declarations a consumer may make, which of them Rigger requires,
-// ABOUTME: and the refusal of anything else, each refusal naming what it refused.
+// ABOUTME: the values only the consumer can answer, and the refusal of anything else, each
+// ABOUTME: refusal naming what it refused.
+
+/**
+ * The value the starter config carries where only the consumer can answer, by the key it sits
+ * under. A placeholder is a name where a value belongs, so a config still holding one is refused.
+ *
+ * `repo` is here because a repository not yet pushed anywhere has no `origin` for `init` to read.
+ * `project` is here for the stronger reason: a board number is GitHub's fact and nothing `init`
+ * can read names it. Asking GitHub for the boards linked to the repository answers three for
+ * `nodejs/node`, none for `cli/cli`, and a permission error for a repository behind an
+ * organization's SAML enforcement, each measured with `gh api graphql` on 2026-09-23 — so which
+ * board Rigger works is the consumer's to say, and a plausible number shipped as a default would
+ * have Rigger work whatever board it happens to name.
+ */
+export const PLACEHOLDER = {
+  repo: 'OWNER/REPOSITORY',
+  project: 'PROJECT_NUMBER',
+};
 
 /**
  * Every declaration a consumer may make, by the shape it sits in.
@@ -9,16 +27,17 @@
  * nothing besides: `test/config.test.mjs` runs the published shape and holds the two to each
  * other, so a declaration the architecture does not spell is not offered here.
  *
- * A rule carries three things. `required` says Rigger can do nothing without the key and no
+ * A rule carries four things. `required` says Rigger can do nothing without the key and no
  * default is fixed anywhere in the binding documents — which is why `repo` is required and
  * `concurrency` is not, the engine-settings row defaulting N to three. `keys` names the shape the
  * value's own keys are read against. `entries` names the shape each value under a consumer-named
  * key is read against, which is how `roles`, `kinds` and `provisioning` hold names Rigger never
- * fixes.
+ * fixes. `placeholder` names the value the starter config arrives holding, which is a name rather
+ * than an answer and is refused as one.
  */
 export const SHAPES = {
   config: {
-    repo: { required: true },
+    repo: { required: true, placeholder: PLACEHOLDER.repo },
     board: { required: true, keys: 'board' },
     concurrency: {},
     roles: { required: true, entries: 'role' },
@@ -28,7 +47,7 @@ export const SHAPES = {
     telemetry: { keys: 'telemetry' },
   },
   board: {
-    project: { required: true },
+    project: { required: true, placeholder: PLACEHOLDER.project },
     columns: { required: true, keys: 'columns' },
   },
   // Every column the config declares, which M1 reads off the board. A display name has no
@@ -127,6 +146,14 @@ function readShape(value, shape, path, refusals) {
     }
     if (rule.type && !holds(value[key], rule.type)) {
       refusals.push(`\`${at(path, key)}\` must be ${SAYS[rule.type]}`);
+    }
+    // `undefined` on both sides is a rule that names no placeholder against a key declared with
+    // no value, which is a refusal the shape earns elsewhere and not this one.
+    if (rule.placeholder !== undefined && value[key] === rule.placeholder) {
+      refusals.push(
+        `\`${at(path, key)}\` still holds \`${rule.placeholder}\`, which is the name the starter `
+        + 'config carries where only you can answer it',
+      );
     }
     if (rule.keys) readShape(value[key], rule.keys, at(path, key), refusals);
     if (rule.entries) {
