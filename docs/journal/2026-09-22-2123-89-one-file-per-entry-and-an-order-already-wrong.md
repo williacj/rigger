@@ -21,8 +21,14 @@ that, and no reader could have caught it: every heading carries a date and no ti
 record fine enough to contradict the order was the commit log.
 
 So the newest-first rule those five conflicts were paid to preserve had already lost a piece of
-what it was preserving. The file names now carry the time, measured from the commit that wrote
-each entry rather than inferred from where the entry sat.
+what it was preserving. Every migrated entry's file name now carries the time of the commit that
+wrote it, measured rather than inferred from where the entry sat.
+
+That measurement is available only to a migration, and saying so is the honest bound. An entry
+written from here on is named before the commit that carries it exists, so its time is chosen by
+hand and cannot be the commit's — this entry is named `2123` against a commit stamped 21:27. The
+name claims the time the entry was written, which is what a writer can know, and nothing checks
+it.
 
 The migration surface the card measured was one reference short, and the check that would have
 caught it is the one the card named as its own falsifier. `docs/spec/decisions.md` ends `D16`
@@ -31,7 +37,7 @@ deleting the file reds `check:paths` at that line. The card's table listed four 
 that one. Grepping for the string rather than reading the table found it in a second, which is
 the cheaper order. A measured list in a card is evidence about the moment it was measured, and
 this one had drifted twice over: the card counts three entries at `0df465b` where that commit
-holds four, the file held seven when the work started, and eight by the time it was mergeable.
+holds four, the file held seven when the work started, and nine by the time it was mergeable.
 
 The fix there is a one-word path, and it is still a diff inside `docs/spec/`. A reference that
 resolves is not the same as a claim that holds: leaving `docs/journal.md` in place as a stub
@@ -39,16 +45,23 @@ would have kept `check:paths` green while making `D16`'s last sentence false, an
 failure `AGENTS.md` names when it says the resolver passing is no evidence the citation is
 sound. Green was available and wrong.
 
-The split had to survive one more conflict on the file it was deleting, and the shape of that
-one is worth recording because it is the shape every card open at the cut will meet. Card #91
-merged an entry into `docs/journal.md` while this branch had already deleted it, so `git` raised
-a modify/delete rather than a text conflict: it left `main`'s whole file in the tree and refused
-to guess. That is the right refusal, because the resolution is not mechanical — the incoming
-entry has to be migrated into the new form, with its own measured time, before the file goes.
-The cost is one migration per branch and it is paid once, which is the trade this card is for.
+The split had to survive further conflicts on the file it was deleting, and their shape is worth
+recording because it is the shape every card open at the cut will meet. Card #91 merged an entry
+into `docs/journal.md` while this branch had already deleted it, so `git` raised a modify/delete
+rather than a text conflict: it left `main`'s whole file in the tree and refused to guess. That
+is the right refusal, because the resolution is not mechanical — the incoming entry has to be
+migrated into the new form, with its own measured time, before the file goes.
 
-The entries were moved by a script and checked by a second one, because eight hand-moves are
-eight chances to reflow a paragraph. The checker asserts each new file's body appears verbatim
+Then card #97 did it again, which is the more useful half. The first draft of the paragraph above
+called the cost "one migration per branch, paid once", and that was a prediction dressed as a
+measurement: two cards landed entries while this one was open, so this branch paid it twice. The
+cost is one migration per entry that lands while a branch is open, and what bounds it is how long
+the branch stays open rather than anything this card can do. A card that ends journal conflicts
+is itself blocked by journal conflicts, so the number is settled by where it sits in the merge
+order.
+
+The entries were moved by a script and checked by a second one, because nine hand-moves are nine
+chances to reflow a paragraph. The checker asserts each new file's body appears verbatim
 in `docs/journal.md` as it stood before the split, and it failed every one on its first run: the
 working tree is CRLF under `core.autocrlf`, `git show` hands out LF, and the comparison was
 between the two. The entry at `2026-09-22-1700-36-a-generated-document-and-crlf.md` is about
