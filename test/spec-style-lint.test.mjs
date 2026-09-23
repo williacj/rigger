@@ -164,7 +164,7 @@ test('the lint reports no finding about whether prose should have been a list', 
   assert.deepEqual(findings(prose, under([])), []);
 });
 
-test('the lint reads the README, the architecture and the authored files under docs/spec', () => {
+test('the lint reads README.md, ARCHITECTURE.md, docs/spec/decisions.md and docs/spec/requirements.md', () => {
   const root = mkdtempSync(join(tmpdir(), 'rigger-lint-'));
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   mkdirSync(join(root, 'docs', 'derived'), { recursive: true });
@@ -192,7 +192,7 @@ test('the lint reads the README, the architecture and the authored files under d
   ]);
 });
 
-test('which documents the lint reads is the skill, so a scope it does not name is not read', () => {
+test('the lint reads only scope roots named by the skill', () => {
   const root = mkdtempSync(join(tmpdir(), 'rigger-scope-'));
   writeFileSync(join(root, 'README.md'), 'A document.\n');
   writeFileSync(join(root, 'ARCHITECTURE.md'), 'A document.\n');
@@ -201,7 +201,7 @@ test('which documents the lint reads is the skill, so a scope it does not name i
   assert.deepEqual(lintFiles(root, narrowed), ['README.md']);
 });
 
-test('the binding documents pass the lint', () => {
+test('the four linted documents pass the lint', () => {
   // The lint guards documents it did not write. A finding here is a claim about the binding
   // documents, which only the owner may change, so a red here means the lint is wrong until they
   // say otherwise. The message carries every finding, because one at a time would cost a round
