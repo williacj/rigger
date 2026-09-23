@@ -78,6 +78,38 @@ test('no pattern matches the line that declares it, so the list is no finding of
   for (const word of RULED_OUT) assert.deepEqual(findings(word.pattern, RULED_OUT), []);
 });
 
+/**
+ * The word a pattern names, recovered by unbracketing its one bracketed character.
+ *
+ * The word is derived rather than written, because writing it is the thing the pattern exists to
+ * avoid. A pattern bracketing anything but exactly one character is refused here, because there
+ * is then no word to recover and no assertion to make.
+ */
+function unbracketed(pattern) {
+  const classes = pattern.match(/\[[^\]]*\]/g) ?? [];
+  assert.deepEqual(
+    classes.map((one) => one.length), [3],
+    `${pattern} does not bracket exactly one character, so it names no word`,
+  );
+  return pattern.replace(/\[(.)\]/, '$1');
+}
+
+test('every pattern matches the word it names, and stops matching if its bracket slips', () => {
+  // The test above says the list finds nothing in its own line, and the live-repository test
+  // below says no tracked file carries a word. Both are zero-claims: each reads the same whether
+  // the word is absent or the pattern matches nothing at all. This is the positive one. Moving a
+  // bracket one character right, `a[b]c` to `a[bc]`, is the likeliest slip in this scheme and
+  // leaves a pattern matching neither the word nor its own line, with every other test green.
+  for (const word of RULED_OUT) {
+    const spelling = unbracketed(word.pattern);
+    assert.deepEqual(findings(spelling, [word]).map((one) => one.match), [spelling]);
+
+    const slipped = { ...word, pattern: word.pattern.replace(/\[(.)\](.)/, '[$1$2]') };
+    assert.notEqual(slipped.pattern, word.pattern);
+    assert.deepEqual(findings(spelling, [slipped]), []);
+  }
+});
+
 test('the check reads a file of every kind this repository holds', () => {
   // A guard is worth what it reaches. These six are the directories the word it rules out had
   // got to, and a scope narrowed to the documents a lint reads would let five of the six back in.
