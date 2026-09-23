@@ -576,7 +576,7 @@ function programWords(given) {
     // its body — on the same line as the body's first command, because `)` is no operator here.
     // The scan runs to the first word ending in `)` rather than testing one word, because the
     // pattern may be several words and may itself hold a `)`.
-    if (first === 'caseZ') {
+    if (first === 'case') {
       const pattern = words.findIndex((word, at) => at > 0 && word.endsWith(')'));
       if (pattern === -1) return [];
       words = words.slice(pattern + 1);
