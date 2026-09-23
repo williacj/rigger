@@ -194,6 +194,47 @@ test('a template for a provider Rigger has no destination for is refused by name
   assert.throws(() => plan({ templates, repo: 'acme/widgets' }), /codex/);
 });
 
+/** A templates directory holding the starter config and one provider directory with one file. */
+function templatesNaming(provider) {
+  const templates = mkdtempSync(join(tmpdir(), 'rigger-templates-'));
+  copyFileSync(join(TEMPLATES, CONFIG), join(templates, CONFIG));
+  mkdirSync(join(templates, provider));
+  writeFileSync(join(templates, provider, 'a.md'), 'ABOUTME: a second adapter\n');
+  return templates;
+}
+
+test('a provider named after anything `Object.prototype` carries is refused like any other', () => {
+  // The refusal above asks `PROVIDER_ASSETS` whether it offers a destination, and every name that
+  // table inherits answers as though it did. Read by truthiness, `constructor` yields the `Object`
+  // constructor and `__proto__` yields `Object.prototype`, both truthy, so the refusal never fires
+  // and the fork path becomes that value stringified — `function Object() { [native code] }/a.md`.
+  //
+  // The names are asked of the runtime rather than written out, because the set is the runtime's
+  // to decide: a name a later Node adds to `Object.prototype` is covered here the day it lands,
+  // where a typed list would still be describing the runtime that was current when it was typed.
+  const inherited = Object.getOwnPropertyNames(Object.prototype);
+  assert.ok(inherited.includes('constructor'), 'the runtime names no `constructor` to probe with');
+
+  for (const provider of inherited) {
+    assert.throws(
+      () => plan({ templates: templatesNaming(provider), repo: 'acme/widgets' }),
+      new RegExp(provider.replace(/[$]/g, '\\$&')),
+      `\`templates/${provider}/\` was not refused, or the refusal never named it`,
+    );
+  }
+
+  // The other half of the same claim: a provider the table does own is still planned where it
+  // always was, so the loop above shows a refusal narrowed to inherited names rather than one
+  // widened to every name.
+  for (const provider of Object.keys(PROVIDER_ASSETS)) {
+    const planned = plan({ templates: templatesNaming(provider), repo: 'acme/widgets' });
+    assert.ok(
+      planned.some((file) => file.path === `${PROVIDER_ASSETS[provider]}/a.md`),
+      `\`templates/${provider}/a.md\` was not planned into \`${PROVIDER_ASSETS[provider]}/\``,
+    );
+  }
+});
+
 test('the repository a config names is the one git says the origin remote points at', () => {
   // Git owns what `origin` is, so it is asked rather than restated (`D16`). Both spellings are
   // real repositories here, created and configured through git itself, because a fixture string
