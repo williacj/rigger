@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG, PROVIDER_ASSETS, REPO_PLACEHOLDER, TEMPLATES, plan, repoSlug } from '../src/cli/init.mjs';
+import { CONFIG, PROVIDER_ASSETS, REPO_PLACEHOLDER, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -134,4 +134,48 @@ test('a host with no git to ask answers with the placeholder rather than a crash
   }
 
   assert.equal(repoSlug(consumer), 'acme/widgets');
+});
+
+test('init writes every file it planned, and names each one it wrote', () => {
+  // The defect this catches is a fork that reports what it meant to do rather than what it did:
+  // a directory it never created, a file it wrote empty, or a path missing from the report that
+  // a consumer then never looks at.
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const written = plan({ repo: 'acme/widgets' });
+
+  const ran = init({ target: consumer });
+
+  assert.equal(ran.code, 0, ran.text);
+  for (const file of written) {
+    assert.equal(readFileSync(join(consumer, file.path), 'utf8'), file.content, file.path);
+    assert.ok(ran.text.includes(file.path), `the report never names \`${file.path}\`:\n${ran.text}`);
+  }
+});
+
+test('a second run leaves an edited template alone, and names everything it skipped', () => {
+  // Measured by running it twice with an edit in between rather than argued from the code. The
+  // defect this catches is the fork a consumer cannot trust: `init` run again — by a person, or
+  // by a later card's provisioning step — overwriting a role prompt that repository had made its
+  // own. Silence would be nearly as bad, so the report has to name each file it left.
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const files = plan({ repo: 'acme/widgets' });
+  const first = init({ target: consumer });
+  assert.match(first.text, new RegExp(`wrote ${files.length} of ${files.length} files`));
+
+  const ours = '.claude/agents/engineer.md';
+  const edited = 'ABOUTME: this repository has made this prompt its own.\n';
+  writeFileSync(join(consumer, ours), edited);
+  const before = files.map((file) => readFileSync(join(consumer, file.path), 'utf8'));
+
+  const second = init({ target: consumer });
+
+  assert.equal(readFileSync(join(consumer, ours), 'utf8'), edited);
+  assert.equal(second.code, 0, second.text);
+  assert.match(second.text, new RegExp(`wrote 0 of ${files.length} files`));
+  // Read back against what was on disk before the second run, so the skip is shown to be the
+  // rule rather than a special case for the one file that was edited.
+  files.forEach((file, index) => {
+    assert.equal(readFileSync(join(consumer, file.path), 'utf8'), before[index], file.path);
+    assert.ok(second.text.includes(file.path), `the second run never names \`${file.path}\`:\n${second.text}`);
+  });
 });

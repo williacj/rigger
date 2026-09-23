@@ -2,7 +2,7 @@
 // ABOUTME: templates the package ships, and what a second run leaves alone.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -103,4 +103,42 @@ export function plan({ templates = TEMPLATES, repo } = {}) {
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .flatMap((entry) => forks(templates, entry.name)),
   ];
+}
+
+/** A heading and the paths under it, or nothing at all where there are no paths. */
+const listing = (heading, paths) => (paths.length === 0 ? [] : [heading, ...paths.map((path) => `  ${path}`), '']);
+
+/**
+ * Forks the templates into a repository, writing nothing over a file that is already there.
+ *
+ * A file that exists is left exactly as it is and named in the report. That is what makes a
+ * second run safe: the assets are the consumer's from the moment they land (`R-SAFE-6`), so an
+ * edited role prompt is the one thing `init` must never quietly replace, and it cannot tell an
+ * edit from an original without keeping a copy of what it wrote — which is state, and state a
+ * restart would have to rebuild (`D1`).
+ */
+export function init({ target = process.cwd(), templates = TEMPLATES } = {}) {
+  const repo = repoSlug(target);
+  const files = plan({ templates, repo });
+  const wrote = [];
+  const skipped = [];
+  for (const file of files) {
+    const path = join(target, file.path);
+    if (existsSync(path)) {
+      skipped.push(file.path);
+      continue;
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, file.content);
+    wrote.push(file.path);
+  }
+  return {
+    text: [
+      `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
+      ...wrote.map((path) => `  ${path}`),
+      ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
+      ...(repo ? [] : [`\`${CONFIG}\` names \`${REPO_PLACEHOLDER}\`, because git named no \`origin\` remote to read it from.`]),
+    ].join('\n'),
+    code: 0,
+  };
 }
