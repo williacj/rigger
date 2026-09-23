@@ -130,16 +130,37 @@ work adds are regenerated and committed with it. A declaration naming an id
 `docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
 test — a call that is commented out is not a test.
 
-The scan reads lines, not syntax, which is what a fixture in a test has to work around. A
-declaration is a whole line, so one written inside a single-line string claims nothing: that is
-the shape a fixture takes here, with `\n` escapes where it needs more than one line. Write the
-same fixture as a template literal spanning lines and its lines are lines like any other, so the
-declaration in it is refused where it sits rather than read as a claim. The scan does read quoted
-runs, so a comment marker inside a string is text and opens no comment. What it cannot see is
-syntax: a stray backtick in a string counts towards whether a template literal is open, so a
-declaration below one is refused by name — if you meet that refusal, look above it for the
-backtick — and a comment marker inside a regular expression reads as a marker, which refuses the
-file when the comment it opens never closes.
+The scan reads the source as the syntax it is, so a fixture in a test claims nothing whatever
+shape it takes, and no shape needs working around:
+
+| A fixture written as | What the scan makes of it |
+|---|---|
+| a single-line string, with `\n` escapes | one string token; claims nothing |
+| a template literal spanning lines | one token, lines and all; claims nothing |
+| a string continued with a trailing backslash | one token; claims nothing |
+| the text inside a block comment | a comment; claims nothing |
+| a run of line comments | a comment — except that a `// proves` line among them is still a declaration, and is refused for standing above a comment rather than above a call |
+
+Eight shapes it refuses rather than reads, and each refusal names the file and the line:
+
+| Shape | Why it is refused |
+|---|---|
+| a declaration above a call the file nests, a `describe` block included | whether the runner reaches an enclosed call is not a question about tokens |
+| a call to a `test` or `it` the file binds itself, or never binds at all | `node --test` installs no global, so only a name imported from `node:test` reaches the runner |
+| a title the call builds from more than one quoted run — a `+`, a `${}` | the title is then not that string, and half a title names no test |
+| a title carrying an escape the scan does not decode | the string the runner registers is not known |
+| a title carrying a line ending or a `\|` | `docs/derived/test-matrix.md` is a pipe table: a row is one line, and its cells are what the `\|` characters divide, so no row can carry either |
+| a call reached any way but through a plain name a `node:test` import bound — a dynamic `import`, a `require`, a namespace member, `?.()`, or a `String.raw` title | reading those would take more of the grammar than this does; each is measured, and each costs a refusal rather than a claim |
+| a `/` directly after a `}` | a division after an object literal and a regular expression after a block are one token apart, and the grammar above them decides which |
+| a quoted run or a comment the source leaves open | it is not source that parses |
+
+What it gets wrong: a declaration above a top-level call the module never finishes reaching is
+claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land
+there, because in each the source is complete and it is the run that stops. That is a question
+about running the module rather than reading it; what the source decides is decided, and a shape
+the source decides that the scan reads wrongly is a defect rather than a limit.
+`scripts/build-test-matrix.mjs` states the same set beside the code, and
+`test/build-test-matrix.test.mjs` puts every row of it to a constructed input.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
