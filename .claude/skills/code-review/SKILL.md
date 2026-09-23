@@ -98,6 +98,13 @@ Then the rules that bind every change in this repository, whatever it touches:
 - **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
   implementation, does it declare the requirement it proves, does it sleep, and was a failing
   test deleted or weakened (`AGENTS.md`; the `tdd` skill)?
+- **Proof declarations.** For every `// proves R-GROUP-#` declaration in the work you read,
+  remove the behaviour each named requirement describes in a disposable copy and run the
+  declaring test. It must fail on an assertion about that behaviour. Show that the deletion
+  applied and had its intended effect, that the named test reached a verdict, and that the
+  original was restored, under the `tdd` skill's "A mutation claim" bar. A test that passes
+  with the behaviour absent does not prove the requirement; rule the claim unverified and name
+  what would make it sound. Where a test names several requirements, check each one.
 - **Mutation claims.** Where an acceptance item rests on a mutation, whether the maker's or your
   own, does the claim show what the `tdd` skill's "A mutation claim" requires — that the mutation
   applied, that it did what it meant, and which tests failed on which assertion? An unguarded
