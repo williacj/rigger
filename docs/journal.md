@@ -77,6 +77,187 @@ file, not the mutation alone. It took the fix with it. Re-applying from the tran
 watching the suite pass again recovers behaviour, not the diff: a passing suite says the
 behaviours under test are back, and says nothing about a line no test reads. Commit the work,
 then mutate, then `git checkout --` returns to the commit.
+## 2026-09-22 — Evidence that looked like evidence, four times over
+
+Card #71 taught the command gate that card #28 built to skip a here-document body. A judge then
+found it permitted a reserved command bash runs, whenever a `<<` sat where bash reads no command
+word — in a comment, or in an arithmetic command. Asking bash for the whole set of regions turned up
+five more: a backtick substitution, three spellings of parameter expansion, and the old `$[ ]`
+form. Seven live spellings, not two.
+
+**The judge's probe missed those five because of how it was spelled.** Each probe wrote
+`<<W`, the reserved command, then a closing line `W`. But bash reads a delimiter word to the next
+metacharacter, and a backtick, `}` and `]` are not metacharacters, so the delimiter was really
+``W` `` or `W}` and no line matched it. The gate refused — for the wrong reason, by accident.
+Spelling the closing line ``W` `` or `W}` makes the same five permit. A probe has to be spelled
+the way the tool under test reads it, or a refusal by accident reads exactly like a control.
+
+**A mutation that deleted three guards at once said the same thing about its own suite.** Three
+lines refuse an unterminated here-document body. One mutation replaced all three, the suite went
+red on the covered ones, and the mutation was recorded as caught. A mutation is only evidence
+about the one behaviour it removes; batching them reports the union and hides the gap.
+
+Splitting them found two gaps rather than one. A line nothing reached — deleting it alone left the
+suite green — and a line nothing *can* reach, because removing it changes no behaviour: the next
+iteration of the loop throws the identical error. A mutant that reddens that one replaces it with
+`break`, which is a different behaviour rather than its absence, so booking it as caught was
+counting a non-equivalent mutant as cover. Two lines are independently reachable, not three.
+
+**And a measurement that contradicted its own earlier run.** Payloads passed to `node -e` inside
+a quoted shell string were altered by the shell, and the verdicts disagreed with a run made
+minutes earlier. The contradiction is what caught it; nothing in either run looked wrong on its
+own. Redone from a script file with no shell quoting, the numbers changed — five classes moved
+from "refused" to "permitted", which was the finding. A measurement that no other measurement
+disagrees with is not thereby correct, and a harness that reshapes its own input is the quietest
+way to be confidently wrong.
+
+**And then this entry's own lesson, committed two rounds after it was written.** The gate learned
+to disregard a carriage return before a line feed, in two halves: one on the body line, one on the
+delimiter. Six payloads pinned it, every one carrying a reserved command after the body and
+asserting a refusal. Delete the delimiter half and all six still refuse — as unreadable rather
+than as reserved. The suite stayed green over a gate that refused every here-document written on a
+CRLF machine, which is this card's own defect in CRLF clothing. A refusal by accident reads exactly
+like a control, in the words three paragraphs above, and the mutation table booked both halves as a
+single row, which is the batching two paragraphs above. Writing a lesson down is not the same as
+holding to it, and the test that pins a behaviour whose absence still refuses has to assert what it
+*permits*.
+
+**The other half of that round: a fix written for the depth it was demonstrated at.** The reported
+case carried one carriage return, the fix stripped one, and bash's rule is a run of them. Depths
+two upward stayed open, and each was a reserved command bash runs. A guard built to the example
+closes the example; only a guard built to the rule closes the rule, and the rule is worth measuring
+past the first case that failed — to six, here, and against a trailing space and tab to learn that
+it is carriage returns and not whitespace.
+## 2026-09-22 — Raising a budget cost one word, because the document owned the figure
+
+The instruction-file ceiling moved from 2,000 to 2,500 words, and the whole change is one number
+in `ARCHITECTURE.md`'s `Budgets` section. `scripts/instruction-budget.mjs` reads the figure out of
+that sentence rather than carrying a copy, so no script, no test and no second document had to be
+edited to agree with it.
+
+No test asserts against this repository's own ceiling, which is why raising it was a one-word
+edit. `test/instruction-budget.test.mjs` writes an architecture fixture stating the figure it
+wants, and so do five of the six tests in `test/budget-checks.test.mjs`. A test holding a
+hard-coded 2,000 would have turned a one-word proposal into a multi-file edit, and would have made
+the test the authority instead of the document.
+
+The sixth test is the one a later reader should open. `neither check states a budget of its own`
+builds no fixture: it reads the two budget scripts out of this repository and asserts that four
+spellings — `12000`, `12,000`, `2000`, `2,000` — appear in neither source. That is the falsifier
+for a figure typed into a script, and the two spellings it names for the instruction ceiling are
+the old one rather than 2,500. This card left the list untouched.
+
+No recorded decision governs that read, and `D16` says so itself. Its Notes name
+`scripts/instruction-budget.mjs` reading a budget out of `ARCHITECTURE.md`, and state that no rule
+of `D16` reaches the dependency, because a document owns the fact rather than a tool. The
+arrangement is easy to credit to `D16` and is not its.
+
+Neither figure is derived. Nothing in the corpus says why two thousand rather than one or three,
+and 2,500 is a judgement in the same way. The card was explicit that it could not compute a
+replacement and should not pretend to.
+
+What can be measured is the property the budget rests on, so it was run rather than asserted.
+Appending 600 words to `AGENTS.md` took the check to 2,577 against 2,500 and exit 1, and moving
+those same words into a nested instruction file under `src/` left the total at 2,577 and the
+refusal identical. One number, one check, and the move spent nothing.
+
+## 2026-09-22 — A form rule that nothing checks
+
+`AGENTS.md` gained a rule about how a paragraph is written. The two passages that prompted it
+broke no rule, and both were delivered by makers who had loaded the skills they were working
+under: one in `.claude/skills/tdd/SKILL.md`, one an entry in this file.
+
+`npm run lint:spec-style` prints the documents it reads, and they are `README.md`,
+`ARCHITECTURE.md`, `docs/spec/decisions.md` and `docs/spec/requirements.md`. No skill and no
+journal is among them, so neither passage was ever in front of it.
+
+Of the four rules the lint's own skill states, it applies two.
+`.claude/skills/spec-style/SKILL.md` says rules 3 and 4 are judgments an author applies and a
+reviewer reads for, and `test/spec-style-lint.test.mjs` pins that silence: no finding about
+voice, and none about whether prose should have been a list.
+
+Nothing therefore checks the new rule on any document, and that is why it went into the file
+every session loads rather than into a skill. A rule living in a skill reaches the sessions that
+load that skill, and that is the set which produced both passages.
+
+The root instruction file now measures 1,977 words against the 2,000 `ARCHITECTURE.md` allows,
+so 23 words of headroom are left for every rule after this one.
+
+## 2026-09-22 — Four sentences said the build reds, and no check did
+
+`D17` had to settle what a requirement no test claims does to the build. Four places said CI
+reds on one, `AGENTS.md` said it of a requirement being added, and the draft of `D17` repeated
+that red as though a check performed it. Running the matrix generator over a scratch copy of the
+register showed none of them is mechanical.
+
+Adding an unclaimed requirement and regenerating the matrix leaves every check at exit 0. So
+does deleting the test that claimed a requirement: the staleness check reds once, a regenerated
+matrix clears it, and the row goes quietly back to a gap. Editing a row's `checked by` moves
+the matrix's mark and never the count, and retiring an unclaimed row moves both numbers down by
+one with no test written.
+
+Three of those four were claims the draft made in prose and would have shipped unmeasured. Each
+took about a minute to measure, and two of them came back the opposite of what the prose said.
+The rule that a decision's claims about a tool get run rather than reasoned about is cheap
+enough that there is no excuse for the reasoned version.
+## 2026-09-22 — The architecture already held the config, so the validator had nothing to invent
+
+The config core looked like a design job and turned out to be a transcription job.
+`ARCHITECTURE.md` publishes a config shape under its extension-point table, and that shape is
+the only place the corpus spells any of these keys. Taking it as the offer left nothing for this
+card to name: the test runs that block as a module and compares its key paths against the
+validator's, in both directions, so a key the architecture does not spell cannot be offered and
+one it does spell cannot be missed.
+
+What the shape does not spell is the interesting part. The table names three engine settings the
+shape leaves out — the worktree root, the state directory and the topic rule — and two rows
+marked `Yes` that it gives no key: document checking, which the config points at rather than
+contains, and clock triggers, which nothing reads before M7. A config naming any of those five
+is refused today, because Rigger offers no spelling for them yet. That is a real bound on the
+refusal, not a completeness claim, and the card that lands each setting is what adds its key.
+
+The generalisation that found the most also hid the most. Refusing a key nobody offers was
+tested by growing every shape the config reaches, and a container key — `roles`, `kinds`,
+`provisioning` — is never itself one of those shapes, so three sites went unwatched and each
+crashed on a `null`. A site derivation that walks the values a config holds can only reach the
+sites that config nests, and the class the test names is wider than that. Deriving the sites
+from the shape table instead reaches every one of them, whatever a config happens to hold.
+
+An exhaustive walk over a single probe is still a single probe. With every site reached, the
+test grew a key nobody offers at each one and asserted a refusal — and the key it grew was
+`fixedByRiggerAndNotTheConsumer`, which nothing can inherit. The check behind it asked
+`key in shape`, which answers yes to every name `Object.prototype` carries, so `toString`,
+`constructor` and nine others were offered as declarations at all twenty sites, and the
+required-key check answered the same way: a config declaring nothing and inheriting all four
+required keys was accepted outright. Changing that one expression moved no test either way.
+The probe set is now every name the runtime says an object carries, asked for rather than
+listed, plus the one name nothing carries as a control. Coverage of the sites and coverage of
+the values are two separate questions, and a walk that is exhaustive in one direction reads as
+though it were exhaustive in both.
+
+The matrix is what made that expensive rather than merely wrong. The test carried
+`// proves R-SCHED-10`, so a generated binding document recorded a requirement as proved by a
+test that could not tell the two behaviours apart. A declaration is a claim about a test's
+discriminating power, not about its subject, and nothing checks it: the cheapest thing that
+does is to break the behaviour on purpose and watch that test, and only that test, go red.
+
+Two claims in this card's own commit messages turned out not to match the code, in consecutive
+rounds. One said a rule lived in the read itself when it did not, for three keys. The other
+attached a refusal count to `roles: null`, where the count belongs to a string, a list or a
+number — `null` throws without the guard the same commit added. Both were true of the substance
+and wrong in the detail, and a detail in a commit message is read later as evidence. Running
+the claim before writing it down costs one command.
+
+Three tests could not have failed first, because each generalises a test that already had. Each
+was instead watched failing with its own defect mutated into the validator: the required-key
+refusal stubbed out, the unknown-key sweep stubbed out, and a key the architecture does not
+publish added to this repository's config. A fourth test — that the validator accepts this
+repository's own config — can only fail by that config changing, which is what it is for.
+
+One fixture was wrong in a way that would have passed for the wrong reason. The owner-order test
+named the kind's own maker among its judges, so it earned two refusals, and it would have gone
+green off the maker-and-judge separation rule rather than the order rule it tests. Asserting the
+refusal count rather than a match is what caught it.
 
 ## 2026-09-22 — A test that passed on the runtime's error message, not on ours
 
