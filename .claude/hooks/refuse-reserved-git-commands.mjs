@@ -108,12 +108,20 @@ function delimiterAt(text, start) {
 }
 
 /**
- * A line with its ending removed. A line feed ends a line, and a carriage return before that line
- * feed belongs to the ending rather than to the text — bash closes a body named `W` on a line
- * reading `W\r`, measured on this machine. Reading the carriage return as text is how a body comes
- * to be read as continuing past the line bash ended it at, with the commands after it skipped.
+ * A line with its ending removed. A line feed ends a line, and *every* carriage return before that
+ * line feed belongs to the ending rather than to the text: bash closes a body named `W` on a line
+ * reading `W`, `W\r`, `W\r\r` and so on without limit, so the rule is a run of them and not one.
+ * Measured on this machine to a depth of six.
+ *
+ * A run of carriage returns only. A trailing space or tab closes no body, measured the same way,
+ * so this takes carriage returns rather than trailing whitespace — trimming whitespace would close
+ * bodies bash leaves open.
+ *
+ * Reading any of that run as text is how a body comes to be read as continuing past the line bash
+ * ended it at, with the commands after it skipped. Stripping the whole run can only end a body
+ * earlier, which surfaces more text as commands and can hide none.
  */
-const withoutEnding = (line) => (line.endsWith('\r') ? line.slice(0, -1) : line);
+const withoutEnding = (line) => line.replace(/\r+$/, '');
 
 /**
  * Skip the bodies the here-documents on the line just ended will be fed. A body is data on

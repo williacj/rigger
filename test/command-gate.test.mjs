@@ -149,6 +149,32 @@ export const CARRIAGE_RETURN_PAYLOADS = [
   ['the <<- form, CRLF and a tab', 'cat <<-W\r\n\tbody\r\n\tW\r\ngit push --force\r\nW\r\n'],
   ['a quoted delimiter, CRLF', "cat <<'W'\r\nbody\r\nW\r\ngit push --force\r\nW\r\n"],
   ['a carriage return inside the body', 'cat <<W\nbo\rdy\nW\ngit push --force\n'],
+  // Bash's rule is a run of carriage returns before the line feed, not one: `\r*\n`. Each depth
+  // is pinned, because a guard that strips a fixed number closes only the depth it was written
+  // for and leaves the rest open, which is exactly what one carriage return's worth of fix did.
+  ['two carriage returns', 'cat <<W\nbody\nW\r\r\ngit push --force\nW\n'],
+  ['three carriage returns', 'cat <<W\nbody\nW\r\r\r\ngit push --force\nW\n'],
+  ['four carriage returns', 'cat <<W\nbody\nW\r\r\r\r\ngit push --force\nW\n'],
+  ['a CRLF opener and two carriage returns', 'cat <<W\r\nbody\r\nW\r\r\ngit push --force\nW\n'],
+  ['the <<- form with two carriage returns', 'cat <<-W\r\n\tbody\r\n\tW\r\r\ngit push --force\nW\n'],
+  ['a quoted delimiter with two carriage returns', "cat <<'W'\r\nbody\r\nW\r\r\ngit push --force\nW\n"],
+];
+
+/**
+ * The other side of the same rule: what a run of carriage returns does NOT include. Bash closes a
+ * body on `delimiter` followed by carriage returns and nothing else, so a trailing space or tab
+ * leaves the body open and the `git push --force` below stays body data — measured, and bash does
+ * not run the marker in any of these. The gate agrees, so it permits them.
+ *
+ * Pinned because the obvious over-correction for B1 is to trim the line. Trimming whitespace would
+ * close these bodies early, surface the push as a command and refuse — safe, but no longer what
+ * bash does, and a divergence nothing else in the suite would catch.
+ */
+export const NOT_A_LINE_ENDING = [
+  ['a trailing space', 'cat <<W\nbody\nW \ngit push --force\nW\n'],
+  ['a trailing tab', 'cat <<W\nbody\nW\t\ngit push --force\nW\n'],
+  ['a carriage return then a space', 'cat <<W\nbody\nW\r \ngit push --force\nW\n'],
+  ['a space then a carriage return', 'cat <<W\nbody\nW \r\ngit push --force\nW\n'],
 ];
 
 /** Commands the gate cannot read, which it refuses rather than guess at. */
@@ -296,6 +322,38 @@ test('a body ends where bash ends it, whatever the line ending', () => {
   for (const [shape, command] of CARRIAGE_RETURN_PAYLOADS) {
     refuses(command, `a force push after a here-document closed by ${shape}`);
   }
+  // And the body stays open where bash keeps it open, so the push stays data rather than becoming
+  // a command. These fail if the line ending is read as trailing whitespace rather than as
+  // carriage returns.
+  for (const [shape, command] of NOT_A_LINE_ENDING) {
+    permits(command, `a here-document whose closing line has ${shape}, which closes no body`);
+  }
+});
+
+test('a here-document written CRLF throughout is read, not refused', () => {
+  // The delimiter side of the line-ending rule, tested for what it permits rather than for what
+  // it refuses. Every payload above carries a reserved command and asserts a refusal, so all of
+  // them still refuse with this half deleted — as unreadable instead of as reserved. A refusal by
+  // accident reads exactly like a control, so only a `permits` assertion pins this half: with the
+  // delimiter left unstripped, a CRLF opener makes the delimiter `EOF\r`, no line ever matches it,
+  // and every here-document written on a CRLF machine is refused as having no closing delimiter —
+  // this card's own defect in CRLF clothing.
+  permits(
+    "cat > notes.md <<'EOF'\r\nIt is the author's to change.\r\nEOF\r\n",
+    'a CRLF here-document with a quoted delimiter and prose in the body',
+  );
+  permits(
+    'cat > notes.md <<EOF\r\ndon\'t\r\nEOF\r\n',
+    'a CRLF here-document with an unquoted delimiter',
+  );
+  permits(
+    'cat > notes.md <<-EOF\r\n\tdon\'t\r\n\tEOF\r\n',
+    'a CRLF here-document in the <<- form',
+  );
+  permits(
+    'git commit -m "$(cat <<\'EOF\'\r\nIt is the author\'s to change.\r\nEOF\r\n)"',
+    'a CRLF here-document inside a command substitution',
+  );
 });
 
 test('a `<<` directly after a redirection is refused, not skipped', () => {
