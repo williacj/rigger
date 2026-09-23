@@ -132,6 +132,25 @@ export const INERT_REGION_PAYLOADS = [
   ['the old $[ ] arithmetic form', lines('echo $[1<<W]', 'git push --force', 'W]')],
 ];
 
+/**
+ * Payloads whose here-document closes on a line ending in a carriage return. Bash ends the body
+ * at that line and runs the command after it — measured on this machine under Git-for-Windows
+ * bash, from a file, with `git` replaced by a marker on `PATH`, for every shape below. A gate that
+ * reads the body as continuing past it skips a reserved command bash goes on to run.
+ *
+ * Written out rather than built with `lines`, because that helper joins on a line feed and so
+ * keeps a carriage return out of this file by construction. These are the only payloads in the
+ * suite carrying a literal `\r`, and they are the reason the helper is not used here.
+ */
+export const CARRIAGE_RETURN_PAYLOADS = [
+  ['a closing line ending CRLF, opener LF', 'cat <<W\nbody\nW\r\ngit push --force\nW\n'],
+  ['every line ending CRLF', 'cat <<W\r\nbody\r\nW\r\ngit push --force\r\nW\r\n'],
+  ['opener CRLF, closing line LF', 'cat <<W\r\nbody\r\nW\ngit push --force\nW\n'],
+  ['the <<- form, CRLF and a tab', 'cat <<-W\r\n\tbody\r\n\tW\r\ngit push --force\r\nW\r\n'],
+  ['a quoted delimiter, CRLF', "cat <<'W'\r\nbody\r\nW\r\ngit push --force\r\nW\r\n"],
+  ['a carriage return inside the body', 'cat <<W\nbo\rdy\nW\ngit push --force\n'],
+];
+
 /** Commands the gate cannot read, which it refuses rather than guess at. */
 export const UNREADABLE_COMMANDS = [
   "echo don't",
@@ -150,6 +169,26 @@ export const UNREADABLE_COMMANDS = [
   lines('cat foo<<EOF', 'body', 'EOF'),
   lines('a=1<<W', 'git push --force', 'W'),
   lines('let x=1<<W', 'git push --force', 'W'),
+];
+
+/**
+ * A `<<` written directly after another redirection. Bash ends a word at `<` and `>`, so it
+ * begins a redirection straight after the previous one's target and every shape here is a
+ * here-document to bash, which runs the push after it — measured, from a file, with `git` replaced
+ * by a marker on `PATH`. This gate places none of them and refuses.
+ *
+ * Pinned rather than fixed, deliberately. Honouring a `<<` because the word it sits in began with
+ * a redirection also honours `echo >${x:-<<W}`, where bash reads no redirection and runs what
+ * follows; that shape is in `INERT_REGION_PAYLOADS`' family and the measurement is in the pull
+ * request. Widening the rule to the target would trade a refusal for a bypass. These tests exist
+ * so that trade cannot be made by accident: changing the placement rule turns them red.
+ */
+export const AFTER_A_REDIRECTION = [
+  ['cat >out<<EOF', lines('cat >out<<EOF', 'body', 'EOF', 'git push --force')],
+  ['cat >>out<<EOF', lines('cat >>out<<EOF', 'body', 'EOF', 'git push --force')],
+  ['cat 2>/dev/null<<EOF', lines('cat 2>/dev/null<<EOF', 'body', 'EOF', 'git push --force')],
+  ['cat </dev/null<<EOF', lines('cat </dev/null<<EOF', 'body', 'EOF', 'git push --force')],
+  ['cat <<A<<B', lines('cat <<A<<B', 'first', 'A', 'second', 'B', 'git push --force')],
 ];
 
 test('an apostrophe in a here-document body does not make the command unreadable', () => {
@@ -249,6 +288,27 @@ test('a `<<` where bash reads no command word hides nothing', () => {
   for (const [region, command] of INERT_REGION_PAYLOADS) {
     refuses(command, `a reserved command hidden behind a \`<<\` in ${region}`);
   }
+});
+
+test('a body ends where bash ends it, whatever the line ending', () => {
+  // A body the gate reads as continuing past the line bash closed it at is a gap a reserved
+  // command lands in. CRLF is live in this repository: the gate's own worktree copy has it.
+  for (const [shape, command] of CARRIAGE_RETURN_PAYLOADS) {
+    refuses(command, `a force push after a here-document closed by ${shape}`);
+  }
+});
+
+test('a `<<` directly after a redirection is refused, not skipped', () => {
+  // One removed space is the difference: the spaced form is a here-document the gate reads, and
+  // the closed-up form is one it cannot place. Refusing is the cost; permitting the body would be
+  // the hole. The spaced form is asserted alongside so the pair is visible.
+  for (const [shape, command] of AFTER_A_REDIRECTION) {
+    refuses(command, `a \`<<\` directly after a redirection, in \`${shape}\``);
+  }
+  permits(
+    lines('cat >out <<EOF', 'body', 'EOF'),
+    'the same redirection with a blank before the `<<`',
+  );
 });
 
 test('a `#` bash does not read as a comment hides nothing', () => {

@@ -44,18 +44,26 @@ const OPERATORS = ['&&', '||', ';', '|', '&', '\n'];
 // lexer honours and bash ignores skips commands bash goes on to run — which is why the notion of
 // where one can open must not exceed bash's. Bash reads no command word inside a quoted string,
 // a comment, an arithmetic expression, a parameter expansion or a backtick substitution. The
-// first, second, third and fifth the lexer takes whole. The fourth, and `$[ ]` with it, need no
-// modelling: a `<<` inside one is inside a word, and a redirection begins only at the start of a
-// word or after the file descriptor it redirects. That list was taken from bash by running it,
-// and `[[ ]]` and a `case` pattern are absent from it because bash rejects a `<<` in either.
+// first, second, third and fifth the lexer takes whole. The fourth, and `$[ ]` with it, are not
+// modelled: instead this gate honours a `<<` only where the word being read is empty or is the
+// file descriptor it redirects, which places a `<<` inside any word-internal construct out of
+// reach without modelling any of them. That list was taken from bash by running it, and `[[ ]]`
+// and a `case` pattern are absent from it because bash rejects a `<<` in either.
+//
+// That placement rule is narrower than bash's, which is a cost rather than a claim about bash:
+// bash ends a word at `<` and `>`, so it begins a redirection straight after another
+// redirection's target, and `cat >out<<EOF` is a here-document to bash and unreadable here. It is
+// kept narrow deliberately. Honouring a `<<` because its word began with a redirection would
+// honour `echo >${x:-<<W}` too, where bash reads no redirection at all and runs what follows —
+// measured, and the reason the rule is not widened to the target.
 //
 // Where the copy still disagrees, it refuses:
 //   - A body bash would end at end of input. Bash warns and runs the command; a permission
 //     decision has no warning to give, and the alternative is skipping to the end of the text.
-//   - A `<<` inside a word — `cat foo<<EOF`, `a=1<<EOF`, `let x=1<<EOF`. Bash makes each a
-//     here-document. The gate cannot tell them from a `<<` inside a construct of that word.
-//   - A closing delimiter carrying a carriage return, which closes no body here or in bash. Bash
-//     warns and runs.
+//   - A `<<` this gate cannot place: inside a word, as in `cat foo<<EOF`, `a=1<<EOF` and
+//     `let x=1<<EOF`, and directly after a redirection, as in `cat >out<<EOF` and `cat <<A<<B`.
+//     Bash makes every one of those a here-document. The gate cannot tell them apart from a `<<`
+//     inside a construct of that word, so all of them are unreadable here.
 //   - `$( (subshell) )`, whose first `)` this lexer pairs with the `$(`. Nothing is skipped.
 //
 // And one disagreement it does not settle by refusing, because it never did: the gate reads
@@ -100,6 +108,14 @@ function delimiterAt(text, start) {
 }
 
 /**
+ * A line with its ending removed. A line feed ends a line, and a carriage return before that line
+ * feed belongs to the ending rather than to the text — bash closes a body named `W` on a line
+ * reading `W\r`, measured on this machine. Reading the carriage return as text is how a body comes
+ * to be read as continuing past the line bash ended it at, with the commands after it skipped.
+ */
+const withoutEnding = (line) => (line.endsWith('\r') ? line.slice(0, -1) : line);
+
+/**
  * Skip the bodies the here-documents on the line just ended will be fed. A body is data on
  * standard input: it ends at a line that is exactly the delimiter, nothing in it is ever run, and
  * so nothing in it is read as shell text. `<<-` strips leading tabs from the body lines and from
@@ -112,13 +128,15 @@ function delimiterAt(text, start) {
 function skipBodies(text, start, pending) {
   let i = start;
   for (const { delimiter, stripTabs } of pending) {
+    const closing = withoutEnding(delimiter);
     for (;;) {
       if (i >= text.length) throw new Unreadable('a here-document has no closing delimiter');
       const breakAt = text.indexOf('\n', i);
       const end = breakAt === -1 ? text.length : breakAt;
-      const line = stripTabs ? text.slice(i, end).replace(/^\t+/, '') : text.slice(i, end);
+      const read = withoutEnding(text.slice(i, end));
+      const line = stripTabs ? read.replace(/^\t+/, '') : read;
       i = breakAt === -1 ? end : breakAt + 1;
-      if (line === delimiter) break;
+      if (line === closing) break;
       if (breakAt === -1) throw new Unreadable('a here-document has no closing delimiter');
     }
   }
