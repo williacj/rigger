@@ -81,19 +81,33 @@ function expand(value, parts) {
   return names.flatMap((name) => expand(value[name], rest).map((tail) => [name, ...tail]));
 }
 
-/** Every place in a config where the validator reads a value's keys against a shape. */
-function shapeSites(value, shape = 'config', path = '') {
-  const sites = [path];
-  for (const [key, held] of Object.entries(value)) {
-    const rule = SHAPES[shape]?.[key];
-    if (rule?.keys) sites.push(...shapeSites(held, rule.keys, at(path, key)));
-    if (rule?.entries) {
-      for (const [name, entry] of Object.entries(held)) {
-        sites.push(...shapeSites(entry, rule.entries, at(at(path, key), name)));
-      }
-    }
-  }
-  return sites;
+/**
+ * Every place the validator reads a value's keys against a shape, derived from the shape table
+ * rather than from what one config happens to hold.
+ *
+ * Reading a config's values instead would only ever reach the sites that config nests, which is
+ * narrower than the class: a container key holds no shape of its own, so it is never a site, and
+ * three of them went unwatched until the sites came from the table.
+ */
+function shapeSites(shape = 'config', path = '') {
+  return [path, ...Object.entries(SHAPES[shape]).flatMap(([key, rule]) => {
+    if (rule.keys) return shapeSites(rule.keys, at(path, key));
+    if (rule.entries) return shapeSites(rule.entries, `${at(path, key)}.*`);
+    return [];
+  })];
+}
+
+/**
+ * Every place the validator reads a value's keys as consumer-chosen names, each holding a shape.
+ * A container is not a shape site — its keys are the consumer's — but it holds declarations just
+ * the same, so it is refused for holding none.
+ */
+function containerSites(shape = 'config', path = '') {
+  return Object.entries(SHAPES[shape]).flatMap(([key, rule]) => {
+    if (rule.keys) return containerSites(rule.keys, at(path, key));
+    if (rule.entries) return [at(path, key), ...containerSites(rule.entries, `${at(path, key)}.*`)];
+    return [];
+  });
 }
 
 /** The value one dotted path names inside a config. */
@@ -106,32 +120,64 @@ function without(config, parts) {
   return copy;
 }
 
+/** This config, with the value at one dotted path replaced. The empty path is the config itself. */
+function holding(config, parts, value) {
+  if (parts.length === 0) return value;
+  const copy = structuredClone(config);
+  walkTo(copy, parts.slice(0, -1))[parts.at(-1)] = value;
+  return copy;
+}
+
+/**
+ * Every concrete path this config offers for one site of the table, each `*` expanded to the
+ * names the config holds there. A site the config exercises nowhere is a site this suite cannot
+ * watch, so it fails rather than passing over it.
+ */
+function instancesOf(site) {
+  const paths = site === '' ? [[]] : expand(rigger, site.split('.'));
+  assert.ok(paths.length > 0, `this repository's config holds nothing at \`${site}\`, so the site went unchecked`);
+  return paths;
+}
+
 test("the validator accepts this repository's own config unchanged", () => {
   assert.deepEqual(validate(rigger), []);
 });
 
-test('a file that exports no config at all is refused rather than crashing its reader', () => {
-  // A config file whose module exports nothing hands the validator `undefined`, which is the
-  // shape a missing `export default` takes. It is a config naming none of the required keys.
-  for (const nothing of [undefined, null, 'rigger.config.mjs', []]) {
-    assert.match(refusal(nothing), /config/);
+test('a declaration that holds no declarations is refused wherever it sits, and the refusal names it', () => {
+  // Every place the validator reads declarations, whether their keys are Rigger's or the
+  // consumer's. The top level is one site among them and not a special case, which is the whole
+  // claim: a value that is not a set of declarations earns one refusal naming where it sits,
+  // never a throw and never one refusal per character of a string.
+  const everywhere = [...shapeSites(), ...containerSites()];
+  for (const site of everywhere) {
+    for (const parts of instancesOf(site)) {
+      for (const nothing of [null, undefined, 'npm ci', ['npm ci'], 3]) {
+        const named = parts.join('.');
+        const refusals = validate(holding(rigger, parts, nothing));
+        assert.equal(
+          refusals.length,
+          1,
+          `\`${named || 'the config'}\` holding ${JSON.stringify(nothing) ?? 'undefined'} earned ${refusals.length} refusals: ${refusals.join('; ') || 'none'}`,
+        );
+        assert.ok(
+          refusals[0].includes(named === '' ? 'the config' : `\`${named}\``),
+          `\`${named || 'the config'}\` holding ${JSON.stringify(nothing) ?? 'undefined'} earned a refusal that does not name it: ${refusals[0]}`,
+        );
+      }
+    }
   }
 });
 
-test('a declaration that holds no declarations is refused wherever it sits, and the refusal names it', () => {
-  // The top level is not a special case: every shape the validator reads holds declarations, so
-  // one that holds a string or a null is refused where it sits rather than read as an empty set.
-  for (const site of ['board', 'board.columns', 'roles.engineer', 'kinds.change', 'provisioning.vhs', 'telemetry']) {
-    for (const nothing of [null, 'npm ci']) {
-      const parts = site.split('.');
-      const config = structuredClone(rigger);
-      walkTo(config, parts.slice(0, -1))[parts.at(-1)] = nothing;
-      const refusals = validate(config);
-      assert.ok(
-        refusals.some((refusal) => refusal.includes(`\`${site}\``)),
-        `\`${site}\` set to ${JSON.stringify(nothing)} earned no refusal naming it: ${refusals.join('; ') || 'none'}`,
-      );
-    }
+test('a config declaring nothing at all is refused for each of the four keys Rigger cannot act without', () => {
+  // Written out rather than derived from the shape table, which the test below reads: a required
+  // key dropped from that table would take itself out of the derivation and go unnoticed. What
+  // Rigger can do nothing without is a judgement this card makes, so it is pinned by hand.
+  const refusals = validate({});
+  for (const key of ['repo', 'board', 'roles', 'kinds']) {
+    assert.ok(
+      refusals.some((refusal) => refusal.includes(`\`${key}\``) && refusal.includes('required')),
+      `a config declaring nothing earned no refusal requiring \`${key}\`: ${refusals.join('; ') || 'none'}`,
+    );
   }
 });
 
@@ -148,13 +194,14 @@ test('every key the validator requires is refused when missing, and the refusal 
   }
 });
 
+// proves R-SCHED-10
 test('a declaration Rigger does not offer is refused wherever it sits, and the refusal names it', () => {
-  const sites = shapeSites(rigger);
+  const sites = shapeSites().flatMap(instancesOf);
   assert.ok(sites.length > 1, 'the config reaches no nested shape, so only the top level was checked');
-  for (const site of sites) {
+  for (const parts of sites) {
     const config = structuredClone(rigger);
-    walkTo(config, site ? site.split('.') : [])['fixedByRiggerAndNotTheConsumer'] = true;
-    const named = at(site, 'fixedByRiggerAndNotTheConsumer');
+    walkTo(config, parts)['fixedByRiggerAndNotTheConsumer'] = true;
+    const named = at(parts.join('.'), 'fixedByRiggerAndNotTheConsumer');
     const refusals = validate(config);
     assert.ok(
       refusals.some((refusal) => refusal.includes(`\`${named}\``)),
@@ -163,6 +210,7 @@ test('a declaration Rigger does not offer is refused wherever it sits, and the r
   }
 });
 
+// proves R-SCHED-10, R-LOOP-10
 test('what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions', async () => {
   assert.deepEqual(unique(offered()), unique(declared(await publishedShape())));
 });
@@ -216,6 +264,7 @@ test('a kind whose judges are not an ordered list is refused, because their orde
   assert.match(refusal(withKind({ judges: 'reviewer' })), /`kinds\.change\.judges`/);
 });
 
+// proves R-LOOP-11
 test('a kind naming the owner anywhere but last is refused, and the refusal names the position', () => {
   // None of these names `engineer`, which is this kind's maker: a fixture that named it would
   // earn the separation refusal too, and pass this test for the wrong rule.
@@ -231,6 +280,7 @@ test('a kind naming the owner last is accepted, and so is one naming the owner n
   assert.deepEqual(validate(withKind({ judges: ['reviewer'] })), []);
 });
 
+// proves R-LOOP-3
 test('a kind naming one role as both its maker and a judge is refused, and the refusal names it', () => {
   for (const judges of [['engineer'], ['reviewer', 'engineer'], ['engineer', 'owner']]) {
     const earned = refusal(withKind({ maker: 'engineer', judges }));
@@ -239,10 +289,12 @@ test('a kind naming one role as both its maker and a judge is refused, and the r
   }
 });
 
+// proves R-SCHED-10, R-ESCALATE-2
 test('an escalation category Rigger does not offer is refused, and the refusal names it', () => {
   assert.match(refusal({ ...rigger, escalate: ['critical', 'infrastructure'] }), /infrastructure/);
 });
 
+// proves R-ESCALATE-2
 test('a consumer choosing among the fixed categories is accepted, adding none of its own', async () => {
   // R-ESCALATE-2: the set is Rigger's, a consumer chooses which of them are the owner's, and all
   // are unless the consumer says otherwise. The default the architecture publishes is therefore
@@ -254,6 +306,7 @@ test('a consumer choosing among the fixed categories is accepted, adding none of
   assert.deepEqual(validate({ ...rigger, escalate: every }), []);
 });
 
+// proves R-PROV-1
 test('a provisioning step that declares nothing is read as optional', () => {
   // R-PROV-1: a step declares whether the work requires it, and one that does not declare it is
   // optional. The expected readings come from that row and from D12, which has this repository's
@@ -270,6 +323,7 @@ test('a provisioning step whose declaration is not a boolean is refused, so noth
   assert.match(refusal(config), /`provisioning\.vhs\.required`/);
 });
 
+// proves R-LOOP-11
 test('a role called owner is refused, because the owner is the one judge that is not a role', () => {
   const declared = { ...rigger, roles: { ...rigger.roles, owner: { agent: 'a.md', provider: 'claude', tier: 'high' } } };
   assert.match(refusal(declared), /`roles\.owner`/);

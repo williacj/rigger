@@ -91,16 +91,25 @@ const at = (path, key) => (path ? `${path}.${key}` : key);
 const SAYS = { boolean: 'true or false', array: 'a list' };
 const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof value === type);
 
-/** Whether a value is a set of declarations, which is what every shape holds. */
+/** Whether a value is a set of declarations, which is what a shape and a container both hold. */
 const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * The refusal a value earns where Rigger reads declarations and finds something else.
+ *
+ * Refused where it sits rather than read as an empty set, which would report every key under it
+ * as missing and bury the one fault that caused them. A container earns this as a shape does: a
+ * string read as a set of names yields one refusal per character, each naming an index the
+ * author never wrote.
+ */
+const holdsNothing = (path, value) =>
+  `\`${path || 'the config'}\` holds no declarations, and Rigger reads ${JSON.stringify(value) ?? String(value)} as none`;
 
 /** Reads one value's keys against its shape, and every shape nested under it. */
 function readShape(value, shape, path, refusals) {
   const rules = SHAPES[shape];
   if (!declares(value)) {
-    // Refused where it sits rather than read as an empty set, which would report every key under
-    // it as missing and bury the one fault that caused them.
-    refusals.push(`\`${path || 'the config'}\` holds no declarations, and Rigger reads ${JSON.stringify(value) ?? String(value)} as none`);
+    refusals.push(holdsNothing(path, value));
     return;
   }
   for (const [key, rule] of Object.entries(rules)) {
@@ -115,8 +124,11 @@ function readShape(value, shape, path, refusals) {
     }
     if (rule.keys) readShape(value[key], rule.keys, at(path, key), refusals);
     if (rule.entries) {
-      for (const [name, entry] of Object.entries(value[key])) {
-        readShape(entry, rule.entries, at(at(path, key), name), refusals);
+      if (!declares(value[key])) refusals.push(holdsNothing(at(path, key), value[key]));
+      else {
+        for (const [name, entry] of Object.entries(value[key])) {
+          readShape(entry, rule.entries, at(at(path, key), name), refusals);
+        }
       }
     }
   }
@@ -132,11 +144,15 @@ function readShape(value, shape, path, refusals) {
  * else names something Rigger cannot dispatch (`R-SCHED-10`).
  */
 function readKinds(config, refusals) {
-  const roles = config.roles ?? {};
+  // Neither rule below can be read where the declarations they read are missing: a maker cannot
+  // be held to the roles when there are none, and every kind would be refused for a fault that
+  // is one refusal already, naming the container that holds nothing.
+  if (!declares(config.roles) || !declares(config.kinds)) return;
+  const roles = config.roles;
   if (Object.hasOwn(roles, OWNER)) {
     refusals.push(`\`roles.${OWNER}\` is reserved: \`${OWNER}\` names the owner, who is never dispatched`);
   }
-  for (const [name, kind] of Object.entries(config.kinds ?? {})) {
+  for (const [name, kind] of Object.entries(config.kinds)) {
     const where = `kinds.${name}`;
     if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
       refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);

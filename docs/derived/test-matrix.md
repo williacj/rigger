@@ -34,7 +34,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-7 | **gap** |
 | R-SCHED-8 | **gap** |
 | R-SCHED-9 | **gap** |
-| R-SCHED-10 | **gap** |
+| R-SCHED-10 | `test/config.test.mjs` a declaration Rigger does not offer is refused wherever it sits, and the refusal names it<br>`test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions<br>`test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
 | R-SCHED-11 | **gap** |
 | R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |
@@ -44,15 +44,15 @@ reports no gap of its own; the register carries the reason.
 | R-WORK-6 | **gap** |
 | R-LOOP-1 | **gap** |
 | R-LOOP-2 | **gap** |
-| R-LOOP-3 | **gap** |
+| R-LOOP-3 | `test/config.test.mjs` a kind naming one role as both its maker and a judge is refused, and the refusal names it |
 | R-LOOP-4 | **gap** |
 | R-LOOP-5 | **gap** |
 | R-LOOP-6 | **gap** |
 | R-LOOP-7 | **gap** |
 | R-LOOP-8 | **gap** |
 | R-LOOP-9 | **gap** |
-| R-LOOP-10 | **gap** |
-| R-LOOP-11 | **gap** |
+| R-LOOP-10 | `test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions |
+| R-LOOP-11 | `test/config.test.mjs` a kind naming the owner anywhere but last is refused, and the refusal names the position<br>`test/config.test.mjs` a role called owner is refused, because the owner is the one judge that is not a role |
 | R-EVIDENCE-1 | **gap** |
 | R-EVIDENCE-2 | **gap** |
 | R-EVIDENCE-3 | **gap** |
@@ -73,7 +73,7 @@ reports no gap of its own; the register carries the reason.
 | R-GATE-7 | **gap** |
 | R-GATE-8 | **gap** |
 | R-ESCALATE-1 | **gap** |
-| R-ESCALATE-2 | **gap** |
+| R-ESCALATE-2 | `test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it<br>`test/config.test.mjs` a consumer choosing among the fixed categories is accepted, adding none of its own |
 | R-ESCALATE-3 | **gap** |
 | R-ESCALATE-4 | **gap** |
 | R-ESCALATE-5 | **gap** |
@@ -88,7 +88,7 @@ reports no gap of its own; the register carries the reason.
 | R-FAIL-2 | **gap** |
 | R-FAIL-3 | **gap** |
 | R-FAIL-4 | **gap** |
-| R-PROV-1 | **gap** |
+| R-PROV-1 | `test/config.test.mjs` a provisioning step that declares nothing is read as optional |
 | R-PROV-2 | **gap** |
 | R-PROV-3 | **gap** |
 | R-CONFLICT-1 | **gap** |

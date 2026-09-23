@@ -17,9 +17,17 @@ one it does spell cannot be missed.
 
 What the shape does not spell is the interesting part. The table names three engine settings the
 shape leaves out — the worktree root, the state directory and the topic rule — and two rows
-marked `Yes` that the config points at rather than contains. A config naming any of those five
+marked `Yes` that it gives no key: document checking, which the config points at rather than
+contains, and clock triggers, which nothing reads before M7. A config naming any of those five
 is refused today, because Rigger offers no spelling for them yet. That is a real bound on the
 refusal, not a completeness claim, and the card that lands each setting is what adds its key.
+
+The generalisation that found the most also hid the most. Refusing a key nobody offers was
+tested by growing every shape the config reaches, and a container key — `roles`, `kinds`,
+`provisioning` — is never itself one of those shapes, so three sites went unwatched and each
+crashed on a `null`. A site derivation that walks the values a config holds can only reach the
+sites that config nests, and the class the test names is wider than that. Deriving the sites
+from the shape table instead reaches every one of them, whatever a config happens to hold.
 
 Three tests could not have failed first, because each generalises a test that already had. Each
 was instead watched failing with its own defect mutated into the validator: the required-key
