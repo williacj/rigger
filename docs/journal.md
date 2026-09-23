@@ -13,11 +13,17 @@ in `ARCHITECTURE.md`'s `Budgets` section. `scripts/instruction-budget.mjs` reads
 that sentence rather than carrying a copy, so no script, no test and no second document had to be
 edited to agree with it.
 
-Every test that mentions a word budget writes its own architecture fixture.
-`test/instruction-budget.test.mjs` and `test/budget-checks.test.mjs` each state the figure they
-want and assert against that one, so neither pinned this repository's own number. A test holding a
+No test asserts against this repository's own ceiling, which is why raising it was a one-word
+edit. `test/instruction-budget.test.mjs` writes an architecture fixture stating the figure it
+wants, and so do five of the six tests in `test/budget-checks.test.mjs`. A test holding a
 hard-coded 2,000 would have turned a one-word proposal into a multi-file edit, and would have made
 the test the authority instead of the document.
+
+The sixth test is the one a later reader should open. `neither check states a budget of its own`
+builds no fixture: it reads the two budget scripts out of this repository and asserts that four
+spellings — `12000`, `12,000`, `2000`, `2,000` — appear in neither source. That is the falsifier
+for a figure typed into a script, and the two spellings it names for the instruction ceiling are
+the old one rather than 2,500. This card left the list untouched.
 
 No recorded decision governs that read, and `D16` says so itself. Its Notes name
 `scripts/instruction-budget.mjs` reading a budget out of `ARCHITECTURE.md`, and state that no rule
