@@ -188,7 +188,7 @@ shape it takes, and no shape needs working around:
 | the text inside a block comment | a comment; claims nothing |
 | a run of line comments | a comment — except that a `// proves` line among them is still a declaration, and is refused for standing above a comment rather than above a call |
 
-Eight shapes it refuses rather than reads, and each refusal names the file and the line:
+Shapes it refuses rather than claims, each naming the file and the line:
 
 | Shape | Why it is refused |
 |---|---|
@@ -196,18 +196,28 @@ Eight shapes it refuses rather than reads, and each refusal names the file and t
 | a call to a `test` or `it` the file binds itself, or never binds at all | `node --test` installs no global, so only a name imported from `node:test` reaches the runner |
 | a title the call builds from more than one quoted run — a `+`, a `${}` | the title is then not that string, and half a title names no test |
 | a title carrying an escape the scan does not decode | the string the runner registers is not known |
-| a title carrying a line ending or a `\|` | `docs/derived/test-matrix.md` is a pipe table: a row is one line, and its cells are what the `\|` characters divide, so no row can carry either |
-| a call reached any way but through a plain name a `node:test` import bound — a dynamic `import`, a `require`, a namespace member, `?.()`, or a `String.raw` title | reading those would take more of the grammar than this does; each is measured, and each costs a refusal rather than a claim |
+| a title carrying a line ending | a matrix row is one line, so it cannot carry the title |
+| a title carrying a `\|` | the pipe divides the two cells of a matrix row |
+| a title carrying `U+2028` or `U+2029` | each is a JavaScript line separator, so a matrix row cannot carry it |
+| a runner import through a re-export chain | the local import names the bridge, so proving its identity would require tracing another file |
+| `test(...args)` | the title is in the spread value, not in a quoted argument the reader can see |
+| `(test)('x', …)` | the callee is an expression rather than the directly bound name the reader checks |
+| a dynamic `import('node:test')` binding | the reader does not establish which name the awaited import binds |
+| `require('node:test')` in a .cjs file | `require` can be rebound, so its call alone does not establish the runner binding |
+| a namespace member call | the reader does not establish both the namespace binding and member identity |
+| `?.()` on a runner binding | an optional call can be skipped, so the direct-call rule cannot prove it ran |
+| a `String.raw` title | the tag determines the registered string, which the plain-title decoder does not read |
 | a `/` directly after a `}` | a division after an object literal and a regular expression after a block are one token apart, and the grammar above them decides which |
 | a quoted run or a comment the source leaves open | it is not source that parses |
 
 What it gets wrong: a declaration above a top-level call the module never finishes reaching is
 claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land
 there, because in each the source is complete and it is the run that stops. That is a question
-about running the module rather than reading it; what the source decides is decided, and a shape
-the source decides that the scan reads wrongly is a defect rather than a limit.
-`scripts/build-test-matrix.mjs` states the same set beside the code, and
-`test/build-test-matrix.test.mjs` puts every row of it to a constructed input.
+about running the module rather than reading it. A wrong claim is a defect; a source-decidable
+refusal in the table is a visible cost of keeping the reader bounded.
+`scripts/build-test-matrix.mjs` states the same set beside the code. The existing parser cases
+live in `test/build-test-matrix.test.mjs`; the added call shapes were measured with the runner
+and recorded in `docs/journal/2026-09-23-1638-119-matrix-refusals.md`.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the

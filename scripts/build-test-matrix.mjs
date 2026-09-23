@@ -395,9 +395,10 @@ function decoded(raw) {
  * is one string token however many lines it spans. And the call sits at the top level of the file,
  * because a call the runner reaches is one that nothing encloses.
  *
- * What it tells apart and what it does not, each row put to a constructed input in
- * `test/build-test-matrix.test.mjs` rather than reasoned about. Every row but the last costs a
- * refusal naming the file and the line, never a claim:
+ * What it tells apart and what it does not. `test/build-test-matrix.test.mjs` exercises the
+ * parser; `docs/journal/2026-09-23-1638-119-matrix-refusals.md` records runner measurements
+ * for the additional call shapes. Every row but the last costs a refusal naming the file and
+ * the line, never a claim:
  *
  *   a marker or a quote inside a string, a template or a regex   the character it is; no claim
  *   a declaration or a call inside a comment of either kind      commented out; no claim
@@ -407,10 +408,16 @@ function decoded(raw) {
  *   a call to a name the file binds itself, or never binds       refused: that reaches no runner
  *   a title built from anything but one quoted run               refused: no plain quoted title
  *   a title carrying an escape with no decoding here             refused: the string is not known
- *   a title carrying a line ending or a `|`                      refused: no matrix row carries it
- *   a call reached any way but a plain name a `node:test`        refused: five such, all measured
- *     import bound — a dynamic import, a `require`, a
- *     namespace member, `?.()`, or a `String.raw` title
+ *   a title carrying a line ending (also U+2028/U+2029)          refused: no row spans lines
+ *   a title carrying a `|`                                      refused: it divides row cells
+ *   an import through a re-export chain                          refused: the binding is indirect
+ *   `test(...args)`                                               refused: the title is in a spread
+ *   `(test)('x', ...)`                                             refused: the callee is an expression
+ *   a dynamic `import('node:test')` binding                       refused: binding is not static
+ *   `require('node:test')` in a `.cjs` file                       refused: require can be rebound
+ *   a namespace member call                                      refused: the member needs binding
+ *   `?.()` on a runner binding                                   refused: the call can be skipped
+ *   a `String.raw` title                                         refused: the tag decides its value
  *   a quoted run or a comment the source leaves open             refused: it does not tokenize
  *   a top-level call the module never finishes reaching          claimed all the same
  *
@@ -418,10 +425,8 @@ function decoded(raw) {
  * of the list above it: whether a module reaches its own top-level calls is a question about
  * running it. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land there,
  * because in each the source is complete and it is the run that stops, and refusing every file
- * whose top level might not finish would refuse every test file there is. So the governing
- * statement is not that the list is exhaustive: it is that what the source decides is decided
- * here, and a shape the source decides that this reads wrongly is a defect in it rather than a
- * limit of it.
+ * whose top level might not finish would refuse every test file there is. A wrong claim is a
+ * defect; a source-decidable refusal above is a visible cost of keeping this reader bounded.
  */
 export function declarationsIn(source, file) {
   const { tokens, comments } = tokensIn(source, file);
