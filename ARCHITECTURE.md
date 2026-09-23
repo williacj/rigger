@@ -285,7 +285,7 @@ budget change.
 
 Instruction files carry one budget of their own, covering the root `AGENTS.md` and every nested
 one together, checked the same way: one number, one check. Moving text from the root file into a
-directory's file therefore changes nothing; only deleting does. The budget is 2,000 words.
+directory's file therefore changes nothing; only deleting does. The budget is 2,500 words.
 
 ## Where to start reading
 
