@@ -422,6 +422,13 @@ export const KEYWORD_CONSTRUCT_PAYLOADS = [
   ['case, a later branch', 'case x in a) git status;; x) git push --force;; esac', 'a force push'],
   ['case, a parenthesised pattern', 'case x in (x) git push --force;; esac', 'a force push'],
   ['case, a pattern set off by blanks', 'case x in x ) git push --force ;; esac', 'a force push'],
+  // The same blank, in a branch after the first. The `case` word is on the command before this
+  // one, so the pattern is the whole of what stands before the body and the `)` is its own word.
+  [
+    'case, a later branch whose pattern is set off by blanks',
+    'case x in a) :;; x ) git push --force;; esac',
+    'a force push',
+  ],
   ['case, an alternation', 'case x in a|x) git push --force;; esac', 'a force push'],
   ['case, a quoted pattern', "case x in 'a)b') :;; x) git push -f;; esac", 'a force push'],
   ['case, a fall-through pattern', 'case x in a) :;& x) git push --force;; esac', 'a force push'],
