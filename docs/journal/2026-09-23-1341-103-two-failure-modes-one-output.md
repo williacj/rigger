@@ -32,7 +32,29 @@ counts either, which is the same refusal by a different route. Reproducing it ra
 believing it is what turned a third guard into a correction of the second.
 
 The other thing worth writing down is where the statement went. The instinct was the reviewer's
-skill, because a judge is who reads a mutation claim. The record says otherwise: seven of the
-eight mutation claims this repository holds are in a maker's own pull request body and one is in a
-judge round. A bar only a judge loads would have reached one of eight. It went in the `tdd` skill,
-which a maker loads before its first test body, with a pointer from the judge's lens.
+skill, because a judge is who reads a mutation claim. The record says otherwise, and more sharply
+than the count first written here: **no mutation claim a judge made is recorded anywhere a census
+can reach.** Every one sits in a maker's own report — ten pull request bodies, plus one maker's
+own round-2 comment, over every pull request and issue on 2026-09-23 — and none in a judge's. The
+reason is structural rather than accidental: `gh api .../reviews` returns zero reviews on every
+pull request, and the verdict store `M5` installs does not exist yet, so a judge's mutation claim
+lives in a dispatch transcript and nowhere a later reader can grep. Judge mutation claims are
+real — card #33 round 2, #31 and #35 each made one — and none of them left a trace. So the
+statement went in the `tdd` skill, which a maker loads before its first test body, and the
+pointer from the judge's lens is the only thing that reaches a judge at all: necessary rather
+than a courtesy.
+
+The first version of that paragraph said seven of eight, and one site in a judge round. All three
+figures were wrong, and the one that mattered was the split: the site read as a judge's is the
+maker's own round-2 reply, which says the body above is edited in place and addresses the judge in
+the second person. **The conclusion got stronger when the numbers got right**, which is the
+argument for measuring a claim you already believe. The count also moves — two more maker bodies
+appeared while this card was open — so the figure carries the date it was taken, and the zero is
+the part to read.
+
+One soft spot, named because a future edit can walk straight through it. `test/mutation-claim.test.mjs`
+pins the set of seven bolded requirement names, so any body can be reworded freely — including
+reverted to the pre-correction wording this entry's own measurement overturned, requirement 3's
+name left standing and the test still green. Pinning body text would make the document
+unmaintainable, so the gap stays open deliberately: the sentence most worth protecting is the one
+nothing protects.
