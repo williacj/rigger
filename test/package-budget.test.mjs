@@ -51,6 +51,16 @@ test('a comment opener inside a template literal opens no comment', () => {
   assert.equal(countProductionLines(source), 2);
 });
 
+test('a block-comment opener inside a regular expression leaves later code charged', () => {
+  const source = ['const marker = /[/*]/;', 'const a = 1;', 'const b = 2;'].join('\n');
+  assert.equal(countProductionLines(source), 3);
+});
+
+test('a block-comment opener inside a multiline template leaves later code charged', () => {
+  const source = ['const message = `first', '/*', 'last`;', 'const a = 1;'].join('\n');
+  assert.equal(countProductionLines(source), 4);
+});
+
 test('an apostrophe in a comment opens no string', () => {
   const source = ["// don't count me", 'const a = 1;', 'const b = 2;'].join('\n');
   assert.equal(countProductionLines(source), 2);
@@ -74,9 +84,8 @@ test('a template literal spanning lines carries code on each of them', () => {
 });
 
 test('a block comment left open fails rather than swallowing the rest of the file', () => {
-  // Source that parses cannot leave one open, so reaching the end inside a block comment means
-  // the scan was fooled — by the regex literal its own doc comment names, or by something else.
-  // The budget is a gate, and a gate that undercounts in silence is worse than one that stops.
+  // Source that parses cannot leave one open. The budget is a gate, and a gate that undercounts
+  // in silence is worse than one that stops.
   assert.throws(() => countProductionLines('/* open\nconst a = 1;\n'), /never closes/);
 });
 
@@ -264,7 +273,7 @@ test('a repository with no production sources yet walks to nothing', () => {
   assert.deepEqual(productionFiles(root), []);
 });
 
-test('the file the scan could not read through is named in the failure', () => {
+test('the file the parser could not read through is named in the failure', () => {
   const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'ARCHITECTURE.md'), '| **Package** | **12,000** |\n');
