@@ -18,9 +18,9 @@ The measurements say how invisible it was. At PR #106's tip `df7ef1c`, `npm test
 the word sits on 43 lines across 17 files, line 99 being one of them and in no way remarkable
 among them. At PR #112's tip `1dd61a1`, `npm test` exits 0 at `tests 203 / pass 203 / fail 0`; the
 check is there, `git grep -i` finds the word on zero lines tree-wide, and
-`test/absorption-check.test.mjs` does not exist. Both tips were cut from `c7804c5`, so neither was
-stale work. One branch had the offence and no detector; the other had the detector and nothing to
-detect.
+`test/absorption-check.test.mjs` does not exist. PR #106 was cut at `c7804c5` and PR #112 later,
+at `a727d51`, a descendant of it, so the two diverged at `c7804c5` and neither was stale work. One
+branch had the offence and no detector; the other had the detector and nothing to detect.
 
 The clean merge of just those two is already red, and running it is the fact worth having rather
 than the `git grep` that suggested it. `git commit-tree 4c32c12`, with the two tips as parents,
