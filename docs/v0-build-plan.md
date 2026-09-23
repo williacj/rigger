@@ -156,10 +156,13 @@ Those two documents are in scope because they name only assets that land here, w
 name code that arrives later. The path check keeps its own exemptions, and `docs/derived/` is on
 that list until D8 rule 4 creates it.
 
-The **lint** covers every document in the repository, including `AGENTS.md` and the README.
+The **lint** reads `README.md`, `ARCHITECTURE.md`, and authored files under `docs/spec/`, as
+`.claude/skills/spec-style/SKILL.md` states. Outside that scope, authors follow the form rules
+that govern each document, and reviewers check them.
 
 Exit:
 
+- The lint reports exactly the document scope stated above.
 - The verbs, and their order, match the README's block. Their help text is not part of the
   match; the verbs gain checks and behaviour as later milestones land.
 - `init` and `doctor` pass on a fresh clone.
