@@ -15,10 +15,113 @@ const SOURCE_SUFFIX = /\.(?:m|c)?js$/;
 // A test is whatever `npm test` runs, and `npm test` is `node --test`, so these are that
 // command's own default patterns: `test.js`, `test-*.js`, and the `.test.`, `-test.` and
 // `_test.` infixes, in any of the three extensions. Naming a narrower set here would charge a
-// file the runner executes to a budget that ARCHITECTURE.md puts tests outside of. Exported
-// because `scripts/build-test-matrix.mjs` asks the same question of a file name, and a second
-// copy of the answer is a second place for it to drift.
-export const TEST_FILE = /(?:^|[.\-_])test\.(?:m|c)?js$|^test-.*\.(?:m|c)?js$/;
+// file the runner executes to a budget that ARCHITECTURE.md puts tests outside of.
+//
+// The split is by case, and it is the runner's, not a convention of ours. From Node 21 the runner
+// matches its default pattern with `fs.glob`, and that glob sets `nocaseMagicOnly`: a pattern
+// component holding glob magic is matched without regard to case, and a wholly literal one is
+// compared exactly. What that pattern is, dumped from each interpreter rather than read off a
+// changelog:
+//
+//   20.20.2                    no such export; the runner matches by its own predicate
+//   21.0.0, 21.7.3, 22.0.0     `**/{test,test/**/*,test-*,*[.-_]test}.?(c|m)js`
+//   22.9.0                     `**/{test,test/**/*,test-*,*[._-]test}.?(c|m)js`
+//   22.10.0                    `**/{test,test/**/*,test-*,*[._-]test}.{js,mjs,cjs}`
+//   22.23.2, 24.18.0           the same, the extension list grown to `{js,mjs,cjs,ts,mts,cts}`
+//   23.11.1                    two patterns rather than one, the `{js,mjs,cjs}` spelling above
+//                              and `**/test/**/*{-,.,_}test.{cts,mts,ts}` beside it
+//
+// Once glob matching is there, two things moved, at different times, and only one of them is
+// what this file keys on.
+//
+// The extension is the one that matters here, and it is measured at both ends. The extglob
+// `?(c|m)js` is magic, so through 22.9.0 no alternative is wholly literal and the runner folds
+// `TEST.mjs` along with the rest. The brace list expands to plain `test.mjs`, so from 22.10.0
+// that one alternative alone answers to its exact case while every other keeps a `*` or a
+// character class. Hence two regexes and two answers rather than one.
+//
+// The character class moved too, and its boundary is exact: the range `[.-_]` from 21.0.0
+// through 22.8.0, the set `[._-]` from 22.9.0. Every release from 21.0.0 to 22.8.0 was dumped,
+// the ten in 22.1 to 22.8 among them, so there is no gap in it. This file does not key on the
+// class, and what that costs is recorded below.
+const TEST_LITERAL = /^test\.(?:m|c)?js$/;
+const TEST_LITERAL_FOLDED = new RegExp(TEST_LITERAL.source, 'i');
+const TEST_PATTERNED = /(?:[.\-_]test|^test-.*)\.(?:m|c)?js$/;
+const TEST_PATTERNED_FOLDED = new RegExp(TEST_PATTERNED.source, 'i');
+// Whether the runner folds is the runner's answer, and it turns on two things. Which Node is
+// running, because the runner only began matching by glob in 21. And which platform, because that
+// glob sets `nocase` for Windows and macOS and for nowhere else — on the platform, not on the
+// filesystem, so a case-sensitive volume on either still folds.
+//
+// Measured, not reasoned, each name in a directory of its own so that a case-insensitive
+// filesystem folded none of them onto another. Of `a.TEST.mjs`, `TEST-b.mjs` and `c_Test.mjs`,
+// `node --test` ran:
+//
+//   Windows 11 10.0.26200, NTFS:  none under 20.20.2; all three under 21.0.0, 21.7.3, 22.0.0,
+//                                 22.9.0, 22.10.0, 22.23.2, 23.11.1 and 24.18.0
+//   macos-latest, `darwin`:       none under 20.20.2; all three under 24.20.0. The CI log names
+//                                 the platform and the Node version, so neither the filesystem
+//                                 nor any other Node version is measured there.
+//
+// `TEST.mjs` ran under 21.0.0, 21.7.3, 22.0.0 and 22.9.0, and was declined under 20.20.2,
+// 22.10.0, 22.23.2, 23.11.1 and 24.18.0, which is the extension respelling above.
+//
+// Where this answer differs from the runner's. Each name was put to the real runner and to this
+// check under the same interpreter, on Windows 11 10.0.26200, NTFS. Under 20.20.2, 22.9.0,
+// 22.10.0, 22.23.2, 23.11.1 and 24.18.0 the two agree on every name below. Under the other four
+// interpreters run, they do not:
+//
+//   21.0.0 and 21.7.3   charged, and the runner runs them:     `a.TEST.mjs`, `TEST-b.mjs`,
+//                                                              `c_Test.mjs`, `TEST.mjs`,
+//                                                              `latest.mjs`, `notatest.mjs`
+//                       excluded, and the runner declines it:  `b-test.mjs`
+//   22.0.0 and 22.8.0   charged, and the runner runs them:     `latest.mjs`, `notatest.mjs`
+//                       excluded, and the runner declines them: `b-test.mjs`, `b-TEST.mjs`
+//
+// Charged where the runner runs it is an overcount; excluded where the runner declines it is an
+// undercount. Neither is silent: the budget suite reds on 21.0.0 and 22.0.0 for `645eeec` as
+// much as for this file, and is green there on 22.9.0. Closing any of it belongs to the card
+// that owns the version axis rather than to this one.
+//
+// Ten interpreters were put to that comparison, the six named above and the four in the table.
+// It is what was measured, not a range: no release between them was put to it.
+//
+// All of it was measured on Windows, where the runner folds. On a host where it does not fold
+// these names were not measured, so this file says nothing about them there.
+//
+// Linux is measured by nobody. What stands in for it is node's own predicate in
+// `internal/fs/glob`: `nocase: isWindows || isOSX` at v21.0.0 and v22.0.0, and `nocase:
+// isWindows || isMacOS` at v22.9.0 and v24.18.0, read at those four tags. D13 makes macOS v0's
+// only host and CI runs nowhere else, which is why no Linux measurement exists. Nor would a
+// disagreement there pass quietly — the relation test in `test/package-budget.test.mjs` asks the
+// real runner, in both directions, on whatever host the suite runs, and reds there.
+const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split('.').map(Number);
+const RUNNER_FOLDS_CASE =
+  NODE_MAJOR >= 22 && (process.platform === 'win32' || process.platform === 'darwin');
+// Before 22.10 the extension is still an extglob, so the bare `test` alternative folds as well.
+const RUNNER_FOLDS_BARE_TEST = RUNNER_FOLDS_CASE && NODE_MAJOR === 22 && NODE_MINOR < 10;
+
+/**
+ * Whether `node --test` runs a file of this name. `foldsCase` says whether it folds the
+ * alternatives carrying glob magic, and `foldsBareTest` whether the bare `test` one folds too.
+ */
+function runsAsTest(name, foldsCase, foldsBareTest) {
+  return (
+    (foldsBareTest ? TEST_LITERAL_FOLDED : TEST_LITERAL).test(name) ||
+    (foldsCase ? TEST_PATTERNED_FOLDED : TEST_PATTERNED).test(name)
+  );
+}
+
+/**
+ * Whether a name is a test spelling, read exactly as written.
+ *
+ * Exported because `scripts/build-test-matrix.mjs` asks the same question of a file name, and a
+ * second copy of the answer is a second place for it to drift. It is built from the two halves
+ * above rather than spelled a second time, so there is still one answer here. It does not fold:
+ * folding is the runner's and varies by host, where what the matrix reads is this repository's
+ * own corpus, whose names are all lower case.
+ */
+export const TEST_FILE = new RegExp(`${TEST_LITERAL.source}|${TEST_PATTERNED.source}`);
 // Directories the budget never charges for, wherever they sit rather than only at the root: a
 // directory of templates under `src/` is still templates, and `node --test` runs every file
 // under a `test` directory whatever it is called.
@@ -115,7 +218,11 @@ export function countProductionLines(source) {
 }
 
 /** Every production source file under a repository root, in a stable order. */
-export function productionFiles(root) {
+export function productionFiles(
+  root,
+  foldsCase = RUNNER_FOLDS_CASE,
+  foldsBareTest = RUNNER_FOLDS_BARE_TEST,
+) {
   const walk = (dir) => {
     let entries;
     try {
@@ -129,7 +236,7 @@ export function productionFiles(root) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) return UNCHARGED.has(entry.name) ? [] : walk(path);
         if (!SOURCE_SUFFIX.test(entry.name)) return [];
-        if (TEST_FILE.test(entry.name)) return [];
+        if (runsAsTest(entry.name, foldsCase, foldsBareTest)) return [];
         return [path];
       });
   };
