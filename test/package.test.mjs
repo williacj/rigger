@@ -28,11 +28,16 @@ test('the Node floor is 20 or later, and the README states the same one', () => 
   assert.ok(floor >= 20, `the declared floor is Node ${floor}, below the 20 the card asks for`);
 });
 
-test('an install under an older Node fails, and names that as the reason', () => {
-  // The floor is raised above the Node running this test rather than lowered onto an old one,
-  // because the machine has only the Node it has. What is proved is the pair: `engines` states
-  // the floor and `engine-strict` refuses below it, against this repository's real manifest.
-  const unmet = `>=${Number(process.versions.node.split('.')[0]) + 1}`;
+// The floor is raised above the Node running these tests rather than lowered onto an old one,
+// because the machine has only the Node it has.
+const unmet = `>=${Number(process.versions.node.split('.')[0]) + 1}`;
+
+/**
+ * A real `npm install` of this repository's manifest with its Node floor raised to `unmet`, in a
+ * throwaway directory beside a copy of this repository's `.npmrc`, run under `env`. Returns the
+ * exit status and everything the install printed on either stream.
+ */
+function installUnderRaisedFloor(env) {
   const dir = mkdtempSync(join(tmpdir(), 'rigger-engines-'));
   writeFileSync(
     join(dir, 'package.json'),
@@ -40,17 +45,38 @@ test('an install under an older Node fails, and names that as the reason', () =>
   );
   copyFileSync(join(root, '.npmrc'), join(dir, '.npmrc'));
 
-  const install = spawnSync('npm install --no-audit --no-fund', {
+  const install = spawnSync('npm install --no-audit --no-fund --loglevel=error', {
     cwd: dir,
     shell: true,
     encoding: 'utf8',
+    env,
   });
 
-  assert.notEqual(install.status, 0);
-  const said = install.stdout + install.stderr;
+  return { status: install.status, said: install.stdout + install.stderr };
+}
+
+test('an install under an older Node fails, and names that as the reason', () => {
+  // What is proved is the pair: `engines` states the floor and `engine-strict` refuses below it,
+  // against this repository's real manifest.
+  const { status, said } = installUnderRaisedFloor(process.env);
+
+  assert.notEqual(status, 0);
   assert.match(said, /EBADENGINE|Unsupported engine/);
   assert.match(said, new RegExp(`Required.*${unmet}`));
   assert.match(said, new RegExp(`Actual.*v${process.versions.node}`));
+});
+
+test('the refusal is printed however quiet the npm that launched the suite was told to be', () => {
+  // npm exports its own config to a script's environment as `npm_config_*`, so `npm test
+  // --silent` leaves `npm_config_loglevel=silent` there and a child install inheriting it
+  // refuses in silence: exit 1, nothing printed, and the test above reading an empty string.
+  // That is the whole of the flake this file used to have. The install names its own loglevel
+  // on the command line so that nothing the environment carries can mute it, and this asks npm
+  // whether that holds rather than assuming which of the two sources wins (D16).
+  const { status, said } = installUnderRaisedFloor({ ...process.env, npm_config_loglevel: 'silent' });
+
+  assert.notEqual(status, 0);
+  assert.match(said, /EBADENGINE|Unsupported engine/);
 });
 
 test('every script the repository defines is reachable from npm run', () => {
