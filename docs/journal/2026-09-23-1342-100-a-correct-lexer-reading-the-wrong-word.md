@@ -53,3 +53,48 @@ caught a zero-byte gate file earlier in this milestone. That is only half of it:
 never reached `PATH` reports "did not run git" for every payload, and every bypass then reads as
 inert. So the same two controls are asserted against bash as well, and the shim has to have run for
 both before any row is printed.
+
+## Round two — the enumeration was of the wrong thing
+
+A judge found the rule this card rewrote stepping over only *some* of the words bash puts before a
+program. A redirection was missing, and so was every prefix program but `env`; 59 payloads reached a
+reserved command through them.
+
+**The list above was enumerated from bash's reserved words, which was the wrong axis to exhaust.**
+Bash's grammar for a simple command is assignments and redirections, then the program; the
+construct introducers are a second axis, and the programs that exec another program are a third. I
+enumerated one axis to its end, reported it as thorough, and never asked what *kind* of word I was
+listing. `AGENTS.md`'s acceptance skill says exhausting one axis is not covering the card, and that
+is what a complete-looking enumeration buys you: confidence proportional to the axis rather than to
+the problem.
+
+**The sharpest evidence was that the gap disabled step-overs the gate already had.**
+`env git push --force` and `X=1 git push --force` were refused before this card; inserting
+`>/dev/null` between the prefix and the program defeated both. A missing case that only fails to
+add cover is one thing, and a missing case that switches off working cover is another — and reading
+the rule rather than the diff is what would have shown it, because the redirection sits between two
+clauses that both already worked.
+
+**The direction argument held, and it was worth having had it in writing.** Stepping over a word,
+and reading the words after a prefix, can each only surface a program the gate was not reading. So
+round two widened freely where card #71 could not, and the 0 in "refused to permitted, over 214
+commands, twice" is what let it. The one place that argument did not cover was the lexer, where the
+change was to *narrow* the operator set — and there the honest move was to write down the one side
+effect (`2>&1<<EOF` becomes a here-document the gate refuses rather than honours) and show it lands
+on the safe side.
+
+**Then three separate green mutations, all found by a guard rather than by reading.** The runner now
+treats a mutation that leaves the suite green as a guard failure, in the same breath as a mutation
+that fails to apply. It stopped three times. Once because a payload named for a rule reached it
+through a different rule — the lesson from round one, repeated. Twice because the rule element was
+genuinely redundant: two `REDIRECTION` members nothing can reach, and `time` held in both the
+keyword list and the prefix list, which let `TIME_OPTIONS` and its loop be deleted outright. **The
+mutation that reports nothing is the one carrying information**, and the only way to stop reading
+past it is to make green fail loudly.
+
+**And the runner's own failure path was leaving the repository mutated.** `die()` exited before the
+restore, so the first green mutation left a mutant on disk — and the next three measurements I took
+were against it, which is how `bash -c 'nohup bash -c "…"'` came to look permitted when it is
+refused. Nothing in the output said so; the contradiction with a trace I had done by hand is what
+caught it. A harness that can leave the thing under test modified has to restore on every exit, not
+only the happy one.
