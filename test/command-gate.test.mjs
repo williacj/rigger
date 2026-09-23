@@ -603,10 +603,13 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   ['chrt -f, whose option takes a value', 'chrt -f 1 git push --force', 'a force push'],
   ['doas', 'doas git push --force', 'a force push'],
   ['unbuffer', 'unbuffer git push --force', 'a force push'],
-  // A prefix is not a shell, so a chain of them must not spend the budget for reading inside one.
-  // Three prefixes and then a shell is the shape that says so: counting each prefix against that
-  // budget leaves the script unread, and bash runs the push in it.
   ['three prefixes and then a shell', "nohup env nice bash -c 'git push --force'", 'a force push'],
+  // A prefix is not a shell, so it must not spend the budget for reading inside one. A prefix
+  // *inside* a shell is the shape that says so, and the chain above is not: the scan reads every
+  // word after the outermost prefix, so the `bash -c` that follows two more prefixes is reached
+  // from the outermost one and never needs the budget. Here the shell is already one level down,
+  // so counting the prefix against the budget leaves the script unread and bash runs the push.
+  ['a prefix inside a shell, before another shell', 'bash -c \'nohup bash -c "git push --force"\'', 'a force push'],
 ];
 
 /**
