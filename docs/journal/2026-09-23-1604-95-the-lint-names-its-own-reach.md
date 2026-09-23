@@ -11,3 +11,6 @@ not name.
 The skill's description named `docs/spec/` as a directory, while the lint leaves retired
 registers out of that directory. The skill now states that limit in its description and lint
 explanation; its four form rules and the lint's parser are unchanged.
+
+The test naming this scope also said “authored files under `docs/spec/`” while its fixture excluded
+retired registers. Its title now names the four checked files; the test assertions are unchanged.

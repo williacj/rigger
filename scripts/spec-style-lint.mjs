@@ -7,8 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { countWords } from './instruction-budget.mjs';
 
-// The skill is the authority for every rule the lint applies and for which documents it applies
-// them to, so this path is the only fact the lint holds of its own.
+// The skill owns the lint rules and scope roots. The document walk excludes retired registers.
 const SKILL = '.claude/skills/spec-style/SKILL.md';
 
 /**
@@ -123,10 +122,10 @@ export function findings(text, { ceiling, terms }) {
 }
 
 /**
- * What the skill says it governs: a document, or a directory whose authored documents it governs.
+ * What the skill names for the lint: a root document or a directory of documents.
  *
- * The skill names its own scope, so the lint asks it rather than carrying a second copy that can
- * disagree with the first.
+ * The skill names its scope roots, so the lint asks it rather than carrying a second copy that
+ * can disagree with the first.
  */
 export function lintScope(skill) {
   const stated = skill.match(/for any diff touching ([^\n]+?)\.(?:\s|$)/);
