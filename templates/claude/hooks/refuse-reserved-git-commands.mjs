@@ -509,6 +509,11 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * `for` and `select` are followed by a name rather than a command, and `for x in git push --force`
  * is a word list bash runs no git from; `[[` opens a conditional bash runs no command inside. Each
  * of those was measured rather than reasoned about, and the pull request reports what bash ran.
+ *
+ * `time` is absent for a different reason: it is also the name of a program, so it sits in
+ * `PREFIX_PROGRAMS` below, which reaches every spelling this list would — `time -p`, `time --` and
+ * `time { … }` alike — and also `/usr/bin/time`, which this list cannot, because it matches a whole
+ * word where the prefix list matches a basename. Holding it in both left one of them dead.
  */
 const KEYWORDS_A_COMMAND_MAY_FOLLOW = new Set([
   '!',
@@ -521,13 +526,9 @@ const KEYWORDS_A_COMMAND_MAY_FOLLOW = new Set([
   'if',
   'in',
   'then',
-  'time',
   'until',
   'while',
 ]);
-
-/** What bash's `time` takes before the pipeline it times. `--portability` is not one: bash rejects it. */
-const TIME_OPTIONS = new Set(['-p', '--']);
 
 /**
  * A redirection where bash reads a command's words. Bash reads one before the program as freely as
@@ -565,9 +566,6 @@ function programWords(given) {
 
     if (KEYWORDS_A_COMMAND_MAY_FOLLOW.has(first)) {
       words = words.slice(1);
-      if (first === 'time') {
-        while (words.length && TIME_OPTIONS.has(words[0])) words = words.slice(1);
-      }
       // `coproc NAME compound` and `function NAME compound` name the thing before its body, so
       // the body's first command is a word further on. Bash reads a NAME only before a compound
       // command: in `coproc c git push --force` the `c` is the program, and bash runs `c`.
