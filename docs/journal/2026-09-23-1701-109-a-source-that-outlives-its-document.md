@@ -47,10 +47,13 @@ between a heading and the first bullet as a clause, so a bullet-free section yie
 blob carrying a whole section's vocabulary, which overlaps most of a register and reports as
 absorbed. Pointed at `## The gate`, the old script matched 81 of 99 rows and exited 0 having
 compared nothing — card #57's false green, one layer over, on the section rather than the argument
-vector. Across the 225 `## ` sections in the 61 tracked markdown files, every bullet-free section
-yielded exactly one clause, 162 of them without exception, and every section with a bullet yielded
-at least two. So the floor is 2: the only value that refuses every bullet-free section while
-admitting every real list. A floor of 3 refuses `.claude/agents/reviewer.md`'s "What you rule on",
+vector. The rule the floor rests on is that a bullet-free section yields exactly one clause and a
+bulleted one yields at least two, and it held without exception across every `## ` section in
+every tracked markdown file — 162 bullet-free of 225 sections in 61 files at the merge base
+`2c8d49c`, and 163 of 226 in 62 at this entry's own head, which is this entry's file moving the
+tally it was written beside. So the floor is 2: the only value that refuses every bullet-free
+section while admitting every real list. A floor of 3 refuses `.claude/agents/reviewer.md`'s
+"What you rule on",
 which the test says by name when the number is moved. A threshold with that shape needs no
 defending, because the measurement picks it and the test re-picks it whenever the documents move.
 
