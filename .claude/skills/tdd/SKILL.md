@@ -118,9 +118,10 @@ says what broke. Never log a secret (`AGENTS.md`).
 
 Each test declares the requirement it proves. A tool builds `docs/derived/test-matrix.md` from
 those declarations, so the matrix is generated and never hand-edited (`D8`). A requirement the
-register gains with no test to claim it reds the build (`AGENTS.md`, "When you write a decision
-or a requirement"). One the register already held is a counted gap, which the matrix shows and
-the build does not red on, and `D17` holds the difference and when each gap closes.
+register gains needs a test that claims it, or the build reds (`AGENTS.md`, "When you write a
+decision or a requirement"). A judge enforces that, so expect no check to catch it for you. One
+the register already held is a counted gap, which the matrix counts and the build does not red
+on, and `D17` holds the difference and when each gap closes.
 
 A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
 for, naming as many ids as that test proves, separated by commas. `npm run matrix` rebuilds the

@@ -511,29 +511,30 @@ on an upgrade a restated fact would have survived.
 
 ### Rule
 
-1. A requirement no test claims reds the build, unless it is a counted gap. `AGENTS.md`, under
-   "When you write a decision or a requirement", holds that red for a requirement being added,
-   and this decision neither widens nor narrows it.
+1. `AGENTS.md`, under "When you write a decision or a requirement", obliges whoever adds a
+   requirement to claim it with a test. This decision neither widens nor narrows that
+   obligation, and adds no check of its own.
 2. A **counted gap** is a requirement `docs/spec/requirements.md` held when this decision bound,
-   and that no test has claimed since. The test matrix `docs/v0-build-plan.md` requires at M0
-   names it, the count of requirements with no test includes it, and the build does not red.
-3. The set of counted gaps never gains a member. A requirement leaves it when a test claims it,
-   or when the owner withdraws it, and it never returns. Deleting the test that claimed a
-   requirement therefore reds the build.
-4. `checked by` records what *would* catch a violation, never what a test has done
-   (`docs/spec/requirements.md`, preamble). Editing a row's `checked by` moves no requirement
-   into the set or out of it, and changes the count by nothing.
-5. A requirement the owner withdraws leaves the set with its row, and the count falls by one.
-   That fall is not a test written. Only the owner withdraws a requirement
-   (`docs/spec/requirements.md`, preamble), so the set loses a member that way only where the
-   owner has decided Rigger need not do the thing.
+   and that no test has claimed since. `docs/derived/test-matrix.md` marks it, the count its
+   generator prints includes it, and the build does not red.
+3. The set of counted gaps never gains a member. A requirement leaves the set when a test claims
+   it, or when the owner withdraws it, and it never returns.
+4. Editing a row's `checked by` moves no requirement into the set or out of it.
+   `docs/spec/requirements.md`'s preamble states that the column records what *would* catch a
+   violation, never what a test has done.
+5. A requirement the owner withdraws leaves the set with its row. Only the owner withdraws a
+   requirement (`docs/spec/requirements.md`, preamble), so the set loses a member that way only
+   where the owner has decided Rigger need not do the thing.
 6. Three things shrink the set, and they run at once:
-   1. The card that makes a requirement true claims it with a test in the same work. The card's
-      acceptance says so (`R-CARD-1`), the maker finishes against that acceptance (`R-LOOP-1`),
-      and every judge rules on it (`R-LOOP-5`).
+   1. The card that makes a requirement true claims it with a test in the same work. That
+      obligation is an acceptance item: the card's author writes it before the work starts
+      (`R-CARD-1`), the maker finishes against it (`R-LOOP-1`), and every judge rules on it
+      (`R-LOOP-5`).
    2. A milestone closes only when a test claims every requirement its exit list cites.
    3. v0 ships with the set empty. `docs/v0-build-plan.md`'s M8 holds that, and this decision
       ends there.
+7. A judge enforces the rules above. No tool holds the set, and the notes record what the
+   generator answers instead.
 
 ### Deferred, and what returns it
 
@@ -543,10 +544,16 @@ on an upgrade a restated fact would have survived.
 
 ### Notes
 
-The claim that a requirement no test claims reds the build was written in four places, and only
-`AGENTS.md`'s was satisfiable. Every requirement in the register was unclaimed when this decision
-was drafted. Redding on every unclaimed row would therefore have redded the build on the commit
-that landed the check, and forced tests written to move a number.
+The claim that a requirement no test claims reds the build was written of every requirement in
+four places: `docs/v0-build-plan.md` twice, `docs/spec/requirements.md`'s preamble, and
+`.claude/skills/tdd/SKILL.md`, which cited `AGENTS.md` for it. `AGENTS.md` states it of a
+requirement being added, and that narrower rule is the only one an author could satisfy.
+
+Redding on every unclaimed row is the first failure. `npm run matrix:check` reported 99 of 99
+requirements with no test when this entry was drafted. A check redding on each would therefore
+have redded the build on the commit that landed it, and forced tests written to move a number.
+The generator owns the live figure (`D8`), and 99 is the measurement this reasoning rests on
+rather than a number the register keeps current.
 
 Counting every unclaimed row and redding on none is the other failure. It makes the gap visible
 and leaves nothing acting on it, and a number nobody is obliged to move does not move. Rule 6 is
@@ -556,6 +563,22 @@ Dating the set is what makes both halves true at once. A requirement added from 
 someone who can write its test, because the behaviour is being built in the same work. A
 requirement the register already held waits on code that does not exist, and no test could claim
 it honestly. The date is the only line that separates those two.
+
+**What the generator answers, and where that differs from the set.** `D16` rule 3 asks for the
+difference to be measured rather than estimated. Running the generator over a scratch copy of the
+register measured four things.
+
+1. The printed count is every live requirement no declaration claims, and it holds no date. It
+   therefore counts a requirement added after this entry alongside a counted gap. Adding one
+   unclaimed row moved the count from 99 of 99 to 100 of 100 while the set gained no member.
+2. Retiring an unclaimed requirement moved the count from 99 of 99 to 98 of 98 and dropped the
+   row from the matrix. Both numbers fell by one, and no test was written.
+3. Editing a row's `checked by` left the count untouched in both directions. It did move how the
+   matrix marks the row: under `the test suite` the mark reads **gap**, and under `nothing yet`
+   it reads `nothing yet`. So the column moves the mark, while rule 4 holds the membership.
+4. Nothing records which requirements the set held. Deleting the test that claimed one redded
+   only the staleness check, and regenerating the matrix cleared that red and returned the row
+   to **gap**. Rule 3 is what forbids the return, and rule 7 names who holds it.
 
 Rule 4 closes the route that would otherwise open. `checked by` is prospective, and an author
 edits it freely, so a set defined by that column could be emptied by editing cells. Membership is
@@ -575,5 +598,5 @@ count falls while the suite proves no more than before, because cards close with
 claim a row rather than to prove a behaviour. CI's printed count shows the first, and `report`
 shows the second as work that came back (`R-RECORD-3`).
 
-This decision holds one lifespan. It begins with the set and ends when the set is empty. The red
-it names for a requirement being added lives in `AGENTS.md`, which outlives it.
+This decision holds one lifespan. It begins with the set and ends when the set is empty. The
+obligation `AGENTS.md` carries for a requirement being added outlives it.

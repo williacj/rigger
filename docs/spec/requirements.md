@@ -49,8 +49,8 @@ check that Rigger did it.
 
 `checked by` names what *would* catch a violation. Which tests actually do is
 `docs/derived/test-matrix.md`, which a tool builds from the tests themselves. `D17` states which
-requirement with no test reds the build and which is a counted gap. Editing a row's `checked by`
-moves no requirement between the two.
+requirement with no test is a counted gap, and who is obliged to close it. Editing a row's
+`checked by` moves no requirement into that set or out of it.
 
 **Ids and lifespan.** Ids group by subject, and an id is never reused. A new requirement takes a
 new id in its group.
