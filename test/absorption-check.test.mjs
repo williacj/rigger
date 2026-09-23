@@ -96,7 +96,7 @@ function documents(source, destination) {
 const HEADING = '## Invariants that hold across every layer';
 
 test('the two-document form names the file and the heading when the source section is absent', () => {
-  // ARCHITECTURE.md lost this section in 755c809, so this is the state the corpus is really in.
+  // ARCHITECTURE.md lost this section in 755c809, so this is the state that document is really in.
   // A caller needs to read which file was short of which heading off the failure.
   const dir = documents('# Architecture\n\n## Something else\n\n- A clause.\n', '| R-CARD-1 | A card states its acceptance. |\n');
 
