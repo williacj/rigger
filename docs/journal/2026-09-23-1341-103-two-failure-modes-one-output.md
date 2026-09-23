@@ -33,16 +33,19 @@ believing it is what turned a third guard into a correction of the second.
 
 The other thing worth writing down is where the statement went. The instinct was the reviewer's
 skill, because a judge is who reads a mutation claim. The record says otherwise, and more sharply
-than the count first written here: **no mutation claim a judge made is recorded anywhere a census
-can reach.** Every one sits in a maker's own report — ten pull request bodies, plus one maker's
-own round-2 comment, over every pull request and issue on 2026-09-23 — and none in a judge's. The
-reason is structural rather than accidental: `gh api .../reviews` returns zero reviews on every
-pull request, and the verdict store `M5` installs does not exist yet, so a judge's mutation claim
-lives in a dispatch transcript and nowhere a later reader can grep. Judge mutation claims are
-real — card #33 round 2, #31 and #35 each made one — and none of them left a trace. So the
-statement went in the `tdd` skill, which a maker loads before its first test body, and the
-pointer from the judge's lens is the only thing that reaches a judge at all: necessary rather
-than a courtesy.
+than the count first written here: **no judge's own report is among the eleven sites, and no judge
+verdict is recorded as a review or in a verdict store at all.** Every one of the eleven sits in a
+maker's own report — ten pull request bodies, plus one maker's own round-2 comment, over every
+pull request and issue on 2026-09-23. The reason is structural rather than accidental: `gh api
+.../reviews` returns zero reviews on every pull request, and the verdict store `M5` installs does
+not exist yet. Judge mutation claims are real — card #33 round 2, #31 and #35 each made one — and
+what survives of them is quotation rather than record: card #103's own body quotes #33 round 2
+verbatim, card #24's body quotes another judge's eight-mutation report, and issue #97's comments
+record a third at second hand, while #31, #35 and #33 carry no mutation mention at all. **A
+quotation is a record the card's author chose to make, not one the judge creates or could rely
+on.** So the statement went in the `tdd` skill, which a maker loads before its first test body,
+and the pointer from the judge's lens is the only thing that reaches a judge by design:
+necessary rather than a courtesy.
 
 The first version of that paragraph said seven of eight, and one site in a judge round. All three
 figures were wrong, and the one that mattered was the split: the site read as a judge's is the
