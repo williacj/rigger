@@ -180,7 +180,8 @@ checkout is not a workspace. Branch for every piece of work. Nothing reaches `ma
 through the gate. Until M5 installs it here that rule is yours to keep and the owner's to
 waive; from M5 it is the hook's, it refuses on missing or stale evidence whoever you are, and
 nobody can wave it through. Commit atomically and often, with messages that say why. `git
-status` before `git add -A`. Commit journal entries with the work that produced them.
+status` before `git add -A`. Commit a journal entry with the work that produced it, as its own
+file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
 
 ## Pointers
 
@@ -188,4 +189,4 @@ status` before `git add -A`. Commit journal entries with the work that produced 
 - What each layer decides, and may never decide → `ARCHITECTURE.md`
 - What was chosen, and what would reverse it → `docs/spec/decisions.md`
 - What is being built next, and its exit test → `docs/v0-build-plan.md`
-- What we learned, and what failed → `docs/journal.md`
+- What we learned, and what failed → `docs/journal/`
