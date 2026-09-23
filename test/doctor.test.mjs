@@ -7,10 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { PROVIDER_ASSETS } from '../src/cli/init.mjs';
-import { AGENT_CLI, agentAuth, doctor, ghAuth, nodeVersion, sameTree } from '../src/cli/doctor.mjs';
+import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
+import { validate } from '../src/config/validate.mjs';
+import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, sameTree } from '../src/cli/doctor.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -156,12 +157,53 @@ test('a floor written in a form this reader does not read is said to be unread, 
   }
 });
 
+/**
+ * What each authority really answered on this host, recorded so a test can hand it back.
+ *
+ * Taken from the tools rather than written to make an assertion pass: gh 2.96.0 run signed in
+ * and run against an empty `GH_CONFIG_DIR`, and Claude Code 2.1.281 run signed in and against an
+ * empty `CLAUDE_CONFIG_DIR`. The tests that tie each check to its tool ask the tool itself; these
+ * are for the runs that need a verdict fixed in order to measure something else.
+ */
+const RECORDED = {
+  ghIn: { status: 0, stdout: 'github.com\n  ✓ Logged in to github.com account williacj (keyring)\n', stderr: '' },
+  ghOut: { status: 1, stdout: '', stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' },
+  agentIn: { status: 0, stdout: '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}\n', stderr: '' },
+  agentOut: { status: 1, stdout: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}\n', stderr: '' },
+};
+
 /** A runner that answers one recorded result and records what it was asked. */
 function answering(result) {
   const asked = [];
   const ask = (command, args) => { asked.push([command, ...args].join(' ')); return result; };
   ask.asked = asked;
   return ask;
+}
+
+/**
+ * A runner answering a recorded result per command, and letting git through to the real thing.
+ *
+ * Git is not an authority a check asks: it is how `doctor` names the repository it is looking at,
+ * so a fixture repository has to answer for itself.
+ */
+function answeringEach(answers) {
+  const asked = [];
+  const ask = (command, args) => {
+    asked.push([command, ...args].join(' '));
+    if (command === 'git') return spawnSync(command, args, { encoding: 'utf8' });
+    assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
+    return answers[command];
+  };
+  ask.asked = asked;
+  return ask;
+}
+
+/** A git repository holding a config, which is what `doctor` expects to be pointed at. */
+function checked(source) {
+  const where = mkdtempSync(join(tmpdir(), 'rigger-checked-'));
+  assert.equal(spawnSync('git', ['-C', where, 'init', '-q'], { encoding: 'utf8' }).status, 0);
+  writeFileSync(join(where, CONFIG), source);
+  return where;
 }
 
 test('the gh check answers what `gh auth status` answers, and asks it without the token', () => {
@@ -181,8 +223,8 @@ test('the gh check answers what `gh auth status` answers, and asks it without th
 
   assert.equal(here.ok, tool.status === null ? null : tool.status === 0, here.detail);
 
-  const authenticated = answering({ status: 0, stdout: 'github.com\n  ✓ Logged in to github.com account williacj (keyring)\n', stderr: '' });
-  const not = answering({ status: 1, stdout: '', stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' });
+  const authenticated = answering(RECORDED.ghIn);
+  const not = answering(RECORDED.ghOut);
   assert.equal(ghAuth({ ask: authenticated }).ok, true);
   assert.equal(ghAuth({ ask: not }).ok, false);
   assert.deepEqual(authenticated.asked, ['gh auth status']);
@@ -236,8 +278,8 @@ test('the agent CLI check answers the `loggedIn` the CLI states, and asks every 
 
   assert.equal(here.ok, typeof stated === 'boolean' ? stated : null, `${here.detail} against ${tool.stdout}`);
 
-  const signedIn = answering({ status: 0, stdout: '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}\n', stderr: '' });
-  const out = answering({ status: 1, stdout: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}\n', stderr: '' });
+  const signedIn = answering(RECORDED.agentIn);
+  const out = answering(RECORDED.agentOut);
   assert.equal(agentAuth({ ask: signedIn }).ok, true);
   assert.equal(agentAuth({ ask: out }).ok, false);
   assert.deepEqual(signedIn.asked, ['claude auth status --json']);
@@ -254,4 +296,210 @@ test('every provider Rigger forks assets for has a CLI this check knows how to a
   // table and not the other: its assets land, its roles are dispatched, and the check that would
   // have said its CLI was never signed in passes over it in silence.
   assert.deepEqual(Object.keys(AGENT_CLI).sort(), Object.keys(PROVIDER_ASSETS).sort());
+});
+
+/** A directory holding one config file, written as the text given. */
+function holding(source) {
+  const where = mkdtempSync(join(tmpdir(), 'rigger-config-'));
+  if (source !== null) writeFileSync(join(where, CONFIG), source);
+  return where;
+}
+
+/** The starter config `init` writes, with the board number a consumer would answer. */
+const starter = () => plan({ repo: 'acme/widgets', project: 12 }).find((file) => file.path === CONFIG).content;
+
+test('config validity is the validator\'s answer, read from the config the consumer holds', async () => {
+  // `src/config/validate.mjs` decides what Rigger accepts, so the defect this catches is a second
+  // reading of the config living here: two answers to one question, drifting apart the first time
+  // the validator gains a rule. What is asserted is the relation — the check passes exactly when
+  // the validator refuses nothing, and its line carries the refusals the validator gave.
+  const good = holding(starter());
+  const bad = holding(starter().replace(/^\s*repo:.*$/m, ''));
+
+  const passed = await configValidity({ target: good });
+  const failed = await configValidity({ target: bad });
+
+  assert.deepEqual(validate((await import(pathToFileURL(join(good, CONFIG)))).default), []);
+  assert.equal(passed.ok, true, passed.detail);
+
+  const refusals = validate((await import(pathToFileURL(join(bad, CONFIG)))).default);
+  assert.notDeepEqual(refusals, [], 'the broken config earns no refusals, so this proves nothing');
+  assert.equal(failed.ok, false, failed.detail);
+  for (const refusal of refusals) assert.ok(failed.detail.includes(refusal), `the line never says: ${refusal}`);
+});
+
+test('a config that will not load is reported by what went wrong, never by a stack trace', async () => {
+  // The card asks for a line per check without a stack trace, and a config is the one input here
+  // that can throw on being read: it is a module the consumer wrote, and Rigger imports it. The
+  // defect this catches is the raw error reaching the report — twenty frames of Node internals
+  // where the file and the reason belong — and the other is a missing config read as a crash.
+  const broken = await configValidity({ target: holding('export default {\n') });
+  const absent = await configValidity({ target: holding(null) });
+
+  for (const said of [broken, absent]) {
+    assert.equal(said.ok, false, said.detail);
+    assert.ok(said.detail.includes(CONFIG), `the line never names the file: ${said.detail}`);
+    assert.doesNotMatch(said.detail, /\n\s+at /, `the line carries a stack trace: ${said.detail}`);
+    assert.doesNotMatch(said.detail, /[\r\n]/, `the line is more than a line: ${said.detail}`);
+  }
+});
+
+/**
+ * The four checks the card asks `doctor` to report, written out by hand.
+ *
+ * Written out rather than read back from the report, because an expectation taken from the report
+ * agrees with whatever the report says, a report of nothing included.
+ */
+const CHECKED = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity'];
+
+/** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
+const against = (target, answers) => ({
+  target,
+  // A floor every Node reaches, so the one check that reads this host rather than an argument is
+  // fixed too and the run below turns on the verdicts this test sets.
+  packageRoot: packageDeclaring('>=0'),
+  ask: answeringEach(answers),
+});
+
+/** The lines of a report under its heading, which is one line per check. */
+const checkLines = (text) => text.split('\n').slice(1).filter(Boolean);
+
+test('doctor reports one line per check, each naming the check it is', async () => {
+  // The card asks for Node version, `gh` authentication, agent CLI authentication and config
+  // validity, one line each. The defects this catches are a check dropped from the report, two
+  // folded onto one line, and a report that names a verdict without naming what it is about.
+  const ran = await doctor(against(checked(starter()), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+
+  const lines = checkLines(ran.text);
+
+  assert.equal(lines.length, CHECKED.length, `one line per check was expected:\n${ran.text}`);
+  for (const name of CHECKED) {
+    assert.equal(lines.filter((line) => line.includes(name)).length, 1, `\`${name}\` is not on one line of:\n${ran.text}`);
+  }
+  // The heading names the repository that was checked, so a consumer reading a pasted report
+  // knows which one it is about.
+  assert.ok(ran.text.split('\n')[0].includes('doctor'), ran.text);
+});
+
+test('each line says whether its own check passed, and a failure moves only that line', async () => {
+  // "Whether it passed" has to be readable per line rather than inferred from the exit code, and
+  // it has to be that line's own verdict. The defect this catches is a report whose lines all
+  // change together — a summary verdict written out four times — which tells a consumer that
+  // something is wrong and nothing about which thing.
+  //
+  // The wording of a verdict is the report's own business, so what is asserted is the difference:
+  // the failing check's line moves and the other three stand still.
+  const target = checked(starter());
+  const passing = await doctor(against(target, { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+  const failing = await doctor(against(target, { gh: RECORDED.ghOut, claude: RECORDED.agentIn }));
+
+  const before = checkLines(passing.text);
+  const after = checkLines(failing.text);
+
+  assert.equal(before.length, after.length);
+  const moved = before.filter((line, index) => line !== after[index]);
+  assert.equal(moved.length, 1, `${moved.length} lines moved where one check failed:\n${passing.text}\n\n${failing.text}`);
+  assert.ok(moved[0].includes('gh authentication'), moved[0]);
+});
+
+test('doctor exits zero when every check passes and non-zero when any does not', async () => {
+  // The card asks for an exit code that means something: whoever called `doctor` — a person, a
+  // provisioning step, a CI job — reads the status rather than the lines. The defect this catches
+  // is the verb that reports a failure and exits zero anyway, which reads as work that was done.
+  //
+  // Each check is failed in turn, so this shows the status answering to all four rather than to
+  // whichever one the first run happened to exercise.
+  const good = checked(starter());
+  const bad = checked(starter().replace(/^\s*repo:.*$/m, ''));
+
+  const all = await doctor(against(good, { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+  assert.equal(all.code, 0, all.text);
+
+  const each = [
+    await doctor({ ...against(good, { gh: RECORDED.ghIn, claude: RECORDED.agentIn }), packageRoot: packageDeclaring('>=999') }),
+    await doctor(against(good, { gh: RECORDED.ghOut, claude: RECORDED.agentIn })),
+    await doctor(against(good, { gh: RECORDED.ghIn, claude: RECORDED.agentOut })),
+    await doctor(against(bad, { gh: RECORDED.ghIn, claude: RECORDED.agentIn })),
+  ];
+  for (const ran of each) assert.notEqual(ran.code, 0, ran.text);
+});
+
+test('the whole report is lines, and carries no stack trace', async () => {
+  // The card asks for a line per check without a stack trace. The defect this catches is an error
+  // from any check reaching the report whole: `doctor` is run by a consumer setting Rigger up for
+  // the first time, and twenty frames of Node internals is what makes them stop reading.
+  const ran = await doctor(against(checked('export default {\n'), { gh: RECORDED.ghOut, claude: RECORDED.agentOut }));
+
+  assert.notEqual(ran.code, 0);
+  assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
+  assert.doesNotMatch(ran.text, /\n\s+at /, ran.text);
+});
+
+/**
+ * A fresh clone of this repository, carrying the name it is published under.
+ *
+ * Cloned from this checkout rather than fetched over the network, so the suite needs neither a
+ * connection nor a credential, and the clone holds this branch rather than whatever `main` holds.
+ * `origin` is then set to the URL this checkout's own `origin` names, because a clone made from a
+ * path has a filesystem path as its remote and `repoSlug` reads `owner/name` out of that remote:
+ * a local path is no such thing, and the config `init` writes would name a repository nobody has.
+ */
+function freshClone() {
+  const into = join(mkdtempSync(join(tmpdir(), 'rigger-clone-')), 'rigger');
+  const cloned = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', root, into], { encoding: 'utf8' });
+  assert.equal(cloned.status, 0, `cloning this repository failed: ${cloned.stderr}`);
+  const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8' });
+  assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
+  assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()]).status, 0);
+  return into;
+}
+
+test('doctor passes on a fresh clone of this repository after init', async () => {
+  // The card's fourth item, and M0's own exit condition: `rigger doctor` runs against this
+  // repository. The defects it catches are the ones only a real repository shows — a config this
+  // repository holds that the validator refuses, a `.claude/` `init` would rewrite, a Node floor
+  // this checkout cannot meet — none of which a fixture built to pass would ever show.
+  //
+  // Two of the four checks ask a tool that answers for the host rather than for the repository,
+  // and a host with no gh signed in is not a fault in this clone. Those two are handed the
+  // answers a signed-in host gives, recorded from the tools themselves; what ties them to the
+  // tools is the pair of tests above that ask the real ones and assert the relation. The Node
+  // check and the config check run for real against this package and this clone.
+  const clone = freshClone();
+
+  const forked = init({ target: clone });
+  const ran = await doctor({
+    target: clone,
+    packageRoot: root,
+    ask: answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn }),
+  });
+
+  assert.equal(forked.code, 0, forked.text);
+  assert.equal(ran.code, 0, `doctor did not pass on a fresh clone:\n${ran.text}`);
+  assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
+});
+
+test('the command runs the checks in the repository it was called in, from outside that repository', () => {
+  // The wiring test: the real bin, the real arguments, a real repository, and every authority
+  // asked for real. The defects it catch are `doctor` still answering `not yet implemented`, a
+  // verb wired to something that reports nothing, and the surface never awaiting an answer that
+  // arrives later — `doctor` imports the consumer's config, so what it hands back is a promise,
+  // and a bin that printed it unawaited would print `[object Promise]` and exit zero.
+  //
+  // The exit code is not asserted here, because two of the four checks answer for the host: a
+  // machine with no gh signed in fails this run correctly. What is asserted is that all four ran
+  // and that the status agrees with what the report says about them, which holds either way.
+  const clone = freshClone();
+  const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
+
+  const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], { cwd: clone, encoding: 'utf8' });
+
+  const printed = ran.stdout + ran.stderr;
+  assert.equal(ran.error, undefined);
+  assert.doesNotMatch(printed, /not yet implemented/, printed);
+  assert.doesNotMatch(printed, /object Promise/, printed);
+  for (const name of CHECKED) {
+    assert.ok(printed.includes(name), `the command never reported \`${name}\`:\n${printed}`);
+  }
+  assert.equal(ran.status === 0, /^rigger doctor: (\d+) of \1 checks passed/.test(printed), printed);
 });

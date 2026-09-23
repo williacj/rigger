@@ -1,6 +1,7 @@
 // ABOUTME: The CLI surface: the verbs Rigger accepts, which of them have landed, what `--help`
 // ABOUTME: lists for them, and what one whose milestone has not landed answers.
 
+import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
 
 /**
@@ -30,7 +31,7 @@ export const VERBS = [
  * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
  * the test would drift from this one the day a verb lands.
  */
-export const LANDED = { init };
+export const LANDED = { init, doctor };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
@@ -44,8 +45,14 @@ export function help(verbs = VERBS) {
   ].join('\n');
 }
 
-/** What the command prints for these arguments, and the status it exits with. */
-export function run(argv) {
+/**
+ * What the command prints for these arguments, and the status it exits with.
+ *
+ * Awaited, because a landed verb may have to wait for something: `doctor` imports the consumer's
+ * config, which is an ES module and so cannot be read any other way. A verb that answers without
+ * waiting is awaited here too and costs nothing.
+ */
+export async function run(argv) {
   const [first] = argv;
   if (first === '--help') return { text: help(), code: 0 };
   if (!VERBS.some(([verb]) => verb === first)) {

@@ -2,9 +2,12 @@
 // ABOUTME: at a time, and the source tree it refuses to run against.
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { validate } from '../config/validate.mjs';
+import { CONFIG } from './init.mjs';
 
 /** Runs a command and hands back what it answered, which is every authority this verb asks. */
 const asked = (command, args) => spawnSync(command, args, { encoding: 'utf8' });
@@ -84,20 +87,6 @@ export function repoRoot(dir, ask = asked) {
   return real(said.status === 0 ? said.stdout.trim() : dir);
 }
 
-/** What the command prints for a `doctor` run, and the status it exits with. */
-export async function doctor({ target = process.cwd(), packageRoot = PACKAGE, ask = asked } = {}) {
-  const repository = repoRoot(target, ask);
-  if (sameTree(repository, packageRoot)) {
-    return {
-      text: `rigger doctor: ${repository} is the source tree this Rigger is running from, and Rigger `
-        + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
-        + 'from there.',
-      code: 1,
-    };
-  }
-  return { text: '', code: 0 };
-}
-
 /**
  * The one form of `engines.node` this reads: a single `>=` comparator over a dotted version.
  *
@@ -154,13 +143,16 @@ export function nodeVersion({ packageRoot = PACKAGE, running = process.versions.
 }
 
 /**
- * What a command said, whichever stream it said it on, reduced to its first line.
+ * The first thing a piece of text says, and nothing after it.
  *
- * A report a consumer pastes into an issue carries this, so it is one line and it is the tool's
- * own words rather than a reading of them.
+ * Every detail in the report is one line, because the report is a line per check and a detail
+ * that brought its own lines would break that shape wherever it landed — gh's account block and
+ * a thrown error's stack are both several lines long.
  */
-const firstLine = (said) => `${said.stdout ?? ''}\n${said.stderr ?? ''}`
-  .split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+const oneLine = (text) => text.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+
+/** What a command said, whichever stream it said it on, reduced to its first line. */
+const firstLine = (said) => oneLine(`${said.stdout ?? ''}\n${said.stderr ?? ''}`);
 
 /**
  * Why a command answered no status.
@@ -251,4 +243,93 @@ export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
     }
   }
   return { name, ok: folded(verdicts), detail: lines.join('; ') };
+}
+
+/**
+ * Whether the config the consumer holds is one Rigger accepts, which is the validator's answer.
+ *
+ * `src/config/validate.mjs` decides what Rigger accepts, and every refusal it gives is carried
+ * here word for word: a second reading of the config living in this file would be a second answer
+ * to a question already answered, drifting from the first the day the validator gains a rule.
+ *
+ * The config is a module the consumer wrote, so importing it runs their code and can throw. What
+ * the report carries is the first line of what went wrong, never the error: a stack of Node's
+ * own frames tells a consumer nothing about the file they have to fix, and the card asks for a
+ * line per check without one.
+ */
+export async function configValidity({ target = process.cwd() } = {}) {
+  const name = 'config validity';
+  const path = join(target, CONFIG);
+  if (!existsSync(path)) {
+    return { name, ok: false, detail: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
+  }
+  let config;
+  try {
+    config = (await import(pathToFileURL(path))).default;
+  } catch (threw) {
+    return { name, ok: false, detail: `\`${CONFIG}\` could not be read: ${oneLine(threw.message)}` };
+  }
+  const refusals = validate(config);
+  return {
+    name,
+    ok: refusals.length === 0,
+    detail: refusals.length === 0
+      ? `\`${CONFIG}\` earns no refusals`
+      : `\`${CONFIG}\`: ${refusals.map(oneLine).join('; ')}`,
+  };
+}
+
+/**
+ * What a check answered, in the words the report writes it with.
+ *
+ * Three verdicts and not two. A check that could not reach the tool it asks has not passed, and
+ * saying so is the whole difference between a report a consumer can act on and one that claims
+ * a green nobody measured.
+ */
+const SAYS = { true: 'ok', false: 'failed', null: 'not asked' };
+
+/**
+ * What a run of the checks prints, and the status it exits with.
+ *
+ * One line per check, the verdict first and then the check's own name, as `init` writes one line
+ * per file under a heading that counts them. Zero only where every check passed: a check that
+ * failed and one that could not be run are both "not passed", and either leaves a consumer with
+ * a Rigger that is not ready.
+ */
+export function report(where, results) {
+  const passed = results.filter((result) => result.ok === true).length;
+  const width = Math.max(...Object.values(SAYS).map((said) => said.length));
+  return {
+    text: [
+      `rigger doctor: ${passed} of ${results.length} checks passed in ${where}`,
+      ...results.map((result) => `  ${SAYS[result.ok].padEnd(width)}  ${result.name}: ${result.detail}`),
+    ].join('\n'),
+    code: passed === results.length ? 0 : 1,
+  };
+}
+
+/**
+ * The checks `doctor` runs, in the order the card lists them.
+ *
+ * Each takes the same options and reads the ones it needs, so this list is the whole of what
+ * decides which checks there are and what order they are reported in.
+ */
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
+
+/** What the command prints for a `doctor` run, and the status it exits with. */
+export async function doctor({
+  target = process.cwd(), packageRoot = PACKAGE, ask = asked, checks = CHECKS,
+} = {}) {
+  const repository = repoRoot(target, ask);
+  if (sameTree(repository, packageRoot)) {
+    return {
+      text: `rigger doctor: ${repository} is the source tree this Rigger is running from, and Rigger `
+        + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
+        + 'from there.',
+      code: 1,
+    };
+  }
+  const results = [];
+  for (const check of checks) results.push(await check({ target: repository, packageRoot, ask }));
+  return report(repository, results);
 }
