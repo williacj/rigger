@@ -1,11 +1,11 @@
-// ABOUTME: Builds docs/derived/test-matrix.md from the declarations in Rigger's own tests, and
-// ABOUTME: refuses a matrix that has gone stale or been edited by hand.
+// ABOUTME: Builds docs/derived/test-matrix.md from the declarations in Rigger's own tests, reading
+// ABOUTME: each test file as the syntax it is, and refuses a matrix gone stale or edited by hand.
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { endOfQuoted, TEST_FILE } from './package-budget.mjs';
+import { TEST_FILE } from './package-budget.mjs';
 
 /** The cells of one markdown table row, trimmed. */
 function cells(line) {
@@ -34,119 +34,296 @@ export function register(text) {
   return rows;
 }
 
-// A declaration is a whole line. That keeps a declaration quoted inside a single-line string
-// from claiming anything, which this generator's own tests need: they hand it fixture sources,
-// and a scan matching anywhere on a line would read every fixture as a claim by the file
-// quoting it. It settles nothing on its own about a fixture that spans lines, because the lines
-// of a template literal are lines like any other; the scan below is what answers that.
-const DECLARATION = /^\/\/ proves (\S.*)$/;
-// What the declaration sits above: a line that begins with a call to the runner and a quoted
-// title. Beginning the line is what keeps a line merely carrying the text of a call — a fixture,
-// or a call commented out — from being named as a test. The ids are not matched against a shape
-// here: `docs/spec/requirements.md` says which ids exist, and a declaration naming anything else
-// is refused by name rather than passed over in silence.
-const TEST_CALL = /^(?:await\s+)?(?:test|it)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/;
-// An escape, or a backtick that is not escaped. Counting those is how the scan reads whether a
-// template literal is open where a declaration sits.
-const BACKTICK = /\\.|`/g;
+/**
+ * Whether a character ends a line for JavaScript. All four count, not just the two a text editor
+ * shows: a line comment ends at any of them, so a scan that knows only `\n` reads whatever follows
+ * a ` ` as part of the comment above it.
+ */
+const terminates = (character) =>
+  character === '\n' || character === '\r' || character === ' ' || character === ' ';
 
-/** How many backticks a line carries that an escape does not swallow. */
-function backticks(line) {
-  return (line.match(BACKTICK) ?? []).filter((token) => token === '`').length;
+/** Whitespace between tokens, which carries nothing and ends nothing. */
+const SPACING = new Set([' ', '\t', '\v', '\f', ' ', '﻿']);
+// Characters that stand alone as punctuation rather than running together into a word. `/` is
+// absent because whether it opens a comment, a regular expression or a division is the one
+// question this reader has to think about, and the quotes are absent for the same reason.
+const PUNCTUATION = new Set([...'{}()[];,<>+-*%&|^!~?:=.#@\\']);
+// After one of these a `/` opens a regular expression, because each of them wants an expression
+// next. After any other word — a name, a number, `this`, `true` — the same `/` is a division.
+const BEFORE_AN_EXPRESSION = new Set([
+  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
+  'typeof', 'void', 'yield',
+]);
+// A `(` that one of these opened is a control-flow head, so the `)` closing it is followed by a
+// statement: `if (a) /re/.test(b)` is a regular expression where `(a + b) / 2` is a division.
+const CONTROL = new Set(['if', 'while', 'for', 'with']);
+
+/** Where each line of a source starts, so any index can be turned into a line number. */
+function lineStarts(source) {
+  const starts = [0];
+  for (let at = 0; at < source.length; at++) {
+    if (source[at] === '\r' && source[at + 1] === '\n') starts.push(++at + 1);
+    else if (terminates(source[at])) starts.push(at + 1);
+  }
+  return starts;
+}
+
+/** The 1-based line a source index sits on. */
+function lineOf(starts, index) {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (starts[middle] <= index) low = middle;
+    else high = middle - 1;
+  }
+  return low + 1;
 }
 
 /**
- * Whether a block comment is open at the end of a line, given whether one was open before it.
+ * The comments and tokens one JavaScript source holds.
  *
- * The scan reads quoted runs, so a marker inside one opens and closes nothing: a fixture written
- * as a single-line string holds the text of a comment opener, not an opener.
- * `scripts/package-budget.mjs` reads a quoted run the same way for the same reason, and this
- * asks it where one ends rather than keeping a second answer.
+ * What it answers, and what it refuses, is the point of reading source as syntax rather than as
+ * lines. A comment is a comment, a quoted run is a quoted run, and a marker inside either is
+ * neither — so a caller can ask where a comment is without a shape of code being able to fool it.
+ * Where the language itself leaves a character ambiguous, or where the source does not tokenize,
+ * this throws naming the line rather than choosing: a refusal costs a run, and a guess costs a
+ * claim nobody checks.
+ *
+ * Each comment carries `kind`, its source `text`, the `line` it opens on, whether it `startsLine`
+ * — only spacing before it — and `tokensBefore`, the count of tokens read before it, so the token
+ * that follows a comment is `tokens[comment.tokensBefore]`.
+ *
+ * Each token carries `kind` — `word` for a run of name or number characters, `punct`, `string`,
+ * `template` for one holding a `${}` substitution, or `regex` — the `line` it opens on, and the
+ * `depth` of brackets open around it. A `string` also carries the `value` between its quotes,
+ * with the escapes left as the source wrote them.
+ *
+ * The one thing it cannot tell apart is a `/` directly after a `}`, which is a division after an
+ * object literal and a regular expression after a block. Both need the grammar above the token,
+ * and this reads tokens, so it refuses instead.
  */
-function commenting(line, open) {
-  let at = 0;
-  while (at < line.length) {
-    if (open) {
-      const close = line.indexOf('*/', at);
-      if (close < 0) return true;
-      open = false;
-      at = close + 2;
-    } else if (line[at] === '"' || line[at] === "'" || line[at] === '`') {
-      const close = endOfQuoted(line, at + 1, line[at]);
-      // A run the line never closes carries on past its end, where a marker is text as well.
-      if (close < 0) return open;
-      at = close;
-    } else if (line[at] === '/' && line[at + 1] === '/') {
-      // Two slashes, and the rest of the line is a comment that opens no block.
-      return open;
-    } else if (line[at] === '/' && line[at + 1] === '*') {
-      open = true;
-      at += 2;
+export function tokensIn(source, file) {
+  const starts = lineStarts(source);
+  const at = (index) => `${file} line ${lineOf(starts, index)}`;
+  const tokens = [];
+  const comments = [];
+  // What is open around the current token: a bracket, or a `${}` substitution inside a template.
+  const open = [];
+  let index = 0;
+
+  const word = (from) => {
+    let end = from;
+    while (end < source.length && !terminates(source[end]) && !SPACING.has(source[end])
+      && !PUNCTUATION.has(source[end]) && source[end] !== '/' && source[end] !== '"'
+      && source[end] !== "'" && source[end] !== '`') end++;
+    return end;
+  };
+
+  /** Where a quoted run ends, one past its closing quote. A line inside one is source that would not parse. */
+  const quoted = (from, quote) => {
+    for (let end = from; end < source.length; end++) {
+      if (source[end] === '\\') {
+        // An escaped line terminator is a continuation, and `\r\n` is one terminator in two characters.
+        end += source[end + 1] === '\r' && source[end + 2] === '\n' ? 2 : 1;
+      } else if (source[end] === quote) return end + 1;
+      else if (terminates(source[end])) break;
+    }
+    throw new Error(`${at(from - 1)}: a ${quote === '"' ? 'double' : 'single'}-quoted run opens and never closes, so this is not source that parses.`);
+  };
+
+  /** Where the raw text of a template ends: at its closing backtick, or at the `${` that interrupts it. */
+  const template = (from) => {
+    for (let end = from; end < source.length; end++) {
+      if (source[end] === '\\') end++;
+      else if (source[end] === '`') return { end: end + 1, closed: true };
+      else if (source[end] === '$' && source[end + 1] === '{') return { end: end + 2, closed: false };
+    }
+    throw new Error(`${at(from - 1)}: a template literal opens and never closes, so this is not source that parses.`);
+  };
+
+  /** Where a regular expression literal ends, flags and all. A `/` inside a character class does not close it. */
+  const expression = (from) => {
+    let inClass = false;
+    for (let end = from; end < source.length; end++) {
+      if (source[end] === '\\') end++;
+      else if (terminates(source[end])) break;
+      else if (source[end] === '[') inClass = true;
+      else if (source[end] === ']') inClass = false;
+      else if (source[end] === '/' && !inClass) return word(end + 1);
+    }
+    throw new Error(`${at(from - 1)}: a regular expression opens and never closes, so this is not source that parses.`);
+  };
+
+  /** Whether a `/` here opens a regular expression rather than dividing what came before it. */
+  const opensExpression = (slash) => {
+    const previous = tokens[tokens.length - 1];
+    if (!previous) return true;
+    if (previous.kind === 'word') return BEFORE_AN_EXPRESSION.has(previous.value);
+    if (previous.kind !== 'punct') return false;
+    if (previous.value === ')') return previous.control;
+    if (previous.value === ']' || previous.value === '++' || previous.value === '--') return false;
+    if (previous.value === '}') {
+      throw new Error(
+        `${at(slash)}: a \`/\` directly after a \`}\` is a regular expression after a block and a ` +
+        'division after an object literal, and telling those apart needs the grammar above the ' +
+        'token rather than the token. Put the expression in parentheses, or the division on its own line.',
+      );
+    }
+    return true;
+  };
+
+  const push = (kind, end, rest = {}) => {
+    tokens.push({ kind, line: lineOf(starts, index), depth: open.length, ...rest });
+    index = end;
+  };
+
+  if (source.startsWith('#!')) {
+    let end = 0;
+    while (end < source.length && !terminates(source[end])) end++;
+    comments.push({ kind: 'hashbang', text: source.slice(0, end), line: 1, startsLine: true, tokensBefore: 0 });
+    index = end;
+  }
+
+  while (index < source.length) {
+    const character = source[index];
+    if (terminates(character) || SPACING.has(character)) {
+      index++;
+    } else if (character === '/' && source[index + 1] === '/') {
+      let end = index;
+      while (end < source.length && !terminates(source[end])) end++;
+      comments.push({
+        kind: 'line',
+        text: source.slice(index, end),
+        line: lineOf(starts, index),
+        startsLine: source.slice(starts[lineOf(starts, index) - 1], index).trim() === '',
+        tokensBefore: tokens.length,
+      });
+      index = end;
+    } else if (character === '/' && source[index + 1] === '*') {
+      const close = source.indexOf('*/', index + 2);
+      if (close < 0) {
+        throw new Error(
+          `${at(index)}: a block comment opens and never closes, so the rest of the file is inside ` +
+          'it and no declaration in it can be read. Source that parses does not end inside a comment.',
+        );
+      }
+      comments.push({
+        kind: 'block',
+        text: source.slice(index, close + 2),
+        line: lineOf(starts, index),
+        startsLine: source.slice(starts[lineOf(starts, index) - 1], index).trim() === '',
+        tokensBefore: tokens.length,
+      });
+      index = close + 2;
+    } else if (character === '"' || character === "'") {
+      const end = quoted(index + 1, character);
+      push('string', end, { value: source.slice(index + 1, end - 1) });
+    } else if (character === '`') {
+      const run = template(index + 1);
+      if (run.closed) push('string', run.end, { value: source.slice(index + 1, run.end - 1) });
+      else {
+        push('template', run.end);
+        open.push({ bracket: '${' });
+      }
+    } else if (character === '/') {
+      if (opensExpression(index)) push('regex', expression(index + 1));
+      else push('punct', index + 1, { value: '/' });
+    } else if (character === '}' && open[open.length - 1]?.bracket === '${') {
+      open.pop();
+      // The `}` closes a substitution, so what follows is the template again rather than code. A
+      // template carrying one is no plain title, so it holds no value for a caller to read.
+      const run = template(index + 1);
+      push('template', run.end);
+      if (!run.closed) open.push({ bracket: '${' });
+    } else if (PUNCTUATION.has(character)) {
+      const doubled = (character === '+' || character === '-') && source[index + 1] === character;
+      if (character === '(' || character === '[' || character === '{') {
+        const previous = tokens[tokens.length - 1];
+        push('punct', index + 1, { value: character });
+        open.push({ bracket: character, control: previous?.kind === 'word' && CONTROL.has(previous.value) });
+      } else if (character === ')' || character === ']' || character === '}') {
+        const closed = open.pop();
+        push('punct', index + 1, { value: character, control: closed?.control === true });
+      } else {
+        push('punct', index + (doubled ? 2 : 1), { value: doubled ? character + character : character });
+      }
     } else {
-      at += 1;
+      const end = word(index);
+      push('word', end, { value: source.slice(index, end) });
     }
   }
-  return open;
+
+  return { tokens, comments };
 }
+
+// A declaration is a line comment of its own, with nothing but spacing before it. It is read out
+// of the source's syntax rather than matched against the text of a line, so a declaration written
+// inside a string or a template literal is the text of a fixture and claims nothing, and one
+// inside a comment is commented out along with the test beneath it. The ids are not matched
+// against a shape here: `docs/spec/requirements.md` says which ids exist, and a declaration naming
+// anything else is refused by name rather than passed over in silence.
+const DECLARATION = /^\/\/ proves (\S.*)$/;
+// What a declaration has to sit above: a call to the runner, carrying a quoted title.
+const RUNNER = new Set(['test', 'it']);
 
 /**
  * Every declaration in one test file's source, in the order they appear.
  *
- * The scan reads lines, not syntax, so it never guesses at one it cannot read. A claim names
- * only a line that begins with a call to the runner; a declaration standing above anything else,
- * a call commented out among them, is refused. So is one under an odd backtick, where a template
- * literal is open and the line may be the text of a fixture rather than a claim. A declaration
- * inside a block comment is read as commented out, along with the test beneath it.
+ * What it reports is a claim that a test exists, so the bar is that `node --test` would execute
+ * the test named. `tokensIn` above reads the source into its comments and tokens,
+ * and every part of that bar is a question about those rather than about the shape of a line. A
+ * declaration is a line comment, which no marker inside a string or a regular expression can
+ * forge and no commented-out line can be. The test it speaks for is the run of tokens directly
+ * after it, which the text of a call inside a fixture cannot be, because a fixture is one string
+ * token. And the call sits at the top level of the file, because a call the runner reaches is one
+ * nothing encloses.
  *
- * What the scan cannot see is syntax. It reads quoted runs, so a comment marker inside a string
- * is text and opens nothing; what it still cannot tell apart is a backtick inside a string from
- * one opening a template literal, or a comment marker inside a regular expression from one
- * opening a comment. A backtick costs a declaration after it refused by name. A marker costs
- * the file refused where the comment it opens never closes, and a declaration between it and
- * whatever does close it going unread where something does. Reading either apart for certain
- * needs a parser, and this is a scan.
+ * Two things it does not tell apart, and both cost a refusal naming the line rather than a claim.
+ * A `/` directly after a `}` is ambiguous in the language itself, so the reader refuses it. And a
+ * declaration above a call the file nests — inside a function, a branch, a loop — is refused,
+ * because whether the runner ever reaches that call is not a question about tokens.
+ *
+ * What it still cannot see is a file that runs and throws before the runner registers anything,
+ * or one whose top-level code decides at run time what to register. A declaration above a
+ * top-level call is read as a claim there, and a run that never reaches the call makes it false.
+ * Reading that apart needs the program run, not read.
  */
 export function declarationsIn(source, file) {
-  const lines = source.split(/\r?\n/);
+  const { tokens, comments } = tokensIn(source, file);
   const found = [];
-  let quoting = false;
-  let commented = false;
-  for (const [index, line] of lines.entries()) {
-    const declaration = commented ? null : line.trim().match(DECLARATION);
-    if (declaration) {
-      const at = `${file} line ${index + 1}: \`${line.trim()}\``;
-      if (quoting) {
-        throw new Error(
-          `${at} follows a backtick the scan never saw closed, so it cannot tell a declaration ` +
-          `of ${declaration[1]} from the text of a fixture. A fixture that spans lines goes in ` +
-          'a single-line string with \\n escapes.',
-        );
-      }
-      const next = (lines[index + 1] ?? '').trim();
-      const call = next.startsWith('//') ? null : next.match(TEST_CALL);
-      if (!call) {
-        throw new Error(
-          `${at} stands above no test, so nothing proves ${declaration[1]}. A declaration goes ` +
-          'on the line directly above the test it speaks for.',
-        );
-      }
-      found.push({
-        ids: declaration[1].split(',').map((id) => id.trim()),
-        title: call[2].replace(/\\(.)/g, '$1'),
-      });
+  for (const comment of comments) {
+    if (comment.kind !== 'line' || !comment.startsLine) continue;
+    const declaration = comment.text.trimEnd().match(DECLARATION);
+    if (!declaration) continue;
+    const at = `${file} line ${comment.line}: \`${comment.text.trimEnd()}\``;
+    const head = tokens[comment.tokensBefore];
+    if (!head || head.line !== comment.line + 1) {
+      throw new Error(
+        `${at} stands above no test, so nothing proves ${declaration[1]}. A declaration goes ` +
+        'on the line directly above the test it speaks for.',
+      );
     }
-    if (!commented && backticks(line) % 2 === 1) quoting = !quoting;
-    commented = commenting(line, commented);
-  }
-  if (commented) {
-    // Source that parses cannot leave a block comment open, so the scan has misread a marker
-    // somewhere — inside a regular expression, or inside a fixture that spans lines. Everything
-    // after it went unread, and a claim nobody hears about is worse than a refusal.
-    throw new Error(
-      `${file}: a block comment opens and never closes, so the scan lost the rest of the file ` +
-      'and any declaration in it. Source that parses does not end inside a comment, so a marker ' +
-      'in it has been read as one; putting that text in a single-line string clears it.',
-    );
+    if (head.depth > 0) {
+      throw new Error(
+        `${at} sits inside brackets the file has left open, so whether the runner ever reaches ` +
+        `the call below it is not something the source says. A declaration of ${declaration[1]} ` +
+        'goes above a call at the top level of the file.',
+      );
+    }
+    const first = comment.tokensBefore + (head.kind === 'word' && head.value === 'await' ? 1 : 0);
+    const [name, opener, title] = tokens.slice(first, first + 3);
+    if (!(name?.kind === 'word' && RUNNER.has(name.value)) || opener?.value !== '('
+      || title?.kind !== 'string') {
+      throw new Error(
+        `${at} stands above no test, so nothing proves ${declaration[1]}. A declaration goes ` +
+        'on the line directly above the test it speaks for.',
+      );
+    }
+    found.push({
+      ids: declaration[1].split(',').map((id) => id.trim()),
+      title: title.value.replace(/\\(.)/g, '$1'),
+    });
   }
   return found;
 }

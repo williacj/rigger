@@ -26,6 +26,68 @@ const run = (dir, ...args) =>
 
 const lines = (...rows) => rows.join('\n');
 
+// Sources whose only call to the runner the runner never executes, each one valid JavaScript, and
+// each carrying a declaration above that call. The name of the shape says what hides the call; the
+// test named `a test nobody runs` is the claim no matrix may ever make. `node --test` is the
+// authority on the second half of that, and the relation test at the foot of this file asks it.
+const NEVER_RUN = {
+  'a block comment a regular expression opened': lines(
+    "const quoted = /['\"]/; /* these tests are disabled for now",
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '*/',
+    '',
+  ),
+  'a fixture that spans lines': lines(
+    'const fixture = `',
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '`;',
+    '',
+  ),
+  'a fixture that spans lines, opened under a backtick inside a string': lines(
+    'const tick = "`";',
+    'const fixture = `',
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '`;',
+    '',
+  ),
+  'a fixture in a string continued onto the next line': lines(
+    "const fixture = '\\",
+    '// proves R-ONE-1\\',
+    'test("a test nobody runs", () => {}) \\',
+    "';",
+    '',
+  ),
+  'a call commented out with two slashes': lines(
+    '// proves R-ONE-1',
+    "// test('a test nobody runs', () => {});",
+    '',
+  ),
+  'a call commented out in a block': lines(
+    '/*',
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '*/',
+    '',
+  ),
+  'a call inside a function nobody calls': lines(
+    'function disabled() {',
+    '  // proves R-ONE-1',
+    "  test('a test nobody runs', () => {});",
+    '}',
+    '',
+  ),
+  'a call behind a branch that is never taken': lines(
+    'if (Number(0)) {',
+    '  // proves R-ONE-1',
+    "  test('a test nobody runs', () => {});",
+    '}',
+    '',
+  ),
+};
+
 /** A fixture repository holding the files a run reads, and nothing else. */
 function fixture(files) {
   const dir = mkdtempSync(join(tmpdir(), 'rigger-matrix-'));
@@ -143,11 +205,24 @@ test('a declaration quoted inside a string is no claim by the file quoting it', 
   assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
 });
 
-test('a declaration inside a fixture that spans lines is refused, not claimed', () => {
-  // The lines of a template literal are lines like any other, so anchoring alone does not tell a
-  // declaration from the text of a fixture. Telling the two apart would need a parser; refusing
-  // the one the scan cannot read does not, and what it costs is a claim, loudly, rather than a
-  // matrix naming a test that does not exist.
+test('a declaration inside a block comment a regular expression opened claims nothing', () => {
+  // The repro on card #85. A quote inside a regular expression is text, so the scan that read
+  // quoted runs by hand stopped at it and never saw the `/*` after it: the block comment was
+  // never opened, and a test nobody runs was written into the matrix as evidence.
+  const source = lines(
+    "const quoted = /['\"]/; /* these tests are disabled for now",
+    '// proves R-ONE-1',
+    "test('a test nobody runs', () => {});",
+    '*/',
+  );
+
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
+});
+
+test('a declaration inside a fixture that spans lines claims nothing, and costs nothing either', () => {
+  // A template literal is one token whatever it holds, so a declaration inside one is the text of
+  // a fixture and never a claim. It used to be refused instead, because a scan reading lines could
+  // not tell the two apart: the refusal was the price of that, and reading syntax does not pay it.
   const source = lines(
     'const fixture = `',
     '// proves R-ONE-1',
@@ -156,12 +231,7 @@ test('a declaration inside a fixture that spans lines is refused, not claimed', 
     "test('the only real test in this file', () => {});",
   );
 
-  assert.throws(() => declarationsIn(source, 'test/first.test.mjs'), (error) => {
-    assert.match(error.message, /test\/first\.test\.mjs/);
-    assert.match(error.message, /line 2\b/);
-    assert.match(error.message, /R-ONE-1/);
-    return true;
-  });
+  assert.deepEqual(declarationsIn(source, 'test/first.test.mjs'), []);
 });
 
 test('a declaration above a test that is commented out is refused, because that is no test', () => {
@@ -483,26 +553,13 @@ test('the committed matrix holds the ids the register holds, in the order it hol
   assert.deepEqual(ids(matrix), registered);
 });
 
-test('no run writes a matrix naming a test that is a fixture, or one commented out', () => {
-  // Both files were reported as a matrix that named two tests, neither of which existed. What
-  // the run does with them is what matters: an exit code, and no document.
-  const sources = {
-    'a fixture that spans lines': lines(
-      'const fixture = `',
-      '// proves R-ONE-1',
-      "test('a fixture that proves nothing', () => {});",
-      '`;',
-      "test('the only real test in this file', () => {});",
-      '',
-    ),
-    'a call that is commented out': lines(
-      '// proves R-ONE-1',
-      "// test('a test someone commented out', () => {});",
-      '',
-    ),
-  };
-
-  for (const [shape, source] of Object.entries(sources)) {
+test('no run writes a matrix naming a test the runner never runs', () => {
+  // The whole bar, at the command that writes the document. Each source below is valid JavaScript
+  // whose only call to the runner the runner never executes, and the shapes are unrelated to one
+  // another on purpose: a scan closing them one at a time is the cost this card was filed over.
+  // What the run does with a shape is its own business — a refusal, or a document with a gap in
+  // it — so long as no document names the test.
+  for (const [shape, source] of Object.entries(NEVER_RUN)) {
     const dir = fixture({
       'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite']),
       'docs/spec/requirements-retired.md': retiredOf(),
@@ -510,13 +567,15 @@ test('no run writes a matrix naming a test that is a fixture, or one commented o
     });
 
     const { status, stdout, stderr } = run(dir, '--write');
+    let matrix = '';
+    try {
+      matrix = readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md'), 'utf8');
+    } catch { /* a run that refused wrote none, which names nothing */ }
 
-    assert.notEqual(status, 0, `${shape} was read as a test`);
-    assert.match(stdout + stderr, /test\/first\.test\.mjs/);
-    assert.throws(
-      () => readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md')),
-      `${shape} left a matrix behind`,
-    );
+    assert.doesNotMatch(matrix, /a test nobody runs/, `${shape} was written into the matrix`);
+    if (status !== 0) {
+      assert.match(stdout + stderr, /test\/first\.test\.mjs/, `${shape} was refused without naming the file`);
+    }
   }
 });
 
