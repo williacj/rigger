@@ -9,8 +9,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { validate } from '../src/config/validate.mjs';
-import { CONFIG, PROVIDER_ASSETS, REPO_PLACEHOLDER, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
+import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
+import { CONFIG, PROVIDER_ASSETS, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
+import riggerConfig from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -104,7 +105,23 @@ test('the starter config is written to the config path, naming the repository in
   const config = planned(plan({ repo: 'acme/widgets' }), CONFIG);
 
   assert.match(config.content, /repo: 'acme\/widgets'/);
-  assert.doesNotMatch(config.content, new RegExp(REPO_PLACEHOLDER));
+  assert.doesNotMatch(config.content, new RegExp(PLACEHOLDER.repo));
+});
+
+test('a board number the plan is given is written in as a number, and none leaves the name it ships with', () => {
+  // `repo` and the board number are the two values only the consumer can answer, and the
+  // difference between them is that git answers the first while nothing `init` can read answers
+  // the second. So a caller that knows the number says so — this repository does, and `init`
+  // never does — and one that does not leaves the name the template ships.
+  //
+  // Written in as a number rather than in the quotes the template carries: the defect that catches
+  // is `project: '12'`, a config a consumer answered and Rigger still refuses.
+  const given = planned(plan({ repo: 'acme/widgets', project: 12 }), CONFIG);
+  const not = planned(plan({ repo: 'acme/widgets' }), CONFIG);
+
+  assert.match(given.content, /project: 12,/);
+  assert.doesNotMatch(given.content, /'PROJECT_NUMBER'/);
+  assert.match(not.content, /project: 'PROJECT_NUMBER',/);
 });
 
 test('every provider template lands where that provider reads it, and nothing lands elsewhere', () => {
@@ -194,7 +211,7 @@ test('a repository with no origin remote gets the placeholder, and init says so'
   const consumer = repository(null);
 
   assert.equal(repoSlug(consumer), null);
-  assert.match(planned(plan({ repo: repoSlug(consumer) }), CONFIG).content, new RegExp(REPO_PLACEHOLDER));
+  assert.match(planned(plan({ repo: repoSlug(consumer) }), CONFIG).content, new RegExp(PLACEHOLDER.repo));
 });
 
 test('a host with no git to ask answers with the placeholder rather than a crash', () => {
@@ -236,11 +253,29 @@ test('init writes every file it planned, and names each one it wrote', () => {
   }
 });
 
-/** What `init` would write into this repository, asking git for the name it goes by. */
+/**
+ * What `init` would write into this repository, asking git for the name it goes by and this
+ * repository's own config for the board it works.
+ *
+ * Two values the template ships as names, and they are asked for differently because they are
+ * known differently. Git owns what `origin` points at, so it is asked. A board number is owned by
+ * GitHub and named by no remote, so this repository answers it in its config the way any consumer
+ * does, and the number is read back from there — which is what makes it an intended difference
+ * from the template rather than a divergence, and is the whole of what this reads that file for.
+ *
+ * So nothing here says the number is the right one: no offline check can, and `doctor` is what
+ * will ask GitHub. What is asserted is that this repository has answered it at all, because a
+ * checkout still holding the name would otherwise compare clean against the template.
+ */
 function forThisRepository() {
   const repo = repoSlug(root);
   assert.ok(repo, 'this checkout has no `origin` remote, so there is no repository name to compare against');
-  return plan({ repo });
+  assert.notEqual(
+    riggerConfig.board.project,
+    PLACEHOLDER.project,
+    `this repository's \`${CONFIG}\` still holds \`${PLACEHOLDER.project}\`, so it names no board of its own`,
+  );
+  return plan({ repo, project: riggerConfig.board.project });
 }
 
 test('this repository holds exactly what init produces for it, and nothing else', () => {
@@ -305,18 +340,29 @@ test('an asset a repository holds with no template behind it is still found', ()
   ].sort());
 });
 
-test('the config init writes into a repository with none is one the validator accepts', async () => {
+test('the config init writes is accepted once the consumer names its board, and refused until then', async () => {
   // The whole chain, end to end: the template read off disk, `repo` filled in from git, the file
   // written, imported as the module a consumer's Rigger would import, and read by the validator
-  // that refuses anything Rigger does not offer. The defect this catches is a starter config that
-  // parses and is refused — a consumer's first command answering with a list of refusals.
+  // that refuses anything Rigger does not offer. Two defects, one either side of the board
+  // number. A starter config refused for anything else is a consumer's first command answering
+  // with a list of refusals. A starter config accepted while it still carries a board number
+  // nobody chose is worse, because `init` can read a board number from nowhere: the consumer
+  // would get an engine working whatever board that number named in their account.
+  //
+  // `PROJECT_NUMBER` is written out here rather than read from the table the validator uses, so
+  // this fails if the template and that table ever name different placeholders.
   const consumer = repository('https://github.com/acme/widgets.git');
   init({ target: consumer });
 
-  const written = await import(pathToFileURL(join(consumer, CONFIG)));
+  const written = (await import(pathToFileURL(join(consumer, CONFIG)))).default;
 
-  assert.deepEqual(validate(written.default), []);
-  assert.equal(written.default.repo, 'acme/widgets');
+  assert.equal(written.repo, 'acme/widgets');
+  assert.equal(written.board.project, 'PROJECT_NUMBER');
+  const refusals = validate(written);
+  assert.equal(refusals.length, 1, `expected the board number alone to be refused, got: ${refusals.join('; ') || 'none'}`);
+  assert.match(refusals[0], /`board\.project`.*`PROJECT_NUMBER`/);
+  // Answering it is the whole of what it takes, so nothing else in the starter config is refused.
+  assert.deepEqual(validate({ ...written, board: { ...written.board, project: 12 } }), []);
 });
 
 /**
