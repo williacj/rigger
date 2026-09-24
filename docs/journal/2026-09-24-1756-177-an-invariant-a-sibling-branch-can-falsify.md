@@ -32,10 +32,22 @@ The sweep is `every git this repository spawns is handed an environment the call
 `7cc95d1^1`. Its failure at `c433d57` reports
 `{ where: 'test/path-check.test.mjs:115', spawns: 'git', hands: 'nothing' }`.
 
-The added member is the second spawn in `test/path-check.test.mjs`. The call runs from line 113 to
-line 115 at `985d74c`, and its options object carries `encoding` and no `env`. The sweep reports it
-at 115, the line the object closes on, which is where the card's citation comes from; the `git`
-token itself is on 113.
+The added member is the second spawn in `test/path-check.test.mjs`, whose options object carries
+`encoding` and no `env`. **The pointer is exact, and it is exact about `c433d57`** — the tree the
+sweep ran on, which is the only tree it could have reported from. There the call opens on line 115
+and its object closes on 117. What the sweep reports is the line the call opens on, which is a
+property of the sweep and not of either tree: `everySpawn` builds `where` from `open.line`, and
+`open` is the `(` token the loop is standing on, guarded to be exactly that — `if (open.kind !==
+'punct' || open.value !== '(') continue;`. Numbered as `c433d57` numbers that file, the assignment
+is `test/git-environment.test.mjs:202`, the guard `:204`, and the report `:213`.
+
+The same call sits two lines earlier at `985d74c`, opening on 113, because the first parent added
+two lines above it — the `gitEnvironment` import and the `env: gitEnvironment()` on the earlier
+spawn. So a reader who checks the report against `985d74c` finds a comment on 113 and is tempted
+into a correction the tree that reds does not need. The temptation is worth recording because this
+entry fell for it in round 1: it read the spawn on the parent that never ran the sweep, inferred
+from the coincidence that the sweep must report the line the object closes on, and wrote a caveat
+onto a pointer that was already right. A figure about a failing run belongs to the tree that failed.
 
 PR #155 merged at `2026-09-24T17:00:57Z` as `7cc95d1`. PR #162 merged 63 seconds later, at
 `17:02:00Z`, as `c433d57`. PR #162's last CI run was at `15:45:03Z` — **seventy-five minutes before
@@ -88,10 +100,11 @@ requires of the gate that "every one of those verdicts ruled on the work now bei
 against the card's current acceptance" — so a verdict read before the absorb no longer rules on the
 work being merged, and the gate refuses. `R-LOOP-8` then prices the repair: "A change to the work, or
 to the acceptance, sends every judge back. Either spends one round." The absorb is a change to the
-work, so it spends one of the rounds `R-LOOP-9` bounds at three. In a burst — several sound pull
-requests waiting together, which is this milestone's ordinary pattern — every pull request after the
-first would need a re-judge before it could merge, and each would pay a round for a commit that
-changed nothing anyone reviewed.
+work, so it spends one of the rounds `R-LOOP-9` bounds — a count the consumer sets, three unless it
+says otherwise, so the ceiling this argument runs into is a default and not a fixed number. In a
+burst — several sound pull requests waiting together, which is this milestone's ordinary pattern —
+every pull request after the first would need a re-judge before it could merge, and each would pay
+a round for a commit that changed nothing anyone reviewed.
 
 A merge queue tests the merge result on a temporary branch it creates and discards, and never writes
 to the pull request's head. The verdict stays bound to the commit the judge read, so `R-GATE-7` is
