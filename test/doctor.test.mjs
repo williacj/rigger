@@ -418,6 +418,50 @@ test('a config that will not load is reported by what went wrong, never by a sta
 });
 
 /**
+ * Every kind of thing a consumer's config can throw, with what it would say for itself.
+ *
+ * `throw` takes any value, and the config is the one input here that is arbitrary code the
+ * consumer wrote. The two the test above covered — a module that will not parse and one that is
+ * not there — both arrive as an `Error`, which is the half of this list a `.message` read
+ * happens to work for.
+ *
+ * The last two are the ones no report can quote: `String` runs a `toString` the thrower supplied
+ * and `JSON.stringify` runs a `toJSON`, so either can throw in its turn, and a check that quotes
+ * a thrown value has to survive that too.
+ */
+const THROWS = [
+  "throw 'the board is not reachable';",
+  "throw { code: 'EBADCONFIG' };",
+  'throw null;',
+  'throw undefined;',
+  'throw 0;',
+  'throw new Error();',
+  'throw { toString() { throw new Error("no"); }, toJSON() { throw new Error("no"); } };',
+  'const loop = {}; loop.self = loop; loop.toString = () => { throw loop; }; throw loop;',
+];
+
+test('a config that throws anything at all is one failed line, and the other three still report', async () => {
+  // The defect this catches is the crash the work already fixed once in `nodeVersion`, on the one
+  // input this file's own comment calls arbitrary consumer code. `threw.message` is `undefined`
+  // for a thrown string or plain object and unreadable on a thrown `null`, so reading it is a
+  // second throw — and that one escapes the check, `doctor`, the surface and the bin, so no line
+  // prints for any of the four checks and what a consumer sees is a `TypeError` stack.
+  //
+  // The whole report is read rather than the check alone, because "the other three still report"
+  // is the half of the claim a check-level assertion cannot make.
+  for (const thrown of THROWS) {
+    const ran = await doctor(against(checked(thrown), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+
+    assert.equal(checkLines(ran.text).length, CHECKED.length, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
+    assert.notEqual(ran.code, 0, ran.text);
+    assert.doesNotMatch(ran.text, /\n\s+at /, `\`${thrown}\` put a stack trace in the report:\n${ran.text}`);
+    const line = checkLines(ran.text).find((said) => said.includes('config validity'));
+    assert.ok(/failed/.test(line), `\`${thrown}\` was not reported as a failed config: ${line}`);
+    assert.ok(line.trim().length > 0, line);
+  }
+});
+
+/**
  * The four checks the card asks `doctor` to report, written out by hand.
  *
  * Written out rather than read back from the report, because an expectation taken from the report

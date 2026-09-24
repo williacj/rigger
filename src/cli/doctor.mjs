@@ -149,7 +149,7 @@ export function nodeVersion({ packageRoot = PACKAGE, running = process.versions.
     // A check that throws takes the whole report with it: the three checks below never run, and
     // a consumer setting Rigger up sees a stack trace where a line per check belongs. Every other
     // check here can say it could not look, and this one is no different.
-    return { name, ok: null, detail: `the floor could not be read from \`package.json\`: ${oneLine(threw.message)}` };
+    return { name, ok: null, detail: `the floor could not be read from \`package.json\`: ${wentWrong(threw)}` };
   }
   const floor = typeof declared === 'string' ? declared.trim().match(FLOOR) : null;
   if (!floor) {
@@ -178,6 +178,31 @@ const oneLine = (text) => text.split('\n').map((line) => line.trim()).find(Boole
 
 /** What a command said, whichever stream it said it on, reduced to its first line. */
 const firstLine = (said) => oneLine(`${said.stdout ?? ''}\n${said.stderr ?? ''}`);
+
+/**
+ * One line saying what a thrown value was, whatever kind of value it is.
+ *
+ * `throw` takes any value, and the consumer's config is the one input here that is arbitrary code
+ * (`configValidity` below). Reading `.message` off it works only for the half of that input which
+ * happens to be an `Error`: it is `undefined` for a thrown string or plain object and unreadable
+ * on a thrown `null`, so reading it is a second throw — and that one escapes the check, `doctor`,
+ * the surface and the bin, and costs a consumer every line of the report. A check that says it
+ * could not look is the whole point of this file, and it cannot say that by throwing.
+ *
+ * Quoting the value is itself the consumer's code running: `String` calls a `toString` they
+ * supplied and `JSON.stringify` a `toJSON`, either of which can throw in its turn. What is left
+ * to say then is that it threw, which is still a line.
+ */
+const wentWrong = (threw) => {
+  let said;
+  try {
+    const held = threw instanceof Error ? threw.message : threw;
+    said = oneLine(String((typeof held === 'string' ? held : JSON.stringify(held)) || threw));
+  } catch {
+    said = '';
+  }
+  return said || 'a value it could say nothing about';
+};
 
 /**
  * Why a command answered no status.
@@ -292,7 +317,7 @@ export async function configValidity({ target = process.cwd() } = {}) {
   try {
     config = (await import(pathToFileURL(path))).default;
   } catch (threw) {
-    return { name, ok: false, detail: `\`${CONFIG}\` could not be read: ${oneLine(threw.message)}` };
+    return { name, ok: false, detail: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
   }
   const refusals = validate(config);
   return {
