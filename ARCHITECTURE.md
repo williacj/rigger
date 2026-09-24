@@ -297,7 +297,7 @@ one together, checked the same way: one number, one check. Moving text from the 
 directory's file therefore changes nothing; only deleting does. The budget is 2,500 words.
 
 Rigger's live instruction pool covers its `.claude/` role prompts and skill instructions. Its
-budget is 13,000 words, separate from the `AGENTS.md` budget. The check counts each live file
+budget is 14,000 words, separate from the `AGENTS.md` budget. The check counts each live file
 once. Distribution templates under `templates/claude/` do not spend this pool. Another consumer
 sizes its own L4 roles and procedures.
 
