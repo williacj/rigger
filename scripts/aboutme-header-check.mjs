@@ -88,6 +88,15 @@ export function exemptions(agents) {
  * the old convention is a journal file, which no lint reads. `trackedFiles` is imported rather
  * than spelled again here: it is the same question git answers for the ruled-out-word check, and
  * the three places its answer differs from a walk of the disk are documented where it lives.
+ *
+ * A file git lists and the disk does not hold is reported rather than skipped. git names what the
+ * index holds, which outlives the file on disk, and a root-only sparse checkout or a delete
+ * mid-work parts the two — so the read has to fail for a reason that is nobody's defect. Skipping
+ * it silently was the same fault this check exists to close, one layer down: the placement-free
+ * reader cannot give a clean answer about a file it never read, and then the read gave one anyway.
+ * A file that could not be opened is unchecked, the check cannot vouch for it, and saying so is
+ * what `AGENTS.md` means by failing fast and logging clearly. `read` is what it opened rather than
+ * what it was handed, so the count stops asserting a figure it did not measure.
  */
 export function check(root) {
   const files = trackedFiles(root);
@@ -96,12 +105,13 @@ export function check(root) {
     let text;
     try {
       text = readFileSync(join(root, path), 'utf8');
-    } catch {
-      return [];
+    } catch (reason) {
+      return [{ path, kind: 'unreadable', why: reason.code ?? reason.message }];
     }
     return headerFindings(path, text, rule);
   });
-  return { files, findings: found, failing: found.length > 0 };
+  const unreadable = found.filter((one) => one.kind === 'unreadable').length;
+  return { files, read: files.length - unreadable, findings: found, failing: found.length > 0 };
 }
 
 /**
@@ -134,14 +144,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // CI passes no argument and this repository is read. A path reads that repository instead,
   // which is how a test watches the check refuse one.
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const { files, findings, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
-  for (const { path, kind, lines } of findings) {
+  const { files, read, findings, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
+  for (const { path, kind, lines, why } of findings) {
     if (kind === 'repeated') console.error(`${path}:${lines.join(',')}  the header repeats the \`${PREFIX}\` prefix`);
+    else if (kind === 'unreadable') console.error(`${path}  git tracks it and it could not be opened (${why}), so its header is unchecked`);
     else console.error(`${path}  no \`${PREFIX}\` header, and ${RULE_SOURCE} exempts no such file`);
   }
-  console.log(`${String(findings.length).padStart(6)}  header findings, across ${files.length} tracked files`);
+  // Both numbers, always. A line naming only the files it was handed asserts a figure it did not
+  // measure the moment one of them cannot be opened.
+  console.log(`${String(findings.length).padStart(6)}  header findings, across ${read} of ${files.length} tracked files read`);
   if (failing) {
-    console.error(`A header states what a file is once. Carry the prefix on the header's first line only, or, for a file that should carry none, take the exemption to the owner as a change to ${RULE_SOURCE}.`);
+    console.error(`A header states what a file is once. Carry the prefix on the header's first line only, or, for a file that should carry none, take the exemption to the owner as a change to ${RULE_SOURCE}. A file that could not be opened is unchecked rather than clean: check out the paths git tracks, or narrow what git tracks to what you check out.`);
     process.exit(1);
   }
 }
