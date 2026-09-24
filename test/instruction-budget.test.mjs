@@ -1,5 +1,5 @@
 // ABOUTME: Tests the instruction-file word budget check: what counts as a word, where the number
-// ABOUTME: comes from, and which files are weighed together.
+// comes from, and which files are weighed together.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

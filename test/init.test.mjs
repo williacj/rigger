@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger init`: what it writes, where each template lands, what a second run
-// ABOUTME: leaves alone, and that this repository's own assets are what it produced for it.
+// leaves alone, and that this repository's own assets are what it produced for it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

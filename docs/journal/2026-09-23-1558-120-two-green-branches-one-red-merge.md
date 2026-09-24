@@ -1,5 +1,5 @@
 ABOUTME: A journal entry from card #120: Two green branches, one red merge, and the merge test
-ABOUTME: nobody ran
+nobody ran
 
 ## 2026-09-23 — Two green branches, one red merge
 

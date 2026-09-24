@@ -1,5 +1,5 @@
 // ABOUTME: Checks the separate AGENTS.md and live .claude/ instruction pools against the word
-// ABOUTME: budgets ARCHITECTURE.md records.
+// budgets ARCHITECTURE.md records.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

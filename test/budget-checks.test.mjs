@@ -1,5 +1,5 @@
 // ABOUTME: Tests the two budget checks as CI runs them — as commands, for the exit code they
-// ABOUTME: return and what their output names, over budget, under it, and with the figure gone.
+// return and what their output names, over budget, under it, and with the figure gone.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

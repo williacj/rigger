@@ -1,5 +1,5 @@
 // ABOUTME: Holds this repository to its own statement of what a mutation claim must show: the
-// ABOUTME: bar the tdd skill states, and the judge's lens that sends a reader to it.
+// bar the tdd skill states, and the judge's lens that sends a reader to it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

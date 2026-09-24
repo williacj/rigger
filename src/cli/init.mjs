@@ -1,5 +1,5 @@
 // ABOUTME: The `init` verb: what Rigger forks into a consumer's repository, read from the
-// ABOUTME: templates the package ships, and what a second run leaves alone.
+// templates the package ships, and what a second run leaves alone.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';

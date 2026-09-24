@@ -1,5 +1,5 @@
 // ABOUTME: Tests the doc-reference resolver: what it reads a pointer as, which documents it
-// ABOUTME: reads, and which of them a finding fails the build for.
+// reads, and which of them a finding fails the build for.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

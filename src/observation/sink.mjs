@@ -1,5 +1,5 @@
 // ABOUTME: L5's event sink: it stamps every event with the envelope and appends it to one JSONL
-// ABOUTME: stream in the consumer's state directory, and reads that stream back.
+// stream in the consumer's state directory, and reads that stream back.
 
 // What this buys, and what it does not. One event is one synchronous append of one line, so the
 // stream only ever grows and a process killed outright loses no event whose call had already

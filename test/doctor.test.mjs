@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger doctor`: what each check asks the tool that owns its fact, what the
-// ABOUTME: report says, what it exits with, and the source tree it refuses to run against.
+// report says, what it exits with, and the source tree it refuses to run against.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

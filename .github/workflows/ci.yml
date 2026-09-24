@@ -1,5 +1,5 @@
 # ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
-# ABOUTME: ruled-out-word check and its test-matrix check, on every push and every pull request.
+# ruled-out-word check and its test-matrix check, on every push and every pull request.
 
 name: CI
 

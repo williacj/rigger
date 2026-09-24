@@ -1,5 +1,5 @@
 ABOUTME: Records why card #113 extends the document checks to agent prompts and skills, and
-ABOUTME: what the widened scan had to distinguish before those files could be checked.
+what the widened scan had to distinguish before those files could be checked.
 
 # Instruction paths need a scope
 

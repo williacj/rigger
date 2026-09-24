@@ -1,5 +1,5 @@
 // ABOUTME: Refuses a register that allocates one id twice. A retired id stays allocated, so the
-// ABOUTME: live register and the retired one are counted together.
+// live register and the retired one are counted together.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

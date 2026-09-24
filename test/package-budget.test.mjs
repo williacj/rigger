@@ -1,5 +1,5 @@
 // ABOUTME: Tests the package budget check: what counts as a production line, where the number
-// ABOUTME: comes from, and which files the walk includes.
+// comes from, and which files the walk includes.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,5 +1,5 @@
 ABOUTME: A journal entry from card #105: A blacklist cannot spell the word it bans, and a rewrap
-ABOUTME: guarded on words alone is not guarded on structure
+guarded on words alone is not guarded on structure
 
 ## 2026-09-23 — A blacklist cannot spell the word it bans
 

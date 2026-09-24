@@ -1,5 +1,5 @@
 // ABOUTME: Tests the path check: which backticked spans it reads as repository paths, what a
-// ABOUTME: missing one costs, and how long the docs/derived/ exemption lasts.
+// missing one costs, and how long the docs/derived/ exemption lasts.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

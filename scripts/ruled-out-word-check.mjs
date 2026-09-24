@@ -1,5 +1,5 @@
 // ABOUTME: Refuses any tracked file carrying a word this repository has ruled out everywhere,
-// ABOUTME: naming the file, the line, the spelling it found and what to write instead.
+// naming the file, the line, the spelling it found and what to write instead.
 
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

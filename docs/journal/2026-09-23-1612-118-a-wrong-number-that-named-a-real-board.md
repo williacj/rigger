@@ -1,5 +1,5 @@
 ABOUTME: A journal entry from card #118 on a config value no tool can fill, and what shipping a
-ABOUTME: plausible default for one costs.
+plausible default for one costs.
 
 # A wrong number that named a real board
 

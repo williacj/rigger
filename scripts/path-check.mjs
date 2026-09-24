@@ -1,5 +1,5 @@
 // ABOUTME: Asserts that every backticked repository path in a checked document exists on disk.
-// ABOUTME: The resolver never looks at a path carrying no line number, so this covers those.
+// The resolver never looks at a path carrying no line number, so this covers those.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

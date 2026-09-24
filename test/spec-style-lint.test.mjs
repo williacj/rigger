@@ -1,5 +1,5 @@
 // ABOUTME: Tests spec-style-lint: where its ceiling and its ruled-out terms come from, what it
-// ABOUTME: reads, what it declines to say, and that the binding documents pass it.
+// reads, what it declines to say, and that the binding documents pass it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

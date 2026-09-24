@@ -1,5 +1,5 @@
 // ABOUTME: The `doctor` verb: what it asks the tool that owns each fact, what it reports one line
-// ABOUTME: at a time, and the source tree it refuses to run against.
+// at a time, and the source tree it refuses to run against.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';

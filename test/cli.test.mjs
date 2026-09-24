@@ -1,5 +1,5 @@
 // ABOUTME: Tests the CLI surface against the README's "Install and usage" block, which is the
-// ABOUTME: CLI spec: which verbs `--help` lists, in what order, and what an unlanded verb does.
+// CLI spec: which verbs `--help` lists, in what order, and what an unlanded verb does.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
