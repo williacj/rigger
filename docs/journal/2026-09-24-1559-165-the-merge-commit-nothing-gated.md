@@ -159,6 +159,20 @@ The tdd skill's seventh requirement is that a failed guard exits non-zero, and t
 version of the same fault — a guard that answers confidently about something it did not measure.
 The byte counts in this entry are all from `tr -cd` and `od -c`.
 
+## What the hook does not reach
+
+A fresh clone carries no `core.hooksPath`. Measured in a clone taken from the GitHub URL with
+`git config --get core.hooksPath`: the answer is empty. Until someone sets it, none of the four
+hooks runs, this one included.
+
+Nothing in this repository's instructions says to set it. `grep -rn hooksPath` over `AGENTS.md`,
+`.claude/`, `docs/spec/` and `README.md` at `06ca7e6` finds it only inside
+`.claude/hooks/refuse-reserved-git-commands.mjs`, which is the gate that refuses turning it off.
+Every session this milestone arms it because its own task says to.
+
+So what this card closes is the gap in an armed repository, which is what its acceptance asks
+about. Whether arming it should be written down, or done by something, is outside that.
+
 ## What was left alone
 
 Git leaves a refused merge staged, with `MERGE_HEAD` set, and tells the person to `git commit`.
