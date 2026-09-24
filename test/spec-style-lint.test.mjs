@@ -226,10 +226,51 @@ test('a finding names the file it sits in, alongside the line and the word count
   );
 });
 
-test('the skill names which of its four rules the lint covers', () => {
+test('the skill names which of its rules the lint covers', () => {
   const skill = readFileSync(join(repository, '.claude/skills/spec-style/SKILL.md'), 'utf8');
   assert.doesNotMatch(skill, /Nothing checks these mechanically/i);
   assert.match(skill, /spec-style-lint/);
   assert.match(skill, /rules 1 and 2/i);
   assert.match(skill, /rules 3 and 4/i);
+  assert.match(skill, /Rule 5/);
+});
+
+/** The shipped spec-style skill, read off disk rather than the fixture above. */
+const shipped = () => readFileSync(join(repository, '.claude/skills/spec-style/SKILL.md'), 'utf8');
+
+/**
+ * One numbered rule section of the skill, heading and body, or undefined where it states none.
+ *
+ * The split takes `##` as well as `###`, so a rule section ends where the next section of the
+ * skill begins. Splitting on `###` alone would run the last rule to the end of the file, and
+ * every assertion about that rule could then be satisfied by text belonging to another.
+ */
+const ruleOf = (skill, number) => skill.split(/^#{2,3}\s+/m).find((part) => part.startsWith(`${number}.`));
+
+test('the skill states the ownership rule a passage is read against', () => {
+  // The break this names is the ordinary one for a shipped instruction file: the rule dropped in
+  // a later edit, or reduced to a note about length. What the skill states is the whole of what
+  // it does, so each of the rule's three conditions is asserted on its own. `templates/` is not
+  // read here — `test/init.test.mjs` is what holds the two copies identical.
+  const rule = ruleOf(shipped(), 5);
+
+  assert.ok(rule, 'the skill states no fifth rule');
+  assert.match(rule, /owns/, 'the fifth rule says nothing about who owns a fact');
+  assert.match(rule, /restat/i, 'the fifth rule says nothing about restating a cited source');
+  assert.match(rule, /\bterm\b/, 'the fifth rule says nothing about a term nothing defines');
+});
+
+test('the skill states as many rules as it holds', () => {
+  // The break this names is a rule added or dropped while a count elsewhere in the file goes on
+  // stating the old number. The count is written in four places and nothing tied any of them to
+  // the sections, so the skill could ship saying it holds one number of rules and hold another.
+  const skill = shipped();
+  const words = { three: 3, four: 4, five: 5, six: 6, seven: 7 };
+  const held = [...skill.matchAll(/^### (\d+)\./gm)].map((found) => Number(found[1]));
+  const counted = [...skill.matchAll(/\b(three|four|five|six|seven)\s+(?:form\s+)?rules\b/gi)]
+    .map((found) => words[found[1].toLowerCase()]);
+
+  assert.deepEqual(held, held.map((_, index) => index + 1), `the rule sections run ${held}`);
+  assert.ok(counted.length > 0, 'the skill states no number of rules for the sections to match');
+  assert.deepEqual(counted, counted.map(() => held.length), `${held.length} sections, counted ${counted}`);
 });

@@ -1,14 +1,14 @@
 ---
 name: spec-style
-description: The register Rigger's binding documents are written in — four form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. In docs/spec/, the lint reads the live decisions and requirements registers; retired registers keep their historical text. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
+description: The register Rigger's binding documents are written in — five form rules for any diff touching README.md, ARCHITECTURE.md or docs/spec/. In docs/spec/, the lint reads the live decisions and requirements registers; retired registers keep their historical text. Load before drafting or reviewing one. Form only — it never licenses a change to what a ratified clause means. For allocating, amending and retiring ids, read the register's own preamble.
 ---
 
-ABOUTME: The four form rules Rigger's binding documents are written under, and the test behind
+ABOUTME: The five form rules Rigger's binding documents are written under, and the test behind
 each, for anyone drafting or reviewing a delta to them.
 
 # The Rigger register
 
-Four rules. They constrain **form only**. Content is never negotiable: every bound, exception and
+Five rules. They constrain **form only**. Content is never negotiable: every bound, exception and
 gate survives an edit made under them. Where form and meaning pull apart, keep the meaning and
 flag the sentence.
 
@@ -16,7 +16,7 @@ They describe how the binding documents are already written, so that a delta wri
 reads like what is already there. That is the whole of the job — a reader should not be able to
 pick your row out of the ones around it.
 
-## The four rules
+## The five rules
 
 ### 1. One term per concept
 
@@ -62,6 +62,22 @@ A structure that neither a list nor a table carries — a set of things and the 
 them — becomes a diagram. `docs/spec/decisions.md`'s `D15` holds when a diagram is admitted, what
 it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map is the exemplar.
 
+### 5. Own it, refer to it, or cut it
+
+Rule 5 reaches the documents this skill's description names, which is where rules 1 through 4
+reach. `AGENTS.md`'s "Documents own their facts" splits every sentence in them three ways.
+
+1. **It states a fact the document owns.** A fact another document owns fails this branch.
+2. **It refers to a fact another document owns.** A passage that names a source and restates what
+   it says fails, however short the restatement.
+3. **It is cut.** A sentence that owns nothing and refers to nothing is cut. Shortening it is no
+   answer to this rule.
+
+A term for a concept is one these documents already use for that concept, or one the sentence
+introducing it defines. A term that is neither fails.
+
+`AGENTS.md`, under "Write to be acted on", governs how the sentence that survives is written.
+
 ## What this skill is not
 
 - **Not a rewrite licence.** Never improve a ratified clause's meaning while restyling it. Where
@@ -75,7 +91,8 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
   `docs/spec/requirements.md`. It skips the retired registers, whose historical text is kept.
   A ruled-out term is a finding, and so is a sentence past the ceiling. Rules 3 and 4 ask whether
   an actor matters and whether a structure fits its meaning. Those are judgments, so they hold
-  because an author applies them and a reviewer reads for them.
+  because an author applies them and a reviewer reads for them. Rule 5 asks who owns a fact, and
+  holds the same way.
 
 ## Before you hand it off
 
@@ -84,4 +101,6 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
 2. Is any sentence past 40 words? Are most nearer 25 than 35?
 3. Does every sentence about authority name its actor?
 4. Is anything ordered or conditional still buried in prose?
-5. Did you change what a ratified clause means? That is a proposal, not a restyle.
+5. Does any passage restate what a source it names already says, or introduce a term nothing
+   here defines?
+6. Did you change what a ratified clause means? That is a proposal, not a restyle.
