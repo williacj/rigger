@@ -3,34 +3,18 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { findings, trackedFiles, check, RULED_OUT } from '../scripts/ruled-out-word-check.mjs';
-import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { repositoryIn } from './git-repository.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A repository whose files hold the given contents, each path relative and posix-spelled. */
 function repositoryOf(files) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-words-'));
-  for (const [path, content] of Object.entries(files)) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), content);
-  }
-  // The environment is scrubbed of what redirects git, so this fixture's own commit lands here
-  // rather than in a repository an inherited variable names — a suite run from a git hook in a
-  // linked worktree inherits exactly that.
-  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
-  git('init', '-q');
-  git('config', 'user.email', 'fixture@example.invalid');
-  git('config', 'user.name', 'fixture');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  return { root, git };
+  return repositoryIn('rigger-words-', files);
 }
 
 // A fixture word, so this file states no spelling the check itself rules out. Each pattern
@@ -59,7 +43,7 @@ test('a longer word that merely contains the spelling is not a finding', () => {
 test('the check reads what git tracks, so an untracked file is not read', () => {
   // A spike lives in a gitignored directory and is throwaway, so what it says is nobody's
   // finding. Walking the disk would refuse it; asking git never sees it.
-  const { root } = repositoryOf({ 'kept.md': 'nothing here\n' });
+  const root = repositoryOf({ 'kept.md': 'nothing here\n' });
   writeFileSync(join(root, 'spike.md'), 'the widget again\n');
   assert.deepEqual(trackedFiles(root), ['kept.md']);
   assert.deepEqual(check(root, FIXTURE).findings, []);
@@ -68,7 +52,7 @@ test('the check reads what git tracks, so an untracked file is not read', () => 
 test('a tracked file deleted from the working tree costs no finding and no crash', () => {
   // git lists what the index holds, which outlives the file on disk. The check reads files it
   // was handed, so a delete mid-work must not turn the whole suite into a read error.
-  const { root } = repositoryOf({ 'kept.md': 'the widget is here\n', 'gone.md': 'nothing\n' });
+  const root = repositoryOf({ 'kept.md': 'the widget is here\n', 'gone.md': 'nothing\n' });
   rmSync(join(root, 'gone.md'));
   assert.deepEqual(trackedFiles(root), ['gone.md', 'kept.md']);
   assert.deepEqual(check(root, FIXTURE).findings, [
@@ -155,7 +139,7 @@ test('no tracked file in this repository carries a ruled-out word', () => {
 test('a tracked name carrying a ruled-out word is a finding, contents or no contents', () => {
   // The word reached a file name as well as its prose, and a journal slug derives from its
   // heading. A check reading only contents would pass a file whose name still says it.
-  const { root } = repositoryOf({ 'docs/the-widget.md': 'nothing here\n' });
+  const root = repositoryOf({ 'docs/the-widget.md': 'nothing here\n' });
   const { names, findings: found } = check(root, FIXTURE);
   assert.deepEqual(found, []);
   assert.deepEqual(names, [

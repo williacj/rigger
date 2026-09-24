@@ -13,6 +13,7 @@ import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
 import { validate } from '../src/config/validate.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
+import { cloneInto, repositoryIn } from './git-repository.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -114,8 +115,7 @@ test('the tree compared is the repository, not the directory the command was run
   //
   // Git is asked which repository the directory sits in (`D16` rule 1), so this is a real
   // repository rather than a path arrangement, and the premise is measured before the claim.
-  const consumer = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
-  assert.equal(spawnSync('git', ['-C', consumer, 'init', '-q'], { encoding: 'utf8', env: gitEnvironment() }).status, 0);
+  const consumer = repositoryIn('rigger-consumer-');
   const installed = join(consumer, 'node_modules', '@williacj', 'rigger');
   const from = join(consumer, 'src');
   mkdirSync(installed, { recursive: true });
@@ -281,8 +281,7 @@ function answeringEach(answers) {
 
 /** A git repository holding a config, which is what `doctor` expects to be pointed at. */
 function checked(source) {
-  const where = mkdtempSync(join(tmpdir(), 'rigger-checked-'));
-  assert.equal(spawnSync('git', ['-C', where, 'init', '-q'], { encoding: 'utf8', env: gitEnvironment() }).status, 0);
+  const where = repositoryIn('rigger-checked-');
   writeFileSync(join(where, CONFIG), source);
   return where;
 }
@@ -606,9 +605,7 @@ test('the whole report is lines, and carries no stack trace', async () => {
  * a local path is no such thing, and the config `init` writes would name a repository nobody has.
  */
 function freshClone() {
-  const into = join(mkdtempSync(join(tmpdir(), 'rigger-clone-')), 'rigger');
-  const cloned = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', root, into], { encoding: 'utf8', env: gitEnvironment() });
-  assert.equal(cloned.status, 0, `cloning this repository failed: ${cloned.stderr}`);
+  const into = cloneInto(root, join(mkdtempSync(join(tmpdir(), 'rigger-clone-')), 'rigger'));
   const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
