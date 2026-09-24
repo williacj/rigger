@@ -384,3 +384,414 @@ test('a command the gate cannot read is refused', () => {
     refuses(command, `the unreadable command \`${command}\``);
   }
 });
+
+/**
+ * A reserved git spelling reached through a shell keyword. `commandsIn` splits on operators, so a
+ * keyword is the first word of its command and the git invocation is the second or later word —
+ * and the rule that decides whether a command is git at all reads the first word. Bash runs the
+ * reserved command in every payload below: each was run under bash from a file with `git` replaced
+ * by a marker on `PATH`, and bash ran the marker in every one. The measurement is in the pull
+ * request, and the constructs the card names are the first six rows.
+ *
+ * The third column is the spelling the refusal must name, read off `AGENTS.md`'s three
+ * reservations rather than off the gate. A refusal that stopped naming what it found would still
+ * be a deny, so the deny alone is no test of it.
+ */
+export const KEYWORD_CONSTRUCT_PAYLOADS = [
+  ['a brace group', '{ git push --force; }', 'a force push'],
+  ['if / then', 'if true; then git push --force; fi', 'a force push'],
+  ['for / do', 'for x in 1; do git branch -D topic; done', 'deleting a branch'],
+  ['while / do', 'while true; do git push -f; break; done', 'a force push'],
+  ['case', 'case x in x) git push --force;; esac', 'a force push'],
+  ['a group after &&', 'true && { git commit --no-verify -m x; }', 'a commit that skips the hooks'],
+  // The rest of the keyword family, enumerated from bash's reserved words rather than from the
+  // card's table, because a keyword left out is a bypass this gate cannot see.
+  ['a git condition after if', 'if git push --force; then :; fi', 'a force push'],
+  ['if / else', 'if false; then :; else git push --force; fi', 'a force push'],
+  ['if / elif / then', 'if false; then :; elif true; then git push --force; fi', 'a force push'],
+  [
+    'a git condition after elif',
+    'if false; then :; elif git push --force; then :; fi',
+    'a force push',
+  ],
+  ['for / do, an arithmetic header', 'for ((i=0;i<1;i++)); do git push -f; done', 'a force push'],
+  ['select / do', "printf '1\\n' | { select x in 1; do git push -f; break; done; }", 'a force push'],
+  ['a git condition after while', 'while git push -f; do break; done', 'a force push'],
+  ['until / do', 'until false; do git push -f; break; done', 'a force push'],
+  ['a git condition after until', 'until git push -f; do break; done', 'a force push'],
+  ['case, a later branch', 'case x in a) git status;; x) git push --force;; esac', 'a force push'],
+  ['case, a parenthesised pattern', 'case x in (x) git push --force;; esac', 'a force push'],
+  ['case, a pattern set off by blanks', 'case x in x ) git push --force ;; esac', 'a force push'],
+  // The same blank, in a branch after the first. The `case` word is on the command before this
+  // one, so the pattern is the whole of what stands before the body and the `)` is its own word.
+  [
+    'case, a later branch whose pattern is set off by blanks',
+    'case x in a) :;; x ) git push --force;; esac',
+    'a force push',
+  ],
+  ['case, an alternation', 'case x in a|x) git push --force;; esac', 'a force push'],
+  ['case, a quoted pattern', "case x in 'a)b') :;; x) git push -f;; esac", 'a force push'],
+  ['case, a fall-through pattern', 'case x in a) :;& x) git push --force;; esac', 'a force push'],
+  ['case on a substitution', 'case $(echo x) in x) git push --force;; esac', 'a force push'],
+  ['a group after ||', 'false || { git push -f; }', 'a force push'],
+  ['a group in a pipeline', '{ git push --force; } | cat', 'a force push'],
+  ['nested groups', '{ { git push --force; }; }', 'a force push'],
+  ['a group after then', 'if true; then { git push --force; }; fi', 'a force push'],
+  [
+    'a construct inside a loop',
+    'while :; do if true; then git push -f; fi; break; done',
+    'a force push',
+  ],
+  ['negation', '! git push --force', 'a force push'],
+  ['negation twice', '! ! git push --force', 'a force push'],
+  ['negation of a group', '! { git push --force; }', 'a force push'],
+  ['time', 'time git push --force', 'a force push'],
+  ['time -p', 'time -p git push --force', 'a force push'],
+  ['time --', 'time -- git push --force', 'a force push'],
+  ['time of a group', 'time { git push --force; }', 'a force push'],
+  ['coproc', 'coproc git push --force', 'a force push'],
+  ['coproc of a named group', 'coproc c { git push --force; }', 'a force push'],
+  ['a function definition', 'f() { git push --force; }', 'a force push'],
+  ['the function keyword', lines('function f { git push --force; }', 'f'), 'a force push'],
+  [
+    'the function keyword with parentheses',
+    lines('function f() { git push --force; }', 'f'),
+    'a force push',
+  ],
+  ['an assignment inside a group', '{ x=1 git push --force; }', 'a force push'],
+  ['env inside a construct', 'if true; then env git push --force; fi', 'a force push'],
+  ['a group inside bash -c', "bash -c '{ git push --force; }'", 'a force push'],
+];
+
+/**
+ * The other side of the same rule: keyword constructs the gate must go on permitting. Bash runs no
+ * reserved git command in any of these — measured the same way, with `git` shadowed by a marker —
+ * and two of them carry the *text* of a reserved spelling where bash reads a word list or an
+ * argument rather than a command. A rule wide enough to refuse those has stopped following bash,
+ * which is how card #71 traded refusals for bypasses.
+ */
+export const KEYWORD_CONSTRUCTS_CARRYING_NOTHING_RESERVED = [
+  ['a brace group', '{ git status; }'],
+  ['if / then', 'if true; then git status; fi'],
+  ['for / do', 'for x in 1; do git log --oneline -1; done'],
+  ['case', 'case x in x) git status;; esac'],
+  ['the case word spelled git', 'case git in git) echo ok;; esac'],
+  ['a for word list spelled like a force push', 'for x in git push --force; do :; done'],
+  ['a keyword written as an argument', 'echo then git push --force'],
+  ['an awk program in braces', "echo a | awk '{print $1}'"],
+  ['a jq program in braces', "echo {} | jq '{a:1}'"],
+  ['xargs with a brace placeholder', 'echo x | xargs -I{} echo {}'],
+  ['a git format string holding a parenthesis', "git log --format='%h) %s' -1"],
+  ['time of a command carrying nothing reserved', 'time git status'],
+  ['negation of a command carrying nothing reserved', '! git diff --quiet'],
+  ['a function definition carrying nothing reserved', 'f() { git status; }'],
+  ['a [[ ]] test beside a command carrying nothing reserved', '[[ -n x ]] && git status'],
+];
+
+test('a reserved git spelling inside a shell keyword construct is refused', () => {
+  // Every shape here was fail-open: the gate permitted and bash ran the reserved command. A
+  // keyword is the first word of the command the operator split, so the git invocation is never
+  // word one and the rule that reads word one never looks at it.
+  for (const [construct, command, spelling] of KEYWORD_CONSTRUCT_PAYLOADS) {
+    refuses(command, `a reserved spelling reached through ${construct}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${construct} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a keyword construct carrying nothing reserved is still permitted', () => {
+  // The floor under the fix. Reaching past a keyword must not become reaching past anything: bash
+  // runs no reserved git command in any of these, and neither a word list nor an argument that
+  // reads like one is a command.
+  for (const [shape, command] of KEYWORD_CONSTRUCTS_CARRYING_NOTHING_RESERVED) {
+    permits(command, `${shape}, which bash runs no reserved git command from`);
+  }
+});
+
+/**
+ * A reserved git spelling behind a **redirection word**. Bash allows a redirection wherever it
+ * reads a command's words, before the program as freely as after it, so the program is not word
+ * one in any of these and bash runs the reserved command in every one — measured under bash from
+ * a file with `git` shadowed by a marker on `PATH`.
+ *
+ * The two rows that name `env` and an assignment are the sharpest: `env git push --force` and
+ * `X=1 git push --force` were refused before this table existed, and inserting a redirection
+ * between the prefix and the program defeated that. So a redirection is not a family beside the
+ * words already stepped over — it is a gap in the middle of them.
+ */
+export const REDIRECTION_PAYLOADS = [
+  ['a brace group and `>out`', '{ >/dev/null git push --force; }', 'a force push'],
+  ['a brace group and `<in`', '{ </dev/null git push --force; }', 'a force push'],
+  ['an explicit file descriptor', '{ 1>/dev/null git push --force; }', 'a force push'],
+  ['a here-string', '{ <<<x git push --force; }', 'a force push'],
+  // Each operator below is written with a blank as well as closed up. Only the spaced spelling
+  // leaves the operator as a word of its own, and only then does its length decide whether the
+  // target is this word or the next — so the closed-up form alone pins none of them.
+  ['a here-string with a blank', '{ <<< x git push --force; }', 'a force push'],
+  ['an input redirection with a blank', '{ < /dev/null git push --force; }', 'a force push'],
+  ['a descriptor duplication on standard input', '{ <&0 git push --force; }', 'a force push'],
+  ['a descriptor duplication on standard input, spaced', '{ <& 0 git push --force; }', 'a force push'],
+  ['`2>&1` after then', 'if true; then 2>&1 git push --force; fi', 'a force push'],
+  ['a case body', 'case x in x) >/dev/null git push --force;; esac', 'a force push'],
+  ['a target in the next word', '{ > /dev/null git push --force; }', 'a force push'],
+  ['a descriptor and a target in the next word', '{ 2> /dev/null git push --force; }', 'a force push'],
+  ['the append form', '{ >> /dev/null git push --force; }', 'a force push'],
+  ['a descriptor duplication', '{ >&2 git push --force; }', 'a force push'],
+  ['a descriptor duplication, spaced', '{ >& 2 git push --force; }', 'a force push'],
+  ['the read-write form', '{ <> /dev/null git push --force; }', 'a force push'],
+  ['the clobber form', '{ >| /dev/null git push --force; }', 'a force push'],
+  ['the clobber form, closed up', '{ >|/dev/null git push --force; }', 'a force push'],
+  ['a descriptor named in braces', '{ {fd}>/dev/null git push --force; }', 'a force push'],
+  ['after env', 'env >/dev/null git push --force', 'a force push'],
+  ['after an assignment', 'X=1 >/dev/null git push --force', 'a force push'],
+  ['before an assignment', '{ >/dev/null X=1 git push --force; }', 'a force push'],
+  ['no keyword at all', '>/dev/null git push --force', 'a force push'],
+  ['two redirections', '{ <<<x >/dev/null git push --force; }', 'a force push'],
+  ['a for body', 'for x in 1; do >/dev/null git branch -D t; done', 'deleting a branch'],
+  ['a while body', 'while true; do >/dev/null git push -f; break; done', 'a force push'],
+  ['an until body', 'until false; do >/dev/null git push -f; break; done', 'a force push'],
+  ['after negation', '! >/dev/null git push --force', 'a force push'],
+  ['after time', 'time >/dev/null git push --force', 'a force push'],
+];
+
+/**
+ * A reserved git spelling behind a **program that runs a command named in its arguments**. `env`
+ * was the only one the gate stepped over, and its own options defeated even that.
+ *
+ * Each option grammar here is the program's own rather than bash's, so the gate reads every word
+ * after the prefix as a possible command start instead of modelling any of them. That reads more
+ * words than bash runs and can only add a refusal, because it objects only where the words from
+ * one of them on spell a reserved command — which is why `nohup echo git status` stays permitted.
+ *
+ * `eval` is the exception: it joins its arguments and runs the result as shell text, so no one
+ * word is the command and the text is re-read the way a shell's `-c` argument already is. `env -S`
+ * is the same exception for the same reason — it carries the whole command inside **one word**, so
+ * no word after the prefix is the program and reading every word reaches nothing.
+ *
+ * Which of these bash could be watched running git is a fact about this host, not about the gate.
+ * The pull request records, with bash's own message for each, the ones that were absent here, and
+ * the two whose prefix resets `PATH` so that bash reported `git: command not found` — proof it
+ * resolved the prefix and went looking for git.
+ */
+export const PREFIX_PROGRAM_PAYLOADS = [
+  ['command', '{ command git push --force; }', 'a force push'],
+  ['command -p', '{ command -p git push --force; }', 'a force push'],
+  ['eval, single-quoted', "{ eval 'git push --force'; }", 'a force push'],
+  ['eval, double-quoted', '{ eval "git push --force"; }', 'a force push'],
+  ['eval, unquoted', '{ eval git push --force; }', 'a force push'],
+  ['eval of a brace group', "eval '{ git push --force; }'", 'a force push'],
+  ['exec', '{ exec git push --force; }', 'a force push'],
+  ['nohup', '{ nohup git push --force; }', 'a force push'],
+  ['nice', '{ nice git push --force; }', 'a force push'],
+  ['nice -n, whose option takes a value', '{ nice -n 10 git push --force; }', 'a force push'],
+  ['timeout, whose first operand is a duration', 'timeout 5 git push --force', 'a force push'],
+  ['timeout in a brace group', '{ timeout 5 git push --force; }', 'a force push'],
+  ['stdbuf -o0', 'stdbuf -o0 git push --force', 'a force push'],
+  ['stdbuf -o 0', 'stdbuf -o 0 git push --force', 'a force push'],
+  ['env -u, whose option takes a value', 'env -u FOO git push --force', 'a force push'],
+  ['env -i, which resets PATH', 'env -i git push --force', 'a force push'],
+  ['xargs fed a word', 'echo origin | xargs git push --force', 'a force push'],
+  ['a chain of three prefixes', 'nohup env nice git push --force', 'a force push'],
+  ['setsid', 'setsid git push --force', 'a force push'],
+  ['sudo', 'sudo git push --force', 'a force push'],
+  ['sudo of a shell', "sudo bash -c 'git push --force'", 'a force push'],
+  ['flock, whose first operand is a lock file', 'flock /tmp/rigger.lock git push --force', 'a force push'],
+  ['ionice', 'ionice git push --force', 'a force push'],
+  ['taskset -c, whose option takes a value', 'taskset -c 0 git push --force', 'a force push'],
+  ['time as a program rather than the keyword', '/usr/bin/time git push --force', 'a force push'],
+  ['chrt -f, whose option takes a value', 'chrt -f 1 git push --force', 'a force push'],
+  ['doas', 'doas git push --force', 'a force push'],
+  ['unbuffer', 'unbuffer git push --force', 'a force push'],
+  ['three prefixes and then a shell', "nohup env nice bash -c 'git push --force'", 'a force push'],
+  // A prefix is not a shell, so it must not spend the budget for reading inside one. A prefix
+  // *inside* a shell is the shape that says so, and the chain above is not: the scan reads every
+  // word after the outermost prefix, so the `bash -c` that follows two more prefixes is reached
+  // from the outermost one and never needs the budget. Here the shell is already one level down,
+  // so counting the prefix against the budget leaves the script unread and bash runs the push.
+  ['a prefix inside a shell, before another shell', 'bash -c \'nohup bash -c "git push --force"\'', 'a force push'],
+  // `env -S` / `--split-string`. The option's argument is the whole command, so the words after
+  // the prefix are one word that is no program. Six spellings of the option, because each is a
+  // separate reading: the argument closed up against a short option, set off from it, after the
+  // long name's `=`, set off from the long name, clustered behind a flag that takes no value, and
+  // behind an option that takes one.
+  ['env -S, the command closed up in one word', "env -S'git push --force'", 'a force push'],
+  ['env -S, the command in the next word', "env -S 'git push --force'", 'a force push'],
+  ['env --split-string=', "env --split-string='git push --force'", 'a force push'],
+  ['env --split-string, the command in the next word', "env --split-string 'git push --force'", 'a force push'],
+  ['env -S clustered behind a flag', "env -vS'git push --force'", 'a force push'],
+  ['env -S behind an option that takes a value', "env -u FOO -S'git push --force'", 'a force push'],
+  ['env -S named by its path', "/usr/bin/env -S'git push --force'", 'a force push'],
+  // The card's six constructs, each around an `env -S` rather than around a bare git invocation,
+  // and each a measured bypass of its own: the construct is stepped over and the prefix reached,
+  // and the command is still inside one word.
+  ['env -S in a brace group', "{ env -S'git push --force'; }", 'a force push'],
+  ['env -S after then', "if true; then env -S'git push --force'; fi", 'a force push'],
+  ['env -S in a for body', "for x in 1; do env -S'git branch -D topic'; done", 'deleting a branch'],
+  ['env -S in a while body', "while true; do env -S'git push -f'; break; done", 'a force push'],
+  ['env -S in a case body', "case x in x) env -S'git push --force';; esac", 'a force push'],
+  ['env -S in a group after &&', "true && { env -S'git commit --no-verify -m x'; }", 'a commit that skips the hooks (--no-verify)'],
+  ['env --split-string= in a brace group', "{ env --split-string='git push --force'; }", 'a force push'],
+  ['env -S behind another prefix', "nohup env -S'git push --force'", 'a force push'],
+  // The split text is text, so everything the gate reads in a command it reads in there too.
+  ['a prefix program inside the split text', "env -S'nohup git push --force'", 'a force push'],
+  ['a shell inside the split text', 'env -S\'bash -c "git push --force"\'', 'a force push'],
+  // `env` is a prefix and not a shell, so reading its split text must not spend the budget for
+  // looking inside a shell. This is the shape that says so: spend it here and the innermost
+  // script goes unread, and bash runs the push.
+  ['a shell inside the split text of an env inside a shell', 'bash -c "env -S\'bash -c \\"git push --force\\"\'"', 'a force push'],
+  // `env` parses with `getopt_long`, which takes any unambiguous abbreviation of a long option,
+  // and `split-string` is its only long option beginning with `s`. So `--s=` is `--split-string=`,
+  // and matching the option by its full spelling alone leaves every shorter one open. Measured
+  // under bash: all twelve ran the reserved command.
+  ['env --s=, the shortest abbreviation there is', "env --s='git push --force'", 'a force push'],
+  ['env --sp=', "env --sp='git push --force'", 'a force push'],
+  ['env --split=', "env --split='git push --force'", 'a force push'],
+  ['env --split-strin=, one letter short of the name', "env --split-strin='git push --force'", 'a force push'],
+  ['env --s, an abbreviation whose argument is the next word', "env --s 'git push --force'", 'a force push'],
+  ['env --split, an abbreviation whose argument is the next word', "env --split 'git push --force'", 'a force push'],
+  ['env --s= deleting a branch', "env --s='git branch -D topic'", 'deleting a branch'],
+  ['env --s= skipping the hooks', "env --s='git commit --no-verify -m x'", 'a commit that skips the hooks (--no-verify)'],
+  ['env --s= in a brace group', "{ env --s='git push --force'; }", 'a force push'],
+  ['env --s= after then', "if true; then env --s='git push --force'; fi", 'a force push'],
+  ['env --s= behind another prefix', "nohup env --s='git push --force'", 'a force push'],
+  ['env --s= named by its path', "/usr/bin/env --s='git push --force'", 'a force push'],
+  // `flock` carries a command in one word the same way, through `-c` / `--command`, which it hands
+  // to a shell. **No bash oracle for these exists on this host**: `flock` is absent here, so bash
+  // runs nothing and the marker is empty for every one. What is asserted is the gate's verdict,
+  // which is deterministic and needs no oracle — the same footing the seven prefix names absent
+  // from this host already stand on, and `templates/claude/` ships for the hosts that have it.
+  ['flock -c, the lock file first', "flock /tmp/l -c 'git push --force'", 'a force push'],
+  ['flock -c, the option first', "flock -c 'git push --force' /tmp/l", 'a force push'],
+  ['flock --command=', "flock --command='git push --force' /tmp/l", 'a force push'],
+  ['flock --com=, an unambiguous abbreviation', "flock --com='git push --force' /tmp/l", 'a force push'],
+  ['flock -nc, the option clustered behind a flag', "flock -nc 'git push --force' /tmp/l", 'a force push'],
+  ['flock --command deleting a branch', "flock /tmp/l --command 'git branch -D topic'", 'deleting a branch'],
+  // A real option behind a `--` word, which ends option parsing. Both were refused from round 3
+  // on, and they are here because they are the shapes a reader that stops at the `--` would miss.
+  // Reading every match rather than the first is what keeps them refused now.
+  //
+  // Bash runs nothing for either, and says why: `env: '-Sgit push --force': No such file or
+  // directory` for the first, because `--` ends option parsing and `env` takes the next word as a
+  // program name, and `env: ambiguous option --` for the second. So both are the fail-closed
+  // direction, and the pull request reports them as over-refusals as well as here.
+  ['a bare -- before the real option', "env -- -S'git push --force'", 'a force push'],
+  ['an empty long-option name before the real option', "env --=x -S'git push --force'", 'a force push'],
+  // `sudo` is the third program that carries a command in one word, and the second-largest of the
+  // three: `-s` / `--shell` and `-i` / `--login` each run a shell, and sudo(8) says of both that
+  // "if a command is specified, it is passed to the shell for execution via the shell's -c
+  // option". So `sudo -s 'git push --force'` is `bash -c 'git push --force'` with a shell in
+  // between, and the whole command is one word.
+  //
+  // **No bash oracle for these exists on this host.** `sudo` here is Windows' own `sudo`, which
+  // answers `error: unexpected argument '-s' found` and runs nothing, so the marker is empty for
+  // every row and what is asserted is the gate's verdict. Same footing as the `flock` rows.
+  //
+  // Neither flag takes an option argument — the command is an *operand* — so which word it is
+  // depends on the options between the flag and it. Every word after the flag is read rather than
+  // sudo's option order being assumed, which is the one thing about `sudo` this host cannot answer.
+  ['sudo -s', "sudo -s 'git push --force'", 'a force push'],
+  ['sudo -i', "sudo -i 'git push --force'", 'a force push'],
+  ['sudo --shell', "sudo --shell 'git push --force'", 'a force push'],
+  ['sudo --login', "sudo --login 'git push --force'", 'a force push'],
+  ['sudo --sh, an abbreviation', "sudo --sh 'git push --force'", 'a force push'],
+  ['sudo --lo, an abbreviation', "sudo --lo 'git push --force'", 'a force push'],
+  ['sudo -s deleting a branch', "sudo -s 'git branch -D topic'", 'deleting a branch'],
+  ['sudo -i skipping the hooks', "sudo -i 'git commit --no-verify -m x'", 'a commit that skips the hooks (--no-verify)'],
+  ['sudo -s in a brace group', "{ sudo -s 'git push --force'; }", 'a force push'],
+  ['sudo -s behind another prefix', "nohup sudo -s 'git push --force'", 'a force push'],
+  ['sudo -s behind an option that takes a value', "sudo -u root -s 'git push --force'", 'a force push'],
+  ['sudo -s with an option between the flag and the command', "sudo -s -u root 'git push --force'", 'a force push'],
+  ['sudo -ns, the flag clustered behind another', "sudo -ns 'git push --force'", 'a force push'],
+  // A decoy option ahead of the real one. GNU `env` takes the **first** `-S` and makes everything
+  // after it arguments to that command, which is measured — so for `env` the first match is
+  // `env`'s own resolution. What `flock` does with a second `-c` is **not** measured here and is
+  // not assumed: every match is read, so which one the program would take does not have to be
+  // known. This row is the one that says so.
+  ['a decoy option ahead of the real one', "flock /tmp/l -c : -c 'git push --force'", 'a force push'],
+  // The row above is closed by reading every *word* after the option, which sweeps past the decoy
+  // and reaches the second `-c`'s argument, which is the next word. This one is closed only by
+  // reading every *match*: the real option is written `--com=…`, so its text sits inside its own
+  // word and no word after the decoy carries it. Read as a command, `--com=git push --force` has
+  // `--com=git` for its program and nothing objects to that.
+  ['a later option whose text is inside its own word', "flock /tmp/l -c : --com='git push --force'", 'a force push'],
+];
+
+/**
+ * The floor under both tables above: a redirection or a prefix program beside a command carrying
+ * nothing reserved. Bash runs no reserved git command in any of these, measured the same way.
+ *
+ * The last three hold a `)` where the gate steps over one, and they are here because the rule that
+ * steps over a blank-separated `case` pattern reads the second word. They pin that it reads only
+ * that word: a `)` further along a command, or one in an argument to a program that is not a
+ * pattern, changes nothing.
+ */
+export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
+  ['a redirection before a clean git command', '{ >/dev/null git status; }'],
+  ['a descriptor duplication before a clean git command', '{ 2>&1 git log --oneline -1; }'],
+  ['git redirecting its own output', 'git log --oneline -1 > /dev/null'],
+  ['command -v, which prints a path rather than running it', 'command -v git'],
+  ['a prefix program whose argument mentions git', 'nohup echo git status'],
+  ['timeout of a command that is not git', 'timeout 5 echo npm test'],
+  ['nice of a command that is not git', 'nice -n 10 echo node x.js'],
+  ['env with no command after it', 'env | grep -c PATH'],
+  ['a quoted parenthesis as an argument', "echo ')' hello"],
+  ['a quoted parenthesis in a pattern', "echo x | grep ')' || true"],
+  ['a quoted parenthesis in a substitution', "echo x | sed 's/x/)/'"],
+  ['split text carrying no git command at all', "env -S'echo hello'"],
+  ['split text carrying a clean git command', "env -S'git log --oneline -1'"],
+  ['long-form split text carrying no git command', "env --split-string='echo hello'"],
+  ['split text behind an option that takes a value, carrying a clean git command', "env -u FOO -S'git status'"],
+  ['an abbreviated split string carrying no git command', "env --s='echo hello'"],
+  ['an abbreviated split string carrying a clean git command', "env --s='git log --oneline -1'"],
+  ['a long option that is no abbreviation of split-string', "env --unset=FOO git status"],
+  ["flock's command carrying no git command", "flock /tmp/l -c 'echo hello'"],
+  ["flock's command carrying a clean git command", "flock /tmp/l -c 'git status'"],
+  ["sudo's shell carrying no git command", "sudo -s 'echo hello'"],
+  ["sudo's login shell carrying a clean git command", "sudo -i 'git status'"],
+  ['sudo -u, whose option takes a user rather than a command', 'sudo -u root git status'],
+  ['a long option that is no abbreviation of shell or login', 'sudo --list git status'],
+  // Every option name begins with the empty string, so a bare `--` would match the option and have
+  // every word after it read as command text. This is what the non-empty test on that name costs
+  // if it goes: bash runs `echo` here, printing the words, and the gate would refuse it. A
+  // mutation removing that test reds on this row and on nothing else.
+  ['a bare -- before an argument that spells a reserved command', "env -- echo 'git push --force'"],
+];
+
+test('a reserved git spelling behind a redirection word is refused', () => {
+  // Bash reads a redirection wherever it reads a command's words. A gate that steps over the
+  // reserved words and the assignments but not the redirections has a gap between them, and that
+  // gap disables the step-overs on either side of it.
+  for (const [shape, command, spelling] of REDIRECTION_PAYLOADS) {
+    refuses(command, `a reserved spelling behind a redirection: ${shape}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${shape} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a reserved git spelling behind a prefix program is refused', () => {
+  // `env` was stepped over and nothing else was, so every other program that runs a command named
+  // in its arguments was a way through — including `env`'s own options.
+  for (const [shape, command, spelling] of PREFIX_PROGRAM_PAYLOADS) {
+    refuses(command, `a reserved spelling behind ${shape}`);
+    const { reason } = rule(command);
+    assert.ok(
+      reason.includes(spelling),
+      `the refusal for ${shape} did not name the spelling it found (${spelling}): ${reason}`,
+    );
+  }
+});
+
+test('a redirection or a prefix program beside nothing reserved is still permitted', () => {
+  // Reading more words than bash runs is what keeps the prefix rule free of each program's option
+  // grammar. It costs nothing while it objects only to the words that spell a reserved command,
+  // and these pin that.
+  for (const [shape, command] of PREFIX_WORDS_CARRYING_NOTHING_RESERVED) {
+    permits(command, `${shape}, which bash runs no reserved git command from`);
+  }
+});
