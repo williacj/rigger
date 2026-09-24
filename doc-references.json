@@ -25,8 +25,6 @@
     "templates/claude/skills/tdd/SKILL.md": "strict"
   },
   "exempt": {
-    "paths": {
-      "docs/spikes/": "docs/v0-build-plan.md section 5 places the future WSL2 spike report here; this directory is absent until that report lands."
-    }
+    "paths": {}
   }
 }
