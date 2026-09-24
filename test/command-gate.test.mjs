@@ -669,11 +669,9 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   ['flock --com=, an unambiguous abbreviation', "flock --com='git push --force' /tmp/l", 'a force push'],
   ['flock -nc, the option clustered behind a flag', "flock -nc 'git push --force' /tmp/l", 'a force push'],
   ['flock --command deleting a branch', "flock /tmp/l --command 'git branch -D topic'", 'deleting a branch'],
-  // A `--` word leaves an empty long-option name, which every option name begins with. Matching it
-  // would have the reader return the word after the `--` as the command text and stop, leaving the
-  // real option further along unread — a *narrowing*, which is the direction that trades a refusal
-  // for a bypass. These two rows are what the non-empty test on that name is for, and they are
-  // refusals round 3 already gave.
+  // A real option behind a `--` word, which ends option parsing. Both were refused from round 3
+  // on, and they are here because they are the shapes a reader that stops at the `--` would miss.
+  // Reading every match rather than the first is what keeps them refused now.
   //
   // Bash runs nothing for either, and says why: `env: '-Sgit push --force': No such file or
   // directory` for the first, because `--` ends option parsing and `env` takes the next word as a
@@ -749,6 +747,11 @@ export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
   ["sudo's login shell carrying a clean git command", "sudo -i 'git status'"],
   ['sudo -u, whose option takes a user rather than a command', 'sudo -u root git status'],
   ['a long option that is no abbreviation of shell or login', 'sudo --list git status'],
+  // Every option name begins with the empty string, so a bare `--` would match the option and have
+  // every word after it read as command text. This is what the non-empty test on that name costs
+  // if it goes: bash runs `echo` here, printing the words, and the gate would refuse it. A
+  // mutation removing that test reds on this row and on nothing else.
+  ['a bare -- before an argument that spells a reserved command', "env -- echo 'git push --force'"],
 ];
 
 test('a reserved git spelling behind a redirection word is refused', () => {
