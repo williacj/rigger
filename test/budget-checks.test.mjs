@@ -123,10 +123,14 @@ test('neither check states a budget of its own', () => {
   // ARCHITECTURE.md's to state, and a copy in the script is a second place for them to differ.
   for (const check of ['package-budget.mjs', 'instruction-budget.mjs']) {
     const source = readFileSync(join(root, 'scripts', check), 'utf8');
-    // Every figure either document has recorded, the retired ones included: nothing should type
-    // a budget, and a figure dropped from this list the day it stopped being current would leave
-    // the guard naming only numbers no one would type anyway.
-    for (const typed of ['12000', '12,000', '2000', '2,000', '13000', '13,000', '14000', '14,000']) {
+    // Every figure either budget has been recorded at: the package's 12,000, the AGENTS.md pool's
+    // 2,500 and the 2,000 retired before it, the live pool's 14,000 and the 13,000 retired before
+    // it. A retired figure stays, because what this asserts is that neither script types a budget
+    // at all, and that does not depend on which figure is current. The list samples that property
+    // rather than establishing it, so it holds only as long as every recorded figure is on it. A
+    // current figure left off is the hole that matters: the guard then names the retired number
+    // for a budget while the figure the document actually records walks through.
+    for (const typed of ['12000', '12,000', '2000', '2,000', '2500', '2,500', '13000', '13,000', '14000', '14,000']) {
       assert.ok(!source.includes(typed), `${check} states ${typed} rather than reading it`);
     }
   }
