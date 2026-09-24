@@ -11,6 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, headerFindings, exemptions } from '../scripts/aboutme-header-check.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -152,7 +153,7 @@ function repositoryOf(files) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
   }
-  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
   git('init', '-q');
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'user.name', 'fixture');
