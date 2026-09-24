@@ -108,10 +108,14 @@ function runCommands(yaml) {
   return [...yaml.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)].map(([, command]) => command);
 }
 
-test('CI runs on every push and every pull request', () => {
+test('CI runs on every push, every pull request and every queued merge', () => {
+  // A queue entry is a branch nobody pushed and no pull request points at, so `push` and
+  // `pull_request` leave it unanswered. A queue that requires a check the workflow never starts
+  // waits for it until the entry times out, so the trigger is what makes the queue usable.
   const triggers = topLevelBlock(workflow, 'on');
   assert.match(triggers, /\bpush\b/);
   assert.match(triggers, /\bpull_request\b/);
+  assert.match(triggers, /\bmerge_group\b/);
 });
 
 test('CI installs from the lockfile, then runs the suite and both budget checks', () => {
