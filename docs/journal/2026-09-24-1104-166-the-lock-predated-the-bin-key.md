@@ -16,11 +16,16 @@ The lock's root entry, `packages[""]`, is npm's projection of `package.json`'s o
 version, license, engines, `bin`. A current lock mirrors what the manifest declares. This one did
 not, so it was generated against a manifest that differed.
 
-Git says exactly which manifest, because `package-lock.json` has one commit in its whole history:
-`fb510ce`, the commit that created it. `package.json` at `fb510ce` declares no `bin`. The `bin` key
-arrived two commits later in `0840197`, whose own message says "package.json gains the bin key
-alone" — and that commit touched `package.json`, `src/cli/rigger.mjs` and `test/cli.test.mjs`,
-never the lock. So the lock had been stale since `0840197` and nothing regenerated it.
+Git says exactly which manifest. At base `ab368cf`, `package-lock.json` had one commit in its whole
+history — `fb510ce`, the commit that created it — and `package.json` at `fb510ce` declares no `bin`.
+That count is measured with `git log --follow -- package-lock.json` at `ab368cf`; on this branch it
+is 2, this change being the second.
+
+The `bin` key arrived in `0840197`, whose own message says "package.json gains the bin key alone".
+That commit touched `package.json`, `src/cli/rigger.mjs` and `test/cli.test.mjs`, never the lock.
+So the lock had been stale since `0840197`, and nothing regenerated it between then and this card.
+That is the claim the single-commit history carries on its own, without any arithmetic about how
+long the span was.
 
 ## Ruling out the other candidate
 
@@ -86,8 +91,29 @@ No source file changed, so TDD does not apply and no test was written.
 author would otherwise retype it. A lock file passes that test. But `D8`'s other rules are scoped
 to a path — rule 2 makes a hand edit a lint failure under `docs/derived/`, and a lock file does not
 live there. What this card met is in neither place: not a hand edit, but a generated artifact with
-nothing checking that it is still current. `docs/derived/test-matrix.md` has `npm run matrix:check` standing behind it. The lock
-file had nothing, and so drifted silently for two commits and two pull requests.
+nothing checking that it is still current. `docs/derived/test-matrix.md` has `npm run matrix:check`
+standing behind it. The lock file had nothing, so it drifted unnoticed across the whole span from
+the commit that wrote it to this card.
 
-Whether it should gain the same kind of check is outside this card's acceptance and is left for its
-author to decide.
+How long that span was, measured on this branch with `git rev-list --count <range>` and
+`git rev-list --count --merges <range>`:
+
+| Span | Commits | Merge commits |
+|---|---|---|
+| `fb510ce..0840197` — lock written, then `bin` added | 95 | 19 |
+| `0840197..ab368cf` — `bin` added, then this card | 250 | 73 |
+
+Six of those 95 touched `package.json`, `0840197` itself among them
+(`git log fb510ce..0840197 -- package.json`), and none of the 250 touched the lock
+(`git log 0840197..ab368cf -- package-lock.json`). In wall-clock terms `fb510ce` is 2026-09-17,
+`0840197` is 2026-09-22 and `ab368cf` is 2026-09-24.
+
+My round-1 entry put "two commits and two pull requests" here, and the error is worth keeping
+rather than quietly correcting. It understated the one thing this section exists to record: a
+reader would have concluded the drift was caught almost at once, where it survived 95 commits to
+the `bin` key and 73 merged pull requests after it. The card's remark that two makers had spent
+pull-request words on the drift is a count of who noticed it, not of how long it ran, and I
+carried the number across from one to the other.
+
+Whether the lock should gain the same kind of check is outside this card's acceptance and is left
+for its author to decide.
