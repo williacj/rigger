@@ -114,6 +114,7 @@ test('every tracked spike report is a checked document that no path exemption co
   // to the config, so nothing ever reads its references — card #157's fault, one report on.
   const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', 'docs/spikes'], {
     encoding: 'utf8',
+    env: gitEnvironment(),
   }).split('\0').filter((path) => path.endsWith('.md')).sort();
   const { documents, exempt } = documentChecking(repository);
 
