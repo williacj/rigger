@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
 const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'absorption-check.mjs');
 const { bullets, MIN_CLAUSES } = await import(pathToFileURL(script).href);
 
@@ -300,7 +302,7 @@ test('an unreachable ref is refused in one line, naming the spec, and never as a
 /** Every `## ` section of every tracked markdown file, with its body. */
 function everySection() {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const files = execFileSync('git', ['ls-files', '*.md'], { cwd: root, encoding: 'utf8' })
+  const files = execFileSync('git', ['ls-files', '*.md'], { cwd: root, encoding: 'utf8', env: gitEnvironment() })
     .trim().split('\n').filter(Boolean);
   const found = [];
   for (const file of files) {

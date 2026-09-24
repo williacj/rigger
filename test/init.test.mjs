@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
 import { CONFIG, PROVIDER_ASSETS, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import riggerConfig from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,7 +24,7 @@ const filesUnder = (dir) =>
 
 /** Runs git in a repository, asserting that it answered. */
 function git(dir, ...args) {
-  const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
   return ran.stdout;
 }

@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { PLACEHOLDER } from '../config/validate.mjs';
 
 /** The file a consumer's repository declares Rigger in. */
@@ -56,7 +57,7 @@ const SLUG = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/;
  *   yields the last two, which is not what a forge with a nested namespace would want read.
  */
 export function repoSlug(dir) {
-  const asked = spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8' });
+  const asked = spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   const found = asked.status === 0 ? asked.stdout.trim().match(SLUG) : null;
   return found ? `${found[1]}/${found[2]}` : null;
 }

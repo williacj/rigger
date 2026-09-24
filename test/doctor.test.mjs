@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
 import { validate } from '../src/config/validate.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -109,7 +110,7 @@ test('the tree compared is the repository, not the directory the command was run
   // Git is asked which repository the directory sits in (`D16` rule 1), so this is a real
   // repository rather than a path arrangement, and the premise is measured before the claim.
   const consumer = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
-  assert.equal(spawnSync('git', ['-C', consumer, 'init', '-q'], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnSync('git', ['-C', consumer, 'init', '-q'], { encoding: 'utf8', env: gitEnvironment() }).status, 0);
   const installed = join(consumer, 'node_modules', '@williacj', 'rigger');
   const from = join(consumer, 'src');
   mkdirSync(installed, { recursive: true });
@@ -143,7 +144,7 @@ test('a tree git cannot name is refused rather than compared against the working
   mkdirSync(from, { recursive: true });
   // Git is real here and declines, rather than being stood in for: a directory that is no
   // repository is what it is being asked about. Measured before the claim.
-  const declined = spawnSync('git', ['-C', from, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const declined = spawnSync('git', ['-C', from, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnvironment() });
   assert.notEqual(declined.status, 0, 'git named a repository here, so there is nothing to measure');
 
   const noRepository = await doctor({ target: from, packageRoot: installed });
@@ -274,7 +275,7 @@ function answeringEach(answers) {
 /** A git repository holding a config, which is what `doctor` expects to be pointed at. */
 function checked(source) {
   const where = mkdtempSync(join(tmpdir(), 'rigger-checked-'));
-  assert.equal(spawnSync('git', ['-C', where, 'init', '-q'], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnSync('git', ['-C', where, 'init', '-q'], { encoding: 'utf8', env: gitEnvironment() }).status, 0);
   writeFileSync(join(where, CONFIG), source);
   return where;
 }
@@ -594,11 +595,11 @@ test('the whole report is lines, and carries no stack trace', async () => {
  */
 function freshClone() {
   const into = join(mkdtempSync(join(tmpdir(), 'rigger-clone-')), 'rigger');
-  const cloned = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', root, into], { encoding: 'utf8' });
+  const cloned = spawnSync('git', ['clone', '--quiet', '--no-hardlinks', root, into], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(cloned.status, 0, `cloning this repository failed: ${cloned.stderr}`);
-  const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8' });
+  const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
-  assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()]).status, 0);
+  assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
   return into;
 }
 

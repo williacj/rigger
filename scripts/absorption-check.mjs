@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
 // A rephrase that changes meaning usually changes words. This finds the changed words
 // and shows them; a person decides whether the change was intended. It never decides.
 //
@@ -130,6 +132,7 @@ export function source(spec) {
     return execFileSync('git', ['show', spec], {
       cwd: dirname(fileURLToPath(import.meta.url)),
       encoding: 'utf8',
+      env: gitEnvironment(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch {
