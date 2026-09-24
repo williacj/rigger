@@ -108,6 +108,21 @@ test('the document config checks every tracked agent prompt and skill, including
   for (const path of tracked) assert.equal(documents[path], 'strict', `${path} must fail on a pointer`);
 });
 
+test('every tracked spike report is a checked document that no path exemption covers', () => {
+  // A spike report is merged prose a later card cites, so its references resolve like any other
+  // document's. The break this catches: a new report lands under docs/spikes/ and nobody adds it
+  // to the config, so nothing ever reads its references — card #157's fault, one report on.
+  const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', 'docs/spikes'], {
+    encoding: 'utf8',
+  }).split('\0').filter((path) => path.endsWith('.md')).sort();
+  const { documents, exempt } = documentChecking(repository);
+
+  assert.ok(tracked.length > 0, 'a tracked report is what this test has to read');
+  for (const path of tracked) assert.equal(documents[path], 'strict', `${path} must fail on a pointer`);
+  assert.deepEqual(Object.keys(exempt.paths).filter((prefix) => prefix.startsWith('docs/spikes')), [],
+    'the directory is tracked, so no exemption under it can claim it is absent');
+});
+
 test('every backticked path in the checked documents exists or is exempt', () => {
   assert.deepEqual(check(repository).findings, []);
 });

@@ -6,7 +6,7 @@ ABOUTME: Spike findings for card #117 on command text the reserved-git hook cann
 
 Should the PreToolUse hook refuse command forms whose executed Git command is absent from the command tokens it reads, or keep permitting those forms? This report proposes a choice; it changes no hook or recorded decision.
 
-On 2026-09-23, I ran Git for Windows Bash 5.3.15(2), Node 24.18.0, and the live `.claude/hooks/refuse-reserved-git-commands.mjs` on this branch. A disposable `git` script was first on Bash's `PATH`; it appended its arguments to `marker.log` and could not contact a remote. For each payload, the harness sent `{ "tool_name": "Bash", "tool_input": { "command": payload } }` to the hook and ran the payload separately under `bash -c`. The observation is the marker's output, not a guess from the shell text. The two controls passed first: bare `git push --force` wrote `git push --force` and the hook exited 2; bare `git status` wrote `git status` and the hook exited 0. All Bash runs below exited 0.
+On 2026-09-23, I ran Git for Windows Bash 5.3.15(2), Node 24.18.0, and the live `.claude/hooks/refuse-reserved-git-commands.mjs` on this branch. A disposable `git` script was first on Bash's `PATH`; it appended its arguments to `/spikes/marker.log` and could not contact a remote. For each payload, the harness sent `{ "tool_name": "Bash", "tool_input": { "command": payload } }` to the hook and ran the payload separately under `bash -c`. The observation is the marker's output, not a guess from the shell text. The two controls passed first: bare `git push --force` wrote `git push --force` and the hook exited 2; bare `git status` wrote `git status` and the hook exited 0. All Bash runs below exited 0.
 
 ## What the hook missed
 
@@ -15,7 +15,7 @@ On 2026-09-23, I ran Git for Windows Bash 5.3.15(2), Node 24.18.0, and the live 
 | Program expansion | `g=git; { $g push --force; }` | `git push --force` | 0, permit | No. `$g` is a token; its value `git` is not. |
 | Command expansion through `eval` | `c='git push --force'; { eval "$c"; }` | `git push --force` | 0, permit | No. The assignment carries data, and the command runs `eval` with `$c`. |
 | Flag expansion | `f=--force; { git push $f; }` | `git push --force` | 0, permit | No. `git` and `push` are tokens, but `--force` is supplied by `$f`. |
-| Sourcing with `.` | `printf 'git push --force\n' > s.sh; { . s.sh; }` | `git push --force` | 0, permit | No. The executable Git command is in `s.sh`; the payload's quoted spelling is `printf` data. |
+| Sourcing with `.` | `printf 'git push --force\n' > s.sh; { . s.sh; }` | `git push --force` | 0, permit | No. The executable Git command is in `/spikes/s.sh`; the payload's quoted spelling is `printf` data. |
 | Sourcing with `source` | `printf 'git push --force\n' > s.sh; { source s.sh; }` | `git push --force` | 0, permit | No, for the same reason. |
 | Interpreter one-liner | `{ perl -e 'system("git push --force")'; }` | `git push --force` | 0, permit | No. The Git spelling is inside a Perl source argument. |
 | Third nested shell | `bash -c 'bash -c "bash -c \"git push --force\""'` | `git push --force` | 0, permit | Yes, if the inner `-c` argument is lexed. `objectionTo` stops recursing at `depth === 2`. At two levels, the same marker ran and the hook exited 2. |
