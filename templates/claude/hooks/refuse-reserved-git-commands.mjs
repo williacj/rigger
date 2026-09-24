@@ -653,27 +653,40 @@ const PREFIX_PROGRAMS = new Set([
 ]);
 
 /**
- * Programs on `PREFIX_PROGRAMS` that take an option carrying a **whole command inside one word**,
- * and the option that carries it. The prefix scan reads every word after the prefix looking for a
- * program, so a command written inside one of those words is a word that is no program and the
- * scan reaches nothing. `env` splits the word itself; `flock` hands it to a shell.
+ * Options of programs on `PREFIX_PROGRAMS` that carry a **whole command inside one word**. The
+ * prefix scan reads every word after the prefix looking for a program, so a command written inside
+ * one of those words is a word that is no program and the scan reaches nothing. `env -S` splits the
+ * word itself; `flock -c` and `sudo -s` / `-i` hand it to a shell, which is what `sudo`'s manual
+ * says of both its flags: if a command is specified, it is passed to the shell for execution via
+ * the shell's `-c` option.
  *
- * `letter` is the short option; `name` is the long one without its dashes.
+ * `letter` matches the short option, allowing for the flags it may sit behind in a cluster; `name`
+ * is the long one without its dashes. A program with more than one such option is read once per
+ * option, because the options are independent.
  */
-const COMMAND_CARRIED_IN_A_WORD = new Map([
-  ['env', { letter: /^-[A-Za-z0-9]*S/, name: 'split-string' }],
-  ['flock', { letter: /^-[A-Za-z0-9]*c/, name: 'command' }],
+const COMMANDS_CARRIED_IN_A_WORD = new Map([
+  ['env', [{ letter: /^-[A-Za-z0-9]*S/, name: 'split-string' }]],
+  ['flock', [{ letter: /^-[A-Za-z0-9]*c/, name: 'command' }]],
+  ['sudo', [
+    { letter: /^-[A-Za-z0-9]*s/, name: 'shell' },
+    { letter: /^-[A-Za-z0-9]*i/, name: 'login' },
+  ]],
 ]);
 
 /**
- * The text that option carries, or undefined where the option is absent.
+ * Every text that option can carry, in the order the words give them.
  *
- * The argument is in this word or the next one, which is what says where to read it: `-S…` and
- * `--split-string=…` carry it here, `-S …` and `--split-string …` in the next word. A short option
- * may sit behind the flags that take no value, where its letter ends the cluster because
- * everything after it is its argument.
+ * The text may be written in the option's own word — `-S…` and `--split-string=…` — and it may be
+ * a word after it: `-S …` and `--split-string …` put it in the next one, and `sudo`'s flags take no
+ * argument at all, so the command is an operand and which operand depends on the options between
+ * the flag and it. **So every word after the option is read, and every match is read rather than
+ * the first.** That reads more words than any of these programs runs, which can only add a
+ * refusal — it objects only where the words from one of them on spell a reserved command — and it
+ * buys the one thing this host cannot check: nothing here has to know where a program stops
+ * parsing options, or which of two `-c` words it would take. `env` takes the first `-S`, which is
+ * measured; what `flock` takes is not, and the pull request says which is which.
  *
- * **A long option is matched by any non-empty prefix of its name**, because both programs parse
+ * **A long option is matched by any non-empty prefix of its name**, because these programs parse
  * with `getopt_long`, which resolves an unambiguous abbreviation to the option it abbreviates. So
  * `--s=` is `env`'s `--split-string=`, `split-string` being its only long option beginning with
  * `s`, and `--com=` is `flock`'s `--command=`. Which abbreviations are *unambiguous* is the
@@ -681,21 +694,31 @@ const COMMAND_CARRIED_IN_A_WORD = new Map([
  * read as this option anyway, which can only add a refusal, and only to text that spells a
  * reserved git command. So can a cluster whose earlier letter takes a value — `-uS` unsets a
  * variable named `S` — for the same reason.
+ *
+ * The name must be non-empty, because every name begins with the empty string: match a bare `--`
+ * and a real option further along goes unread, which is a narrowing rather than a widening.
  */
-function commandCarriedInAWord(words, option) {
+function commandsCarriedInAWord(words, option) {
+  const texts = [];
   for (let at = 1; at < words.length; at++) {
     const word = words[at];
+    let inTheWord;
     if (word.startsWith('--')) {
       const equals = word.indexOf('=');
       const written = equals === -1 ? word.slice(2) : word.slice(2, equals);
       if (written.length && option.name.startsWith(written)) {
-        return equals === -1 ? words[at + 1] : word.slice(equals + 1);
+        inTheWord = equals === -1 ? '' : word.slice(equals + 1);
       }
     }
-    const short = option.letter.exec(word);
-    if (short) return short[0].length === word.length ? words[at + 1] : word.slice(short[0].length);
+    if (inTheWord === undefined) {
+      const short = option.letter.exec(word);
+      if (short) inTheWord = word.slice(short[0].length);
+    }
+    if (inTheWord === undefined) continue;
+    if (inTheWord !== '') texts.push(inTheWord);
+    texts.push(...words.slice(at + 1));
   }
-  return undefined;
+  return texts;
 }
 
 /** Inspect one command. Returns the reason to refuse, or null. */
@@ -731,18 +754,14 @@ function objectionTo(given, depth) {
     return null;
   }
 
-  // `env -S` and `flock -c` carry the whole command inside one word, so the scan below reads a
-  // word that is no program. The word's own text is re-read instead, the way a shell's `-c`
-  // argument and `eval`'s joined arguments already are. `env` splits that text on blanks rather
-  // than running a shell, so reading it as shell text reads more than `env` runs, which can only
-  // add a refusal. The depth is passed on unchanged for the reason the prefix scan below passes it
-  // on: neither is a shell, and `env -S'bash -c "…"'` has to reach the script. There is no early
-  // return, because both are also ordinary prefixes and `env -u FOO git push --force` is reached
-  // by the scan.
-  const carrier = COMMAND_CARRIED_IN_A_WORD.get(program);
-  if (carrier) {
-    const text = commandCarriedInAWord(words, carrier);
-    if (text !== undefined) {
+  // `env -S`, `flock -c` and `sudo -s` / `-i` carry the whole command inside one word, so the scan
+  // below reads a word that is no program. Each such word's text is re-read instead, the way a
+  // shell's `-c` argument and `eval`'s joined arguments already are. The depth is passed on
+  // unchanged for the reason the prefix scan below passes it on: none of the three is a shell, and
+  // `env -S'bash -c "…"'` has to reach the script. There is no early return, because all three are
+  // also ordinary prefixes and `env -u FOO git push --force` is reached by the scan.
+  for (const option of COMMANDS_CARRIED_IN_A_WORD.get(program) ?? []) {
+    for (const text of commandsCarriedInAWord(words, option)) {
       for (const inner of commandsIn(text)) {
         const objection = objectionTo(inner, depth);
         if (objection) return objection;

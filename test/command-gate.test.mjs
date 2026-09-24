@@ -681,6 +681,38 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   // direction, and the pull request reports them as over-refusals as well as here.
   ['a bare -- before the real option', "env -- -S'git push --force'", 'a force push'],
   ['an empty long-option name before the real option', "env --=x -S'git push --force'", 'a force push'],
+  // `sudo` is the third program that carries a command in one word, and the second-largest of the
+  // three: `-s` / `--shell` and `-i` / `--login` each run a shell, and sudo(8) says of both that
+  // "if a command is specified, it is passed to the shell for execution via the shell's -c
+  // option". So `sudo -s 'git push --force'` is `bash -c 'git push --force'` with a shell in
+  // between, and the whole command is one word.
+  //
+  // **No bash oracle for these exists on this host.** `sudo` here is Windows' own `sudo`, which
+  // answers `error: unexpected argument '-s' found` and runs nothing, so the marker is empty for
+  // every row and what is asserted is the gate's verdict. Same footing as the `flock` rows.
+  //
+  // Neither flag takes an option argument — the command is an *operand* — so which word it is
+  // depends on the options between the flag and it. Every word after the flag is read rather than
+  // sudo's option order being assumed, which is the one thing about `sudo` this host cannot answer.
+  ['sudo -s', "sudo -s 'git push --force'", 'a force push'],
+  ['sudo -i', "sudo -i 'git push --force'", 'a force push'],
+  ['sudo --shell', "sudo --shell 'git push --force'", 'a force push'],
+  ['sudo --login', "sudo --login 'git push --force'", 'a force push'],
+  ['sudo --sh, an abbreviation', "sudo --sh 'git push --force'", 'a force push'],
+  ['sudo --lo, an abbreviation', "sudo --lo 'git push --force'", 'a force push'],
+  ['sudo -s deleting a branch', "sudo -s 'git branch -D topic'", 'deleting a branch'],
+  ['sudo -i skipping the hooks', "sudo -i 'git commit --no-verify -m x'", 'a commit that skips the hooks (--no-verify)'],
+  ['sudo -s in a brace group', "{ sudo -s 'git push --force'; }", 'a force push'],
+  ['sudo -s behind another prefix', "nohup sudo -s 'git push --force'", 'a force push'],
+  ['sudo -s behind an option that takes a value', "sudo -u root -s 'git push --force'", 'a force push'],
+  ['sudo -s with an option between the flag and the command', "sudo -s -u root 'git push --force'", 'a force push'],
+  ['sudo -ns, the flag clustered behind another', "sudo -ns 'git push --force'", 'a force push'],
+  // A decoy option ahead of the real one. GNU `env` takes the **first** `-S` and makes everything
+  // after it arguments to that command, which is measured — so for `env` the first match is
+  // `env`'s own resolution. What `flock` does with a second `-c` is **not** measured here and is
+  // not assumed: every match is read, so which one the program would take does not have to be
+  // known. This row is the one that says so.
+  ['a decoy option ahead of the real one', "flock /tmp/l -c : -c 'git push --force'", 'a force push'],
 ];
 
 /**
@@ -713,6 +745,10 @@ export const PREFIX_WORDS_CARRYING_NOTHING_RESERVED = [
   ['a long option that is no abbreviation of split-string', "env --unset=FOO git status"],
   ["flock's command carrying no git command", "flock /tmp/l -c 'echo hello'"],
   ["flock's command carrying a clean git command", "flock /tmp/l -c 'git status'"],
+  ["sudo's shell carrying no git command", "sudo -s 'echo hello'"],
+  ["sudo's login shell carrying a clean git command", "sudo -i 'git status'"],
+  ['sudo -u, whose option takes a user rather than a command', 'sudo -u root git status'],
+  ['a long option that is no abbreviation of shell or login', 'sudo --list git status'],
 ];
 
 test('a reserved git spelling behind a redirection word is refused', () => {
