@@ -110,6 +110,6 @@ reports no gap of its own; the register carries the reason.
 | R-SAFE-2 | **gap** |
 | R-SAFE-3 | **gap** |
 | R-SAFE-4 | **gap** |
-| R-SAFE-5 | **gap** |
+| R-SAFE-5 | `test/doctor.test.mjs` doctor refuses the source tree it is running from, and asks nothing before it does<br>`test/doctor.test.mjs` a worktree beside the source tree is not the source tree, however its name begins<br>`test/doctor.test.mjs` a second spelling of the source tree is still the source tree<br>`test/doctor.test.mjs` the tree compared is the repository, not the directory the command was run in<br>`test/doctor.test.mjs` a tree git cannot name is refused rather than compared against the working directory |
 | R-SAFE-6 | `test/init.test.mjs` every role the written config names reads its prompt out of the consumer repository<br>`test/init.test.mjs` the command forks the assets into the repository it is run in, from the package alone |
 | R-OPTION-1 | **gap** |
