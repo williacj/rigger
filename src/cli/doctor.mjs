@@ -86,17 +86,22 @@ export function sameTree(target, packageRoot = PACKAGE) {
 }
 
 /**
- * The root of the repository a directory sits in, or the directory itself where git names none.
+ * The root of the repository a directory sits in, as git names it, or null where git names none.
  *
- * Git owns what a repository is, so it is asked (`D16` rule 1). Where its answer can differ from
- * the directory handed in, measured by asking it rather than reasoned about: it walks up, so a
- * run from `docs/` inside a checkout answers the checkout, and a run from anywhere inside no
- * repository at all answers 128 and nothing on stdout, which falls through to the directory.
- * Measured with git 2.55.0.
+ * Git owns what a repository is, so it is asked (`D16` rule 1). Null rather than the directory
+ * handed in, because a fallback is this code answering the same question a weaker way: the whole
+ * point of asking is that a run from `<repo>/src` is compared as `<repo>`, and a git that
+ * declines must not narrow that back to `<repo>/src`. What to do about a tree git cannot name is
+ * the caller's to decide, and `doctor` refuses rather than compares.
+ *
+ * Where git's answer can differ from the directory handed in, measured by asking rather than
+ * reasoned about, with git 2.55.0: it walks up, so a run from `docs/` inside a checkout answers
+ * the checkout; a directory that is no repository answers 128 with nothing on stdout; and a host
+ * with no git at all answers a null status, which is why the status is read before the output.
  */
 export function repoRoot(dir, ask = asked) {
   const said = ask('git', ['-C', dir, 'rev-parse', '--show-toplevel']);
-  return real(said.status === 0 ? said.stdout.trim() : dir);
+  return said.status === 0 ? real(said.stdout.trim()) : null;
 }
 
 /**
@@ -340,16 +345,32 @@ export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
 export async function doctor({
   target = process.cwd(), packageRoot = PACKAGE, ask = asked, checks = CHECKS,
 } = {}) {
-  const repository = repoRoot(target, ask);
-  if (sameTree(repository, packageRoot)) {
+  const named = repoRoot(target, ask);
+  // The paths are compared whatever git said, so a tree the comparison can name is named
+  // precisely even where git declines — a run from inside the installed package is the case.
+  const here = named ?? real(target);
+  if (sameTree(here, packageRoot)) {
     return {
-      text: `rigger doctor: ${repository} is the source tree this Rigger is running from, and Rigger `
+      text: `rigger doctor: ${here} is the source tree this Rigger is running from, and Rigger `
         + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
         + 'from there.',
       code: 1,
     };
   }
+  // A tree git cannot name is refused rather than checked, because the comparison above is only
+  // as good as the name it was given: asked about `<repo>/src` rather than `<repo>`, it answers
+  // that an engine in `<repo>/node_modules` is a different tree, and the run goes ahead with the
+  // runtime inside the directory being checked. Refusing one tree too many costs a message;
+  // refusing one too few costs the runtime mid-run, which is what `R-SAFE-5` is for.
+  if (named === null) {
+    return {
+      text: `rigger doctor: git names no repository at ${here}, so Rigger cannot tell it from the `
+        + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
+        + 'Run it in a git repository, with git on the path.',
+      code: 1,
+    };
+  }
   const results = [];
-  for (const check of checks) results.push(await check({ target: repository, packageRoot, ask }));
-  return report(repository, results);
+  for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
+  return report(named, results);
 }

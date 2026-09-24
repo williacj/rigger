@@ -122,6 +122,52 @@ test('the tree compared is the repository, not the directory the command was run
   assert.match(ran.text, /source tree/);
 });
 
+// proves R-SAFE-5
+test('a tree git cannot name is refused rather than compared against the working directory', async () => {
+  // The other half of the test above, and the one that decides whether asking git can be
+  // defeated by git declining to answer. `doctor` is the verb a consumer runs on a half-set-up
+  // machine, so "this is not a repository yet" and "git is not reachable" are its audience rather
+  // than exotic states.
+  //
+  // The defect this catches is the fallback: where git names nothing, the tree compared becomes
+  // the directory the command was run in, which is the comparison the test above exists to
+  // refuse. Measured in the arrangement that costs the most — the engine inside the target's own
+  // `node_modules`, run from `<target>/src` — where it runs all four checks with the runtime
+  // sitting in the directory being checked, and an agent clearing that directory takes the
+  // runtime with it. Refusing one tree too many costs a consumer a message; refusing one too few
+  // costs them the runtime mid-run.
+  const consumer = mkdtempSync(join(tmpdir(), 'rigger-unnamed-'));
+  const installed = join(consumer, 'node_modules', '@williacj', 'rigger');
+  const from = join(consumer, 'src');
+  mkdirSync(installed, { recursive: true });
+  mkdirSync(from, { recursive: true });
+  // Git is real here and declines, rather than being stood in for: a directory that is no
+  // repository is what it is being asked about. Measured before the claim.
+  const declined = spawnSync('git', ['-C', from, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  assert.notEqual(declined.status, 0, 'git named a repository here, so there is nothing to measure');
+
+  const noRepository = await doctor({ target: from, packageRoot: installed });
+  // The second way git says nothing, which is a different case: a host with no git at all
+  // answers a null status rather than a number, and neither may narrow what is compared.
+  const missing = spawnSync('rigger-no-such-command', ['rev-parse'], { encoding: 'utf8' });
+  assert.equal(missing.status, null, 'this host ran a command that is not there');
+  const noGit = await doctor({ target: from, packageRoot: installed, ask: () => missing });
+
+  for (const ran of [noRepository, noGit]) {
+    assert.notEqual(ran.code, 0, ran.text);
+    // A refusal rather than a report: the report's heading is what a run that went ahead prints,
+    // and its absence is the whole claim. A non-zero exit alone would not show it — a failed
+    // config check gives one of those in this directory anyway.
+    assert.doesNotMatch(ran.text, /checks passed/, `doctor ran the checks instead of refusing:\n${ran.text}`);
+    assert.match(ran.text, /R-SAFE-5/, ran.text);
+  }
+
+  // The other half: a repository git does name, unrelated to the package, still goes ahead. So
+  // this is a refusal narrowed to a tree that could not be named rather than one widened to all.
+  const named = await doctor(against(checked(starter()), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+  assert.equal(named.code, 0, named.text);
+});
+
 /** A package directory declaring one `engines.node` and nothing else that matters here. */
 function packageDeclaring(engines) {
   const where = mkdtempSync(join(tmpdir(), 'rigger-engines-'));
