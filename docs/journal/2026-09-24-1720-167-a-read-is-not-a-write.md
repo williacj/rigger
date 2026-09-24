@@ -153,6 +153,26 @@ test drives both shapes in one loop and keeps a benign main-checkout shape besid
 control, which is what shows the fault is specific to the arrangement and not an artefact of the
 probe.
 
+The regression test then red on CI and not on the host that wrote it, and what it caught was the
+fingerprint rather than the repository. The entry that moved was
+`.git/objects/maintenance.lock`, digest `e3b0c44298fc…`, which is sha256 of the empty string: a
+zero-byte lock that git's automatic maintenance creates and removes around a commit. The snapshot
+taken before the fixtures ran caught it and the one after did not, so a comparison over every file
+reported a repository as altered while nothing it holds had changed. Measured on a macOS runner in
+GitHub Actions at `fe3a060`, where the host that developed the test — Windows 11, git
+2.55.0.windows.5 — never observed the lock in either snapshot. A lock records that a git was
+running, not what the repository holds, so it is now left out, and the exclusion was checked
+against the mutation rather than assumed harmless: reverting the scrub still reds the test naming
+all fifteen paths, none of which is spelled `.lock`. The transferable part is that **a
+byte-for-byte comparison is only as good as its account of what counts as content**, and a lock
+file is the standing counterexample — it is a fact about the tool, not the data.
+
+That red also cost a round trip for a reason worth removing: comparing the two digest maps with
+`deepEqual` truncates, and the CI log showed `Lines skipped` where the differing path should have
+been. The comparison now reduces to a sorted list of paths and what happened to each, so a failure
+names every one of them. Diagnostics that survive a remote log are part of a test's value, not a
+convenience, because the run that matters most is the one you cannot attach a debugger to.
+
 One last thing generalises, about the sentence that licensed the pattern. The spawner sweep's
 docstring said the premise assertions spawn git under the inherited environment deliberately, and
 that was sound reasoning about reads written when every such spawn was a read. It carried no

@@ -47,16 +47,37 @@ function repositoryHolding(name) {
  * Every file under `root` with the digest of its bytes, so two states of a repository compare
  * byte-for-byte. A claim that a git spawned elsewhere left a repository alone is a claim about
  * its bytes, and a surface git reports about it would not carry one.
+ *
+ * A lock is left out because it records that a git was running rather than what the repository
+ * holds, and it is transient: git's automatic maintenance creates and removes
+ * `objects/maintenance.lock` around a commit, so one snapshot catches it and the next does not.
+ * Measured on a macOS runner where that race red this comparison while the repository was
+ * untouched. Nothing this comparison exists to catch is spelled `.lock` — the damage it was
+ * written for moved the index, `HEAD`, a ref, the reflogs and the object store.
  */
 function fingerprint(root) {
   const digests = {};
   for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
+    if (!entry.isFile() || entry.name.endsWith('.lock')) continue;
     const path = join(entry.parentPath, entry.name);
     digests[relative(root, path).split(sep).join('/')] =
       createHash('sha256').update(readFileSync(path)).digest('hex');
   }
   return digests;
+}
+
+/**
+ * What moved between two fingerprints, as a sorted list of paths and what happened to each. An
+ * assertion on this names every path in its failure, where comparing the digest maps themselves
+ * leaves the reader a truncated diff — which is what a macOS runner reported when the comparison
+ * above first red.
+ */
+function whatMoved(before, after) {
+  return [
+    ...Object.keys(after).filter((p) => !(p in before)).map((p) => `added ${p}`),
+    ...Object.keys(before).filter((p) => !(p in after)).map((p) => `removed ${p}`),
+    ...Object.keys(before).filter((p) => p in after && before[p] !== after[p]).map((p) => `rewritten ${p}`),
+  ].sort();
 }
 
 /** A path spelled the way git spells one: the real path, forward-slashed. */
@@ -214,7 +235,7 @@ test('an alternate object store the environment names is read from and never wri
   askedAbout(fixture, hostile, 'add', '-A');
   askedAbout(fixture, hostile, 'commit', '-qm', 'committed under an inherited alternate');
   askedAbout(fixture, hostile, 'gc', '--prune=now');
-  assert.deepEqual(fingerprint(victim), before);
+  assert.deepEqual(whatMoved(before, fingerprint(victim)), []);
 });
 
 test('a ceiling the environment names refuses a repository rather than naming another one', () => {
@@ -251,7 +272,7 @@ test('a ceiling the environment names refuses a repository rather than naming an
   writeFileSync(join(inner, 'added.txt'), 'added\n');
   askedAbout(inner, atVictim, 'add', '-A');
   askedAbout(inner, atVictim, 'commit', '-qm', 'committed under an inherited ceiling');
-  assert.deepEqual(fingerprint(victim), before);
+  assert.deepEqual(whatMoved(before, fingerprint(victim)), []);
 });
 
 test('a fixture that writes leaves the committing repository alone under either hook environment', () => {
@@ -289,7 +310,7 @@ test('a fixture that writes leaves the committing repository alone under either 
       }
     });
 
-    assert.deepEqual(fingerprint(committing), before, `${shape} was not left alone`);
+    assert.deepEqual(whatMoved(before, fingerprint(committing)), [], `${shape} was not left alone`);
   }
 });
 
