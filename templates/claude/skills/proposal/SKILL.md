@@ -9,9 +9,9 @@ has to carry.
 
 # Writing a proposal
 
-A delta to `ARCHITECTURE.md` or to `docs/spec/` is a proposal (`AGENTS.md`, "When you write a
-decision or a requirement"). The rows are its payload; the proposal is the argument that earns
-them. It travels as the pull request body, and the owner ratifies from it.
+`AGENTS.md`, "When you write a decision or a requirement", says which deltas are proposals. The
+rows are a proposal's payload; the proposal is the argument that earns them. It travels as the
+pull request body, and the owner ratifies from it.
 
 `.claude/skills/spec-style/` holds the form a row is written in. This skill holds what has to be
 true before you write one.
