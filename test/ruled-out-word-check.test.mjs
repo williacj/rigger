@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { findings, trackedFiles, check, RULED_OUT } from '../scripts/ruled-out-word-check.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -20,7 +21,10 @@ function repositoryOf(files) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
   }
-  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  // The environment is scrubbed of what redirects git, so this fixture's own commit lands here
+  // rather than in a repository an inherited variable names — a suite run from a git hook in a
+  // linked worktree inherits exactly that.
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
   git('init', '-q');
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'user.name', 'fixture');

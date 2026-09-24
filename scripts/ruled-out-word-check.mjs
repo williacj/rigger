@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
 /**
  * The words ruled out in every tracked file, each with what to write instead.
  *
@@ -44,7 +46,7 @@ export function findings(text, ruledOut) {
  * tracks none, so nothing is skipped by type.
  */
 export function trackedFiles(root) {
-  return execFileSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8' })
+  return execFileSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8', env: gitEnvironment() })
     .split('\0')
     .filter(Boolean);
 }

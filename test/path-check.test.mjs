@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { backtickedPaths, check } from '../scripts/path-check.mjs';
 import { documentChecking } from '../scripts/doc-reference-check.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -97,6 +98,7 @@ test('the exemption ends when the directory exists, so a missing file under it i
 test('the document config checks every tracked agent prompt and skill, including template twins', () => {
   const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', '.claude', 'templates/claude'], {
     encoding: 'utf8',
+    env: gitEnvironment(),
   }).split('\0').filter((path) => path.endsWith('.md')).sort();
   const documents = documentChecking(repository).documents;
   const configured = Object.keys(documents)

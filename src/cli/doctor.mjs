@@ -6,11 +6,19 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 
-/** Runs a command and hands back what it answered, which is every authority this verb asks. */
-const asked = (command, args) => spawnSync(command, args, { encoding: 'utf8' });
+/**
+ * Runs a command and hands back what it answered, which is every authority this verb asks.
+ *
+ * The environment is the one `gitEnvironment` hands a git child. A `doctor` run from inside a git
+ * hook, a `git rebase --exec` or a `git bisect run` inherits variables naming the repository that
+ * started it, and git honours those over the directory this verb was pointed at. Every authority
+ * here is asked about a named directory, so none may be redirected by the environment.
+ */
+const asked = (command, args) => spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
 
 /**
  * The package this code is part of, which is the source tree `R-SAFE-5` is about.
