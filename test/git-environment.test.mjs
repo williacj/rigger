@@ -66,6 +66,21 @@ const asGit = (path) => realpathSync.native(path).split('\\').join('/');
 const askedAbout = (dir, env, ...args) =>
   execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', env }).trim();
 
+/**
+ * The environment a fixture measuring one variable runs its git under: the module's own scrub,
+ * so no inherited variable redirects the git, plus the single variable under measurement.
+ *
+ * The two are separable because the variables this file measures are exactly the ones the scrub
+ * does not remove, so scrubbing costs the measurement nothing. Building this from the ambient
+ * environment instead is what reintroduced card #151's fault: under a linked worktree's hook the
+ * ambient environment names the committing repository, and a fixture's `commit` and
+ * `gc --prune=now` then landed there. It also measured the wrong thing, because damage recorded
+ * under an inherited `GIT_DIR` would have been that variable's and not the one under test.
+ */
+function carrying(name, value) {
+  return { ...gitEnvironment(), [name]: value };
+}
+
 test('git spawned with this environment acts on the repository the call names, not one the environment names', () => {
   const victim = repositoryHolding('only-in-victim.txt');
   const fixture = repositoryHolding('only-in-fixture.txt');
@@ -179,8 +194,8 @@ test('an alternate object store the environment names is read from and never wri
   const fixture = repositoryHolding('only-in-fixture.txt');
   // Spelled the way git spells one, because git hands this value to the object layer unresolved.
   const store = asGit(join(victim, '.git', 'objects'));
-  const hostile = { ...process.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: store };
-  const withoutIt = { ...process.env };
+  const hostile = carrying('GIT_ALTERNATE_OBJECT_DIRECTORIES', store);
+  const withoutIt = gitEnvironment();
   delete withoutIt.GIT_ALTERNATE_OBJECT_DIRECTORIES;
   const onlyInVictim = askedAbout(victim, gitEnvironment(), 'rev-parse', 'HEAD:only-in-victim.txt');
 
@@ -211,7 +226,7 @@ test('a ceiling the environment names refuses a repository rather than naming an
 
   // Measured the way card #151 measured every candidate, set to a second repository's paths,
   // this variable moves nothing at all: the repository the call names still answers for itself.
-  const atVictim = { ...process.env, GIT_CEILING_DIRECTORIES: asGit(victim) };
+  const atVictim = carrying('GIT_CEILING_DIRECTORIES', asGit(victim));
   assert.equal(askedAbout(inner, atVictim, 'rev-parse', '--absolute-git-dir'), asGit(join(inner, '.git')));
 
   // The premise: a ceiling bites only on an ancestor of the directory git runs in. `inner` is a
@@ -225,7 +240,7 @@ test('a ceiling the environment names refuses a repository rather than naming an
   assert.throws(
     () => execFileSync('git', ['-C', under, 'rev-parse', '--absolute-git-dir'], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_CEILING_DIRECTORIES: asGit(inner) },
+      env: carrying('GIT_CEILING_DIRECTORIES', asGit(inner)),
     }),
     /not a git repository/,
   );
@@ -239,6 +254,45 @@ test('a ceiling the environment names refuses a repository rather than naming an
   assert.deepEqual(fingerprint(victim), before);
 });
 
+test('a fixture that writes leaves the committing repository alone under either hook environment', () => {
+  // `.githooks/pre-commit` runs `npm test` with the hook's own environment unscrubbed, and
+  // `AGENTS.md` requires a worktree for every piece of work, so a linked worktree's hook is the
+  // environment this suite runs in rather than a hypothetical one. Card #151's fault was a
+  // fixture's write landing in the committing repository, and the fixtures measuring what the
+  // scrub leaves behind are the ones that can bring it back: the variable each carries is one
+  // the scrub deliberately does not remove, so an environment built from the ambient one
+  // arrives carrying the redirect as well.
+  const shapes = {
+    'a linked worktree exports a git dir and an absolute index':
+      (gitDir) => ({ GIT_DIR: gitDir, GIT_INDEX_FILE: join(gitDir, 'index') }),
+    // The quieter shape, and the one a weaker fix misses: it overwrites the committing
+    // repository's index while every test in this file still reports a pass.
+    'an absolute index alone': (gitDir) => ({ GIT_INDEX_FILE: join(gitDir, 'index') }),
+  };
+
+  for (const [shape, varsOf] of Object.entries(shapes)) {
+    const committing = repositoryHolding('only-in-committing.txt');
+    const before = fingerprint(committing);
+
+    withEnvironment(varsOf(join(committing, '.git')), () => {
+      const victim = repositoryHolding('only-in-victim.txt');
+      const fixture = repositoryHolding('only-in-fixture.txt');
+      let written = 0;
+      for (const env of [
+        carrying('GIT_ALTERNATE_OBJECT_DIRECTORIES', asGit(join(victim, '.git', 'objects'))),
+        carrying('GIT_CEILING_DIRECTORIES', asGit(victim)),
+      ]) {
+        writeFileSync(join(fixture, `added-${written++}.txt`), 'added\n');
+        askedAbout(fixture, env, 'add', '-A');
+        askedAbout(fixture, env, 'commit', '-qm', 'written while measuring');
+        askedAbout(fixture, env, 'gc', '--prune=now');
+      }
+    });
+
+    assert.deepEqual(fingerprint(committing), before, `${shape} was not left alone`);
+  }
+});
+
 /**
  * Every call to a `node:child_process` spawner under `src/`, `scripts/` and `test/`, read as the
  * syntax it is with the repository's own tokenizer: a bound name, its opening parenthesis, and
@@ -246,9 +300,17 @@ test('a ceiling the environment names refuses a repository rather than naming an
  * spawned, kept in the suite rather than run once as a sweep, so a site added later is named.
  *
  * What it requires of a git spawn is that the call names the environment it runs under, rather
- * than that it names `gitEnvironment`: the two premise assertions in this file spawn git under
- * the inherited environment deliberately, to show that the variable they scrub really did bite.
+ * than that it names `gitEnvironment`: the premise assertions in this file spawn git under the
+ * inherited environment deliberately, to show that the variable they scrub really did bite.
  * Naming `process.env` there says so, where a missing option would read as one forgotten.
+ *
+ * What the sweep cannot see is whether such a spawn reads or writes, and that distinction is the
+ * whole of why the licence above is safe. A premise assertion reading under an inherited
+ * environment gets the wrong repository's answer, which is the point of it. One that wrote would
+ * put the write wherever the inherited variable points, and under a linked worktree's hook that
+ * is the repository being committed — card #151's fault, one level up. So every spawn here built
+ * from the ambient environment is a read, a fixture that writes takes its environment from
+ * `carrying` instead, and the test named for the two hook environments holds that in place.
  */
 const SPAWNERS = new Set(['spawnSync', 'execFileSync', 'execSync', 'spawn', 'execFile', 'exec', 'fork']);
 
@@ -336,11 +398,15 @@ test('nothing spawns a process without the import that is the only way to spawn 
   assert.deepEqual(spawners.sort(), importers.sort());
 });
 
-/** Runs `body` with the environment a hook in a linked worktree exports, and puts it back. */
-function asALinkedWorktreeHook(gitDir, body) {
-  const before = Object.fromEntries(REDIRECTING.map((name) => [name, process.env[name]]));
-  process.env.GIT_DIR = gitDir;
-  process.env.GIT_INDEX_FILE = join(gitDir, 'index');
+/**
+ * Runs `body` with `vars` in `process.env`, and puts back every name it could have disturbed.
+ * Taking the variables as an argument is what lets a caller name a hook shape other than the
+ * linked worktree's, which matters because the shapes differ in whether they red a test.
+ */
+function withEnvironment(vars, body) {
+  const names = [...new Set([...REDIRECTING, ...Object.keys(vars)])];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, vars);
   try {
     return body();
   } finally {
@@ -349,6 +415,11 @@ function asALinkedWorktreeHook(gitDir, body) {
       else process.env[name] = value;
     }
   }
+}
+
+/** Runs `body` with the environment a hook in a linked worktree exports, and puts it back. */
+function asALinkedWorktreeHook(gitDir, body) {
+  return withEnvironment({ GIT_DIR: gitDir, GIT_INDEX_FILE: join(gitDir, 'index') }, body);
 }
 
 /** A repository whose `origin` is the URL given, which is what `repoSlug` reads. */

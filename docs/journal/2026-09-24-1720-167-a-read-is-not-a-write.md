@@ -1,7 +1,8 @@
 ABOUTME: Card #167: which surfaces `GIT_ALTERNATE_OBJECT_DIRECTORIES` and
 `GIT_CEILING_DIRECTORIES` move, why neither reaches a write, where the starting hypothesis was
-too generous to one of them, what the readability finding does and does not bear on, and the red
-that stood on `main` while this was measured.
+too generous to one of them, what the readability finding does and does not bear on, the red
+that stood on `main` while this was measured, and how round 1's own tests reinstated the fault
+the module under test exists to prevent.
 
 # 2026-09-24 — A read is not a write, and a withheld repository is not a redirected one
 
@@ -105,3 +106,56 @@ byte before and after, and it is cheap enough that there is no reason to argue t
 Card #151 built its list on a surface comparison because the surface comparison was what it had;
 this card's contribution is that the comparison is a filter and not a verdict, and that a list
 built only on it would have grown by two members for no reason anybody could defend later.
+
+## Round 2 — the tests proving the guard's limits reinstated the fault above it
+
+The answer above survived review. The tests that established it did not, and the way they failed
+is worth more than the answer. Both built their environment as `{ ...process.env, VAR: value }`,
+so a git they spawned inherited whatever redirecting variables were already set. Under a linked
+worktree's hook those are `GIT_DIR` and an absolute `GIT_INDEX_FILE` naming the repository being
+committed; `.githooks/pre-commit` runs `npm test` with that environment unscrubbed, and
+`AGENTS.md` requires a worktree for every piece of work. So the fixtures' `add -A`, `commit` and
+`gc --prune=now` ran against the committing repository. Measured on a throwaway one fingerprinted
+file-by-file, with git 2.55.0.windows.5, running the whole suite at the published head `e784e28`:
+**15 files changed** — `refs/heads/master` and three loose objects **deleted**, `.git/index`,
+`COMMIT_EDITMSG` and both reflogs rewritten, and a pack, `packed-refs`, `info/refs` and a
+commit-graph added. At the base `6eeaa58` the same probe reported 14 of 14 passing and **0 files
+altered**, so this change introduced it. After the fix: **328 of 328 passing and 0 files altered**
+under every shape.
+
+This is card #151's fault, in card #151's own test file, with a `gc --prune=now` attached that the
+original fault never had. The general shape is worth naming because it will recur: **a guard's own
+tests are written in the environment the guard exists to neutralise, and the test that
+demonstrates the guard's limits is the one most likely to re-enter through them.** Round 1 reached
+for the ambient environment precisely because the point was to show a variable the scrub leaves
+behind, and the scrub was the thing being characterised, so using it felt like assuming the
+conclusion. It was not: the variables this card measures are exactly the ones `gitEnvironment()`
+does not remove, so the scrub and the variable under measurement are separable and scrubbing costs
+the measurement nothing. That separability is what made the fix one line inside a new `carrying`
+helper rather than a redesign.
+
+Carrying the redirect was also a measurement error and not only a hazard, which is the part that
+would have been missed by fixing the danger alone. Damage recorded under an inherited `GIT_DIR`
+would have been that variable's damage and not the variable's under test, so the assertion
+`assert.deepEqual(fingerprint(victim), before)` was reading a repository that a second, unrelated
+redirect had already taken git away from. The scrub makes the tests correct as well as safe, and
+the read-versus-write distinction this card established of git's variables turned out to apply to
+its own fixtures: every spawn here built from the ambient environment is a read, and a read under
+a redirect gets the wrong answer, which is the point of a premise assertion, while a write under
+one lands in the wrong repository.
+
+The quieter shape is the one that should change how a fix like this is checked. With only an
+absolute `GIT_INDEX_FILE` inherited and no `GIT_DIR`, the published head reported **16 of 16
+passing, exit 0** while the committing repository's `.git/index` was overwritten with the
+fixtures' paths. A green suite is not the safety property, and a fix validated against the
+failing test alone would have looked finished while the silent half survived. So the regression
+test drives both shapes in one loop and keeps a benign main-checkout shape beside them as a
+control, which is what shows the fault is specific to the arrangement and not an artefact of the
+probe.
+
+One last thing generalises, about the sentence that licensed the pattern. The spawner sweep's
+docstring said the premise assertions spawn git under the inherited environment deliberately, and
+that was sound reasoning about reads written when every such spawn was a read. It carried no
+clause about writes, so it silently licensed one, and it asserted a count of two that the file had
+already outgrown. A licence in a comment ages against the code it licenses, and a count in prose
+ages faster; the sentence now states the read-versus-write rule and carries no figure to go stale.
