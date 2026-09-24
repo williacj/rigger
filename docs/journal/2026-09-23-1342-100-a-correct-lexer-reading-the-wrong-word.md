@@ -149,3 +149,35 @@ than passed over: it fired four times across the card, three times finding a red
 and once, in round 4, finding an element that was load-bearing but pinned by no test — every long
 option name begins with the empty string, so a bare `--` would have matched the option and left the
 real one further along unread.
+
+## Round five — the fifth instance, and what makes it the fifth
+
+Round four's table said the enumeration was complete at its own level and incomplete one level
+down, four times over. Round five is the fifth instance of the same second-level pattern, and it
+came from a sentence rather than from a payload: the pull request asserted that no listed prefix
+program but `flock` carries a command inside one word, citing `sudo -u` as a name that does not.
+`sudo -u` takes a user. **`sudo -s` and `sudo -i` take a command**, and sudo's manual says of both
+that a command given with them is passed to the shell for execution via the shell's `-c` option.
+
+| instance | the level that was complete | what carried the command anyway |
+|---|---|---|
+| one | bash's reserved words | a redirection, and a program that runs a named command |
+| two | the names of those programs | `env -S`, an option of a listed name |
+| three | that option's two spellings | `getopt_long`'s abbreviation rule |
+| four | the programs whose option was read | `flock -c` |
+| five | the sentence claiming there were no more | `sudo -s` and `sudo -i` |
+
+**The fifth one is the most useful of the five, because it was found in prose.** Four rounds of
+payload sweeps did not surface it; a judge reading one sentence against sudo's manual did. A
+sentence that claims coverage is a testable claim, and it is cheaper to test than the code it
+describes — which is an argument for writing the claim down rather than leaving coverage implied.
+
+**And the round taught the same lesson one level further down about assumptions.** Closing a
+program's option without an oracle imports that program's semantics: which of two `-c` words does
+`flock` take? The reader had been taking the first, which is right for `env` — measured on this
+host, where `env -S'git status' -S'echo hi'` runs `git[status][-Secho hi]`, so the first `-S`
+swallows the rest — and simply unknown for `flock`. The way out was not to assume and not to state
+the assumption, but to stop depending on it: read **every** match and every word after it. That
+costs an over-refusal where the program's own resolution is narrower than the gate's, and it means
+no program's option-precedence rule has to be known to justify the rule. **Where a control cannot
+check an assumption, the cheapest fix is often to stop needing it.**

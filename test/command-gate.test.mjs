@@ -711,6 +711,12 @@ export const PREFIX_PROGRAM_PAYLOADS = [
   // not assumed: every match is read, so which one the program would take does not have to be
   // known. This row is the one that says so.
   ['a decoy option ahead of the real one', "flock /tmp/l -c : -c 'git push --force'", 'a force push'],
+  // The row above is closed by reading every *word* after the option, which sweeps past the decoy
+  // and reaches the second `-c`'s argument, which is the next word. This one is closed only by
+  // reading every *match*: the real option is written `--com=…`, so its text sits inside its own
+  // word and no word after the decoy carries it. Read as a command, `--com=git push --force` has
+  // `--com=git` for its program and nothing objects to that.
+  ['a later option whose text is inside its own word', "flock /tmp/l -c : --com='git push --force'", 'a force push'],
 ];
 
 /**
