@@ -3,7 +3,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, dirname } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { validate } from '../config/validate.mjs';
@@ -36,14 +36,26 @@ export const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), '..', '.
  * - `realpathSync.native` answers the canonical casing on Windows, so a `c:\users\...` spelling
  *   of the checkout resolves to the `C:\Users\...` the same directory is listed under. Measured
  *   on the same host, where the lowercased path answered with the canonical one;
- * - on macOS `os.tmpdir()` answers `/var/folders/...` while a directory created under it answers
- *   `/private/var/folders/...` from within, `/var` being a symlink. Not measured here: this host
- *   is Windows, and the point is why the resolution happens rather than what it answers there.
+ * - on macOS `os.tmpdir()` answers `/var/folders/...` while the same directory resolves to
+ *   `/private/var/folders/...`, `/var` being a symlink. Measured by CI on macOS, which redded on
+ *   one path resolved and the other not where this host's filesystem had let the pair through.
  *
- * A path that is not there cannot be resolved, and is compared as written: a target that does not
- * exist is a fault the checks below report, not one to refuse the run over.
+ * A path that is not there is resolved as far as it can be and the rest carried across. Resolving
+ * only what exists whole is the asymmetry that makes two spellings of one tree compare unequal,
+ * and on macOS that is the everyday case rather than an edge: `/var/folders/x` and
+ * `/private/var/folders/x` are one directory, so a path this could not resolve is a path still
+ * spelled the other way. CI found it, on a comparison this host's filesystem let through.
  */
-export const real = (dir) => { try { return realpathSync.native(dir); } catch { return resolve(dir); } };
+export const real = (dir) => {
+  const full = resolve(dir);
+  try {
+    return realpathSync.native(full);
+  } catch {
+    const above = dirname(full);
+    // A root resolves to itself, which is what stops this where no segment can be read at all.
+    return above === full ? full : join(real(above), basename(full));
+  }
+};
 
 /**
  * Whether one directory is another or sits beneath it.

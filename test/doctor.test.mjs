@@ -89,6 +89,13 @@ test('a second spelling of the source tree is still the source tree', () => {
 
   assert.equal(sameTree(second, packageRoot), true);
   assert.equal(sameTree(join(second, 'docs'), packageRoot), true);
+  // A path that is not there resolves as far as it can and is still read as the tree it sits in.
+  // The defect this catches is one path resolved and the other not, which is the asymmetry that
+  // makes two spellings of one tree compare unequal — and it is the everyday case on macOS,
+  // where `os.tmpdir()` answers `/var/folders/…` and the directory itself answers
+  // `/private/var/folders/…`. CI is what found it: this file's sibling test compared a `docs/`
+  // that had not been created against a package root that had, and redded there and nowhere else.
+  assert.equal(sameTree(join(second, 'not-there-yet'), packageRoot), true);
 });
 
 // proves R-SAFE-5
