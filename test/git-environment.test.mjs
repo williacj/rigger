@@ -468,6 +468,30 @@ function subcommandIn(tokens) {
 const DECLARING = new Set(['const', 'let', 'var', 'function']);
 
 /**
+ * The words that put a parenthesis after a name without that name being called: a control
+ * structure's own condition, and the parameter list a `function` declaration binds. The second is
+ * the one that matters here — `function gitIn(root, ...args)` reads as `gitIn` handed a spread,
+ * which is a definition rather than a call and so is nobody's route to git.
+ */
+const NOT_A_CALL = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'do', 'return', 'typeof', 'await', 'new', 'delete',
+  'void', 'yield', 'in', 'of', 'instanceof', 'else',
+]);
+
+/**
+ * Whether a list of argument tokens spreads its caller's arguments, which is how a runner forwards
+ * them. Three dots read as a spread and fewer do not, so `process.env` in the list is not one.
+ */
+function spreadsItsArguments(tokens) {
+  let dots = 0;
+  for (const token of tokens) {
+    dots = token.kind === 'punct' && token.value === '.' ? dots + 1 : 0;
+    if (dots === 3) return true;
+  }
+  return false;
+}
+
+/**
  * Every name declared in the statement holding the token at `spawnAt`, walking back to where that
  * statement began. Read at a git spawn whose subcommand the source does not name, this is the name
  * a caller reaches git through — the shape card #152 wrote, where a local helper forwards its
@@ -491,25 +515,40 @@ function namesDeclaredAround(tokens, spawnAt) {
 
 
 /**
- * Every call under `test/` through which git is reached, with the subcommand it names. Two routes,
- * because the fault this reading exists to catch took the second: a spawner call naming `git`
- * outright, and a call to a name a forwarding spawn is reached through.
+ * Every call under `test/` through which git is reached, with the subcommand it names and whether
+ * it forwards its caller's arguments. Two routes, because the fault this reading exists to catch
+ * took the second: a spawner call naming `git` outright, and a call to a name a forwarding spawn is
+ * reached through.
  *
  * The forwarding names are collected across `test/` rather than per file, so a fixture's runner is
  * checked wherever it is imported to. A name is only taken as one where the spawn it encloses
  * names no subcommand of its own: a spawn that names one is a repository built there and then,
  * which its callers cannot redirect.
+ *
+ * `forwards` is what licenses a spawn whose subcommand the source does not name, and it is
+ * narrower than that silence. A spawn that spreads its caller's arguments into a list the source
+ * does name has its subcommand in its own call sites, and those call sites are the second route
+ * above — so the reading follows it rather than losing it, which is what the file's `askedAbout`
+ * is. A spawn whose list the source cannot read at all has its subcommand nowhere a reader can
+ * follow: factored into a variable, or holding an identifier where the subcommand goes. Round 1
+ * licensed every spawner call alike and let both of those through, which is ordinary JavaScript
+ * and was card #152's fault with no check over it. So the licence also asks that some name
+ * declared around the spawn is called somewhere under `test/`, because a forwarding spawn nothing
+ * calls is one whose subcommand no call site supplies.
  */
 function everyReach() {
   const read = everySource().filter(({ at }) => at.startsWith('test/')).map(({ at, source }) => {
     const { tokens } = tokensIn(source, at);
     const calls = [];
+    const called = [];
     const forwarding = [];
     for (let i = 1; i < tokens.length; i++) {
       const open = tokens[i];
       const callee = tokens[i - 1];
       if (open.kind !== 'punct' || open.value !== '(') continue;
       if (callee.kind !== 'word' || tokens[i - 2]?.value === '.') continue;
+      if (NOT_A_CALL.has(callee.value) || tokens[i - 2]?.value === 'function') continue;
+      called.push(callee.value);
       let end = i + 1;
       while (end < tokens.length && tokens[end].depth > open.depth) end++;
       const inside = tokens.slice(i + 1, end);
@@ -517,17 +556,28 @@ function everyReach() {
         if (spawnedBy(inside) !== 'git') continue;
         const args = argumentTokens(inside);
         const subcommand = args ? subcommandIn(args) : null;
-        calls.push({ where: `${at}:${open.line}`, through: 'a spawner', subcommand });
-        if (subcommand === null) forwarding.push(...namesDeclaredAround(tokens, i - 1));
+        const around = subcommand === null ? namesDeclaredAround(tokens, i - 1) : [];
+        calls.push({
+          where: `${at}:${open.line}`, through: 'a spawner', subcommand,
+          spread: args !== null && spreadsItsArguments(args), around,
+        });
+        forwarding.push(...around);
       } else {
-        calls.push({ where: `${at}:${open.line}`, through: callee.value, subcommand: subcommandIn(inside) });
+        calls.push({
+          where: `${at}:${open.line}`, through: callee.value, subcommand: subcommandIn(inside),
+          spread: false, around: [],
+        });
       }
     }
-    return { calls, forwarding };
+    return { calls, called, forwarding };
   });
-  const forwarding = new Set(read.flatMap(({ forwarding: names }) => names));
-  return read.flatMap(({ calls }) =>
-    calls.filter((call) => call.through === 'a spawner' || forwarding.has(call.through)));
+  const forwarding = new Set(read.flatMap((one) => one.forwarding));
+  const called = new Set(read.flatMap((one) => one.called));
+  return read.flatMap(({ calls }) => calls
+    .filter((call) => call.through === 'a spawner' || forwarding.has(call.through))
+    .map(({ where, through, subcommand, spread, around }) => ({
+      where, through, subcommand, forwards: spread && around.some((name) => called.has(name)),
+    })));
 }
 
 test('every repository a test builds is built in the one fixture, and no other route reaches git blind', () => {
@@ -538,7 +588,7 @@ test('every repository a test builds is built in the one fixture, and no other r
   // forwarding its arguments to git, so the subcommand is in the call and not in the spawn.
   const reaches = everyReach();
   const creating = reaches.filter((reach) => CREATING.has(reach.subcommand));
-  const blind = reaches.filter((reach) => reach.subcommand === null);
+  const blind = reaches.filter((reach) => reach.subcommand === null && !reach.forwards);
 
   // The premise: a reading that matched nothing would report this green having read nothing, and
   // a reading that found no repository being built anywhere would have missed the fixture itself.
@@ -547,11 +597,16 @@ test('every repository a test builds is built in the one fixture, and no other r
     creating.some((reach) => reach.where.startsWith(`${FIXTURE}:`)),
     `the reader found no repository built in ${FIXTURE}, so it is reading the wrong thing`,
   );
+  // The premise for the licence below, which a rule about an empty set would satisfy by vacuum:
+  // this repository does hold a forwarding runner, so the licence covers something real.
+  assert.ok(reaches.some((reach) => reach.forwards), 'the reader found no forwarding runner, so its licence covers nothing');
 
   assert.deepEqual(creating.filter((reach) => !reach.where.startsWith(`${FIXTURE}:`)), []);
-  // The second half, without which the first is a rule about spellings: a runner reached with a
-  // subcommand the source cannot read is a wrapper, and a wrapper is where the next `init` hides.
-  assert.deepEqual(blind.filter((reach) => reach.through !== 'a spawner' && !reach.where.startsWith(`${FIXTURE}:`)), []);
+  // The second half, without which the first is a rule about spellings: a reach whose subcommand
+  // the source does not name, and which does not forward it from call sites this reading follows,
+  // is a reach nothing can vouch for — and it is where the next `init` hides. The fixture is held
+  // to this too rather than exempted, because its own runner earns the licence by forwarding.
+  assert.deepEqual(blind, []);
 });
 
 /**
