@@ -17,6 +17,7 @@ import { repoRoot } from '../src/cli/doctor.mjs';
 import { trackedFiles } from '../scripts/ruled-out-word-check.mjs';
 import { source } from '../scripts/absorption-check.mjs';
 import { REDIRECTING, gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -25,22 +26,13 @@ const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
  * answered. Taking the root as an argument is what lets a caller put one repository inside
  * another, which is the arrangement a search that walks past one has to be measured against.
  */
-function repositoryAt(root, name) {
-  mkdirSync(root, { recursive: true });
-  writeFileSync(join(root, name), `${name}\n`);
-  const git = (...args) =>
-    execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
-  git('init', '-q');
-  git('config', 'user.email', 'fixture@example.invalid');
-  git('config', 'user.name', 'fixture');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  return root;
+function repositoryHoldingAt(root, name) {
+  return repositoryAt(root, { [name]: `${name}\n` });
 }
 
 /** A repository holding one file, in a temporary directory of its own. */
 function repositoryHolding(name) {
-  return repositoryAt(mkdtempSync(join(tmpdir(), 'rigger-gitenv-')), name);
+  return repositoryIn('rigger-gitenv-', { [name]: `${name}\n` });
 }
 
 /**
@@ -241,7 +233,7 @@ test('an alternate object store the environment names is read from and never wri
 test('a ceiling the environment names refuses a repository rather than naming another one', () => {
   const victim = repositoryHolding('only-in-victim.txt');
   const outer = repositoryHolding('only-in-outer.txt');
-  const inner = repositoryAt(join(outer, 'inner'), 'only-in-inner.txt');
+  const inner = repositoryHoldingAt(join(outer, 'inner'), 'only-in-inner.txt');
   const under = join(inner, 'a', 'b');
   mkdirSync(under, { recursive: true });
 
@@ -419,6 +411,204 @@ test('nothing spawns a process without the import that is the only way to spawn 
   assert.deepEqual(spawners.sort(), importers.sort());
 });
 
+/** Every git subcommand that brings a repository into being, which is the whole of what a fixture is for. */
+const CREATING = new Set(['init', 'clone', 'worktree']);
+
+/** The module every repository a test needs is built in. */
+const FIXTURE = 'test/git-repository.mjs';
+
+/**
+ * The argument list a spawner call names inline, as the tokens between its brackets. A call that
+ * hands its command a variable instead names no list here, and `null` says so.
+ */
+function argumentTokens(inside) {
+  const base = inside[0]?.depth;
+  const open = inside.findIndex((token) => token.kind === 'punct' && token.value === '[' && token.depth === base);
+  if (open === -1) return null;
+  let end = open + 1;
+  while (end < inside.length && inside[end].depth > base) end++;
+  return inside.slice(open + 1, end);
+}
+
+/**
+ * What subcommand a list of argument tokens hands git: the first string literal that is neither a
+ * flag nor `-C`/`-c` with the operand it takes. A leading identifier is passed over, because a
+ * runner takes the repository before the subcommand.
+ *
+ * `null` says the source names no subcommand — a spread forwarding a caller's arguments, or a
+ * value decided at run time — and that is a different finding from a subcommand that is named.
+ * Only three dots read as a spread, so `process.env` among the arguments is not mistaken for one.
+ */
+function subcommandIn(tokens) {
+  let dots = 0;
+  let takesAnOperand = false;
+  for (const token of tokens) {
+    if (token.kind === 'punct') {
+      dots = token.value === '.' ? dots + 1 : 0;
+      if (dots === 3) return null;
+      continue;
+    }
+    dots = 0;
+    if (takesAnOperand) {
+      takesAnOperand = false;
+      continue;
+    }
+    if (token.kind !== 'string') continue;
+    if (token.value === '-C' || token.value === '-c') {
+      takesAnOperand = true;
+      continue;
+    }
+    if (token.value.startsWith('-')) continue;
+    return token.value;
+  }
+  return null;
+}
+
+/** The words that bind a name, so that the token after one is the name it binds. */
+const DECLARING = new Set(['const', 'let', 'var', 'function']);
+
+/**
+ * The words that put a parenthesis after a name without that name being called: a control
+ * structure's own condition, and the parameter list a `function` declaration binds. The second is
+ * the one that matters here — `function gitIn(root, ...args)` reads as `gitIn` handed a spread,
+ * which is a definition rather than a call and so is nobody's route to git.
+ */
+const NOT_A_CALL = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'do', 'return', 'typeof', 'await', 'new', 'delete',
+  'void', 'yield', 'in', 'of', 'instanceof', 'else',
+]);
+
+/**
+ * Whether a list of argument tokens spreads its caller's arguments, which is how a runner forwards
+ * them. Three dots read as a spread and fewer do not, so `process.env` in the list is not one.
+ */
+function spreadsItsArguments(tokens) {
+  let dots = 0;
+  for (const token of tokens) {
+    dots = token.kind === 'punct' && token.value === '.' ? dots + 1 : 0;
+    if (dots === 3) return true;
+  }
+  return false;
+}
+
+/**
+ * Every name declared in the statement holding the token at `spawnAt`, walking back to where that
+ * statement began. Read at a git spawn whose subcommand the source does not name, this is the name
+ * a caller reaches git through — the shape card #152 wrote, where a local helper forwards its
+ * caller's arguments and the subcommand arrives from the call rather than from the spawn.
+ *
+ * Over-inclusive by design: a name it collects that forwards nothing is never called with a
+ * subcommand, so it costs the reading nothing, where a name it missed would be a route to git that
+ * nothing checks.
+ */
+function namesDeclaredAround(tokens, spawnAt) {
+  const names = [];
+  for (let i = spawnAt; i > 0; i--) {
+    const token = tokens[i];
+    if (token.depth === 0 && token.kind === 'punct' && (token.value === ';' || token.value === '}')) break;
+    if (token.kind !== 'word') continue;
+    const before = tokens[i - 1];
+    if (before.kind === 'word' && DECLARING.has(before.value)) names.push(token.value);
+  }
+  return names;
+}
+
+
+/**
+ * Every call under `test/` through which git is reached, with the subcommand it names and whether
+ * it forwards its caller's arguments. Two routes, because the fault this reading exists to catch
+ * took the second: a spawner call naming `git` outright, and a call to a name a forwarding spawn is
+ * reached through.
+ *
+ * The forwarding names are collected across `test/` rather than per file, so a fixture's runner is
+ * checked wherever it is imported to. A name is only taken as one where the spawn it encloses
+ * names no subcommand of its own: a spawn that names one is a repository built there and then,
+ * which its callers cannot redirect.
+ *
+ * `forwards` is what licenses a spawn whose subcommand the source does not name, and it is
+ * narrower than that silence. A spawn that spreads its caller's arguments into a list the source
+ * does name has its subcommand in its own call sites, and those call sites are the second route
+ * above — so the reading follows it rather than losing it, which is what the file's `askedAbout`
+ * is. A spawn whose list the source cannot read at all has its subcommand nowhere a reader can
+ * follow: factored into a variable, or holding an identifier where the subcommand goes. Round 1
+ * licensed every spawner call alike and let both of those through, which is ordinary JavaScript
+ * and was card #152's fault with no check over it. So the licence also asks that some name
+ * declared around the spawn is called somewhere under `test/`, because a forwarding spawn nothing
+ * calls is one whose subcommand no call site supplies.
+ */
+function everyReach() {
+  const read = everySource().filter(({ at }) => at.startsWith('test/')).map(({ at, source }) => {
+    const { tokens } = tokensIn(source, at);
+    const calls = [];
+    const called = [];
+    const forwarding = [];
+    for (let i = 1; i < tokens.length; i++) {
+      const open = tokens[i];
+      const callee = tokens[i - 1];
+      if (open.kind !== 'punct' || open.value !== '(') continue;
+      if (callee.kind !== 'word' || tokens[i - 2]?.value === '.') continue;
+      if (NOT_A_CALL.has(callee.value) || tokens[i - 2]?.value === 'function') continue;
+      called.push(callee.value);
+      let end = i + 1;
+      while (end < tokens.length && tokens[end].depth > open.depth) end++;
+      const inside = tokens.slice(i + 1, end);
+      if (SPAWNERS.has(callee.value)) {
+        if (spawnedBy(inside) !== 'git') continue;
+        const args = argumentTokens(inside);
+        const subcommand = args ? subcommandIn(args) : null;
+        const around = subcommand === null ? namesDeclaredAround(tokens, i - 1) : [];
+        calls.push({
+          where: `${at}:${open.line}`, through: 'a spawner', subcommand,
+          spread: args !== null && spreadsItsArguments(args), around,
+        });
+        forwarding.push(...around);
+      } else {
+        calls.push({
+          where: `${at}:${open.line}`, through: callee.value, subcommand: subcommandIn(inside),
+          spread: false, around: [],
+        });
+      }
+    }
+    return { calls, called, forwarding };
+  });
+  const forwarding = new Set(read.flatMap((one) => one.forwarding));
+  const called = new Set(read.flatMap((one) => one.called));
+  return read.flatMap(({ calls }) => calls
+    .filter((call) => call.through === 'a spawner' || forwarding.has(call.through))
+    .map(({ where, through, subcommand, spread, around }) => ({
+      where, through, subcommand, forwards: spread && around.some((name) => called.has(name)),
+    })));
+}
+
+test('every repository a test builds is built in the one fixture, and no other route reaches git blind', () => {
+  // The card's fourth item, and the reason this is a test rather than a sweep run once: card #152
+  // wrote the fault back in after it had been found, fixed and journalled, and what held it closed
+  // was that a check ran on every commit. A new caller that builds its own repository has to be
+  // named by something, and the shape to catch is the one that card took — a local helper
+  // forwarding its arguments to git, so the subcommand is in the call and not in the spawn.
+  const reaches = everyReach();
+  const creating = reaches.filter((reach) => CREATING.has(reach.subcommand));
+  const blind = reaches.filter((reach) => reach.subcommand === null && !reach.forwards);
+
+  // The premise: a reading that matched nothing would report this green having read nothing, and
+  // a reading that found no repository being built anywhere would have missed the fixture itself.
+  assert.ok(reaches.length >= 30, `the reader found ${reaches.length} reaches to git, so it read the wrong thing`);
+  assert.ok(
+    creating.some((reach) => reach.where.startsWith(`${FIXTURE}:`)),
+    `the reader found no repository built in ${FIXTURE}, so it is reading the wrong thing`,
+  );
+  // The premise for the licence below, which a rule about an empty set would satisfy by vacuum:
+  // this repository does hold a forwarding runner, so the licence covers something real.
+  assert.ok(reaches.some((reach) => reach.forwards), 'the reader found no forwarding runner, so its licence covers nothing');
+
+  assert.deepEqual(creating.filter((reach) => !reach.where.startsWith(`${FIXTURE}:`)), []);
+  // The second half, without which the first is a rule about spellings: a reach whose subcommand
+  // the source does not name, and which does not forward it from call sites this reading follows,
+  // is a reach nothing can vouch for — and it is where the next `init` hides. The fixture is held
+  // to this too rather than exempted, because its own runner earns the licence by forwarding.
+  assert.deepEqual(blind, []);
+});
+
 /**
  * Runs `body` with `vars` in `process.env`, and puts back every name it could have disturbed.
  * Taking the variables as an argument is what lets a caller name a hook shape other than the
@@ -446,7 +636,7 @@ function asALinkedWorktreeHook(gitDir, body) {
 /** A repository whose `origin` is the URL given, which is what `repoSlug` reads. */
 function repositoryRemoting(url) {
   const root = repositoryHolding('only-in-fixture.txt');
-  execFileSync('git', ['-C', root, 'remote', 'add', 'origin', url], { encoding: 'utf8', env: gitEnvironment() });
+  gitIn(root, 'remote', 'add', 'origin', url);
   return root;
 }
 

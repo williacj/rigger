@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
 import { CONFIG, PROVIDER_ASSETS, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
-import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
 import riggerConfig from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,18 +22,10 @@ const filesUnder = (dir) =>
     .filter((entry) => entry.isFile())
     .map((entry) => join(relative(dir, entry.parentPath), entry.name).split(sep).join('/'));
 
-/** Runs git in a repository, asserting that it answered. */
-function git(dir, ...args) {
-  const ran = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: gitEnvironment() });
-  assert.equal(ran.status, 0, `git ${args.join(' ')} failed: ${ran.stderr}`);
-  return ran.stdout;
-}
-
 /** A real git repository, with the remote this test wants it to have. */
 function repository(url) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-consumer-'));
-  git(dir, 'init', '-q');
-  if (url) git(dir, 'remote', 'add', 'origin', url);
+  const dir = repositoryIn('rigger-consumer-');
+  if (url) gitIn(dir, 'remote', 'add', 'origin', url);
   return dir;
 }
 
@@ -48,7 +40,7 @@ function repository(url) {
  * the answer true at the moment the commit hook runs.
  */
 const heldUnder = (repoRoot, directory) =>
-  git(repoRoot, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
+  gitIn(repoRoot, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
 
 /**
  * Every way a repository and the templates it was forked from disagree, each naming the fix.
@@ -386,12 +378,12 @@ test('an asset a repository holds with no template behind it is still found', ()
   const consumer = repository('https://github.com/acme/widgets.git');
   const files = plan({ repo: 'acme/widgets' });
   init({ target: consumer });
-  git(consumer, 'add', '-A');
+  gitIn(consumer, 'add', '-A');
   assert.deepEqual(divergences(consumer, files), []);
 
   writeFileSync(join(consumer, '.claude', 'agents', 'stray.md'), 'ABOUTME: an agent with no template\n');
   writeFileSync(join(consumer, '.claude', 'skills', 'tdd', 'SKILL.md'), 'ABOUTME: edited here alone\n');
-  git(consumer, 'add', '-A');
+  gitIn(consumer, 'add', '-A');
 
   assert.deepEqual(divergences(consumer, files).sort(), [
     '`.claude/agents/stray.md` is an asset no template ships, so `init` would not produce it. '

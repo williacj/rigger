@@ -4,14 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, headerFindings, exemptions } from '../scripts/aboutme-header-check.mjs';
-import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -148,29 +146,18 @@ test('a file whose format the rule exempts is accepted with no header', () => {
 
 /** A repository holding the header rule and the given files, each path relative and posix-spelled. */
 function repositoryOf(files) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-headers-'));
-  for (const [path, content] of Object.entries({ 'AGENTS.md': `${RULE}\n`, ...files })) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), content);
-  }
-  const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
-  git('init', '-q');
-  git('config', 'user.email', 'fixture@example.invalid');
-  git('config', 'user.name', 'fixture');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  return { root, git };
+  return repositoryIn('rigger-headers-', { 'AGENTS.md': `${RULE}\n`, ...files });
 }
 
 test('the check reads what git tracks, so an untracked file is not read', () => {
   // A spike lives in a gitignored directory and is throwaway, so its header is nobody's finding.
-  const { root } = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n' });
+  const root = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n' });
   writeFileSync(join(root, 'spike.md'), 'ABOUTME: one\nABOUTME: two\n');
   assert.deepEqual(check(root).findings, []);
 });
 
 test('a tracked file repeating its header prefix is a finding naming the file and its lines', () => {
-  const { root } = repositoryOf({
+  const root = repositoryOf({
     'docs/journal/an-entry.md': 'ABOUTME: one\nABOUTME: two\n\n# a heading\n',
     'kept.md': 'ABOUTME: what this is.\n',
   });
@@ -184,7 +171,7 @@ test('a tracked file the check cannot read is reported rather than skipped, and 
   // git lists what the index holds, which outlives the file on disk, so a delete mid-work must not
   // turn the whole suite into a read error. Reporting it is not the same as tolerating it: the
   // check cannot vouch for a file it never opened, so it says so rather than passing it.
-  const { root } = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
+  const root = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
   rmSync(join(root, 'gone.md'));
   const { findings } = check(root);
   assert.deepEqual(findings.map((one) => `${one.path} ${one.kind}`), ['gone.md unreadable']);
@@ -193,7 +180,7 @@ test('a tracked file the check cannot read is reported rather than skipped, and 
 test('a tracked file replaced on disk by a directory is reported the same way', () => {
   // The second shape the read fails in, and one a delete does not cover: the path resolves, and
   // opening it throws EISDIR rather than ENOENT.
-  const { root } = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
+  const root = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
   rmSync(join(root, 'gone.md'));
   mkdirSync(join(root, 'gone.md'));
   assert.deepEqual(check(root).findings.map((one) => `${one.path} ${one.kind}`), ['gone.md unreadable']);
@@ -203,12 +190,12 @@ test('a repeated header in a file the check cannot read is never reported clean'
   // The defect this reshaping closes. Under a root-only sparse checkout git lists a file the disk
   // does not hold, and the old catch returned no finding for it — a clean answer about a file the
   // check never read, which is the exact failure this card exists to close.
-  const { root, git } = repositoryOf({
+  const root = repositoryOf({
     'ok.md': 'ABOUTME: a file that is fine.\n',
     'docs/journal/bad.md': 'ABOUTME: one\nABOUTME: two\n\n# a heading\n',
   });
-  git('sparse-checkout', 'init', '--cone');
-  git('sparse-checkout', 'set');
+  gitIn(root, 'sparse-checkout', 'init', '--cone');
+  gitIn(root, 'sparse-checkout', 'set');
   const { findings, failing } = check(root);
   assert.deepEqual(findings.map((one) => `${one.path} ${one.kind}`), ['docs/journal/bad.md unreadable']);
   assert.equal(failing, true, 'a repository the check could not fully read must not pass');
@@ -217,7 +204,7 @@ test('a repeated header in a file the check cannot read is never reported clean'
 test('the count reports what it read, not what it was handed', () => {
   // The output asserted a figure it had not measured: three files listed, two read, and the line
   // claimed all three. A reader re-deriving the number would get a different one.
-  const { root } = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
+  const root = repositoryOf({ 'kept.md': 'ABOUTME: what this is.\n', 'gone.md': 'ABOUTME: a.\n' });
   rmSync(join(root, 'gone.md'));
   const { files, read } = check(root);
   assert.equal(files.length, 3, 'AGENTS.md, gone.md and kept.md are tracked');
