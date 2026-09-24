@@ -1,5 +1,5 @@
 ABOUTME: A journal entry from card #103: Two failure modes, one output, and the guard that reads
-ABOUTME: the wrong thing
+the wrong thing
 
 ## 2026-09-23 — Two failure modes, one output, and the guard that reads the wrong thing
 

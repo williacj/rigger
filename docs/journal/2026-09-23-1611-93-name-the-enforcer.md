@@ -1,5 +1,5 @@
 ABOUTME: Records why card #93 names a judge as the enforcer of tests for new requirements
-ABOUTME: instead of attributing enforcement to a build check that does not exist.
+instead of attributing enforcement to a build check that does not exist.
 
 # Name the enforcer
 

@@ -1,5 +1,5 @@
 // ABOUTME: Tests L5's event envelope and sink: what a recorded event carries, that the sink
-// ABOUTME: stamps it, that the stream only ever grows, and that a reader gets every event back.
+// stamps it, that the stream only ever grows, and that a reader gets every event back.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

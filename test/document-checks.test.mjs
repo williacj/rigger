@@ -1,5 +1,5 @@
 // ABOUTME: One fixture per document check, each holding exactly one defect, proving that each
-// ABOUTME: check fails for its own reason and that the other three stay quiet.
+// check fails for its own reason and that the other three stay quiet.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

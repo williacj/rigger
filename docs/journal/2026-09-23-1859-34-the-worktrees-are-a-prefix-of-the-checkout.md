@@ -1,5 +1,5 @@
 ABOUTME: Card #34's finding about how `doctor` tells the source tree it runs from apart from a
-ABOUTME: worktree beside it, and what a mutation found that a test written alongside would not.
+worktree beside it, and what a mutation found that a test written alongside would not.
 
 # 2026-09-23 — The worktrees are a prefix of the checkout
 

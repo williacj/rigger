@@ -1,5 +1,5 @@
 // ABOUTME: Verifies the references in the documents doc-references.json names, at the fail level
-// ABOUTME: it gives each. Today that is one reference it can never verify: a path:line pointer.
+// it gives each. Today that is one reference it can never verify: a path:line pointer.
 
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

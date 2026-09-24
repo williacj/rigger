@@ -1,5 +1,5 @@
 // ABOUTME: Tests absorption-check as a command: which argument vectors make it do work, what a
-// ABOUTME: refused one costs and says, and that the report a working one prints has not moved.
+// refused one costs and says, and that the report a working one prints has not moved.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

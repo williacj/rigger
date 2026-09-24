@@ -1,5 +1,5 @@
 // ABOUTME: Counts Rigger's production lines and refuses a package that has grown past the budget
-// ABOUTME: ARCHITECTURE.md records. One check, against the package total.
+// ARCHITECTURE.md records. One check, against the package total.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

@@ -1,5 +1,5 @@
 // ABOUTME: Checks Rigger's binding documents against the two spec-style rules a machine can
-// ABOUTME: read: the ruled-out terms, and the sentence ceiling. Both come from the skill.
+// read: the ruled-out terms, and the sentence ceiling. Both come from the skill.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';

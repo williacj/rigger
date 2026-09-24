@@ -1,5 +1,5 @@
 // ABOUTME: Tests the duplicate-id check: where an allocated id is written, which files count
-// ABOUTME: together, and what a second row carrying one costs.
+// together, and what a second row carrying one costs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,6 +1,6 @@
 // ABOUTME: The config core: the declarations a consumer may make, which of them Rigger requires,
-// ABOUTME: the values only the consumer can answer, and the refusal of anything else, each
-// ABOUTME: refusal naming what it refused.
+// the values only the consumer can answer, and the refusal of anything else, each
+// refusal naming what it refused.
 
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits

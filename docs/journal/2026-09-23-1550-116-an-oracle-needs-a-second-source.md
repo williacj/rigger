@@ -1,5 +1,5 @@
 ABOUTME: Records how card #116 made the ruled-out pattern test independent, and the limit that
-ABOUTME: remains when both sources are changed together.
+remains when both sources are changed together.
 
 ## 2026-09-23 — An oracle needs a second source
 

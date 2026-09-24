@@ -1,5 +1,5 @@
 // ABOUTME: Tests the package contract: the Node floor and what an install below it does, that
-// ABOUTME: every script the repository defines is reachable from `npm run`, and that CI runs them.
+// every script the repository defines is reachable from `npm run`, and that CI runs them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

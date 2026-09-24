@@ -1,5 +1,5 @@
 // ABOUTME: Covers what the ruled-out-word check reads, what it reports, and that no tracked
-// ABOUTME: file in this repository carries a ruled-out word.
+// file in this repository carries a ruled-out word.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

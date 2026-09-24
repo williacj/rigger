@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ABOUTME: The `rigger` command: the file the package declares as its bin. It reads the
-// ABOUTME: arguments, writes what the surface answers, and exits with the status it gives.
+// arguments, writes what the surface answers, and exits with the status it gives.
 
 import { run } from './verbs.mjs';
 

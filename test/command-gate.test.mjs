@@ -1,5 +1,5 @@
 // ABOUTME: Tests the PreToolUse command gate as Claude Code runs it — as a process fed a hook
-// ABOUTME: payload, for the exit code and the reason it returns on reserved and on unreadable text.
+// payload, for the exit code and the reason it returns on reserved and on unreadable text.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

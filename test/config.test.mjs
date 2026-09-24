@@ -1,5 +1,5 @@
 // ABOUTME: Tests the config core against ARCHITECTURE.md's extension points and its published
-// ABOUTME: config shape: what a consumer may declare, what is required, and what is refused.
+// config shape: what a consumer may declare, what is required, and what is refused.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
