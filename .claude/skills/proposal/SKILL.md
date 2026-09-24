@@ -67,8 +67,7 @@ failure mode 2 in `.claude/agents/pm.md`.
 The preamble of `docs/spec/requirements.md` is the authority on ids and on what the two columns
 mean. Read it there. What the proposal owes beyond it:
 
-- **Fill both columns.** `made true by` names who or what satisfies the row; `checked by` takes one
-  of the five forms the preamble lists.
+- **Fill both columns.**
 - **Name the test you expect to claim the row.** A judge enforces the test obligation for each new
   requirement (`D17` rules 1 and 7). Where no test exists yet, `checked
   by` is `nothing yet`, and the proposal names the card that closes it.
