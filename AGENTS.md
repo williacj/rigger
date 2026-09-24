@@ -142,13 +142,15 @@ without the owner's approval. `npm run` lists every script.
 
 ## When you write a decision or a requirement
 
-A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal**. It goes to the owner; you
-never ratify your own. A choice and what would reverse it is a decision; what must be true as a
-result is a requirement. Allocate its id as its own register says: neither reuses one, a
-retired id stays allocated, and a decision's row stays behind where a requirement's row leaves.
-A new requirement needs a test that claims it; a judge enforces this (`D17` rules 1 and 7).
-Load the `.claude/skills/spec-style/` skill before you write. Resolve the ambiguity inside the delta or
-escalate it, never leave it for the implementer to guess.
+`D18` rule 1 has the architect propose every delta to `ARCHITECTURE.md`, and rule 7 has the PM
+propose a requirement. A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal** whoever
+wrote it: it goes to the owner, and you never ratify your own. A choice and what would reverse
+it is a decision; what must be true as a result is a requirement. Allocate its id as its own
+register says: neither reuses one, a retired id stays allocated, and a decision's row stays
+behind where a requirement's row leaves. A new requirement needs a test that claims it; a judge
+enforces this (`D17` rules 1 and 7). Load the `.claude/skills/spec-style/` skill before you
+write. Resolve the ambiguity inside the delta or escalate it, never leave it for the implementer
+to guess.
 
 ## Ask the owner before
 
@@ -183,7 +185,15 @@ Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
 this, and the worktree root belongs outside both the checkout and the package. **The engine
 never merges a change to its own live gate, config, or CLI entry point** — those cards are done
-by hand.
+by hand. Those three, by path:
+
+- The live gate: `.githooks/`.
+- The live config: `rigger.config.mjs`, and `templates/rigger.config.mjs` with it.
+- The CLI entry point: `src/cli/rigger.mjs`, which `package.json` declares as its `bin`.
+
+The template is in that list because `test/init.test.mjs` compares this repository's config
+against what `init` would write from the template, byte for byte. So a card that changes the
+template changes the live config, whichever file it opens.
 
 ## Version control
 
