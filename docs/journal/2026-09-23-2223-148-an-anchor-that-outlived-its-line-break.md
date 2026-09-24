@@ -1,5 +1,5 @@
 ABOUTME: Card #148's finding: a mutation anchor written in one round stopped matching in the next
-ABOUTME: because a neighbouring edit rewrapped the line it spanned.
+because a neighbouring edit rewrapped the line it spanned.
 
 # 2026-09-23 — An anchor that outlived its line break
 
