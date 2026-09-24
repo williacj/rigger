@@ -1,0 +1,4 @@
+#!/bin/sh
+# ABOUTME: Git's pre-merge-commit hook. Refuses a merge commit made with a failing suite.
+
+exec "$(dirname "$0")/refuse-if-suite-red"
