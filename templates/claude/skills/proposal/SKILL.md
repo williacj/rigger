@@ -52,11 +52,12 @@ do it, or where the code lives. Three answers, three documents.
 - **A requirement** — what must be true of Rigger, in the sense the preamble of
   `docs/spec/requirements.md` gives the word. It lands in that file.
 - **A decision** — a choice among the structures that satisfy the requirements, with what would
-  reverse it. It lands in `docs/spec/decisions.md`. Most are not yours: a structural choice comes
-  from whichever role needs it (`D4` rule 3).
-- **A structure** — a layer, a module, an extension point. It lands in `ARCHITECTURE.md`, which
-  `.claude/agents/pm.md` forbids you to edit. Name the layer the delta lands in and say why the
-  requirement needs it; the owner and the engineer write it.
+  reverse it. It lands in `docs/spec/decisions.md`. A structural choice is the architect's
+  (`D18` rule 2), so a PM drafting one has left its lane.
+- **A structure** — a layer, a module, an extension point. It lands in `ARCHITECTURE.md`, and the
+  architect proposes every delta there while the owner ratifies it (`D18` rule 1).
+  `.claude/agents/pm.md` forbids the PM to edit that file: name the layer the delta lands in, say
+  why the requirement needs it, and leave the delta to the architect.
 
 Something you cannot place is a finding, not a coin toss. Write it into the proposal as an open
 question, name the two piles it sits between, and say what would settle it. Placing it by guess is
