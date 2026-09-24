@@ -22,7 +22,8 @@
     "templates/claude/skills/code-review/SKILL.md": "strict",
     "templates/claude/skills/proposal/SKILL.md": "strict",
     "templates/claude/skills/spec-style/SKILL.md": "strict",
-    "templates/claude/skills/tdd/SKILL.md": "strict"
+    "templates/claude/skills/tdd/SKILL.md": "strict",
+    "docs/spikes/reserved-git-indirection.md": "strict"
   },
   "exempt": {
     "paths": {}
