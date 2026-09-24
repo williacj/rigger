@@ -43,11 +43,13 @@ is `test/git-environment.test.mjs:202`, the guard `:204`, and the report `:213`.
 
 The same call sits two lines earlier at `985d74c`, opening on 113, because the first parent added
 two lines above it — the `gitEnvironment` import and the `env: gitEnvironment()` on the earlier
-spawn. So a reader who checks the report against `985d74c` finds a comment on 113 and is tempted
-into a correction the tree that reds does not need. The temptation is worth recording because this
-entry fell for it in round 1: it read the spawn on the parent that never ran the sweep, inferred
-from the coincidence that the sweep must report the line the object closes on, and wrote a caveat
-onto a pointer that was already right. A figure about a failing run belongs to the tree that failed.
+spawn. So a reader who checks the report against `985d74c` finds the call itself on 113, and that
+is the bait: the pointer then looks two lines off, and the correction it invites is one the tree
+that reds does not need — there, at `c433d57`, 113 is a comment. The temptation is worth recording
+because this entry fell for it in round 1: it read the spawn on the parent that never ran the sweep,
+inferred from the coincidence that the sweep must report the line the object closes on, and wrote a
+caveat onto a pointer that was already right. A figure about a failing run belongs to the tree that
+failed.
 
 PR #155 merged at `2026-09-24T17:00:57Z` as `7cc95d1`. PR #162 merged 63 seconds later, at
 `17:02:00Z`, as `c433d57`. PR #162's last CI run was at `15:45:03Z` — **seventy-five minutes before
@@ -178,8 +180,12 @@ comment lines, so the comment this card writes inside the block cannot answer fo
 ## What was left alone
 
 Nothing under `.githooks/` is touched, and no repository setting or ruleset was read for change or
-written. `main` still carries neither: this card did not call the protection or rulesets endpoints,
-because a card that must not change them has no reason to ask.
+written. Card #177 records `main` as carrying neither — 404 from the protection endpoint, an empty
+list from `.../rulesets` — measured while `main` stood at `a651895` on 2026-09-24. This entry refers
+to that measurement rather than making one of its own, for two reasons: a card forbidden from
+changing a setting has no reason to read it, and a repository setting is not a property of a commit,
+so a present-state claim about one is stale the moment anybody changes it and the entry cannot know
+when that happens.
 
 The workflow change is sufficient for CI to answer a queued merge, so far as a workflow can be: the
 event is a first-class trigger and the job has no condition that would skip it. Whether the queue
