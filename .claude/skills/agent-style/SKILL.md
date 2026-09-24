@@ -61,9 +61,8 @@ way is a role the prompt has not described.
 A role prompt is written in the form rules of `.claude/skills/spec-style/`, which holds each rule
 and the test behind it. It takes all of them but the ownership split.
 
-`AGENTS.md` reaches a prompt with that split directly, as "The one test" above says, so a prompt
-already has it. Taking it from the skill as well would make a second copy of a fact `AGENTS.md`
-owns.
+`AGENTS.md` reaches a prompt with that split directly, as "The one test" above says, so the skill
+is not where a prompt takes it from.
 
 Write in English rather than in the binding documents' vocabulary. A role reads its prompt on
 dispatch, with nobody to ask. Where a term of art earns its place, the sentence around it says

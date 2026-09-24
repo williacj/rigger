@@ -26,3 +26,7 @@ scopes its rules, and a role prompt falls outside that scope, so a prompt borrow
 than falling under them. The ownership split among them reaches a prompt by the other route, from
 `AGENTS.md`, which is where this skill's "The one test" already sends it. A reader handed "1
 through 4" has to reconstruct all of that from a missing number.
+
+The replacement says where the split comes from and stops there. Why a second source for it would
+be wrong is `AGENTS.md`'s to say, and a skill saying it again would be the defect the sweep set
+out to cut.
