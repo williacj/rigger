@@ -5,10 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 import { tokensIn } from '../scripts/build-test-matrix.mjs';
 import { repoSlug } from '../src/cli/init.mjs';
@@ -19,9 +20,13 @@ import { REDIRECTING, gitEnvironment } from '../src/substrate/git-environment.mj
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** A repository holding one file, named so that its index says which repository answered. */
-function repositoryHolding(name) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-gitenv-'));
+/**
+ * A repository at `root` holding one file, named so that its index says which repository
+ * answered. Taking the root as an argument is what lets a caller put one repository inside
+ * another, which is the arrangement a search that walks past one has to be measured against.
+ */
+function repositoryAt(root, name) {
+  mkdirSync(root, { recursive: true });
   writeFileSync(join(root, name), `${name}\n`);
   const git = (...args) =>
     execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
@@ -31,6 +36,27 @@ function repositoryHolding(name) {
   git('add', '-A');
   git('commit', '-qm', 'fixture');
   return root;
+}
+
+/** A repository holding one file, in a temporary directory of its own. */
+function repositoryHolding(name) {
+  return repositoryAt(mkdtempSync(join(tmpdir(), 'rigger-gitenv-')), name);
+}
+
+/**
+ * Every file under `root` with the digest of its bytes, so two states of a repository compare
+ * byte-for-byte. A claim that a git spawned elsewhere left a repository alone is a claim about
+ * its bytes, and a surface git reports about it would not carry one.
+ */
+function fingerprint(root) {
+  const digests = {};
+  for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    digests[relative(root, path).split(sep).join('/')] =
+      createHash('sha256').update(readFileSync(path)).digest('hex');
+  }
+  return digests;
 }
 
 /** A path spelled the way git spells one: the real path, forward-slashed. */
@@ -146,6 +172,71 @@ test('the environment a main checkout exports leaves the named repository answer
 
   assert.equal(askedAbout(fixture, asMainCheckout, 'ls-files'), 'only-in-fixture.txt');
   assert.equal(askedAbout(fixture, gitEnvironment(asMainCheckout), 'ls-files'), 'only-in-fixture.txt');
+});
+
+test('an alternate object store the environment names is read from and never written to', () => {
+  const victim = repositoryHolding('only-in-victim.txt');
+  const fixture = repositoryHolding('only-in-fixture.txt');
+  // Spelled the way git spells one, because git hands this value to the object layer unresolved.
+  const store = asGit(join(victim, '.git', 'objects'));
+  const hostile = { ...process.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: store };
+  const withoutIt = { ...process.env };
+  delete withoutIt.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+  const onlyInVictim = askedAbout(victim, gitEnvironment(), 'rev-parse', 'HEAD:only-in-victim.txt');
+
+  // The premise, and the surface card #151's six do not reach: this variable moves which objects
+  // the named repository can read. Without it the fixture cannot name the victim's blob at all,
+  // so the victim being untouched below is this variable biting and not an inert one.
+  assert.throws(() => askedAbout(fixture, withoutIt, 'cat-file', '-e', onlyInVictim));
+  assert.equal(askedAbout(fixture, hostile, 'cat-file', '-p', onlyInVictim), 'only-in-victim.txt');
+
+  // The separate question, which readability does not answer: an alternate is a read path and
+  // git writes new objects to the primary store, so a git spawned here reaches no write to the
+  // repository the call did not name. That is why card #167 left the variable in the environment
+  // rather than adding it to the removed set, and this is the claim that would go stale green.
+  const before = fingerprint(victim);
+  writeFileSync(join(fixture, 'added.txt'), 'added\n');
+  askedAbout(fixture, hostile, 'add', '-A');
+  askedAbout(fixture, hostile, 'commit', '-qm', 'committed under an inherited alternate');
+  askedAbout(fixture, hostile, 'gc', '--prune=now');
+  assert.deepEqual(fingerprint(victim), before);
+});
+
+test('a ceiling the environment names refuses a repository rather than naming another one', () => {
+  const victim = repositoryHolding('only-in-victim.txt');
+  const outer = repositoryHolding('only-in-outer.txt');
+  const inner = repositoryAt(join(outer, 'inner'), 'only-in-inner.txt');
+  const under = join(inner, 'a', 'b');
+  mkdirSync(under, { recursive: true });
+
+  // Measured the way card #151 measured every candidate, set to a second repository's paths,
+  // this variable moves nothing at all: the repository the call names still answers for itself.
+  const atVictim = { ...process.env, GIT_CEILING_DIRECTORIES: asGit(victim) };
+  assert.equal(askedAbout(inner, atVictim, 'rev-parse', '--absolute-git-dir'), asGit(join(inner, '.git')));
+
+  // The premise: a ceiling bites only on an ancestor of the directory git runs in. `inner` is a
+  // repository inside `outer`, so a search that walked past it has a second repository to land
+  // on — which is what makes the refusal below a result rather than the only answer available.
+  assert.equal(askedAbout(under, gitEnvironment(), 'rev-parse', '--absolute-git-dir'), asGit(join(inner, '.git')));
+
+  // What a ceiling does there is stop the search rather than redirect it, so git names no
+  // repository at all, and in particular not `outer` — the one a redirect could have reached.
+  // A variable that can only withhold a repository cannot hand git a repository nobody named.
+  assert.throws(
+    () => execFileSync('git', ['-C', under, 'rev-parse', '--absolute-git-dir'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: asGit(inner) },
+    }),
+    /not a git repository/,
+  );
+
+  // And the question item 2 asks separately of each variable: a withheld repository is a refusal
+  // and a refusal reaches no write, so the repository the call did not name is unchanged.
+  const before = fingerprint(victim);
+  writeFileSync(join(inner, 'added.txt'), 'added\n');
+  askedAbout(inner, atVictim, 'add', '-A');
+  askedAbout(inner, atVictim, 'commit', '-qm', 'committed under an inherited ceiling');
+  assert.deepEqual(fingerprint(victim), before);
 });
 
 /**
