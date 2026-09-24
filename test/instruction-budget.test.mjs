@@ -3,15 +3,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   check,
   countWords,
   instructionBudget,
   instructionFiles,
+  liveBudget,
 } from '../scripts/instruction-budget.mjs';
 
 test('words are what whitespace separates', () => {
@@ -40,6 +42,18 @@ test('the budget is read from the architecture, not typed here', () => {
 
 test('an architecture stating no word budget fails rather than guessing', () => {
   assert.throws(() => instructionBudget('Instruction files carry one budget.'), /instruction/i);
+});
+
+test('the live pool budget this repository records is the ratified figure', () => {
+  // Every other test here states a budget in a fixture of its own, so none of them says anything
+  // about the figure the check enforces against this repository. The owner ratified 14,000 words
+  // on 2026-09-24, and a figure the owner has not ratified is the defect this catches. It also
+  // catches the reader latching onto the wrong sentence: the Budgets section ends two sentences
+  // with "budget is N words", the AGENTS.md pool's and this one, and `liveBudget` tells them
+  // apart only by the words before them.
+  const here = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+  assert.equal(liveBudget(readFileSync(join(here, 'ARCHITECTURE.md'), 'utf8')), 14000);
 });
 
 test('the root instruction file and every nested one are weighed together', () => {
