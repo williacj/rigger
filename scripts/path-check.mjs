@@ -1,5 +1,6 @@
-// ABOUTME: Asserts that every backticked repository path in a checked document exists on disk.
-// The resolver never looks at a path carrying no line number, so this covers those.
+// ABOUTME: Asserts that every backticked repository path in a checked document exists on disk,
+// and reads which of the exemptions that excuse one are spent. The resolver never looks at a
+// path carrying no line number, so this covers those.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -34,6 +35,24 @@ export function backtickedPaths(text) {
       .map((path) => ({ line: index + 1, path })));
 }
 
+/** Whether the prefix of an exemption is still absent, which is what the entry is written for. */
+function absent(root, prefix) {
+  return !existsSync(join(root, prefix));
+}
+
+/**
+ * Every exemption prefix the repository now holds, whose entry is therefore spent.
+ *
+ * The reason beside a prefix is a prose sentence and nothing parses it. What a check can read
+ * is the proposition the mechanism acts on: an exemption covers a path while its prefix is
+ * absent, so one whose prefix has arrived excuses nothing while a reader goes on believing the
+ * sentence. An exemption whose prefix is still absent is correct and reported nowhere, because
+ * flagging a correct entry pays the next author to delete it to quieten the build.
+ */
+export function spentExemptions(root, exemptions) {
+  return Object.keys(exemptions).filter((prefix) => !absent(root, prefix)).sort();
+}
+
 /**
  * Whether an exemption still covers a path.
  *
@@ -42,7 +61,7 @@ export function backtickedPaths(text) {
  * other, and the entry in the config is spent.
  */
 function exempt(root, path, exemptions) {
-  return Object.keys(exemptions).some((prefix) => path.startsWith(prefix) && !existsSync(join(root, prefix)));
+  return Object.keys(exemptions).some((prefix) => path.startsWith(prefix) && absent(root, prefix));
 }
 
 /**

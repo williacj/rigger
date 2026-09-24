@@ -1,5 +1,6 @@
 // ABOUTME: Tests the path check: which backticked spans it reads as repository paths, what a
-// missing one costs, and how long the docs/derived/ exemption lasts.
+// missing one costs, how long the docs/derived/ exemption lasts, and which exemptions the
+// check reports as spent.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { backtickedPaths, check } from '../scripts/path-check.mjs';
+import { backtickedPaths, check, spentExemptions } from '../scripts/path-check.mjs';
 import { documentChecking } from '../scripts/doc-reference-check.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
@@ -95,6 +96,28 @@ test('the exemption ends when the directory exists, so a missing file under it i
   assert.deepEqual(check(root).findings.map((f) => f.missing), ['docs/derived/test-matrix.md']);
 });
 
+test('an exemption whose prefix exists is spent, so the absence its reason states is reported', () => {
+  // The reason is prose nothing parses, but every reason ever written here asserted the one
+  // proposition the mechanism acts on: the prefix is absent. Once it is there, that assertion is
+  // false whatever the sentence around it says, and the entry excuses nothing while claiming to.
+  const root = repositoryOf('The matrix is `docs/derived/test-matrix.md`.', {
+    exempt: { 'docs/derived/': 'D8 rule 4: nothing under it exists until the test matrix lands.' },
+    directories: ['docs/derived'],
+  });
+  assert.deepEqual(spentExemptions(root, documentChecking(root).exempt.paths), ['docs/derived/']);
+});
+
+test('an exemption whose prefix is still absent is no finding, and still excuses its paths', () => {
+  // The other half, and the one that decides whether this check is worth having: a correct
+  // exemption stays quiet. A check that flagged it would pay the next author to delete a
+  // legitimate entry to quieten the build, which is worse than the reason nobody reads.
+  const root = repositoryOf('The matrix is `docs/derived/test-matrix.md`.', {
+    exempt: { 'docs/derived/': 'D8 rule 4: nothing under it exists until the test matrix lands.' },
+  });
+  assert.deepEqual(spentExemptions(root, documentChecking(root).exempt.paths), []);
+  assert.deepEqual(check(root).findings, []);
+});
+
 test('the document config checks every tracked agent prompt and skill, including template twins', () => {
   const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', '.claude', 'templates/claude'], {
     encoding: 'utf8',
@@ -114,6 +137,7 @@ test('every tracked spike report is a checked document that no path exemption co
   // to the config, so nothing ever reads its references — card #157's fault, one report on.
   const tracked = execFileSync('git', ['-C', repository, 'ls-files', '-z', '--', 'docs/spikes'], {
     encoding: 'utf8',
+    env: gitEnvironment(),
   }).split('\0').filter((path) => path.endsWith('.md')).sort();
   const { documents, exempt } = documentChecking(repository);
 
@@ -121,6 +145,16 @@ test('every tracked spike report is a checked document that no path exemption co
   for (const path of tracked) assert.equal(documents[path], 'strict', `${path} must fail on a pointer`);
   assert.deepEqual(Object.keys(exempt.paths).filter((prefix) => prefix.startsWith('docs/spikes')), [],
     'the directory is tracked, so no exemption under it can claim it is absent');
+});
+
+test('no exemption in the config claims an absence this repository contradicts', () => {
+  // The config holds no exemption today, so this reads an empty set and says so. That is the
+  // measurement rather than a gap: what it buys is the next entry, because the two exemptions
+  // this file has ever carried both went false exactly this way and neither was caught by a
+  // check. The demonstration that it discriminates is a deliberately false entry, recorded in
+  // docs/journal/ under card #169's slug.
+  const { exempt } = documentChecking(repository);
+  assert.deepEqual(spentExemptions(repository, exempt.paths), []);
 });
 
 test('every backticked path in the checked documents exists or is exempt', () => {
