@@ -167,7 +167,7 @@ Emend is a separate project that is built using Rigger; M8 is where Rigger prove
 its own. Each milestone's exit test is in `docs/v0-build-plan.md`, which owns them. v0 is M0
 through M8.
 The improvement loops follow as M9 and M10. Not planned for v0: an adjudicator role and the
-triage lane that routes to it, an architect role, conflict domains declared per card, resume,
+triage lane that routes to it, conflict domains declared per card, resume,
 multi-host coordination, and native Windows. `docs/spec/decisions.md` records each one and the
 evidence that would bring it back.
 

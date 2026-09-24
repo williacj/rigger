@@ -40,7 +40,7 @@ its row stays in the table below so its id is never reused.
 | D1 | Redo over resume | Ratified |
 | D2 | Every card carries its acceptance | Ratified |
 | D3 | Escalation is bounded by configuration | Ratified |
-| D4 | v0 defers the roles it can do without | Ratified |
+| D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
 | D7 | The engine is promoted on a boundary, not per merge | Ratified |
@@ -54,6 +54,7 @@ its row stays in the table below so its id is never reused.
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 | D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
 | D17 | A requirement older than this decision is a counted gap | Ratified |
+| D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 
 ## D1 — Redo over resume
 
@@ -123,39 +124,6 @@ cheap can afford more rounds than one whose maker runs for an hour.
 
 Three is the default because three worked in practice. It comes from running the loop, not from
 analysis, and the number is the consumer's to change on its own evidence.
-
-## D4 — v0 defers the roles it can do without
-
-**Status:** Ratified.
-
-### Rule
-
-1. v0 gives a maker and its judges no adjudicator. `R-LOOP-9` and `R-LOOP-10` hold what follows:
-   disagreement is bounded by rounds rather than settled by a third role.
-2. No role owns the requirements: the PM proposes them and the owner ratifies them.
-3. v0 has no architect. A delta to `ARCHITECTURE.md` comes from whichever role needs it, and goes
-   to the owner.
-
-### Deferred, and what returns it
-
-| Deferred | Returns when |
-|---|---|
-| An adjudicator role, and the triage lane that routes to it | `report` shows escalation volume the owner cannot absorb, or shows rounds exhausting on disagreements a third role could settle. Adding the lane's column to a board already in use is the first test that board columns can change. |
-| An architect role | Decompositions escalate as `ambiguous` on layer-boundary questions, or reviews keep finding boundary violations the lenses missed. |
-| A role that owns the requirements, distinct from the PM who proposes them | A judge returns the same card twice for an acceptance that contradicts a requirement, or the owner rejects a proposed requirement that the register already answered. |
-
-### Notes
-
-A role is never free. Each one adds a dispatch, a prompt to maintain, and a path for work to take.
-v0 buys the cheaper arrangement first and measures whether it hurts, rather than staffing against a
-problem it has not had.
-
-The roles deferred here would do real work. An adjudicator settles a maker and judge who cannot
-agree. An architect holds the layer boundaries across cards that no single card shows. v0 gives
-both jobs to the owner, who is already in the loop for every architecture delta.
-
-This decision expires. What does not change is elsewhere: D3 holds the escalation rule, and
-`ARCHITECTURE.md` holds the maker and judge structure.
 
 ## D5 — v0 detects a conflict when Git does
 
@@ -601,3 +569,57 @@ shows the second as work that came back (`R-RECORD-3`).
 
 This decision holds one lifespan. It begins with the set and ends when the set is empty. The
 obligation `AGENTS.md` carries for a requirement being added outlives it.
+
+## D18 — v0 staffs an architect, and the PM decomposes
+
+**Status:** Ratified.
+
+### Rule
+
+1. v0 has an architect. The architect owns Rigger's structure: it proposes every delta to
+   `ARCHITECTURE.md`, and the owner ratifies that delta.
+2. The architect decides where a change lives — which layer, which boundary between two layers,
+   and which extension point a need lands in. It decides that across cards, where no single card
+   shows the boundary.
+3. The architect never decides what must be true of Rigger, what Rigger promises, or what good
+   means for a kind of work. The PM proposes the first, `README.md` holds the second, and
+   `ARCHITECTURE.md` gives the third to the owner.
+4. The PM decomposes larger work into cards, so `R-CARD-3`'s decomposing role is the PM.
+5. The architect rules before the cards are cut. A consumer names the architect a judge on the
+   kind of work that proposes requirements, so a decomposition follows a ratified structure.
+6. v0 gives a maker and its judges no adjudicator. `R-LOOP-9` and `R-LOOP-10` hold what follows:
+   disagreement is bounded by rounds rather than settled by a third role.
+7. No role owns the requirements: the PM proposes them and the owner ratifies them.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| An adjudicator role, and the triage lane that routes to it | `report` shows escalation volume the owner cannot absorb, or shows rounds exhausting on disagreements a third role could settle. Adding the lane's column to a board already in use is the first test that board columns can change. |
+| A role that owns the requirements, distinct from the PM who proposes them | A judge returns the same card twice for an acceptance that contradicts a requirement, or the owner rejects a proposed requirement that the register already answered. |
+
+### Notes
+
+`D4` deferred the architect on a trigger that fires after the pain: a decomposition escalating as
+`ambiguous`, or reviews finding boundary violations the lenses missed. The owner's intake puts the
+architect's verdict before every decomposition, which is a different rule rather than that trigger
+firing. So the deferral is replaced rather than waited out, and this decision supersedes `D4`
+whole. Rules 6 and 7 are `D4` rules 1 and 2 carried forward unchanged, because superseding an
+entry retires everything in it.
+
+A role is still never free, and what buys this one is the order. A boundary question caught before
+the cards are cut costs one verdict. The same question caught afterwards costs every card built on
+the wrong boundary, and the rework is invisible until a reviewer finds it.
+
+What reverses this is the mirror of that claim. `report` shows the architect's verdicts on
+proposed requirements, and where those verdicts leave no item unmet across a milestone the gate is
+buying nothing. A later decision removes it on that evidence.
+
+The PM decomposes because the PM already files cards and already writes their acceptance. A new
+intake role would split one job across two prompts, and the architect is the only role this
+decision adds.
+
+Rules 2 and 3 are written as what the architect decides and never decides, so the lane reads
+against `ARCHITECTURE.md`'s layer table rather than beside it. Rule 3 is the load-bearing half: L4
+is the owner's, so what good means for a kind of work stays the owner's however much structure the
+architect holds.

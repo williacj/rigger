@@ -141,17 +141,26 @@ export default {
     engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard' },
     reviewer:      { agent: '.claude/agents/reviewer.md',       provider: 'claude', tier: 'high' },
     pm:            { agent: '.claude/agents/pm.md',             provider: 'claude', tier: 'high' },
+    architect:     { agent: '.claude/agents/architect.md',      provider: 'claude', tier: 'high' },
     spikeEngineer: { agent: '.claude/agents/spike-engineer.md', provider: 'claude', tier: 'high' },
   },
   kinds: {
     // One judge. rounds omitted, so the default of three applies.
-    change:   { select: { labels: ['type:change'] },   maker: 'engineer',      judges: ['reviewer'],
-                provisioning: ['npm-ci'] },
-    // The panel case: two agent judges concurrently, the owner last.
-    spec:     { select: { labels: ['type:spec'] },     maker: 'pm',            judges: ['reviewer', 'engineer', 'owner'],
-                rounds: 2, provisioning: ['npm-ci'] },
-    spike:    { select: { labels: ['type:spike'] },    maker: 'spikeEngineer', judges: ['reviewer'],
-                provisioning: ['npm-ci'] },
+    change:    { select: { labels: ['type:change'] },    maker: 'engineer',      judges: ['reviewer'],
+                 provisioning: ['npm-ci'] },
+    // The panel case: three agent judges concurrently, the owner last. The architect rules on a
+    // proposed requirement here, which is the gate D18 rule 5 puts before the cards are cut.
+    spec:      { select: { labels: ['type:spec'] },      maker: 'pm',            judges: ['reviewer', 'engineer', 'architect', 'owner'],
+                 rounds: 2, provisioning: ['npm-ci'] },
+    // The architect makes this document's own deltas (D18 rule 1).
+    structure: { select: { labels: ['type:structure'] }, maker: 'architect',     judges: ['reviewer', 'owner'],
+                 provisioning: ['npm-ci'] },
+    // Decomposition: the PM cuts larger work into cards (D18 rule 4). A kind no role makes is
+    // never dispatched, so the role that decomposes needs a row of its own.
+    intake:    { select: { labels: ['type:intake'] },    maker: 'pm',            judges: ['reviewer', 'owner'],
+                 provisioning: ['npm-ci'] },
+    spike:     { select: { labels: ['type:spike'] },     maker: 'spikeEngineer', judges: ['reviewer'],
+                 provisioning: ['npm-ci'] },
   },
   provisioning: {
     'npm-ci': { run: 'npm ci', required: true },
