@@ -116,8 +116,8 @@ Then the rules that bind every change in this repository, whatever it touches:
 - **File rules** (`AGENTS.md`, "Any role"). Does every new file meet the `ABOUTME:` rule,
   exemptions and placement included? Does any name describe history rather than what the thing
   does?
-- **Documents own their facts.** Does a document assert something another document owns, rather
-  than referring to it (`AGENTS.md`)?
+- **Documents own their facts.** Does the change satisfy `AGENTS.md`, "Documents own their
+  facts", in every document it touches?
 
 ## The engineering sweep
 

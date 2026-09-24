@@ -11,8 +11,7 @@ declares about the requirement it proves, and the rules on sleeps, deleted tests
 
 `AGENTS.md`'s "When you write code" section requires this loop. This skill is how to run it.
 
-Before you start anything, `npm test` is green. Red means stop: fix it, commit the fix on its
-own, then start the work (`AGENTS.md`, "Before you start").
+`AGENTS.md`, "Before you start", governs the state of the suite before you begin work.
 
 ## The loop
 
@@ -27,13 +26,12 @@ test you have not managed to run yet. Clear it, then go and get the failure you 
 
 **Green.** Write the minimal code that makes it pass, then rerun that same target and watch it
 pass. Minimal is not a style note: anything beyond what the test demands is code no test asked
-for. Put it where `ARCHITECTURE.md` says it lives; a need that fits no extension point is a
-design conversation, not a workaround.
+for. Put it where `ARCHITECTURE.md` says it lives (`AGENTS.md`, "When you write code").
 
 **Refactor.** Improve the code while the suite stays green, rerunning the affected tests after
 each step. Extract rather than copy-paste, by the Rule of Three (`AGENTS.md`, "Any role"). Run
-the whole `npm test` suite before you commit — `AGENTS.md`'s "Before you start" forbids
-committing or pushing with a failing suite, and one focused target passing is not that.
+the whole `npm test` suite before you commit; one focused target passing is not the green suite
+`AGENTS.md`, "Before you start", requires.
 
 Then the next test, and one slice at a time: finish red, green and refactor for one behaviour
 before you write the next test. Never batch the tests and then batch the implementation —
@@ -141,13 +139,12 @@ is a bar you hold yourself to and a judge reads your claim against.
 
 ## A bug fix
 
-Every bug fix starts with the failing test (`AGENTS.md`). Reproduce the bug as a test first,
-watch it fail for the reason you think it fails, and only then fix it. If the test passes before
-you touch the code, you have not reproduced the bug and you do not yet know what it is.
+Reproduce the bug as a test first (`AGENTS.md`, "When you write code"), watch it fail for the
+reason you think it fails, and only then fix it. If the test passes before you touch the code,
+you have not reproduced the bug and you do not yet know what it is.
 
-One hypothesis at a time, and the smallest test that discriminates between it and the next one.
-Root cause only: never stack a second fix on a first that did not work — revert it and test the
-next hypothesis (`AGENTS.md`, "Any role").
+Root cause only (`AGENTS.md`, "Any role"). Where a fix did not work, revert it before you test
+the next hypothesis.
 
 ## Never delete a failing test
 
@@ -157,12 +154,12 @@ assertion until it passes.
 
 ## No sleeps
 
-Tests use injectable clocks and condition-based waits, never a sleep (`AGENTS.md`). A sleep is
-either too short, and the test is flaky, or too long, and the suite is slow — and it is usually
-both on different machines. If a component needs the time, it takes a clock.
+`AGENTS.md`, "When you write code", bars a sleep in a test. A sleep is either too short, and
+the test is flaky, or too long, and the suite is slow — and it is usually both on different
+machines. If a component needs the time, it takes a clock.
 
-Prefer fast and deterministic: fail fast, and log clearly enough that the failure message alone
-says what broke. Never log a secret (`AGENTS.md`).
+Prefer fast and deterministic, and log clearly enough that the failure message alone says what
+broke.
 
 ## What a test declares
 
@@ -233,6 +230,5 @@ still has to protect a concrete behaviour.
 
 ## Spikes
 
-A spike card is exempt from this loop (`AGENTS.md`). Its work is throwaway, lives in the
-gitignored spikes directory, and is never merged. What the spike produces is the report its
-acceptance describes, not the code that got there.
+A spike card is exempt from this loop (`AGENTS.md`, "When you write code"). What the spike
+produces is the report its acceptance describes, not the code that got there.

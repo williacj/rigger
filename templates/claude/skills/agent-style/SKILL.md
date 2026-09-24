@@ -23,8 +23,7 @@ Restating a repo-wide rule in a prompt does not emphasise it. It re-scopes it. T
 as this role's particular duty, and the rule looks narrower than it is. Leaving it out assigns
 nothing, because the prompt's opening keeps the whole of `AGENTS.md` binding.
 
-This is `AGENTS.md`'s "Documents own their facts" applied to prompts: own it, refer to it, or do
-not say it.
+This is `AGENTS.md`'s "Documents own their facts" applied to prompts.
 
 ## The sections
 
@@ -59,9 +58,8 @@ way is a role the prompt has not described.
 
 ## The form
 
-A role prompt is written in the same four rules as the binding documents: one term per concept,
-sentences near 25 words and none past 40, active voice with the actor named, and structure that
-matches the meaning. `.claude/skills/spec-style/` holds them, and the test behind each.
+A role prompt is written in rules 1 through 4 of `.claude/skills/spec-style/`, the same form
+rules as the binding documents. That skill holds each rule and the test behind it.
 
 Write in English rather than in the binding documents' vocabulary. A role reads its prompt on
 dispatch, with nobody to ask. Where a term of art earns its place, the sentence around it says
