@@ -1,5 +1,5 @@
 // ABOUTME: Tests the test-matrix generator: how it reads the requirement register, how it reads
-// ABOUTME: the declarations in the tests, what it renders, and what it refuses.
+// the declarations in the tests, what it renders, and what it refuses.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -432,6 +432,21 @@ test('the matrix holds one row per requirement, naming every test that claims it
   assert.equal(
     rowFor(document, 'R-ONE-2'),
     '| R-ONE-2 | `test/second.test.mjs` the second thing holds |',
+  );
+});
+
+test('the rendered matrix carries its ABOUTME prefix once, on the first line', () => {
+  // `AGENTS.md`'s ABOUTME rule states that the prefix appears once, on the first line, and
+  // that a continuation line carries none. This document is generated and never hand-edited
+  // (`D8`), so the generator is the only place that rule can be kept for it.
+  const document = render([{ id: 'R-ONE-1', checkedBy: 'the test suite' }], []);
+  const header = document.split('\n').slice(0, document.split('\n').indexOf(''));
+
+  assert.match(header[0], /^ABOUTME: \S/, 'the generated matrix opens with no ABOUTME header');
+  assert.equal(
+    header.filter((line) => line.startsWith('ABOUTME:')).length,
+    1,
+    `the matrix header repeats the prefix: ${header.join(' | ')}`,
   );
 });
 
