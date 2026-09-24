@@ -64,8 +64,7 @@ it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map 
 
 ### 5. Own it, refer to it, or cut it
 
-Rule 5 reaches the documents this skill's description names, which is where rules 1 through 4
-reach. `AGENTS.md`'s "Documents own their facts" splits every sentence in them three ways.
+`AGENTS.md`'s "Documents own their facts" splits every sentence three ways.
 
 1. **It states a fact the document owns.** A fact another document owns fails this branch.
 2. **It refers to a fact another document owns.** A passage that names a source and restates what
@@ -73,8 +72,8 @@ reach. `AGENTS.md`'s "Documents own their facts" splits every sentence in them t
 3. **It is cut.** A sentence that owns nothing and refers to nothing is cut. Shortening it is no
    answer to this rule.
 
-A term for a concept is one these documents already use for that concept, or one the sentence
-introducing it defines. A term that is neither fails.
+A term for a concept is one the binding documents already use for that concept, or one the
+sentence introducing it defines. A term that is neither fails.
 
 `AGENTS.md`, under "Write to be acted on", governs how the sentence that survives is written.
 
