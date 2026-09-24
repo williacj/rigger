@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
 import { validate } from '../src/config/validate.mjs';
-import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, sameTree } from '../src/cli/doctor.mjs';
+import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -539,6 +539,37 @@ test('doctor exits zero when every check passes and non-zero when any does not',
     await doctor(against(bad, { gh: RECORDED.ghIn, claude: RECORDED.agentIn })),
   ];
   for (const ran of each) assert.notEqual(ran.code, 0, ran.text);
+});
+
+test('a check that could not be asked does not count as passed, and the status says so', async () => {
+  // The third verdict's effect on the exit code, which nothing here held: the test above fails
+  // each check with `ok: false`, and none failed one with `ok: null`. Measured rather than
+  // argued — counting an unasked check as passed left every test in this file green, so the
+  // behaviour was right and defended by nothing.
+  //
+  // A `not asked` line above a zero exit is the defect the third verdict exists to prevent: a
+  // consumer told Rigger is ready by a run that could not reach two of the tools it asks.
+  const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
+  assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
+
+  const ran = await doctor(against(checked(starter()), { gh: missing, claude: missing }));
+
+  // Two could not be asked and the other two passed, so nothing here failed: whatever makes the
+  // status non-zero can only be the two that were never asked.
+  assert.match(ran.text, /2 of 4 checks passed/, ran.text);
+  assert.equal(
+    checkLines(ran.text).filter((line) => line.includes('could not be run')).length,
+    2,
+    ran.text,
+  );
+  assert.notEqual(ran.code, 0, ran.text);
+
+  // The same rule at the narrowest interface, so what it rests on is legible: three verdicts,
+  // and one of them passes.
+  const one = (ok) => report('/anywhere', [{ name: 'a check', ok, detail: 'why' }]);
+  assert.equal(one(true).code, 0);
+  assert.equal(one(null).code, 1);
+  assert.equal(one(false).code, 1);
 });
 
 test('the whole report is lines, and carries no stack trace', async () => {
