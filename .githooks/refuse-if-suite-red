@@ -1,6 +1,7 @@
 #!/bin/sh
 # ABOUTME: Runs the suite and refuses the git operation that called it when the suite is not
-# green. `AGENTS.md` holds the rule; this is the one place the commit and push hooks enforce it.
+# green. `AGENTS.md` holds the rule; this is the one place the commit, merge and push hooks
+# enforce it.
 
 set -u
 
