@@ -108,7 +108,10 @@ landed uncaught, and a run that never reached a verdict looks exactly like a tes
 reason you wanted. So show all of these, for each mutation, before you say what it proved:
 
 1. **The anchor was there.** The pattern you replaced occurred the number of times you expected.
-   Zero occurrences is a write that changed nothing and a run that reports green.
+   Zero occurrences is a write that changed nothing and a run that reports green. An anchor from
+   an earlier round goes stale when a neighbouring edit rewraps the line it spans, even where the
+   rule it names is unchanged. Resolve its whitespace against the file's bytes, which covers the
+   rewrap and the line ending together.
 2. **The replacement landed.** Read the bytes back off disk rather than trusting the edit, and
    have `git diff` show them.
 3. **The mutant still runs.** The run reached a verdict on the tests you aimed at: it reported
