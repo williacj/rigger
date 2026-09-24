@@ -215,9 +215,10 @@ claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` 
 there, because in each the source is complete and it is the run that stops. That is a question
 about running the module rather than reading it. A wrong claim is a defect; a source-decidable
 refusal in the table is a visible cost of keeping the reader bounded.
-`scripts/build-test-matrix.mjs` states the same set beside the code. The existing parser cases
-live in `test/build-test-matrix.test.mjs`; the added call shapes were measured with the runner
-and recorded in `docs/journal/2026-09-23-1638-119-matrix-refusals.md`.
+`scripts/build-test-matrix.mjs` states the same set beside the code, in the block comment above
+`declarationsIn`. That copy governs where the two disagree, because it is the reader that refuses.
+The existing parser cases live in `test/build-test-matrix.test.mjs`; the added call shapes were
+measured with the runner and recorded in `docs/journal/2026-09-23-1638-119-matrix-refusals.md`.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
