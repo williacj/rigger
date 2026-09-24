@@ -13,6 +13,19 @@
  * `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES` and `GIT_PREFIX`
  * moved none of them, in either call shape this repository spawns git in, and so are left alone.
  * The run is in `docs/journal/2026-09-24-0745-151-the-hook-exported-the-branch-it-was-committing.md`.
+ *
+ * Card #167 took `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES` further, on the
+ * ground that moving none of the six does not by itself settle whether a variable is safe to
+ * inherit. The first does move a surface outside them: set to a second repository's object store,
+ * that repository's objects become readable here, where with nothing set `git cat-file -e` on one
+ * exits 1. The second moves no surface at all in that shape; it bites only on an ancestor of the
+ * directory git runs in, and there it withholds the repository git would have found rather than
+ * naming a different one — measured across a repository nested inside another, so that a redirect
+ * had a second repository to reach. Neither reaches a write: with each set to a throwaway second
+ * repository, that repository is unchanged to the byte after fifteen write shapes. Card #151's
+ * fault was a write to a repository nobody named, so on that test neither is added, and a
+ * variable that widens a read is a divergence this list does not claim to cover. The run is in
+ * `docs/journal/2026-09-24-1720-167-a-read-is-not-a-write.md`.
  */
 export const REDIRECTING = [
   'GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
