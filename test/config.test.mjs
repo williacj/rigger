@@ -334,10 +334,14 @@ test('every kind this repository declares names one maker role and an ordered li
   }
 });
 
+// The stand-in is `adjudicator` because `D18` defers that role and names what returns it, so it
+// is the one name this config is guaranteed not to declare. It held `architect` until this
+// repository staffed the architect, at which point the fixture stopped standing in for anything
+// and the test passed on a config it was no longer describing.
 test('a kind whose maker is no role the config declares is refused, and the refusal names it', () => {
-  const earned = refusal(withKind({ maker: 'architect' }));
+  const earned = refusal(withKind({ maker: 'adjudicator' }));
   assert.match(earned, /`kinds\.change\.maker`/);
-  assert.match(earned, /architect/);
+  assert.match(earned, /adjudicator/);
 });
 
 test('a kind naming more than one maker is refused, because a kind has one maker', () => {
