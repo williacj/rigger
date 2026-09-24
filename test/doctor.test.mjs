@@ -27,8 +27,13 @@ test('doctor refuses the source tree it is running from, and asks nothing before
   // the one that identifies the tree: a check that ran would fail the test rather than quietly
   // passing. Git is exempt because asking it which repository the directory sits in is how the
   // tree gets named, which is the refusal's own work rather than a check.
+  //
+  // It runs under `gitEnvironment()` for the reason production's runner does: this runner stands
+  // in for that one, and a `GIT_WORK_TREE` in the environment this suite was started with would
+  // otherwise make git name a repository elsewhere, so the tree `doctor` refused would not be the
+  // tree it was pointed at and the refusal would never fire.
   const asked = (command, args) => {
-    if (command === 'git') return spawnSync(command, args, { encoding: 'utf8' });
+    if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
     throw new Error(`doctor ran \`${command}\` before refusing`);
   };
 
@@ -258,13 +263,15 @@ function answering(result) {
  * A runner answering a recorded result per command, and letting git through to the real thing.
  *
  * Git is not an authority a check asks: it is how `doctor` names the repository it is looking at,
- * so a fixture repository has to answer for itself.
+ * so a fixture repository has to answer for itself — which is why it runs under
+ * `gitEnvironment()`, exactly as production's runner does. Under an inherited `GIT_WORK_TREE` the
+ * fixture stops answering for itself and `doctor` reports on the repository that variable names.
  */
 function answeringEach(answers) {
   const asked = [];
   const ask = (command, args) => {
     asked.push([command, ...args].join(' '));
-    if (command === 'git') return spawnSync(command, args, { encoding: 'utf8' });
+    if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
     return answers[command];
   };
@@ -339,8 +346,13 @@ test('the agent CLI check answers the `loggedIn` the CLI states, and asks every 
   // The two recorded answers below were measured with Claude Code 2.1.281: signed in it states
   // `loggedIn: true` and exits 0, and pointed at an empty `CLAUDE_CONFIG_DIR` it states
   // `loggedIn: false` and exits 1.
+  //
+  // The command comes out of `AGENT_CLI`, so the source does not name it and cannot rule out a
+  // git. It is asked under `gitEnvironment()` because the check it is compared against asks it
+  // that way, and a relation measured under a different environment from the one production uses
+  // is a relation between two different questions.
   const [command, ...args] = AGENT_CLI.claude;
-  const tool = spawnSync(command, args, { encoding: 'utf8' });
+  const tool = spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
   let stated;
   try {
     stated = JSON.parse(tool.stdout).loggedIn;

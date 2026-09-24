@@ -174,6 +174,25 @@ function everySource() {
   return found.sort((a, b) => a.at.localeCompare(b.at));
 }
 
+/**
+ * What the source says a call spawns, which is what decides whether git can be ruled out.
+ *
+ * A string literal names the command outright, and `process.execPath` names the node binary this
+ * process is running — so in both the source settles it. Anything else is a value the source
+ * cannot see, a parameter or a variable, and a call whose command arrives at run time may be a
+ * git. Reading only the literals is what left `test/doctor.test.mjs`'s runners out of the
+ * enumeration: each spawns git through its `command` parameter, so the literal rule recorded them
+ * as something else and required nothing of them.
+ */
+function spawnedBy(inside) {
+  const [command, next, after] = inside;
+  if (command?.kind === 'string') return command.value === 'git' ? 'git' : 'a command the source names';
+  if (command?.kind === 'word' && command.value === 'process' && next?.value === '.' && after?.value === 'execPath') {
+    return 'a command the source names';
+  }
+  return 'a command decided at run time';
+}
+
 /** Every spawner call in the repository's own code, with what it spawns and what it hands it. */
 function everySpawn() {
   const calls = [];
@@ -184,13 +203,15 @@ function everySpawn() {
       const callee = tokens[i - 1];
       if (open.kind !== 'punct' || open.value !== '(') continue;
       if (callee.kind !== 'word' || !SPAWNERS.has(callee.value)) continue;
+      // A spawner is reached through the name the file imported, so a callee behind a dot is some
+      // other function of that name — `/re/.exec(text)` rather than `node:child_process`'s.
+      if (tokens[i - 2]?.value === '.') continue;
       let end = i + 1;
       while (end < tokens.length && tokens[end].depth > open.depth) end++;
       const inside = tokens.slice(i + 1, end);
-      const command = inside[0];
       calls.push({
         where: `${at}:${open.line}`,
-        spawns: command && command.kind === 'string' && command.value === 'git' ? 'git' : 'something else',
+        spawns: spawnedBy(inside),
         hands: inside.some((token) => token.kind === 'word' && token.value === 'env') ? 'an environment' : 'nothing',
       });
     }
@@ -199,10 +220,17 @@ function everySpawn() {
 }
 
 test('every git this repository spawns is handed an environment the call names', () => {
-  const spawned = everySpawn().filter((call) => call.spawns === 'git');
+  const calls = everySpawn();
+  const git = calls.filter((call) => call.spawns === 'git');
+  const unnamed = calls.filter((call) => call.spawns === 'a command decided at run time');
+
   // The premise: a sweep that matched nothing would report this item green having read nothing.
-  assert.ok(spawned.length >= 13, `the tokenizer found ${spawned.length} git spawns, so it read the wrong thing`);
-  assert.deepEqual(spawned.filter((call) => call.hands === 'nothing'), []);
+  assert.ok(git.length >= 13, `the tokenizer found ${git.length} git spawns, so it read the wrong thing`);
+  // The same premise for the class the literal rule could not see. A rule about an empty set is
+  // one this repository would satisfy by holding no such call, which is not what it holds.
+  assert.ok(unnamed.length >= 4, `the tokenizer found ${unnamed.length} run-time commands, so it read the wrong thing`);
+
+  assert.deepEqual([...git, ...unnamed].filter((call) => call.hands === 'nothing'), []);
 });
 
 test('nothing spawns a process without the import that is the only way to spawn one', () => {
