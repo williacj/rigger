@@ -33,4 +33,17 @@ counts the `rateLimit` query itself and anything else that used the token in the
 `dryRun: true`, GitHub priced the read's three query shapes at 2, 1 and 1 points. A full read
 sends the field query twice, so it costs 5 points. A figure of 0 would have met the item as
 written and told the owner something false. So the PR states all three figures, and the
-measurement method goes back to the card's author.
+measurement method went back to the card's author. The author revised the item to ask for the
+cost GitHub reports for each query, summed.
+
+**A page boundary is not a snapshot.** Items are paged by cursor while the board can change
+between requests, so the same item can come back on two pages. The first round simply
+concatenated the pages. A judge's probe, with one item on both pages, got 102 cards back where
+101 were unique. The read now keeps each item where it first appeared.
+
+**"Recorded" meant two things to two judges.** One judge read it as shaped like `gh`'s answer,
+the other as captured from `gh`. The author ruled for the first reading, and bound it to a
+checkable shape: only the fields the query selects, nested as `gh` returns them. The test forge
+now checks every answer it constructs against the key paths `gh` printed for the same query on
+board 6. That makes the shape a check the suite runs, not a claim the reviewer has to take on
+trust.
