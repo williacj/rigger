@@ -69,6 +69,43 @@ test("the priority field's options read back in the order the board gave them", 
   assert.deepEqual(await fake.operations.readFields(), [{ name: 'Priority', options }]);
 });
 
+test('the priority read hands on each item with its value and whether the declaration names it, the declared order, and the board order', async () => {
+  const fake = createFakeBoard({
+    fields: [{ name: 'Priority', options: ['Urgent', 'Low', 'High', 'Normal'] }],
+    items: [
+      { type: 'issue', number: 1, fieldValues: { Priority: 'Normal' } },
+      { type: 'issue', number: 2, fieldValues: { Priority: 'Urgent' } },
+      { type: 'issue', number: 3 },
+    ],
+  });
+
+  const read = await fake.operations.readPriority({ field: 'Priority', options: ['High', 'Normal', 'Low'] });
+
+  assert.deepEqual(read.items.map((item) => [item.number, item.priority]), [
+    [1, { value: 'Normal', declared: true }],
+    [2, { value: 'Urgent', declared: false }],
+    [3, { value: null, declared: false }],
+  ]);
+  assert.deepEqual(read.declared, ['High', 'Normal', 'Low']);
+  assert.deepEqual(read.options, ['Urgent', 'Low', 'High', 'Normal']);
+});
+
+test('with no priority declared, the priority read hands on no declared order and no value', async () => {
+  const fake = createFakeBoard({ fields: [{ name: 'Priority', options: ['High'] }], items: [{ type: 'issue', number: 1, fieldValues: { Priority: 'High' } }] });
+
+  const read = await fake.operations.readPriority(null);
+
+  assert.deepEqual(read.items.map((item) => [item.number, item.priority]), [[1, null]]);
+  assert.equal(read.declared, null);
+  assert.equal(read.options, null);
+});
+
+test('a declared priority field the fake board does not hold fails the priority read, naming the field', async () => {
+  const fake = createFakeBoard({ fields: [{ name: 'Priority', options: ['High'] }] });
+
+  await assert.rejects(fake.operations.readPriority({ field: 'Urgency', options: ['High'] }), /no field named Urgency/);
+});
+
 test("a draft issue, a pull-request item and another repository's issue read back with their type and repository", async () => {
   // Board 6 holds every one of these beside the repository's own issues, and the adapter that
   // reads it must tell them apart, so the fake has to be able to hold them.

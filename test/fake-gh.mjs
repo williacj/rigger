@@ -162,6 +162,13 @@ const COMMANDS = {
     const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, options: options.map((option) => ({ name: option })) }));
     return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
   },
+  // The priority read's field query: every field with its name and type. The fake board holds
+  // single-select fields only, so each answers as one, with its options.
+  [graphql(boardShape('fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } }'))]: async (board, state, operation) => {
+    onTheBoard(state, operation);
+    const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, dataType: 'SINGLE_SELECT', options: options.map((option) => ({ name: option })) }));
+    return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
+  },
   [graphql(repositoryShape('labels(first: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('labels(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('id'))]: async (board, state, operation) => {

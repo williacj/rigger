@@ -180,8 +180,11 @@ test("each write the real adapter issues through the fake gh appears in the fake
   assert.deepEqual((await model.operations.readItems()).map((item) => item.column), ['Coding', 'Ready']);
 });
 
-/** The tests of #215 (M1-02), the board reads, and of #216 (M1-03), the adapter's sides and runners. */
-const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs'];
+/**
+ * The tests of #215 (M1-02), the board reads, of #216 (M1-03), the adapter's sides and runners, and
+ * of #224 (M1-24), the priority read, whose recorded-answer tests are among the board reads'.
+ */
+const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-priority.test.mjs'];
 
 /**
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
