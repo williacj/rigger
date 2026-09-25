@@ -25,9 +25,10 @@ permission first.
 - **Build the smallest thing that covers today's behaviour.** No machinery for hypothetical
   futures. If you think generality will be needed later, say so and leave it out.
 - **Say "I don't know" when it is true.** Speak up when you are missing something.
-- **Never self-ratify, never review your own work, never merge it.** Proposer, ratifier and
-  reviewer are three people. This holds in an interactive session too: if you did the work,
-  dispatch an independent reviewer rather than reading it back to yourself.
+- **Never self-ratify, never review your own work, and merge your own work only where "Review
+  and merge" permits it.** Proposer, ratifier and reviewer are three people. This holds in an
+  interactive session too: if you did the work, dispatch an independent reviewer rather than
+  reading it back to yourself.
 - **Never delete or rewrite existing work without the owner's permission.** Ask unless you
   added it in this same piece of work, or your change orphaned it.
 - **Finished means finished.** Every piece of work states what done means before it starts, and
@@ -177,6 +178,10 @@ acceptance covered what the card asked, and returns the card to its author rathe
 rewriting it. Its verdict goes in a marker bound to the work it read. From M5 the gate reads
 those markers against the card's judge list, and admits nothing until the consumer's own checks
 have passed too.
+
+Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and never
+otherwise. The permission reaches the merge alone: every verdict in that evidence is another
+role's. `D19` records it and what ends it.
 
 ## Self-hosting
 
