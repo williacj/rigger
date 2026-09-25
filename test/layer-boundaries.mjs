@@ -150,6 +150,12 @@ const IMPORTED = 'import:';
  * its arguments. Null where the callee is anything else.
  */
 function calledFunction(callee) {
+  const { node, mode } = unwrapCall(callee);
+  return isFunction(node) ? { fn: node, mode } : null;
+}
+
+/** The callee a call runs once its comma and its `.call` or `.apply` are taken off, and `mode`. */
+function unwrapCall(callee) {
   let node = callee;
   let mode = 'direct';
   for (;;) {
@@ -159,7 +165,7 @@ function calledFunction(callee) {
       mode = keyOf(node.property, node.computed);
       node = node.object;
     } else {
-      return isFunction(node) ? { fn: node, mode } : null;
+      return { node, mode };
     }
   }
 }
@@ -543,37 +549,87 @@ function parsed(file, source) {
 
   const names = [];
   const strings = [];
+  // The keys an object literal or a class defines, which name a member and read no value. A walk
+  // meets the literal or the class member before its key, so each key is known when it is met.
+  const keys = new Set();
   walk(program, (node) => {
+    if (node.type === 'ObjectExpression') node.properties.forEach((held) => held.type === 'Property' && keys.add(held.key));
+    if (node.type === 'MethodDefinition' || node.type === 'PropertyDefinition') keys.add(node.key);
     if (node.type === 'ImportExpression') {
       const specifier = fixed(node.source);
       dynamic.push({ line: lineOf(node), specifier: specifier ?? null, argument: source.slice(node.source.start, node.source.end) });
     }
-    if (node.type === 'Identifier') names.push({ value: node.name, line: lineOf(node) });
+    const key = keys.has(node);
+    if (node.type === 'Identifier') names.push({ value: node.name, line: lineOf(node), key });
     const value = fixed(node);
-    if (value !== undefined) strings.push({ value, line: lineOf(node) });
+    if (value !== undefined) strings.push({ value, line: lineOf(node), key });
   });
   return { file, program, imports, exported, stars, dynamic, reaches, carries, topLevel, names, strings };
 }
 
 /**
- * The argument expressions a call gives each parameter of a function it calls where it is written,
- * as `[parameter, arguments]` pairs; none where the callee is anything else. An argument after a
- * spread may land at any parameter from the spread's position on, and a rest parameter is left out.
+ * Every function a module defines under a name, keyed by that name: a function declaration, a
+ * named function expression, and a function or arrow bound to a name or a key by a declaration, an
+ * assignment, an object literal or a class member. A method is keyed by its own name.
  */
-function parametersGiven(node) {
+function functionsByName(program) {
+  const named = new Map();
+  const add = (name, fn) => {
+    if (name === undefined || !isFunction(fn) && fn?.type !== 'FunctionDeclaration') return;
+    if (!named.has(name)) named.set(name, []);
+    named.get(name).push(fn);
+  };
+  // A class is called through its constructor, under the class's name or the binding holding it.
+  const constructorOf = (node) => (node?.type === 'ClassExpression' || node?.type === 'ClassDeclaration'
+    ? node.body.body.find((member) => member.kind === 'constructor')?.value : node);
+  walk(program, (node) => {
+    if ((node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression') && node.id) add(node.id.name, node);
+    if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) add(node.id.name, constructorOf(node));
+    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') add(node.id.name, constructorOf(node.init));
+    if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') add(node.left.name, node.right);
+    if (node.type === 'AssignmentExpression' && node.left.type === 'MemberExpression') add(keyOf(node.left.property, node.left.computed), node.right);
+    if (['Property', 'MethodDefinition', 'PropertyDefinition'].includes(node.type)) add(keyOf(node.key, node.computed), node.value);
+  });
+  return named;
+}
+
+/**
+ * The argument expressions a call gives each parameter of a function it runs, as
+ * `[parameter, arguments]` pairs: one called where it is written, or one `named` holds under the
+ * name the callee spells, as a name or as a member's key. None where the callee is anything else.
+ * An argument after a spread may land at any parameter from the spread's position on, and a rest
+ * parameter is left out.
+ */
+function parametersGiven(node, named) {
   const tagged = node.type === 'TaggedTemplateExpression';
-  const called = calledFunction(tagged ? node.tag : node.callee);
-  if (!called) return [];
+  const { node: callee, mode } = unwrapCall(tagged ? node.tag : node.callee);
+  // The functions a callee can be, through the operators Hand-ons step 7 names.
+  const functionsOf = (held) => {
+    switch (held?.type) {
+      case 'ChainExpression': return functionsOf(held.expression);
+      case 'ConditionalExpression': return [...functionsOf(held.consequent), ...functionsOf(held.alternate)];
+      case 'LogicalExpression': return [...functionsOf(held.left), ...functionsOf(held.right)];
+      case 'AwaitExpression': return functionsOf(held.argument);
+      case 'SequenceExpression': return functionsOf(held.expressions.at(-1));
+      case 'Identifier': return named.get(held.name) ?? [];
+      case 'MemberExpression': return named.get(keyOf(held.property, held.computed)) ?? [];
+      default: return isFunction(held) ? [held] : [];
+    }
+  };
+  const fns = functionsOf(callee);
   // A tag's first argument is its strings, which no expression in the source spells.
   let args = tagged ? [null, ...node.quasi.expressions] : node.arguments;
-  if (called.mode === 'call') args = args.slice(1);
-  if (called.mode === 'apply') args = args[1]?.type === 'ArrayExpression' ? args[1].elements : [];
+  if (mode === 'call') args = args.slice(1);
+  if (mode === 'apply') args = args[1]?.type === 'ArrayExpression' ? args[1].elements : [];
   const first = args.findIndex((held) => held?.type === 'SpreadElement');
   const spread = first === -1 ? args.length : first;
-  const after = args.slice(spread).filter((held) => held && held.type !== 'SpreadElement');
-  return called.fn.params
+  // A spread of a list written in place hands on its elements; any other spread's are unknown.
+  const after = args.slice(spread)
+    .flatMap((held) => (held?.type !== 'SpreadElement' ? [held] : held.argument.type === 'ArrayExpression' ? held.argument.elements : []))
+    .filter((held) => held && held.type !== 'SpreadElement');
+  return fns.flatMap((fn) => fn.params
     .map((param, i) => [param, i < spread ? [args[i]] : after])
-    .filter(([param]) => param.type !== 'RestElement');
+    .filter(([param]) => param.type !== 'RestElement'));
 }
 
 /**
@@ -581,12 +637,13 @@ function parametersGiven(node) {
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
  * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
  * reached through an expression whose result can be one of its operands, and a pattern takes it as
- * the value it is given, as its default, or as an argument to a function called where it is
- * written. Any other use of the name `board` passes, so L3's board handle does; a read through an
+ * the value it is given, as its default, or as an argument to a function the call runs: one called
+ * where it is written, or one the module defines under the name the callee spells. Any other use of the name `board` passes, so L3's board handle does; a read through an
  * alias or a computed key is a review finding (the card's Rule 3 item).
  */
 function priorityReads(program) {
   const lines = [];
+  const named = functionsByName(program);
   // An optional chain is the member access it wraps, so `config?.board` is read as `config.board`.
   const unchained = (node) => (node?.type === 'ChainExpression' ? node.expression : node);
   const isBoard = (wrapped) => {
@@ -621,7 +678,7 @@ function priorityReads(program) {
     if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
     if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
     if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
-      for (const [param, given] of parametersGiven(node)) {
+      for (const [param, given] of parametersGiven(node, named)) {
         if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
       }
     }
@@ -823,8 +880,8 @@ export function boundaryReport(tree) {
     }
 
     // A loader the import graph cannot follow binds something nobody can name.
-    for (const { value, line } of [...module.names, ...module.strings]) {
-      if (LOADERS.includes(value)) report(file, line, 'the dynamic-import rule', `it names \`${value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
+    for (const { value, line, key } of [...module.names, ...module.strings]) {
+      if (LOADERS.includes(value) && !key) report(file, line, 'the dynamic-import rule', `it names \`${value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
     }
     const loaded = [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars];
     for (const entry of loaded) {

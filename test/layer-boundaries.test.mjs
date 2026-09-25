@@ -768,6 +768,99 @@ test('rule 3: priority read by a member access from an operand expression holdin
   for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
 });
 
+test('rule 3: a call to a function the module defines by name gives its pattern the value, so board handed to one taking priority fails', () => {
+  const definitions = {
+    'a const arrow': 'const take = ({ priority }) => priority;',
+    'a function declaration': 'function take({ priority }) { return priority; }',
+    'a function expression': 'const take = function ({ priority }) { return priority; };',
+    'a named function expression': 'const take = function taking({ priority }) { return priority; };',
+    'a let assigned later': 'let take;\ntake = ({ priority }) => priority;',
+    'a default in the pattern': 'const take = ({ priority } = {}) => priority;',
+    'a second parameter': 'const take = (first, { priority }) => priority;',
+  };
+  const arguments_ = {
+    'config.board': 'config.board',
+    'config?.board': 'config?.board',
+    "config['board']": "config['board']",
+    '??': 'config.board ?? {}',
+    '||': 'config.board || {}',
+    '&&': 'config && config.board',
+    '? :': 'config ? config.board : {}',
+    'await': 'await config.board',
+    'a comma': '(0, config.board)',
+    'parentheses': '((config.board ?? {}))',
+  };
+  const calls = {
+    'a call': (arg, second) => (second ? `take(0, ${arg})` : `take(${arg})`),
+    '.call': (arg, second) => (second ? `take.call(null, 0, ${arg})` : `take.call(null, ${arg})`),
+    '.apply': (arg, second) => (second ? `take.apply(null, [0, ${arg}])` : `take.apply(null, [${arg}])`),
+    'new': (arg, second) => (second ? `new take(0, ${arg})` : `new take(${arg})`),
+  };
+  const missed = [];
+  for (const [definition, declared] of Object.entries(definitions)) {
+    const second = definition === 'a second parameter';
+    for (const [given, arg] of Object.entries(arguments_)) {
+      for (const [how, call] of Object.entries(calls)) {
+        if (how === 'new' && declared.includes('=>')) continue;
+        const source = `${declared}\nexport async function rank(config) {\n  return ${call(arg, second)};\n}`;
+        const found = messages({ 'src/scheduling/rank.mjs': source });
+        if (!found.some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:'))) missed.push(`${definition}, ${given}, ${how}`);
+      }
+    }
+  }
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
+});
+
+test('rule 3: a method the module defines, called by name, gives its pattern the value', () => {
+  const shapes = [
+    'const ranks = { take({ priority }) { return priority; } };\nexport const rank = (config) => ranks.take(config.board ?? {});',
+    'const ranks = { take: ({ priority }) => priority };\nexport const rank = (config) => ranks.take(config.board);',
+    'class Ranks { static take({ priority }) { return priority; } }\nexport const rank = (config) => Ranks.take(config.board ?? {});',
+    'export class Ranks { take({ priority }) { return priority; } rank(config) { return this.take(config.board); } }',
+    'export class Ranks { take = ({ priority }) => priority; rank(config) { return this.take(config.board ?? {}); } }',
+    'class Take { constructor({ priority }) { this.priority = priority; } }\nexport const rank = (config) => new Take(config.board);',
+    'const Take = class { constructor({ priority }) { this.priority = priority; } };\nexport const rank = (config) => new Take(config.board ?? {});',
+    // The callee reached through an operand, and the argument through a spread of a list.
+    'const take = ({ priority }) => priority;\nexport const rank = (config, ready) => (ready ? take : null)(config.board);',
+    'const take = ({ priority }) => priority;\nexport const rank = (config, other) => (other || take)(config.board ?? {});',
+    'const take = ({ priority }) => priority;\nexport const rank = (config) => take?.(config.board);',
+    'const take = (a, { priority }) => priority;\nexport const rank = (config) => take(...[0, config.board]);',
+    'export const rank = (config) => ((a, { priority }) => priority)(...[0, config.board ?? {}]);',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 3 bars nothing more by name: a function the module defines passes when what it is given is not board, or it takes no priority', () => {
+  const handles = [
+    'const take = ({ priority }) => priority;\nexport const rank = (item) => take(item ?? {});',
+    'function load({ items }) { return items(); }\nexport const pull = (deps) => load(deps.board ?? {});',
+    'const take = (board, { priority }) => [board.items(), priority];\nexport const rank = (deps, item) => take(deps.board, item);',
+    'const take = ({ priority }) => priority;\nexport const rank = (deps) => [take(deps.item), deps.board.items()];',
+    'const ranks = { take({ priority }) { return priority; } };\nexport const rank = (deps, item) => ranks.take(item, deps.board);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('a loader name that only keys an object or a class member passes, and one read as a value fails', () => {
+  const keys = [
+    'export const rules = { require: true };',
+    "export const rules = { 'require': ['acceptance'], mainModule: 1 };",
+    "export const rules = { ['require']: 1 };",
+    'export const rules = { require() { return 1; } };',
+    'export class Rules { require() { return 1; } static mainModule = 1; }',
+  ];
+  for (const source of keys) assert.deepEqual(messages({ 'src/workflow/rules.mjs': source }), [], source);
+  const reads = [
+    'export const rules = { require };',
+    'export const rules = { load: require };',
+    "export const rules = { [require('node:child_process')]: 1 };",
+    'export const rules = (m) => m.require;',
+    "export const rules = (m) => m['mainModule'];",
+    'export const rules = ({ require: load }) => load;',
+  ];
+  for (const source of reads) assertBreaks({ 'src/workflow/rules.mjs': source }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
+});
+
 test('rule 3 bars nothing more: the board handle as a parameter default, a destructured key, a member or an operand passes when no priority is read from it', () => {
   const handles = [
     'export const pull = (deps, board = deps.board) => board.items();',
