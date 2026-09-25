@@ -136,8 +136,8 @@ without the owner's approval. `npm run` lists every script.
 - **Every bug fix starts with the failing test.** Never delete a failing test — raise it with
   the owner.
 - **No sleeps in tests.** Injectable clocks and condition-based waits.
-- **Put code where `ARCHITECTURE.md` says it lives.** A need that fits no extension point is a
-  design conversation, not a workaround.
+- **Put code where `ARCHITECTURE.md` says it lives.** A need that fits no extension point goes
+  to the architect (`D18` rule 2), not into a workaround.
 - **Fail fast, log clearly, never log a secret.**
 
 ## When you write a decision or a requirement
@@ -156,7 +156,7 @@ to guess.
 
 Ask before any of these.
 
-- Any architectural decision, or contradicting a recorded one.
+- Any architectural decision `D18` does not give the architect, or contradicting a recorded one.
 - Restructuring code, or adding backward compatibility.
 - Choosing between approaches where the choice matters.
 - Force-pushing, deleting a branch, or writing to an issue or pull request that is not your
