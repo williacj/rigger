@@ -520,15 +520,6 @@ test('a second declarator in the runners module that holds a write runner is on 
   assert.ok(!found.some((message) => message.includes('`a`')), found.join('\n'));
 });
 
-test('a side with no module, or no runner, is refused rather than read as clean', () => {
-  const tree = new Map(Object.entries(ADAPTER));
-  tree.delete('src/substrate/forge/item-write.mjs');
-  assert.throws(() => boundaryReport(tree), /item-write/);
-  const renamed = new Map(Object.entries(ADAPTER));
-  renamed.set('src/substrate/forge/runners.mjs', ADAPTER['src/substrate/forge/runners.mjs'].replace('itemWriteRunner(args) {', 'moveRunner(args) {'));
-  assert.throws(() => boundaryReport(renamed), /itemWriteRunner/);
-});
-
 /** Asserts that `modules` breaks some rule in `file`, the file named first in the message. */
 function assertRefused(modules, file, label = file) {
   const found = messages(modules);
@@ -886,6 +877,67 @@ test('rule 3 by name reaches through scope: a call in an inner scope, before a h
   for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
 });
 
+test('rule 3 by receiver: a method on an instance, a base class, super or a nested object the module defines still fails', () => {
+  const shapes = [
+    'class Items { take({ priority }) { return priority; } }\nconst items = new Items();\nexport const rank = (config) => items.take(config.board ?? {});',
+    'class Items { take({ priority }) { return priority; } }\nexport const rank = (config) => new Items().take(config.board);',
+    'class Ranks { take({ priority }) { return priority; } }\nexport const rank = (config) => new Ranks().take(config.board ?? {});',
+    'class Ranks { take({ priority }) { return priority; } }\nexport const rank = (config) => { const ranks = new Ranks(); return ranks.take(config.board ?? {}); };',
+    'class A { take({ priority }) { return priority; } }\nexport class B extends A { rank(c) { return super.take(c.board); } }',
+    'class A { take({ priority }) { return priority; } }\nexport class B extends A { rank(c) { return this.take(c.board); } }',
+    'class A { take({ priority }) { return priority; } }\nclass B extends A { }\nexport const rank = (c) => new B().take(c.board ?? {});',
+    'class A { static take({ priority }) { return priority; } }\nclass B extends A { }\nexport const rank = (c) => B.take(c.board);',
+    'class A { static take({ priority }) { return priority; } }\nexport class B extends A { static rank(c) { return super.take(c.board); } }',
+    'const ranks = { inner: { take: ({ priority }) => priority } };\nexport const rank = (config) => ranks.inner.take(config.board);',
+    'const ranks = { inner: { take({ priority }) { return priority; } } };\nexport const rank = (config) => ranks.inner.take(config.board ?? {});',
+    'class Items { take = ({ priority }) => priority; }\nexport const rank = (config) => new Items().take(config.board);',
+    'class Items { constructor() { this.take = ({ priority }) => priority; } }\nexport const rank = (config) => new Items().take(config.board);',
+    // A base class's this may be a subclass the module defines, whose override then runs.
+    'class A { take(b) { return b; } rank(c) { return this.take(c.board); } }\nexport class B extends A { take({ priority }) { return priority; } }',
+    // A replacement the reader cannot place before the call keeps what it replaces.
+    'const queue = { take: ({ priority }) => priority };\nexport const pull = (deps) => queue.take(deps.board);\nqueue.take = (board) => board.items();',
+    'const queue = { take: ({ priority }) => priority };\nif (Math.random() > 1) queue.take = (board) => board.items();\nexport const pull = (deps) => queue.take(deps.board);',
+    'const queue = { take: (board) => board.items() };\nqueue.take = ({ priority }) => priority;\nexport const pull = (deps) => queue.take(deps.board);',
+    'let take = ({ priority }) => priority;\nexport function pull(deps) { return take(deps.board); }\ntake = (board) => board.items();',
+    'let take = ({ priority }) => priority;\nfunction reset() { take = (board) => board.items(); }\nexport const pull = (deps) => [reset, take(deps.board)];',
+    'let take = (board) => board.items();\nfunction later() { take = ({ priority }) => priority; }\nexport const pull = (deps) => [later, take(deps.board)];',
+    'let take = ({ priority }) => priority;\ntake ??= (board) => board.items();\nexport const pull = (deps) => take(deps.board);',
+    // A hoisted declaration may run before the replacement, and a function called later may
+    // restore what the replacement overwrote, so neither lets the replacement drop a definition.
+    'const queue = { take: ({ priority }) => priority };\nqueue.take = (board) => board.items();\nexport function pull(deps) { return queue.take(deps.board); }',
+    'let take = (board) => board.items();\nfunction reset() { take = ({ priority }) => priority; }\ntake = (board) => board.items();\nexport const pull = (deps) => [reset, take(deps.board)];',
+    // A class or a function exported as the default with no name of its own.
+    'export default class { take({ priority }) { return priority; } rank(c) { return this.take(c.board); } }',
+    'export default function ({ priority } = config.board) { return priority; }',
+    // A chain of classes that extends itself, which the reader must not follow for ever.
+    'class A extends B { take({ priority }) { return priority; } }\nclass B extends A { }\nexport const rank = (c) => new A().take(c.board);',
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 by receiver bars nothing more: a method the module replaced before the call, or an instance of another class, passes', () => {
+  const handles = [
+    'const queue = { take: ({ priority }) => priority };\nqueue.take = (board) => board.items();\nexport const pull = (deps) => queue.take(deps.board);',
+    'let take = ({ priority }) => priority;\ntake = (board) => board.items();\nexport const pull = (deps) => take(deps.board);',
+    'export const pull = (deps) => { let take = ({ priority }) => priority; take = (board) => board.items(); return take(deps.board); };',
+    'export const pull = (deps) => { const queue = { take: ({ priority }) => priority }; queue.take = (board) => board.items(); return queue.take(deps.board); };',
+    'const queue = { take: ({ priority }) => priority };\nif (Math.random() > 1) { queue.take = (board) => board.items(); queue.take(Math.random); }\nexport const pull = (deps) => [queue, deps.board];',
+    'class Items { take({ priority }) { return priority; } }\nclass Queue { take(board) { return board.items(); } }\nexport const pull = (deps) => [Items, new Queue().take(deps.board)];',
+    'class Items { take({ priority }) { return priority; } }\nclass Queue { take(board) { return board.items(); } }\nconst queue = new Queue();\nexport const pull = (deps) => [Items, queue.take(deps.board)];',
+    'class A { take({ priority }) { return priority; } }\nexport class B extends A { take(board) { return board.items(); } run(deps) { return this.take(deps.board); } }',
+    'class A { take({ priority }) { return priority; } }\nclass B extends A { take(board) { return board.items(); } }\nexport const pull = (deps) => new B().take(deps.board);',
+    'class A { take(board) { return board.items(); } }\nexport class B extends A { take({ priority }) { return priority; } run(deps) { return super.take(deps.board); } }',
+    'const ranks = { inner: { take: ({ priority }) => priority }, outer: { take: (board) => board.items() } };\nexport const pull = (deps) => ranks.outer.take(deps.board);',
+    'class Items { static take({ priority }) { return priority; } }\nexport const pull = (deps) => new Items().take(deps.board);',
+    'class Items { take({ priority }) { return priority; } }\nexport const pull = (deps) => Items.take(deps.board);',
+    'export default class { take(board) { return board.items(); } run(deps) { return this.take(deps.board); } }',
+    'export default function (deps) { return deps.board.items(); }',
+    'class A extends B { }\nclass B extends A { }\nexport const pull = (deps) => new A().take(deps.board);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
 test('a computed key that reads a loader fails, as a read anywhere else does', () => {
   assertBreaks({ 'src/workflow/rules.mjs': 'export const rules = { [require]: 1 };' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
   assertBreaks({ 'src/workflow/rules.mjs': 'export class Rules { [mainModule] = 1; }' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
@@ -925,4 +977,13 @@ test('rule 3 bars nothing more: the board handle as a parameter default, a destr
     'export const pull = (deps) => { try { return deps.board.items(); } catch ({ board = deps.board }) { return board; } };',
   ];
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('a side with no module, or no runner, is refused rather than read as clean', () => {
+  const tree = new Map(Object.entries(ADAPTER));
+  tree.delete('src/substrate/forge/item-write.mjs');
+  assert.throws(() => boundaryReport(tree), /item-write/);
+  const renamed = new Map(Object.entries(ADAPTER));
+  renamed.set('src/substrate/forge/runners.mjs', ADAPTER['src/substrate/forge/runners.mjs'].replace('itemWriteRunner(args) {', 'moveRunner(args) {'));
+  assert.throws(() => boundaryReport(renamed), /itemWriteRunner/);
 });

@@ -59,17 +59,48 @@ items by their `priority`. So a module holding an item helper `take({ priority }
 unrelated `take(deps.board)`, or beside `deps.queue.take(deps.board)`, is the ordinary shape. It
 failed Rule 3 without reading anything from the board.
 
-**The reader now resolves a callee the way the language does.** It builds the module's lexical
-scopes, with hoisting and shadowing:
+**The second fix followed scope but dropped receivers, and that was wrong too.** It resolved a
+name the way the language does, but it linked a member call only for a receiver that was a bare
+name bound to an object literal, or for `this`. So a method called on an instance, as in
+`new Items().take(config.board)`, on `super`, on an inherited `this`, or on a nested object
+passed again. It also kept a method after the module had replaced it.
+
+**The reader now follows values, not spellings.** The one rule, which came from the coordinator,
+is this: a call resolves to every definition that can reach it, and only those.
+
+The reader first builds the module's lexical scopes, with hoisting and shadowing:
 - a `var` belongs to its function, and a function declaration to its block;
 - a parameter, a catch parameter, an import and a loop variable shadow the names above them.
 
-A name then resolves to the one binding its scope reaches. That binding runs whatever function
-or class it was declared or assigned. A member call runs a method only in two cases: where the
-receiver is a name bound to an object literal or a class the module defines, or where the
-receiver is `this` inside that object's or class's own method or field. A class's static side
-and its instance side are kept apart. A receiver the module does not define, such as
-`deps.queue`, runs nothing the reader can see.
+A name resolves to the one binding its scope reaches. That binding holds whatever each of its
+definitions gives it. A value is one of four things:
+- a function;
+- a class;
+- an instance, which a `new` builds from a class;
+- an object literal.
+
+A member read takes the member from each value the receiver can hold, and falls back to the class
+extended. `this` holds its own object, or its class together with every subclass the module
+defines, because a subclass's instance can run a base class's method and so meet the subclass's
+override. `super` holds the class extended.
+
+**What the reader drops.** It drops a definition only where an unconditional replacement
+overwrote it first. The replacement has to be an assignment statement written after the
+definition, in the same function, and the call has to follow it in the same block. No hoisted
+function declaration may stand between that block and the call. Anywhere the reader cannot tell
+which definition runs, it keeps them all and fails closed. That covers a conditional or
+logical-assignment replacement, a replacement written after the call, and one inside a function
+that may run later. It also covers a call inside a function declaration, which could run before
+the replacement.
+
+**Where values run out.** A parameter, an import, a global and a call's result hold nothing the
+reader can see. So a receiver the module does not define, such as `deps.queue`, runs nothing.
+
+**A crash this card met in #274's reader.** `holdings` read `node.id.name` from every function and
+class declaration. So a module with an anonymous `export default class` or `export default
+function` was refused as unreadable. The test did fail closed, but under the wrong rule, and a
+Rule 3 item needs the failure to name Rule 3. It now skips the name a default export does not
+have. The export's value was always held under the default binding.
 
 **What the card left where it was.** Two shapes outside its items' words stay missed, and both
 are in #213's review-finding class. One is a default in a `for…of` head's assignment pattern,
@@ -78,10 +109,13 @@ which is a loop variable. The other is a value thrown and caught in the same `tr
 Rule 3 has five misses of its own, each outside its items' words:
 - **A function imported from another module:** the items speak of a pattern in the module under
   `src/scheduling/`.
-- **A method of an object reached through a member,** such as `a.b.take(config.board)`: its
-  receiver is not a name the module binds.
 - **A callback:** a function passed to another that runs it, as in `[config.board].map(take)`.
-- **An alias of the function:** `const t = take; t(config.board)`. It is an alias read, which the
-  card leaves to review.
+- **A value a call returns:** `make().take(config.board)`, where `make` returns an object whose
+  `take` reads `priority`. A call's result holds nothing the reader can see.
+- **A function destructured from an object:** `const { t } = { t: take }; t(config.board)`. Only
+  a name bound directly holds what it is given.
 - **A pattern given `board` inside a list:** `(([{ priority }]) => …)([config.board])`. A list
   literal is step 6, and the item names step 7's operators.
+
+The reader now follows a plain alias, such as `const t = take`, and a nested object, such as
+`a.b.take(...)`. So neither of those is a miss any longer.
