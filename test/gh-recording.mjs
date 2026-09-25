@@ -21,24 +21,24 @@ export const readRunner = (args, options) => {
   return read(args, options);
 };
 
-/** The schema-write runner, recording each request a side hands it. */
-export const schemaWriteRunner = (args, options) => {
-  record(args);
-  return schemaWrite(args, options);
-};
-
 /**
- * The item-write runner, recording each request it sends: the move, and the runner's own read of
- * which field holds the columns, which it sends itself and hands no other runner.
+ * A write runner recording each request it sends: the write, and the runner's own read of what it
+ * checks the write against, which it sends itself and hands no other runner.
  */
-export const itemWriteRunner = (args, options = {}) => {
+const recordingSends = (runner) => (args, options = {}) => {
   const { send } = options;
   const recorded = send && ((command, sent) => {
     record(sent);
     return send(command, sent);
   });
-  return itemWrite(args, { ...options, send: recorded });
+  return runner(args, { ...options, send: recorded });
 };
+
+/** The schema-write runner, recording each write and its read of the options an options write names. */
+export const schemaWriteRunner = recordingSends(schemaWrite);
+
+/** The item-write runner, recording each move and its read of which field holds the columns. */
+export const itemWriteRunner = recordingSends(itemWrite);
 
 // Run as `node --import gh-recording.mjs <test file> <record path>`. `node --test` also runs this
 // file, as it runs every module under test/, and names no record path, so it records nothing.

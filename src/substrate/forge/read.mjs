@@ -77,10 +77,11 @@ function everyPage(operation, board, send, query, connectionOf, addressed = '') 
 
 /**
  * The board numbered `board.project` among the boards of its owner: its ID, and the ID and
- * options of its field holding the columns, each option as `{ id, name }` in board order.
+ * options of its field holding the columns, each option as `{ id, name, color, description }` in
+ * board order, which is all a write adding an option has to send back of it.
  */
 export function boardOf(operation, board, send) {
-  const query = boardQuery(operation, board, `id field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id options { id name } } }`);
+  const query = boardQuery(operation, board, `id field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id options { id name color description } } }`);
   const project = asked(operation, board, query, send, asking(board))?.repositoryOwner?.projectV2;
   if (!project) fail(operation, board, `${asking(board)}gh answered no such board`);
   if (!project.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);

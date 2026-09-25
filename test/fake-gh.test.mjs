@@ -168,6 +168,7 @@ test("each write the real adapter issues through the fake gh appears in the fake
   await onPath(fake, async () => {
     await itemWriteSide(BOARD).moveItem('item-1', 'Coding');
     await schemaWriteSide(BOARD).createField('Priority', ['High', 'Low']);
+    await schemaWriteSide(BOARD).createColumn('Owner');
     await schemaWriteSide(BOARD).createLabel('type:change');
   });
 
@@ -175,16 +176,85 @@ test("each write the real adapter issues through the fake gh appears in the fake
   assert.deepEqual(model.writes(), [
     { operation: 'moveItem', args: ['item-1', 'Coding'] },
     { operation: 'createField', args: ['Priority', ['High', 'Low']] },
+    { operation: 'createColumn', args: ['Owner'] },
     { operation: 'createLabel', args: ['type:change'] },
   ]);
   assert.deepEqual((await model.operations.readItems()).map((item) => item.column), ['Coding', 'Ready']);
+  assert.deepEqual(await model.operations.readColumns(), ['Ready', 'Coding', 'Owner']);
+});
+
+test('adding a column through the fake gh keeps every card in its column, and a card can then be moved to the new one', async () => {
+  const fake = installed({
+    columns: ['Ready', 'Coding', 'Review'],
+    items: [
+      { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'One', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Two', column: 'Coding' },
+      { type: 'issue', repository: 'williacj/rigger', number: 216, title: 'Three', column: 'Review' },
+    ],
+  });
+
+  const { before, after } = await onPath(fake, async () => {
+    const read = async () => (await readSide(BOARD).readItems()).map(({ number, column }) => [number, column]);
+    const held = await read();
+    await schemaWriteSide(BOARD).createColumn('Owner');
+    await itemWriteSide(BOARD).moveItem('item-3', 'Owner');
+    return { before: held, after: await read() };
+  });
+
+  assert.deepEqual(before, [[214, 'Ready'], [215, 'Coding'], [216, 'Review']]);
+  assert.deepEqual(after, [[214, 'Ready'], [215, 'Coding'], [216, 'Owner']]);
+});
+
+test('the fake gh does not model an options write that leaves out a held option or its id, and changes nothing', () => {
+  // The schema-write runner refuses these before they are sent, so a real adapter never sends
+  // one. Way C cleared every item's column on GitHub, which the fake board has no way to hold, so
+  // the fake gh fails rather than answer as if the write were harmless.
+  const fake = installed({ columns: ['Ready', 'Coding'] });
+  const wayC = 'mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_Status", singleSelectOptions: [{name: "Ready", color: GRAY, description: ""}, {name: "Coding", color: GRAY, description: ""}, {name: "Owner", color: GRAY, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }';
+
+  const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${wayC}`], { encoding: 'utf8', env: gitEnvironment() });
+
+  assert.notEqual(said.status, 0);
+  assert.match(said.stderr, /does not model/);
+  assert.equal(said.stdout, '');
+});
+
+test('the fake gh does not model an options write that changes a held option\'s name, colour or description, or adds none', async () => {
+  // Way B echoes every held option as the field holds it, which the fake answers as the neutral
+  // grey with no description, and adds one. Anything else would change the board in a way the
+  // fake board cannot hold, so the fake gh fails rather than answer it as a harmless add.
+  const fake = installed({ columns: ['Ready', 'Coding'] });
+  const update = (ready) => `mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_Status", singleSelectOptions: [${ready}, {id: "option-1", name: "Coding", color: GRAY, description: ""}, {name: "Owner", color: GRAY, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
+  const changed = [
+    update('{id: "option-0", name: "Queued", color: GRAY, description: ""}'),
+    update('{id: "option-0", name: "Ready", color: RED, description: ""}'),
+    update('{id: "option-0", name: "Ready", color: GRAY, description: "Waiting"}'),
+    update('{id: "option-0", name: "Ready", color: GRAY, description: ""}').replace(', {name: "Owner", color: GRAY, description: ""}', ''),
+  ];
+  // The way B request itself, which differs from each above only in what they change, is answered.
+  const wayB = update('{id: "option-0", name: "Ready", color: GRAY, description: ""}');
+
+  for (const document of changed) {
+    assert.notEqual(document, wayB);
+    const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${document}`], { encoding: 'utf8', env: gitEnvironment() });
+    assert.notEqual(said.status, 0, document);
+    assert.match(said.stderr, /does not model/);
+    assert.equal(said.stdout, '');
+  }
+  assert.deepEqual(await (await fake.model()).operations.readColumns(), ['Ready', 'Coding']);
+
+  const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${wayB}`], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(said.status, 0, said.stderr);
+  assert.deepEqual(await (await fake.model()).operations.readColumns(), ['Ready', 'Coding', 'Owner']);
 });
 
 /**
- * The tests of #215 (M1-02), the board reads, of #216 (M1-03), the adapter's sides and runners, and
- * of #224 (M1-24), the priority read, whose recorded-answer tests are among the board reads'.
+ * The tests of #215 (M1-02), the board reads; of #216 (M1-03), the adapter's sides and runners;
+ * of #284, the board each operation addresses; of #217 (M1-29), adding a column, which are among
+ * the three before it; and of #224 (M1-24), the priority read, whose recorded-answer tests are
+ * among the board reads'.
  */
-const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-priority.test.mjs'];
+const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-board-owner.test.mjs', 'forge-priority.test.mjs'];
 
 /**
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
