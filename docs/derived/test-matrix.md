@@ -49,7 +49,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-8 | **gap** |
 | R-SCHED-9 | **gap** |
 | R-SCHED-10 | `test/config.test.mjs` a declaration Rigger does not offer is refused wherever it sits, and the refusal names it<br>`test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions<br>`test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
-| R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config |
+| R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config<br>`test/next-action.test.mjs` a ready card carrying the declared epic label and type:change is ignored under this repository config, not pulled and not refused |
 | R-SCHED-12 | `test/next-action.test.mjs` a ready card two kinds select and the form check admits is refused with a reason naming both kinds<br>`test/next-action.test.mjs` a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds |
 | R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |

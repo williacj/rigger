@@ -79,6 +79,12 @@ test('a ready card labelled type:epic is ignored under this repository config', 
   assert.deepEqual(nextAction(card(13, ['type:epic']), config.kinds), { action: 'ignore' });
 });
 
+// proves R-SCHED-11
+test('a ready card carrying the declared epic label and type:change is ignored under this repository config, not pulled and not refused', () => {
+  const given = card(19, ['type:epic', 'type:change']);
+  assert.deepEqual(nextAction(given, config.kinds, config.epicLabel), { action: 'ignore' });
+});
+
 test('the body of issue #182, labelled type:change, is dispatched under the change kind', () => {
   const issue = JSON.parse(readFileSync(new URL('./fixtures/issue-182.json', import.meta.url), 'utf8'));
   assert.equal(issue.number, 182);
