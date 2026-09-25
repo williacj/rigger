@@ -53,7 +53,7 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
-| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
+| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended 2026-09-25. |
 | D17 | A requirement older than this decision is a counted gap | Ratified |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Ratified. Amended 2026-09-24. |
@@ -444,13 +444,13 @@ outgrown. On that evidence a later decision withdraws the admission, and the pro
 
 ## D16 — Code asks the tool that owns the fact, and says where it can disagree
 
-**Status:** Ratified.
+**Status:** Ratified. Amended 2026-09-25.
 
 ### Rule
 
 1. A tool or command outside Rigger is an authority for a fact it owns, and this entry binds that
    class alone. An authority decides the fact it owns, and Rigger's code never decides it instead.
-   `npm test` is `node --test`, so what counts as a test is that command's answer rather than a
+   `npm test` runs `node --test`, so what counts as a test is that command's answer rather than a
    list of spellings a script thought of.
 2. Code carrying a copy of an authority's answer — a pattern, a threshold, a list — ties that copy
    to the authority with a test that asks it. The copy is never what decides.
