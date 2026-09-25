@@ -48,6 +48,15 @@ test('a ready card no kind selects and that has no acceptance is ignored, not re
   assert.deepEqual(nextAction(card(11, [], 'Context, and no acceptance.'), KINDS), { action: 'ignore' });
 });
 
+test('a ready card two kinds select and the form check admits is refused with a reason naming both kinds', () => {
+  const given = card(16, ['type:spec', 'type:change']);
+  assert.deepEqual(nextAction(given, KINDS), {
+    action: 'refuse',
+    card: 16,
+    reason: 'selected by more than one kind: change, spec',
+  });
+});
+
 test('a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds', () => {
   const given = card(12, ['type:spec', 'type:change'], 'Context, and no acceptance.');
   assert.deepEqual(nextAction(given, KINDS), {
