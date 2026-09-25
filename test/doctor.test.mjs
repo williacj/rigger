@@ -664,11 +664,10 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
 
 test('the command runs the checks in the repository it was called in, from outside that repository', () => {
   // The wiring test: the real bin, the real arguments, a real repository, and every authority
-  // asked for real but the forge. `gh` is a recording stand-in, declared as the test's stand-in
-  // and first on the child's path, because the installed one asks github.com (#276). Under the
-  // test runner the forge runners spawn no other `gh`, so a child that lost this path fails
-  // rather than reaching the installed one. That the stand-in was asked is what shows the forge
-  // check reached `gh` through the bin at all.
+  // asked for real but the forge. `gh` is a recording stand-in first on the child's path, ahead of
+  // the refusing `gh` `npm test` puts first (`test/suite.sh`), because the installed one asks
+  // github.com (#276). A child that lost this path reaches the refusing one, which fails the run.
+  // That the stand-in was asked is what shows the forge check reached `gh` through the bin at all.
   //
   // The defects it catch are `doctor` still answering `not yet implemented`, a
   // verb wired to something that reports nothing, and the surface never awaiting an answer that
@@ -682,7 +681,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
 
   const gh = stubGh(RECORDED.ghIn);
-  const env = gh.declared({ ...process.env });
+  const env = { ...process.env, PATH: gh.first() };
 
   const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], { cwd: clone, encoding: 'utf8', env });
 

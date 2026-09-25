@@ -25,7 +25,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "sh test/suite.sh",
     "budget:package": "node scripts/package-budget.mjs",
     "budget:instructions": "node scripts/instruction-budget.mjs",
     "lint:spec-style": "node scripts/spec-style-lint.mjs",

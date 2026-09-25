@@ -1,11 +1,8 @@
-// ABOUTME: A recording stand-in for the `gh` executable, for a test that has to put one on a path,
-// and the environment that declares it as the one `gh` Rigger may spawn under the test runner.
+// ABOUTME: A recording stand-in for the `gh` executable, for a test that has to put one on a path.
 
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-
-import { STAND_IN } from '../src/substrate/forge/runners.mjs';
 
 /**
  * A directory holding an executable named `gh` that records every call it receives and answers
@@ -33,16 +30,13 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   ].join('\n');
   writeFileSync(join(dir, 'gh'), script);
   chmodSync(join(dir, 'gh'), 0o755);
-  const first = (path = process.env.PATH) => `${dir}${delimiter}${path}`;
   return {
     dir,
-    /** `path` with this stub's directory first on it. */
-    first,
     /**
-     * `env` with this stub first on its path and declared as the stand-in, which is the one `gh`
-     * the forge runners spawn under the test runner, and only where the path finds it.
+     * `path` with this stub's directory first on it, ahead of the refusing `gh` `npm test` puts
+     * first on the path this suite runs under (`test/suite.sh`).
      */
-    declared: (env = process.env) => ({ ...env, PATH: first(env.PATH), [STAND_IN]: join(dir, 'gh') }),
+    first: (path = process.env.PATH) => `${dir}${delimiter}${path}`,
     /** Every call the stub received, oldest first. */
     calls: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []),
   };

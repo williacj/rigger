@@ -12,7 +12,6 @@ import { fileURLToPath } from 'node:url';
 import { ANSWERED, commandOf, installFakeGh } from './fake-gh.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
-import { STAND_IN } from '../src/substrate/forge/runners.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
@@ -27,22 +26,14 @@ const installed = (board = {}) => installFakeGh(mkdtempSync(join(tmpdir(), 'rigg
 /**
  * Runs `use` with the fake `gh`'s directory first on `PATH`, as ruling 1 (U9) places it, so the
  * forge runners' own spawn of `gh` reaches it, and puts `PATH` back after.
- *
- * The fake is also declared as this test's stand-in, because under the test runner the forge
- * runners spawn no `gh` but a declared stand-in the path finds (#276). The declaration selects
- * nothing: the runners still spawn whatever `gh` the path finds, and refuse where that is not it.
  */
 async function onPath(fake, use) {
-  const held = { PATH: process.env.PATH, [STAND_IN]: process.env[STAND_IN] };
-  process.env.PATH = `${dirname(fake.gh)}${delimiter}${held.PATH}`;
-  process.env[STAND_IN] = fake.gh;
+  const held = process.env.PATH;
+  process.env.PATH = `${dirname(fake.gh)}${delimiter}${held}`;
   try {
     return await use();
   } finally {
-    for (const [name, value] of Object.entries(held)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
+    process.env.PATH = held;
   }
 }
 
@@ -198,13 +189,9 @@ const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-r
  */
 function commandsIssuedBy(file) {
   const into = join(mkdtempSync(join(tmpdir(), 'rigger-gh-recording-')), 'requests.json');
-  // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` as `child-v8` reports to
-  // this run's runner instead, in a form only that runner reads. The variable is kept, with a
-  // value the runner does not read, because it is also what keeps the forge runners from spawning
-  // any `gh` but a declared stand-in (#276), and the files recorded are tests. Measured with Node
-  // 26.5.0 on 2026-09-25: a file run by `node --test-reporter=tap` with `NODE_TEST_CONTEXT=x`
-  // prints its own TAP report.
-  const env = { ...gitEnvironment(), NODE_TEST_CONTEXT: 'rigger-gh-recording' };
+  // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` reports to this run's
+  // runner instead, in a form only that runner reads.
+  const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', join(HERE, file), into], {
     encoding: 'utf8',
     env,

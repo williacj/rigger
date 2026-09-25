@@ -2,8 +2,6 @@
 // operation of its own side and refuses everything else by name before anything is sent.
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
 
 import { gitEnvironment } from '../git-environment.mjs';
 import { literal, parseDocument } from './graphql.mjs';
@@ -23,52 +21,6 @@ const plainly = (command, args) => spawnSync(command, args, { encoding: 'utf8', 
 
 /** Every command a runner sends is this one (`R-SAFE-2`). */
 const FORGE = 'gh';
-
-/** The variable naming the stand-in `gh` a test declared, by its path. */
-export const STAND_IN = 'RIGGER_GH_STAND_IN';
-
-/**
- * The executable `command` names on `path`, as a spawn would find it, or null where none is. An
- * empty entry is the working directory to a spawn, so it is searched as that.
- */
-function found(command, path = '') {
-  for (const dir of path.split(delimiter)) {
-    try {
-      accessSync(join(dir || '.', command), constants.X_OK);
-      return join(dir || '.', command);
-    } catch {
-      // Not here, so the next directory is where a spawn would look.
-    }
-  }
-  return null;
-}
-
-/**
- * The spawn a runner makes when its caller hands it no stand-in: `gh`, except under the test
- * runner, where it is only the stand-in the test declared, and only where the path finds it.
- * Anything else throws, and nothing is sent.
- *
- * A test that failed to pass its stand-in through would otherwise reach the live forge with the
- * owner's credentials (#276). A test running Rigger in a child process cannot hand it a stand-in,
- * so it declares one in `STAND_IN` and puts it first on the child's path. A child that lost that
- * path finds some other `gh`, and fails rather than running it.
- *
- * `node --test` owns whether a process is under it, and marks each test file's process with
- * `NODE_TEST_CONTEXT`, which every child inherits (`D16` rule 1). Where that mark can disagree
- * with the runner (`D16` rule 3), measured with Node 26.5.0 on 2026-09-25: `node --test` sets
- * `child-v8`; `node --test --test-isolation=none` sets none and passes `--test` in `execArgv`;
- * a test file run directly by `node` has none. Under the last two this spawns `gh` as outside a
- * test, and #276 leaves both outside the suite `npm test` runs.
- */
-function spawned(command, args) {
-  if (process.env.NODE_TEST_CONTEXT !== undefined) {
-    const declared = process.env[STAND_IN];
-    if (!declared || found(command, process.env.PATH) !== declared) {
-      throw new Error(`the forge runners spawn no \`${command}\` under the test runner but the stand-in a test declared, and ${spelled(args)} was handed no stand-in to send it`);
-    }
-  }
-  return plainly(command, args);
-}
 
 /** Throws the refusal every runner gives: which runner, what it refused, and that nothing went. */
 function refuse(runner, what) {
@@ -151,7 +103,7 @@ function queryOf(runner, args, rest) {
  *
  * `send` stands in for the spawn in tests, and is handed what the runner admitted.
  */
-export function readRunner(args, { send = spawned } = {}) {
+export function readRunner(args, { send = plainly } = {}) {
   const [subcommand, endpoint, ...rest] = args;
   if (subcommand === 'api' && endpoint === 'graphql') {
     const operation = operationsOf('read', queryOf('read', args, rest));
@@ -240,7 +192,7 @@ const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel']);
  * Sends one write to the board's fields or the repository's labels, and refuses any other
  * request, including one on its allowlist whose arguments name a board item.
  */
-export function schemaWriteRunner(args, { send = spawned } = {}) {
+export function schemaWriteRunner(args, { send = plainly } = {}) {
   const field = mutationOf('schema-write', args);
   const items = argumentNames(field.arguments).filter((name) => ITEM_ARGUMENTS.has(name));
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
@@ -304,7 +256,7 @@ function columnsField(projectId, fieldId, send) {
  * move: a field-value write setting an option of the field holding the columns, which the runner
  * reads off the board rather than taking from whoever sent the request.
  */
-export function itemWriteRunner(args, { send = spawned } = {}) {
+export function itemWriteRunner(args, { send = plainly } = {}) {
   const field = mutationOf('item-write', args);
   if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
   const { projectId, fieldId } = moveInput(field);

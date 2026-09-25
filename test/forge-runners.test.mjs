@@ -4,13 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
-import { stubGh } from './stub-gh.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -76,6 +75,30 @@ const FLAG_IN_PATH_SLOT = [
 ];
 
 /**
+ * The installed `gh`, by its absolute path: the `gh` this process's `PATH` resolves once the
+ * directory `npm test` puts first on it is taken away (`test/suite.sh`). That directory holds a
+ * `gh` refusing every call, which is what keeps every other test off the real forge (#276). This
+ * probe is the suite's one sanctioned exception, because its request goes only to its own local
+ * proxy (the architect's ruling on #276, section 4). No other test reads the variable.
+ *
+ * An empty entry is the working directory to a spawn, so it is searched as that.
+ */
+function installedGh() {
+  const refusing = process.env.RIGGER_REFUSING_GH_DIR;
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    const gh = resolve(dir || '.', 'gh');
+    if (refusing !== undefined && resolve(dir || '.') === resolve(refusing)) continue;
+    try {
+      accessSync(gh, constants.X_OK);
+      return gh;
+    } catch {
+      // Not here, so the next directory is where a spawn would look.
+    }
+  }
+  assert.fail('no gh is installed on this PATH, so gh cannot be asked which method it sends');
+}
+
+/**
  * The method and body `gh` really sends for `gh api` given `args`, caught by a proxy on this
  * machine so that nothing leaves it.
  *
@@ -107,7 +130,7 @@ async function methodGhSends(args, cwd = process.cwd()) {
   };
   try {
     await new Promise((done, failed) => {
-      execFile('gh', args, { env, cwd }, (error) => (error ? failed(error) : done()));
+      execFile(installedGh(), args, { env, cwd }, (error) => (error ? failed(error) : done()));
     });
   } finally {
     proxy.close();
@@ -369,73 +392,4 @@ test('a write runner refuses a request whose operation it cannot name from the d
     refuses(schemaWriteRunner, args, names);
     refuses(itemWriteRunner, args, names);
   }
-});
-
-test('a runner handed no stand-in under the test runner refuses to spawn gh, and sends nothing', () => {
-  // #276: every runner falls back to spawning the real `gh` when its caller hands it no `send`,
-  // and a side hands its caller's `send` straight through. So a test that fails to pass its
-  // stand-in on reaches the live forge with the owner's credentials: on #273 a stub `gh` first on
-  // the path received a read of board 6 and then a field-value mutation that way. The defect this
-  // catches is that fallback firing under `node --test`. A stub `gh` stands first on the path, so
-  // a runner that still spawns is caught here rather than at github.com.
-  const gh = stubGh({ stdout: '{"data":{}}' });
-  const path = process.env.PATH;
-  process.env.PATH = gh.first(path);
-  try {
-    for (const [runner, args] of [
-      [readRunner, ['auth', 'status']],
-      [schemaWriteRunner, graphql(CREATE_FIELD)],
-      [itemWriteRunner, graphql(MOVE)],
-    ]) {
-      assert.throws(() => runner(args), /under the test runner/, `${runner.name} spawned gh with no stand-in`);
-    }
-  } finally {
-    process.env.PATH = path;
-  }
-  assert.deepEqual(gh.calls(), []);
-});
-
-/** Runs `body` with `vars` in `process.env`, and puts back every name it set. */
-function withEnvironment(vars, body) {
-  const before = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
-  Object.assign(process.env, vars);
-  try {
-    return body();
-  } finally {
-    for (const [name, value] of Object.entries(before)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  }
-}
-
-test('under the test runner a runner spawns only the stand-in its test declared, found where the path finds gh', () => {
-  // A test that runs Rigger in a child process cannot hand it a `send`, so it declares its stand-in
-  // `gh` and puts it first on the child's path. The defect this catches is a child that lost the
-  // path its test built, and was handed one whose `gh` is some other one — the installed `gh`, on
-  // the path the test process itself runs under — and runs that instead of failing (#276).
-  const declared = stubGh({ status: 1, stderr: 'You are not logged into any GitHub hosts.\n' });
-  const other = stubGh();
-
-  const said = withEnvironment(declared.declared(), () => readRunner(['auth', 'status']));
-  assert.equal(said.status, 1, said.stderr);
-  assert.deepEqual(declared.calls(), ['auth status']);
-
-  const elsewhere = { ...declared.declared(), PATH: other.first() };
-  assert.throws(() => withEnvironment(elsewhere, () => readRunner(['auth', 'status'])), /under the test runner/);
-  assert.deepEqual(declared.calls(), ['auth status']);
-  assert.deepEqual(other.calls(), []);
-
-  // An empty entry on the path is the working directory to a spawn, so a `gh` there is the one it
-  // runs, ahead of the stand-in declared behind it.
-  const cwd = process.cwd();
-  process.chdir(other.dir);
-  try {
-    const emptyFirst = { ...declared.declared(), PATH: `${delimiter}${declared.first('')}` };
-    assert.throws(() => withEnvironment(emptyFirst, () => readRunner(['auth', 'status'])), /under the test runner/);
-  } finally {
-    process.chdir(cwd);
-  }
-  assert.deepEqual(declared.calls(), ['auth status']);
-  assert.deepEqual(other.calls(), []);
 });

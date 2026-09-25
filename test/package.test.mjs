@@ -168,13 +168,12 @@ function installFromTarball() {
 }
 
 /**
- * The installed `rigger` run with `args` in `cwd`, under the narrow path above with the stand-in
- * `gh` declared and first on it. Under the test runner that stand-in is the only `gh` its forge
- * runners spawn, so a run that lost this path fails rather than reaching the installed one (#276).
+ * The installed `rigger` run with `args` in `cwd`, under the narrow path above with a stand-in
+ * `gh` first on it, so no forge check it runs reaches the installed `gh` (#276).
  */
 function runInstalled(args, cwd, gh = stubGh()) {
   const { rigger, path } = installFromTarball();
-  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: gh.declared({ ...gitEnvironment(), PATH: path }) });
+  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: { ...gitEnvironment(), PATH: gh.first(path) } });
 }
 
 test('a tarball packed from the head, installed outside the checkout, runs rigger --help', () => {

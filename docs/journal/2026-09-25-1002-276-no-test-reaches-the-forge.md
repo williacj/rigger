@@ -38,3 +38,17 @@ variable out because `child-v8` sends the child's report to the parent's runner.
 does not read still prints its own TAP report. So the recording now sets such a value, and the
 guard stays on in the recorded files. The fake is declared by its path wherever a test puts it
 first.
+
+That guard was the wrong place, because the marker it keyed on is one any test can take away.
+The Codex judge's second return showed a default-isolation test spawning a child with its own
+environment minus `NODE_TEST_CONTEXT`. That child called `ghAuth()` and reached whatever `gh` was
+on its path, and #286's recording did exactly that. The owner moved the guard out of production
+code (option A), and the architect ruled where it lives. `npm test` now runs `test/suite.sh`,
+which puts a refusing, recording `gh` first on `PATH` and runs `node --test` with every argument
+forwarded. It fails the run when anything called that `gh`, whatever the calling test asserted.
+The refusal lives in the path every test and every child inherits, not in a variable a child can
+lose. What stays open is a test that builds its own path around the installed `gh`, which the
+owner confirmed as a review matter. Nothing under `src/` differs from `main`. Every test and
+helper built on the production guard went with it. #286's tests are `main`'s again, because the
+fake `gh` they put first on `PATH` already sits ahead of the refusing one. The `D16` probe finds
+the installed `gh` by taking the harness's directory off `PATH`.
