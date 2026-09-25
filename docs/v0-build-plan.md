@@ -294,11 +294,10 @@ Exit:
 - Two judges at one head receive the same card, base SHA and diff, and what each was given is in
   the event stream. What they write their findings into is M5's.
 - Concurrency holds across a restart. On a fake board holding four pullable cards, `run`
-  dispatches under `concurrency: 2`. One maker exits before the kill and leaves a grandchild
-  alive, and Rigger dispatches a further card while that grandchild lives. Rigger is SIGKILLed
-  while two makers run, then restarted under `concurrency: 1`. Those two makers never exit on
-  their own, so only a kill ends them before the restarted engine's first dispatch. A card
-  counts as running while any process its dispatch started is alive, the killed run's included.
+  dispatches under `concurrency: 2`. Rigger is SIGKILLed while two makers run, then restarted
+  under `concurrency: 1`. Those two makers never exit on their own, so only a kill ends them
+  before the restarted engine's first dispatch. A card counts as running while any process its
+  dispatch started is alive, the killed run's included.
   No more than two cards are running before the kill, and no more than one from the restarted
   engine's first dispatch onward (`R-SCHED-2`).
 
