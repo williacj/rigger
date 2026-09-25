@@ -1,5 +1,6 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
-// may import, and to the config keys, card facts and processes its layer may touch.
+// may import, to the config keys, card facts and processes its layer may touch, and to whether it
+// may call L3's dispatching entry point.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,9 +8,10 @@ import assert from 'node:assert/strict';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 
 /**
- * The smallest tree the rules read: the forge adapter's three side modules and the one module
- * holding their runners. Each fixture adds the module it is about to it. The names in it are
- * placeholders standing for whatever a side exports, not the adapter's operations.
+ * The smallest tree the rules read: the forge adapter's three side modules, the one module
+ * holding their runners, and L3's loop, whose export is L3's dispatching entry point. Each fixture
+ * adds the module it is about to it. The names in the adapter's modules are placeholders standing
+ * for whatever a side exports, not the adapter's operations.
  */
 const ADAPTER = {
   'src/substrate/forge/runners.mjs': [
@@ -21,6 +23,7 @@ const ADAPTER = {
   'src/substrate/forge/read.mjs': "import { readRunner } from './runners.mjs';\nexport function look() { return readRunner([]); }",
   'src/substrate/forge/schema-write.mjs': "import { schemaWriteRunner } from './runners.mjs';\nexport function shape() { return schemaWriteRunner([]); }",
   'src/substrate/forge/item-write.mjs': "import { itemWriteRunner } from './runners.mjs';\nexport function write() { return itemWriteRunner([]); }",
+  'src/scheduling/loop.mjs': 'export function loop(deps) { return { pull: async () => deps }; }',
 };
 
 /** The report on the adapter plus `modules`, a map of path to source. */
@@ -524,4 +527,33 @@ test('a side with no module, or no runner, is refused rather than read as clean'
   const renamed = new Map(Object.entries(ADAPTER));
   renamed.set('src/substrate/forge/runners.mjs', ADAPTER['src/substrate/forge/runners.mjs'].replace('itemWriteRunner(args) {', 'moveRunner(args) {'));
   assert.throws(() => boundaryReport(renamed), /itemWriteRunner/);
+});
+
+test('rule 8: a module outside src/scheduling/ calling L3\'s dispatching entry point fails, whether imported, re-exported or loaded', () => {
+  const calls = 'export const start = (deps) => loop(deps).pull();';
+  for (const directory of ['cli', 'workflow', 'observation', 'substrate']) {
+    const file = `src/${directory}/start.mjs`;
+    assertBreaks({ [file]: `import { loop } from '../scheduling/loop.mjs';\n${calls}` }, file, 'rule 8');
+  }
+  assertBreaks({ 'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
+  assertBreaks({ 'src/cli/start.mjs': "export const start = async (deps) => (await import('../scheduling/loop.mjs')).loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
+  const relayed = {
+    'src/scheduling/relay.mjs': "export { loop as run } from './loop.mjs';",
+    'src/cli/start.mjs': "import { run } from '../scheduling/relay.mjs';\nexport const start = (deps) => run(deps).pull();",
+  };
+  assertBreaks(relayed, 'src/cli/start.mjs', 'rule 8');
+});
+
+test('rule 8: a module under src/scheduling/ calling L3\'s dispatching entry point passes', () => {
+  const trigger = "import { loop } from './loop.mjs';\nexport const tick = (deps) => loop(deps).pull();";
+  assert.deepEqual(messages({ 'src/scheduling/tick.mjs': trigger }), []);
+});
+
+test('rule 8: a tree with no dispatching entry point is refused rather than read as clean', () => {
+  const tree = new Map(Object.entries(ADAPTER));
+  tree.delete('src/scheduling/loop.mjs');
+  assert.throws(() => boundaryReport(tree), /src\/scheduling\/loop\.mjs/);
+  const renamed = new Map(Object.entries(ADAPTER));
+  renamed.set('src/scheduling/loop.mjs', 'export function run(deps) { return deps; }');
+  assert.throws(() => boundaryReport(renamed), /`loop`/);
 });
