@@ -78,6 +78,14 @@ export function repositoryOf(operation, board, send) {
 const ITEM = `id fieldValues(first: ${PAGE}) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: ${PAGE}) { pageInfo { hasNextPage } nodes { name } } } }`;
 
 /**
+ * Whether the item read answered `node` as a card: an issue in the board's repository. A draft
+ * issue, a pull request and another repository's issue are items and not cards. GitHub reads an
+ * owner and repository name alike whatever their case, so the names are compared that way too.
+ */
+const isCard = (board, { content }) =>
+  content?.__typename === 'Issue' && content.repository.nameWithOwner.toLowerCase() === board.repo.toLowerCase();
+
+/**
  * The card an item read answered as `node`: its board item ID, which a move names, the issue's
  * number, title, body and labels, and the column, which is the option it holds in the field
  * holding the columns, or null where it holds none.
@@ -107,7 +115,7 @@ export function readSide(board, { send } = {}) {
     readItems: async () => {
       const query = (page) => boardQuery('readItems', board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
       const nodes = everyPage('readItems', board, send, query, (data) => data?.repositoryOwner?.projectV2?.items);
-      return nodes.map((node) => cardOf('readItems', board, node));
+      return nodes.filter((node) => isCard(board, node)).map((node) => cardOf('readItems', board, node));
     },
   };
 }
