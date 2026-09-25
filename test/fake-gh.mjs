@@ -149,6 +149,19 @@ async function items(board, state, operation) {
   return { repositoryOwner: { projectV2: { items: page(nodes, fieldIn(operation.selections, 'items')) } } };
 }
 
+/** What the priority read's field query selects of a page of fields: every field's name and type. */
+const TYPED_FIELD = 'pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } }';
+
+/**
+ * Answers a page of the priority read's field query. The fake board holds single-select fields
+ * only, so each answers as one, with its options.
+ */
+async function typedFields(board, state, operation) {
+  onTheBoard(state, operation);
+  const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, dataType: 'SINGLE_SELECT', options: options.map((option) => ({ name: option })) }));
+  return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
+}
+
 /** Answers a page of the repository's labels. */
 async function labels(board, state, operation) {
   inTheRepository(state, operation);
@@ -169,6 +182,8 @@ const COMMANDS = {
     const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, options: options.map((option) => ({ name: option })) }));
     return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
   },
+  [graphql(boardShape(`fields(first: _) { ${TYPED_FIELD} }`))]: typedFields,
+  [graphql(boardShape(`fields(first: _, after: _) { ${TYPED_FIELD} }`))]: typedFields,
   [graphql(repositoryShape('labels(first: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('labels(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('id'))]: async (board, state, operation) => {
