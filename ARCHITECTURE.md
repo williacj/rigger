@@ -140,7 +140,7 @@ adapters are code, added to Rigger itself. The shape, abbreviated:
 // Rigger's own config: it is its own first consumer.
 export default {
   repo: 'williacj/rigger',
-  board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } },
+  board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
   roles: {
     engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard' },
@@ -181,9 +181,7 @@ export default {
 
 The priority declaration is one key under `board`: `priority`, an object whose `field` is the
 board field's display name and whose `options` lists that field's option display names, highest
-rank first. With it declared, the shape's `board` line reads:
-
-`board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },`
+rank first.
 
 ## Triggers
 

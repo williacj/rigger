@@ -13,6 +13,11 @@
     "url": "https://github.com/williacj/rigger/issues"
   },
   "type": "module",
+  "files": [
+    "src/",
+    "templates/",
+    "scripts/"
+  ],
   "bin": {
     "rigger": "src/cli/rigger.mjs"
   },

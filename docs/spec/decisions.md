@@ -8,9 +8,10 @@ decision proposed and not yet ratified lives in its pull request, never here.
 `docs/spec/requirements.md` rules the same for a requirement, and its preamble carries the
 reasoning.
 
-The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
-entry binds once that pull request merges. A proposal is therefore written as it will read once
-ratified, and the pull request body is what says it is a proposal.
+Until M5, the owner ratifies a proposed decision by merging its pull request, and the entry binds
+from that merge. A merge by anyone else ratifies nothing. A proposal is therefore written as it
+will read once ratified, and the pull request body is what says it is a proposal. `D21` records
+this arrangement, and what M5 must settle in its place.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
@@ -57,6 +58,7 @@ its row stays in the table below so its id is never reused.
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Ratified. Amended 2026-09-24. |
 | D20 | A card's author survives its writing session | Ratified |
+| D21 | Until M5, the owner's merge is the owner's ratification | Ratified |
 
 ## D1 — Redo over resume
 
@@ -718,3 +720,63 @@ an authoring role that can no longer be dispatched. Second, the event record can
 the authoring role independently of the filing session without adding state beyond the card and
 its history. Either would require a later decision on reassignment or a different authorship
 rule.
+
+## D21 — Until M5, the owner's merge is the owner's ratification
+
+**Status:** Ratified.
+
+### Rule
+
+1. Until M5, the owner ratifies a proposal by merging its pull request, and needs no separate
+   verdict to do so. Each register's preamble holds it.
+2. Until M5, on a card whose kind names `owner` among its judges, the owner's merge is the owner's
+   verdict.
+3. So the maker of such a card never holds `R-GATE-4`'s evidence before the card merges, and
+   `D19` rule 1 never lets it merge that card. The owner merges it. `AGENTS.md`, under "Review
+   and merge", holds it.
+4. A merge by anyone but the owner ratifies nothing. This decision leaves every other judge's
+   verdict where it found it, and leaves self-ratifying forbidden.
+5. M5 reverses this decision, as it reverses `D19`. `docs/v0-build-plan.md` installs the git gate
+   hook there. What replaces this decision is M5's to settle, and the table below names what that
+   is.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| Which record the gate hook here reads as the owner's verdict: a marker, as `README.md` and M5 promise a consumer, or the owner's merge | M5's decomposition is drafted, and the owner rules on it |
+| Whether the hook can tell the owner's merge from a session's, given that sessions act through the owner's forge account and `R-GATE-3` bars the hook from taking an instruction | M5's decomposition is drafted, and the owner rules on it |
+| Whether this repository ratifies the way Rigger ships to a consumer, so that Rigger still exercises its own L7 path on itself | M5's decomposition is drafted, and the owner rules on it |
+| Who merges an owner-judged card once the hook is the gate, and what `AGENTS.md`'s "Review and merge" and the decision replacing `D19` say about it | M5's decomposition is drafted, and the owner rules on it |
+
+### Notes
+
+The owner stated on 2026-09-24 that merging a proposal's pull request ratifies it. That is how
+#193, which added `D20`, and #194, #196, #199 and #200 were ratified. The owner merged each one,
+and none carries a posted owner verdict (card #203).
+
+The preambles described two events where the owner performs one. They had the owner ratify by
+returning a sound verdict, and the entry bind once the pull request merged. A reader holding that
+wording waits for a verdict nobody posts. On 2026-09-24 the M1 coordinator flagged `D20` as merged
+with no verdict. It later relayed a needs revision onto #196 after the owner's merge had ratified
+it. Under rule 2, a verdict returned after the owner's merge rules on nothing.
+
+Rule 3 follows from `D19` rather than changing it. `D19` rule 1 lets a maker merge once
+`R-GATE-4`'s evidence is in hand, and that evidence holds every configured judge's verdict. Where
+the owner is one of those judges and the merge is the owner's verdict, the evidence is complete
+only once the card has merged.
+
+The whole arrangement ends at M5, and the owner ruled so on 2026-09-24, in the first round of the
+pull request that proposed this decision. From M5 the hook reads verdict markers and nothing else,
+and it binds every route to the main line, the owner's own merge included (`ARCHITECTURE.md`, "The
+gate"). A merge cannot be a verdict that hook reads, so rules 1 to 3 cannot outlive it unexamined.
+The deferred table names what M5 must settle, and this decision settles none of it.
+
+The forge cannot tell the owner's merge from a session's. Sessions here act through the owner's
+account, so rules 3 and 4 hold because sessions honour them, and nothing observes a breach.
+
+This decision adds no requirement. It binds how the owner and the sessions working in this
+repository ratify and merge, and `docs/spec/requirements.md` holds only what binds Rigger.
+
+One signal ends this decision before M5. Where a merge recorded as the owner's proves to be a
+session's, a merge alone is too weak a record of ratification, and the owner withdraws it.
