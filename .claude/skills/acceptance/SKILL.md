@@ -107,6 +107,12 @@ and on what evidence, and what would reverse the recommendation.
 becomes its own card rather than joining this one (`R-CARD-11`), and a follow-up may only cover
 work outside it — an item left undone means the card is not done (`R-CARD-10`).
 
+**Split work into cards.** Map every part of the larger work to a card's acceptance item, not
+merely its title or description.
+
+**Name dependencies.** In the dependent card, name the prerequisite card and its required result.
+Its acceptance covers its own work.
+
 **Exhausting one axis is not covering the card.** An item can hold along every value of the axis
 it names and still miss a defect on an axis it never named. Every command exits zero; every one
 of them writes to the wrong path. Where the card varies on more than one axis, name each of
@@ -118,6 +124,14 @@ is recorded with who made it (`R-CARD-6`). A change to the acceptance, like a ch
 sends every judge back and spends one of the card's rounds (`R-LOOP-8`); a card that exhausts its
 rounds escalates as ambiguous (`R-LOOP-9`); and the change stales every verdict already returned
 (`R-GATE-7`). Settle the bar with whoever will help you before you file.
+
+## Work outside the repository
+
+For a card acting on a system outside the repository where undo is not obvious, require the maker
+to state its intended action before acting, with inspectable evidence of what it said and when.
+
+Require proof on a fake for every behaviour a fake can prove. A real-system run cannot replace
+that proof. Make each requirement a separate acceptance item.
 
 ## What is checked, and what is not
 
@@ -144,3 +158,7 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 10. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
 11. Does the set name every axis this card varies on, rather than exhausting one of them?
 12. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
+13. When splitting work, is each part mapped to an acceptance item?
+14. Are each dependency's card and required result named?
+15. Must a maker state an outside-system action before acting if undo is unclear?
+16. Must every fake-provable behaviour be proven on a fake?
