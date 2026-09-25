@@ -623,10 +623,20 @@ test('a config declaring no board owner still carries none once Rigger has loade
 const runningAtOnce = (value) => holding(rigger, ['concurrency'], value);
 
 test('a concurrency that is not a positive whole number is refused, and the refusal names the key and the value', () => {
-  for (const [value, spelled] of [[0, '0'], [-2, '-2'], [1.5, '1.5'], ['3', '"3"']]) {
+  for (const [value, spelled] of [[0, '0'], [-2, '-2'], [1.5, '1.5'], ['3', "'3'"]]) {
     const refused = refusal(runningAtOnce(value));
     assert.match(refused, /`concurrency`/, JSON.stringify(value));
     assert.ok(refused.includes(spelled), `the refusal does not name ${spelled}: ${refused}`);
+  }
+});
+
+test('a concurrency no JSON can spell is refused without a throw, and the refusal names the value as written', () => {
+  // A config is a module, so it can hold values JSON has no spelling for: `Infinity` is a natural
+  // way to write "no cap", and a BigInt is a whole number of another type.
+  for (const [value, spelled] of [[Number.NaN, 'NaN'], [Infinity, 'Infinity'], [-Infinity, '-Infinity'], [3n, '3n'], [{ per: 2n }, '{ per: 2n }']]) {
+    const refused = refusal(runningAtOnce(value));
+    assert.match(refused, /`concurrency`/, String(spelled));
+    assert.ok(refused.endsWith(` ${spelled}`), `the refusal does not name ${spelled}: ${refused}`);
   }
 });
 

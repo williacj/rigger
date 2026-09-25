@@ -2,6 +2,8 @@
 // the values only the consumer can answer, and the refusal of anything else, each
 // refusal naming what it refused.
 
+import { inspect } from 'node:util';
+
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits
  * under. A placeholder is a name where a value belongs, so a config still holding one is refused.
@@ -315,7 +317,8 @@ function readConcurrency(config, refusals) {
   if (!Object.hasOwn(config, 'concurrency')) return;
   const { concurrency } = config;
   if (!Number.isInteger(concurrency) || concurrency < 1) {
-    refusals.push(`\`concurrency\` must be a positive whole number, and the config gives ${JSON.stringify(concurrency) ?? String(concurrency)}`);
+    // Named as a module would write it: JSON spells NaN and Infinity as null, and throws on a BigInt.
+    refusals.push(`\`concurrency\` must be a positive whole number, and the config gives ${inspect(concurrency)}`);
   }
 }
 
