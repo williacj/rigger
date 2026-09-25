@@ -226,13 +226,15 @@ Exit:
   field as it was.
 - `plan` prints its real pull order over the M1 cards themselves (`R-SCHED-1`). With the owner's
   approval, the M1 cards are moved into the real board's Ready column and given varied Priority
-  values. The printed order puts no card after one of lower priority. The values are set so that
-  ordering the cards by issue number, or by their position in the column, would break that rule.
+  values. The printed order is exactly the config's declared priority order, with ties broken by
+  issue number, oldest first. The values are set so that this order differs from each of four
+  orders that ignore priority: issue number ascending, issue number descending, column position,
+  and column position reversed.
 - Concurrency comes from config. On a fake board holding four pullable cards, `run` claims one card
   with `concurrency: 1` and three with `concurrency: 3`, then exits. It never holds more claims
   than the setting allows (`R-SCHED-2`).
-- The column display names come from config: a board whose columns are named differently drives
-  the same loop.
+- The column display names come from config: Rigger reads, pulls from, and claims from a fake
+  board whose columns are named differently exactly as it does one with the default names.
 - The demo GIF regenerates from the tape in CI.
 
 **M2. Execution core.**
