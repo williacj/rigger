@@ -51,10 +51,13 @@ function heldDispatch(answer = () => ({ exit: 0, output: '' })) {
   let most = 0;
   const dispatch = ({ card }) => new Promise((resolve, reject) => {
     started.push(card.number);
-    open.push(() => {
-      const given = answer(card);
-      if (given instanceof Error) reject(given);
-      else resolve(given);
+    open.push({
+      number: card.number,
+      release: () => {
+        const given = answer(card);
+        if (given instanceof Error) reject(given);
+        else resolve(given);
+      },
     });
     most = Math.max(most, open.length);
   });
@@ -62,9 +65,13 @@ function heldDispatch(answer = () => ({ exit: 0, output: '' })) {
     dispatch,
     started,
     held: () => open.length,
+    /** The numbers of the cards whose dispatches are held now, in the order they started. */
+    holding: () => open.map(({ number }) => number),
     most: () => most,
     /** Releases every dispatch held now, each settling as `answer` says. */
-    releaseAll: () => open.splice(0).forEach((release) => release()),
+    releaseAll: () => open.splice(0).forEach(({ release }) => release()),
+    /** Releases the held dispatch of card `number` alone, settling as `answer` says. */
+    release: (number) => open.splice(open.findIndex((held) => held.number === number), 1)[0].release(),
   };
 }
 
@@ -128,6 +135,39 @@ async function runToEnd(built) {
     if (built.dispatches.started.length === before) return built;
   }
 }
+
+/**
+ * Starts one run of `built`'s loop, and releases every held dispatch each time the loop has made
+ * every start it can, until the run ends. Answers the run's own settling, so a run that fails
+ * rejects here with its failure unchanged.
+ */
+async function drive(built) {
+  let ended = false;
+  const run = built.loop.run().finally(() => {
+    ended = true;
+  });
+  run.catch(() => {});
+  while (!ended) {
+    await quiesce();
+    built.dispatches.releaseAll();
+  }
+  return run;
+}
+
+test('given concurrency 2 and cards A, B and C, where A\'s dispatch returns before B\'s, C\'s dispatch starts before B\'s returns', async () => {
+  const built = world({ cards: [1, 2, 3], concurrency: 2 });
+
+  const run = built.loop.run();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [1, 2]);
+  built.dispatches.release(1);
+  await quiesce();
+
+  assert.deepEqual(built.dispatches.started, [1, 2, 3]);
+  assert.deepEqual(built.dispatches.holding(), [2, 3], "B's dispatch has not returned");
+  built.dispatches.releaseAll();
+  await run;
+});
 
 test('given concurrency 1 and four cards L2 would dispatch, the most cards in flight at any moment is exactly 1', async () => {
   const { dispatches } = await runToEnd(world({ concurrency: 1 }));
