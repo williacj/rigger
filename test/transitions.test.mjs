@@ -44,12 +44,16 @@ test('a claimed card moves from the ready column to the coding column', async ()
 
 /**
  * A dispatch's outcome as L3 hands it over unread: the record `Promise.allSettled` makes of the
- * dispatch, which L3 builds without looking inside it.
+ * dispatch, which L3 builds without looking inside it. A dispatch that ran is fulfilled with L1's
+ * result, its exit code and captured output (`ARCHITECTURE.md`, the L1 row); one that threw
+ * before it ran is rejected. Each output here says the opposite of its exit code, so a reading
+ * of the output rather than the exit code sends the card the wrong way.
  */
-const RETURNED = { status: 'fulfilled', value: { exit: 0, output: '' } };
-const FAILED = { status: 'rejected', reason: new Error('the dispatch could not start') };
+const RETURNED = { status: 'fulfilled', value: { exit: 0, output: 'FAIL: 3 of 12 tests failed' } };
+const EXITED = { status: 'fulfilled', value: { exit: 1, output: 'All 12 tests passed.' } };
+const THREW = { status: 'rejected', reason: new Error('the dispatch could not start') };
 
-test("a returned dispatch's card moves from the coding column to the review column", async () => {
+test("a dispatch that exited zero moves its card from the coding column to the review column, whatever its output says", async () => {
   const { fake, l2 } = world();
   const [card] = await itemsOf(fake);
   await l2.claimed(card);
@@ -61,27 +65,50 @@ test("a returned dispatch's card moves from the coding column to the review colu
   assert.deepEqual(fake.writes().at(-1), { operation: 'moveItem', args: [card.id, 'Review'] });
 });
 
-test("a failed dispatch's card is not moved, and stays in the coding column", async () => {
+test('a dispatch that ran and exited non-zero, in the wrapper of an outcome that did not throw, leaves its card in the coding column', async () => {
   const { fake, l2 } = world();
   const [card] = await itemsOf(fake);
   await l2.claimed(card);
 
-  await l2.settled(card, FAILED);
+  await l2.settled(card, EXITED);
 
   const [held] = await itemsOf(fake);
   assert.equal(held.column, 'Coding');
   assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, 'Coding'] }]);
 });
 
-test('an outcome that is neither returned nor failed is refused, naming the card, and moves nothing', async () => {
-  // An outcome L3 built some other way is a fault in L3, and reading it as a failure would hide it.
+test('a dispatch that threw before it ran leaves its card in the coding column', async () => {
   const { fake, l2 } = world();
   const [card] = await itemsOf(fake);
   await l2.claimed(card);
 
-  await assert.rejects(l2.settled(card, { exit: 0 }), /card #12/);
+  await l2.settled(card, THREW);
 
-  assert.equal(fake.writes().length, 1);
+  const [held] = await itemsOf(fake);
+  assert.equal(held.column, 'Coding');
+  assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, 'Coding'] }]);
+});
+
+test('an outcome that is not a settled dispatch with an exit code is refused, naming the card, and moves nothing', async () => {
+  // An outcome L3 built some other way is a fault in L3, and reading it as a failure would hide it.
+  const shapes = [
+    null,
+    undefined,
+    { exit: 0 },
+    { status: 'fulfilled' },
+    { status: 'fulfilled', value: null },
+    { status: 'fulfilled', value: { output: 'done' } },
+    { status: 'fulfilled', value: { exit: '0', output: '' } },
+  ];
+  for (const shape of shapes) {
+    const { fake, l2 } = world();
+    const [card] = await itemsOf(fake);
+    await l2.claimed(card);
+
+    await assert.rejects(l2.settled(card, shape), /card #12/, `${JSON.stringify(shape)} was not refused naming the card`);
+
+    assert.equal(fake.writes().length, 1, `${JSON.stringify(shape)} moved the card`);
+  }
 });
 
 test('each column change writes one L2 event naming the card, the column left, the column entered and the cause', async () => {
@@ -115,19 +142,21 @@ test('a move the board refuses writes no transition event, and is reported namin
 });
 
 /**
- * Four cards, #1 to #4, each claimed, and then #1 and #3 returned, #2 failed and #4 still out.
- * A refused move is caught, so the run goes on past it as a caller that reported it would.
+ * Five cards, #1 to #5, each claimed, and then #1 and #3 exited zero, #2 threw, #4 exited
+ * non-zero and #5 still out. A refused move is caught, so the run goes on past it as a caller
+ * that reported it would.
  */
 async function run({ held } = {}) {
-  const w = world({ cards: [1, 2, 3, 4], held });
+  const w = world({ cards: [1, 2, 3, 4, 5], held });
   const cards = await itemsOf(w.fake);
   const refused = [];
   const attempt = (call) => call.catch((error) => refused.push(error.message));
   for (const card of cards) await attempt(w.l2.claimed(card));
-  const [one, two, three] = cards;
+  const [one, two, three, four] = cards;
   await attempt(w.l2.settled(one, RETURNED));
-  await attempt(w.l2.settled(two, FAILED));
+  await attempt(w.l2.settled(two, THREW));
   await attempt(w.l2.settled(three, RETURNED));
+  await attempt(w.l2.settled(four, EXITED));
   return { ...w, cards, refused };
 }
 
@@ -174,18 +203,19 @@ for (const [name, held] of [
     const { fake, cards, events, refused } = await run({ held });
     const moves = movesIn(fake, cards);
     const transitions = transitionsIn(events);
-    if (held) assert.equal(refused.length, 2, 'the board refused no move');
+    if (held) assert.equal(refused.length, 2, 'the board did not refuse exactly the two moves into review');
 
     for (const transition of transitions) assert.equal(count(moves, transition), 1, `${JSON.stringify(transition)} in ${JSON.stringify(moves)}`);
   });
 }
 
 test('no change L2 makes, for any outcome it handles, has the ready column as its destination', async () => {
-  // `run` drives every outcome L2 handles: a claim, a returned dispatch and a failed one.
+  // `run` drives every outcome L2 handles: a claim, a dispatch that exited zero, one that exited
+  // non-zero, and one that threw.
   const { fake, cards, events } = await run();
   const moves = movesIn(fake, cards);
-  // Four claims and two returned dispatches, whichever columns they went to.
-  assert.equal(moves.length, 6, 'the run did not make one move per claim and per returned dispatch');
+  // Five claims and two dispatches that exited zero, whichever columns they went to.
+  assert.equal(moves.length, 7, 'the run did not make one move per claim and per dispatch that exited zero');
 
   assert.deepEqual(moves.filter(({ to }) => to === 'ready'), []);
   assert.deepEqual(transitionsIn(events).filter(({ to }) => to === 'ready'), []);
@@ -204,7 +234,7 @@ test('renamed display names produce the same moves, by column key, as the defaul
     const [one, two, three] = await itemsOf(fake);
     for (const card of [one, two, three]) await l2.claimed(card);
     await l2.settled(one, RETURNED);
-    await l2.settled(two, FAILED);
+    await l2.settled(two, THREW);
     await l2.settled(three, RETURNED);
   }
 

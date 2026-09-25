@@ -39,14 +39,18 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
     claimed: (card) => change(card, 'claimed'),
 
     /**
-     * L3 hands over `card`'s dispatch `outcome` unread, as `Promise.allSettled` records it. A
-     * returned dispatch's card moves to review. A failed one's is not moved, so it stays in coding.
+     * L3 hands over `card`'s dispatch `outcome` unread, as `Promise.allSettled` records it: a
+     * dispatch that ran is fulfilled with L1's result, `{ exit, output }`, and one that threw
+     * before it ran is rejected. The exit code alone decides, by the owner's ruling on #220: zero
+     * moves the card to review, whatever the output says, and anything else leaves it in coding.
      */
     settled: async (card, outcome) => {
-      if (outcome.status === 'fulfilled') return change(card, 'returned');
-      if (outcome.status !== 'rejected') {
-        throw new Error(`card #${card.number}'s dispatch outcome is neither returned nor failed: ${JSON.stringify(outcome)}`);
+      if (outcome?.status === 'rejected') return;
+      const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : undefined;
+      if (!Number.isInteger(exit)) {
+        throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
+      if (exit === 0) await change(card, 'returned');
     },
   };
 }
