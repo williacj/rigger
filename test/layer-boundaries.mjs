@@ -48,6 +48,9 @@ const CHILD_PROCESS = ['node:child_process', 'child_process'];
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL ( path )' };
 
+/** The loaders besides `import()` that bind a module at run time, out of the import graph's sight. */
+const LOADERS = ['createRequire', 'getBuiltinModule'];
+
 /** The single-character escapes a quoted run may carry, decoded. */
 const ESCAPES = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0' };
 
@@ -93,7 +96,7 @@ function parsed(file, source) {
   const stars = [];
   const dynamic = [];
   const declared = new Map();
-  const aliases = new Map();
+  const carries = new Map();
   const refuse = (at, what) => {
     throw Object.assign(new Error(`${what}, which this test cannot read`), { line: tokens[at]?.line ?? '?' });
   };
@@ -120,10 +123,15 @@ function parsed(file, source) {
     return { pairs, end: i + 1 };
   };
 
-  // Where a top-level statement opens: after a `;`, after a block, or on a new line, which is where
-  // a source leaving its semicolons to the parser ends one.
+  // Where a top-level statement opens: after a `;`, after a block, or on a new line after a token
+  // that can end an expression, which is where a source leaving its semicolons to the parser ends
+  // one. A new line after an operator, or before a word that continues one, is still the statement.
+  const ends = (token) => token.kind === 'string' || token.kind === 'regex' || token.kind === 'template'
+    || (token.kind === 'word' && !CONTINUING.has(token.value))
+    || [')', ']', '}'].some((value) => isPunct(token, value));
   const startsStatement = (i) => tokens[i].depth === 0 && isWord(tokens[i])
-    && (i === 0 || isPunct(tokens[i - 1], ';') || isPunct(tokens[i - 1], '}') || tokens[i - 1].endLine < tokens[i].line);
+    && (i === 0 || isPunct(tokens[i - 1], ';') || isPunct(tokens[i - 1], '}')
+      || (tokens[i - 1].endLine < tokens[i].line && ends(tokens[i - 1]) && !INFIX.has(tokens[i].value)));
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
@@ -168,45 +176,93 @@ function parsed(file, source) {
           exported.set(as, from ? { from, imported: name, line: token.line } : { local: name, line: token.line });
         }
       } else if (isWord(next, 'default')) {
-        const plain = isWord(tokens[i + 2]) && isPunct(tokens[i + 3], ';');
-        exported.set('default', { local: plain ? tokens[i + 2].value : 'default', line: token.line });
+        exported.set('default', { local: 'default', line: token.line });
       } else {
         exported.set(declaredName(tokens, i + 1, refuse), { local: declaredName(tokens, i + 1, refuse), line: token.line });
       }
     }
-    if (token.value !== 'import' && STATEMENTS.includes(token.value) && startsStatement(i)) {
-      let end = i + 1;
-      while (end < tokens.length && !(STATEMENTS.includes(tokens[end].value) && startsStatement(end))) end++;
-      const segment = tokens.slice(i, end);
-      const at = isWord(token, 'export') ? 1 : 0;
-      const references = new Set(segment.filter((held) => isWord(held)).map((held) => held.value));
-      if (isWord(segment[at], 'default')) declared.set('default', references);
-      if (isPunct(segment[at], '{') || isPunct(segment[at], '*') || isWord(segment[at], 'default')) continue;
-      const kind = segment[at].value;
-      if (isPunct(segment[at + 1], '{') || isPunct(segment[at + 1], '[')) {
-        // A destructuring declaration binds every name in its pattern, each carrying what the
-        // whole declaration references, so a runner handed out through one is still reached.
-        if (at === 1) refuse(i, 'an exported destructuring declaration');
-        const pattern = segment.slice(at + 2, segment.findIndex((held, n) => n > at + 1 && held.depth === segment[at + 1].depth));
-        for (const held of pattern) if (isWord(held)) declared.set(held.value, references);
-        continue;
-      }
-      const name = declaredName(tokens, i + at, refuse);
-      if (['const', 'let', 'var'].includes(kind)) {
-        const until = segment.findIndex((held) => isPunct(held, ';'));
-        if (segment.slice(at, until < 0 ? undefined : until).some((held) => held.depth === 0 && isPunct(held, ','))) {
-          refuse(i, 'a declaration binding more than one name');
-        }
-        if (isPunct(segment[at + 2], '=') && isWord(segment[at + 3]) && isPunct(segment[at + 4], ';')) aliases.set(name, segment[at + 3].value);
-      }
-      declared.set(name, references);
-    }
   }
-  return { file, tokens, imports, exported, stars, dynamic, declared, aliases };
+
+  // Each top-level statement, read for the names it binds or assigns and what it gives them.
+  const starts = tokens.map((_, i) => i).filter((i) => startsStatement(i));
+  starts.forEach((start, n) => {
+    const segment = tokens.slice(start, starts[n + 1] ?? tokens.length);
+    if (isWord(segment[0], 'import')) return;
+    const at = isWord(segment[0], 'export') ? 1 : 0;
+    if (isPunct(segment[at], '{') || isPunct(segment[at], '*')) return;
+    const kind = segment[at]?.value;
+    let targets;
+    if (kind === 'default') {
+      targets = ['default'];
+    } else if (['const', 'let', 'var'].includes(kind) && (isPunct(segment[at + 1], '{') || isPunct(segment[at + 1], '['))) {
+      // A destructuring declaration binds every name in its pattern, and each carries what the
+      // whole declaration gives, so a runner handed out through one is still reached.
+      if (at === 1) refuse(start, 'an exported destructuring declaration');
+      const close = segment.findIndex((held, k) => k > at + 1 && held.depth === segment[at + 1].depth);
+      targets = segment.slice(at + 2, close).filter((held) => isWord(held)).map((held) => held.value);
+    } else if (['async', 'function', 'class', 'const', 'let', 'var'].includes(kind)) {
+      if (['const', 'let', 'var'].includes(kind) && segment.some((held) => held.depth === 0 && isPunct(held, ','))) {
+        refuse(start, 'a declaration binding more than one name');
+      }
+      targets = [declaredName(tokens, start + at, refuse)];
+    } else if (isWord(segment[0]) && ['=', '.', '['].some((value) => isPunct(segment[1], value))) {
+      // An assignment gives what it assigns to the binding it writes into, a property of it included.
+      targets = [segment[0].value];
+    } else {
+      return;
+    }
+    const words = segment.filter((held) => isWord(held)).map((held) => held.value);
+    const values = valuesOf(segment);
+    for (const target of targets) {
+      declared.set(target, new Set([...(declared.get(target) ?? []), ...words]));
+      carries.set(target, new Set([...(carries.get(target) ?? []), ...values].filter((name) => name !== target)));
+    }
+  });
+  return { file, tokens, imports, exported, stars, dynamic, declared, carries };
 }
 
-/** The words a top-level statement opens with, where it can declare or bind a name. */
-const STATEMENTS = ['export', 'import', 'function', 'async', 'class', 'const', 'let', 'var'];
+/** The words that, opening a line, join it to the expression on the line before. */
+const INFIX = new Set(['in', 'instanceof', 'of', 'as', 'from', 'extends']);
+
+/** The words that, ending a line, carry the statement on to the next one. */
+const CONTINUING = new Set([
+  'await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
+  'typeof', 'void', 'yield', 'extends', 'async', 'export', 'default', 'const', 'let', 'var',
+  'function', 'class', 'import', 'from', 'as', 'static', 'get', 'set',
+]);
+
+/**
+ * The names a statement hands on as values: every word it holds outside a function body and not
+ * behind a dot. A function's body runs when it is called, and calling a side is a module's own
+ * business; a value handed on is the side itself, whatever expression carries it.
+ */
+function valuesOf(segment) {
+  const inside = new Set();
+  const closeOf = (open) => {
+    let close = open + 1;
+    while (close < segment.length && segment[close].depth > segment[open].depth) close++;
+    return close;
+  };
+  for (let k = 0; k < segment.length; k++) {
+    const token = segment[k];
+    // A body a `)` opens, which is not an `if`'s or a loop's: a function, a method, an accessor.
+    if (isPunct(token, '{') && isPunct(segment[k - 1], ')') && !segment[k - 1].control) {
+      for (let m = k; m <= closeOf(k); m++) inside.add(m);
+    }
+    // An arrow's body: its block, or its expression up to what ends it at the arrow's own depth.
+    if (isPunct(token, '=') && isPunct(segment[k + 1], '>')) {
+      const body = k + 2;
+      if (isPunct(segment[body], '{')) {
+        for (let m = body; m <= closeOf(body); m++) inside.add(m);
+      } else {
+        let m = body;
+        while (m < segment.length && segment[m].depth >= token.depth
+          && !(segment[m].depth === token.depth && [',', ';', ':'].some((value) => isPunct(segment[m], value)))) inside.add(m++);
+      }
+    }
+  }
+  return segment.filter((held, k) => isWord(held) && !inside.has(k) && !isPunct(segment[k - 1], '.')).map((held) => held.value);
+}
 
 /** The name the declaration at `at` binds, refusing a destructured or unnamed one. */
 function declaredName(tokens, at, refuse) {
@@ -277,13 +333,21 @@ export function boundaryReport(tree) {
     throw new Error(`${file} exports no \`${name}\``);
   };
 
-  /** The definitions the top-level name `local` in `file` resolves to, following imports and aliases. */
+  /**
+   * The definitions the top-level name `local` in `file` resolves to: an import's, followed to
+   * where it is defined, or this module's own, together with every binding the name was given as
+   * a value.
+   */
   const resolveLocal = (file, local, seen = new Set()) => {
+    const key = `${file}@${local}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
     const module = modules.get(file);
     const imported = module.imports.find((entry) => entry.local === local);
     if (imported) return resolveExport(target(file, imported.from), imported.imported, seen);
-    if (module.aliases.has(local)) return resolveLocal(file, module.aliases.get(local), seen);
-    return [{ file, local }];
+    const given = [...(module.carries.get(local) ?? [])]
+      .filter((name) => module.carries.has(name) || module.imports.some((entry) => entry.local === name));
+    return [{ file, local }, ...given.flatMap((name) => resolveLocal(file, name, seen))];
   };
 
   /** Every name `file` exports, its star exports' included. */
@@ -395,6 +459,16 @@ export function boundaryReport(tree) {
     }
     if (file.startsWith('src/scheduling/')) {
       for (const line of priorityReads(module.tokens)) report(file, line, 'rule 3', 'it reads `board.priority` from the config, which L0 reads and hands L3 as each item\'s rank');
+      for (const line of boardKeyReads(module.tokens)) {
+        report(file, line, 'rule 3', 'it reads the `board` key, under which the config holds `board.priority`; the board\'s settings are L0\'s (`ARCHITECTURE.md`, Engine settings), and L0 hands L3 each item\'s rank');
+      }
+    }
+
+    // A loader the import graph cannot follow binds something nobody can name.
+    for (const token of module.tokens) {
+      if (isWord(token) && LOADERS.includes(token.value)) {
+        report(file, token.line, 'the dynamic-import rule', `it names \`${token.value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
+      }
     }
 
     // Who may spawn a process, and who may name the forge's command.
@@ -410,6 +484,28 @@ export function boundaryReport(tree) {
     }
   }
   return { violations, exempt };
+}
+
+/**
+ * The lines on which `tokens` read the key `board` off anything: as a member (`.board`,
+ * `?.board`, `['board']`), or as a key in a braced pattern (`{ board }`, `{ board: b }`). Reading
+ * the key at all is what rule 3 bars, because once `board` is bound to another name, which of its
+ * keys is read is a question the tokens cannot answer.
+ */
+function boardKeyReads(tokens) {
+  const lines = [];
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (valueOf(token) !== 'board') continue;
+    const member = (isWord(token) && isPunct(tokens[at - 1], '.'))
+      || (token.kind === 'string' && isPunct(tokens[at - 1], '[') && isPunct(tokens[at + 1], ']'));
+    let open = at - 1;
+    while (open >= 0 && tokens[open].depth >= token.depth) open--;
+    const keyed = isPunct(tokens[open], '{') && ['{', ','].some((value) => isPunct(tokens[at - 1], value))
+      && [':', ',', '}', '='].some((value) => isPunct(tokens[at + 1], value));
+    if (member || keyed) lines.push(token.line);
+  }
+  return lines;
 }
 
 /**
