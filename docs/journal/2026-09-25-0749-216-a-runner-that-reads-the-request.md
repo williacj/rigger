@@ -38,6 +38,9 @@ once with IDs that resolve to nothing. GitHub answered `NOT_FOUND` for the ID ea
 means the document passed its schema validation. No board or label was written, and board 6 was
 never read.
 
-**What did not fit.** The acceptance holds the adapter's operations equal to the fake board's,
-which include four reads. #215 builds those reads on this card's read runner, so they cannot come
-first here. That item is escalated rather than met.
+**What did not fit, and how it was settled.** The acceptance as first written held the adapter's
+operations equal to the fake board's, and those include four reads. #215 builds the reads on this
+card's read runner, so they could not come first here. The maker escalated it, and the author
+narrowed the item to the writes, moving the reads' parity to #215. The test finds the fake's
+writes by calling each operation and watching its write record. An operation it does not know how
+to call fails it by name, so a write added to the fake cannot slip past the comparison.
