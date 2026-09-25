@@ -11,14 +11,21 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}(#{1,6})(?: (.*))?$/s;
 const BULLET = /^ {0,3}[-*+] (.*)$/s;
 const TASK = /^\[[ xX]\]/;
+// A thematic break: three or more of one marker, with spaces between them allowed.
+const BREAK = /^ {0,3}([-*+])(?: *\1){2,} *$/;
+// Text holding nothing but HTML comments and whitespace, such as `<!-- fill in -->`.
+const COMMENTS = /^(?:\s*<!--.*?-->)+\s*$/s;
 
 /** The two reasons a card is refused, which `R-CARD-8` makes the whole of the check. */
 const MISSING = 'missing acceptance';
 const RESTATED = 'restated title';
 
-/** Whether a line closes the fence its opening `marks` began: only a run at least as long. */
+/**
+ * Whether a line closes the fence its opening `marks` began: only a run at least as long, followed
+ * by nothing but spaces or tabs.
+ */
 function closes(line, marks) {
-  const run = /^ {0,3}(`+|~+)$/.exec(line)?.[1];
+  const run = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
   return run !== undefined && run[0] === marks[0] && run.length >= marks.length;
 }
 
@@ -28,8 +35,8 @@ const headingText = (text = '') => text.trim().replace(/#+$/, '').trim();
 /**
  * The text of every plain bullet in every acceptance section. A section runs from a heading whose
  * text is exactly `Acceptance` to the next heading with as many `#` or fewer. Lines inside a
- * fence are skipped, and an unclosed fence runs to the end of the body. Task-list items and
- * bullets with no text are no items.
+ * fence are skipped, and an unclosed fence runs to the end of the body. Thematic breaks,
+ * task-list items, bullets with no text and bullets whose text is only HTML comments are no items.
  */
 function acceptanceItems(body) {
   const items = [];
@@ -49,8 +56,8 @@ function acceptanceItems(body) {
       if (section === null && headingText(heading[2]) === 'Acceptance') section = level;
       continue;
     }
-    const text = section !== null ? BULLET.exec(line)?.[1] : undefined;
-    if (text !== undefined && text.trim() && !TASK.test(text)) items.push(text);
+    const text = section !== null && !BREAK.test(line) ? BULLET.exec(line)?.[1] : undefined;
+    if (text !== undefined && text.trim() && !TASK.test(text) && !COMMENTS.test(text)) items.push(text);
   }
   return items;
 }
@@ -58,7 +65,8 @@ function acceptanceItems(body) {
 /**
  * Text as the restated-title rule compares it (the owner's U2 ruling): letters folded to lower
  * case, every Unicode punctuation and symbol character deleted, and runs of whitespace collapsed
- * and trimmed. Deleting rather than spacing, and counting symbols, is open for the owner.
+ * and trimmed. Deleting before collapsing, and deleting symbols as well as punctuation, are the
+ * owner's (a) ruling of 2026-09-25.
  */
 const normalise = (text) => text.toLowerCase().replace(/[\p{P}\p{S}]/gu, '').replace(/\s+/g, ' ').trim();
 

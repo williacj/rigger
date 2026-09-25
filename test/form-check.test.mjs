@@ -137,6 +137,17 @@ test('a fence closes only on a run of at least as many of the same character', (
   }
 });
 
+test('a fence closer followed only by spaces or a tab closes the fence, so a bullet after it counts', () => {
+  const closers = { spaces: '```  ', tab: '```\t' };
+  const verdicts = Object.fromEntries(
+    Object.entries(closers).map(([name, closer]) => [
+      name,
+      check(card(38, '## Acceptance', '', '```', 'rigger plan', closer, '', `- ${ITEM}`)).admitted,
+    ]),
+  );
+  assert.deepEqual(verdicts, { spaces: true, tab: true });
+});
+
 test('a bullet in a blockquote under ## Acceptance is missing acceptance', () => {
   refusedAsMissing(card(19, '## Acceptance', '', `> - ${ITEM}`));
 });
@@ -168,8 +179,19 @@ test('a section whose only bullet is - followed only by spaces is missing accept
   refusedAsMissing(card(25, '## Acceptance', '', '-   '));
 });
 
-test('a section whose only bullet is - <!-- fill in --> is admitted', () => {
-  admitted(card(26, '## Acceptance', '', '- <!-- fill in -->'));
+test('a section whose only bullet is - <!-- fill in --> is missing acceptance', () => {
+  refusedAsMissing(card(26, '## Acceptance', '', '- <!-- fill in -->'));
+});
+
+test('a bullet holding only HTML comments beside a qualifying bullet leaves the card admitted', () => {
+  admitted(card(36, '## Acceptance', '', '- <!-- note -->', `- ${ITEM}`));
+  admitted(card(36, '## Acceptance', '', `- ${ITEM}`, '- <!-- note --> <!-- another -->'));
+});
+
+test('a section whose only bullet-like line is a thematic break is missing acceptance', () => {
+  const lines = ['- - -', '* * *', '+ + +', '-  -  -'];
+  const verdicts = Object.fromEntries(lines.map((line) => [line, check(card(37, '## Acceptance', '', line)).reason]));
+  assert.deepEqual(verdicts, Object.fromEntries(lines.map((line) => [line, MISSING])));
 });
 
 test('an item linking the title is compared on its source text, URL included', () => {
@@ -250,6 +272,14 @@ test('a stray CR or a U+2028 on a heading or bullet line does not hide a qualify
     Object.entries(bodies).map(([name, text]) => [name, check({ number: 35, title: TITLE, body: text }).admitted]),
   );
   assert.deepEqual(verdicts, Object.fromEntries(Object.keys(bodies).map((name) => [name, true])));
+});
+
+test('a lone CR does not split a line, so a heading and bullet joined by one are no section', () => {
+  refusedAsMissing({ number: 39, title: TITLE, body: `## Acceptance\r- ${ITEM}` });
+});
+
+test('an item keeps the spaces after the one space that follows its marker, so -  [ ] is no task-list item', () => {
+  admitted(card(40, '## Acceptance', '', `-  [ ] ${ITEM}`));
 });
 
 test('the body of issue #182, as gh issue view 182 --json number,title,body returned it on 2026-09-24, passes', () => {
