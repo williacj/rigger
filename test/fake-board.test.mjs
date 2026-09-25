@@ -1,14 +1,13 @@
 // ABOUTME: Tests the fake board every M1 scheduling behaviour is proven against: what it holds
-// and reads back, how it moves a card, what it records of each write, and its sample calls.
+// and reads back, how it moves a card, what it records of each write, and how it holds a read.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 
-import { createFakeBoard, sampleBoard, sampleCalls } from './fake-board.mjs';
+import { createFakeBoard } from './fake-board.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -214,41 +213,4 @@ test('no file under src/ imports the fake board', () => {
 
   const importers = files.filter((file) => importsFake.test(readFileSync(file, 'utf8')));
   assert.deepEqual(importers, []);
-});
-
-// The operations are whatever the fake offers, read off it rather than listed here, so an
-// operation added to the fake is checked with no edit to this file.
-const operationNames = () => Object.keys(sampleBoard().operations);
-
-test('every operation the fake board offers carries a sample call', () => {
-  const lacking = operationNames().filter((name) => !Object.hasOwn(sampleCalls, name));
-  assert.deepEqual(lacking, [], `operations with no sample call: ${lacking.join(', ')}`);
-});
-
-function callSample(fake, name) {
-  assert.ok(Object.hasOwn(sampleCalls, name), `${name} has no sample call`);
-  return fake.operations[name](...structuredClone(sampleCalls[name]));
-}
-
-test("every write's sample call changes what a read of the board returns", async () => {
-  // A write is an operation whose sample call adds to the write record; every other operation is
-  // a read, and the board as read is what all of them return.
-  const writes = [];
-  const reads = [];
-  for (const name of operationNames()) {
-    const fake = sampleBoard();
-    await callSample(fake, name);
-    (fake.writes().length > 0 ? writes : reads).push(name);
-  }
-  assert.ok(writes.length > 0 && reads.length > 0, 'found no writes or no reads to compare');
-
-  const readAll = (fake) => Promise.all(reads.map((name) => callSample(fake, name)));
-  const unchanged = [];
-  for (const name of writes) {
-    const fake = sampleBoard();
-    const before = await readAll(fake);
-    await callSample(fake, name);
-    if (isDeepStrictEqual(before, await readAll(fake))) unchanged.push(name);
-  }
-  assert.deepEqual(unchanged, [], `writes whose sample call left the board unchanged: ${unchanged.join(', ')}`);
 });

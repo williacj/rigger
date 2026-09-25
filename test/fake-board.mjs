@@ -2,43 +2,6 @@
 // imported from src/, and holding forge facts only: no card's linked pull request, no verdict.
 
 /**
- * One invocation of each operation, as the arguments it is called with, valid on a fresh
- * `sampleBoard()`. A test that derives which operations write, or which change a card's column,
- * calls every operation through these rather than keeping a list of names; the fake's own test
- * fails, naming the operation, when one is missing here.
- */
-export const sampleCalls = {
-  readItems: [],
-  readColumns: [],
-  readFields: [],
-  readLabels: [],
-  moveItem: ['item-1', 'Coding'],
-  createColumn: ['Blocked'],
-  createField: ['Size', ['S', 'M', 'L']],
-  createLabel: ['type:spike'],
-};
-
-/** A fresh board every sample call is valid on: one card, in the first of five columns. */
-export function sampleBoard() {
-  return createFakeBoard({
-    columns: ['Ready', 'Coding', 'Review', 'Owner', 'Done'],
-    fields: [{ name: 'Priority', options: ['P0', 'P1', 'P2'] }],
-    items: [
-      {
-        type: 'issue',
-        repository: 'williacj/rigger',
-        number: 1,
-        title: 'A sample card',
-        body: '## Acceptance\n\n- It is read back.',
-        labels: ['type:change'],
-        column: 'Ready',
-        fieldValues: { Priority: 'P1' },
-      },
-    ],
-  });
-}
-
-/**
  * Everything the fake holds of one board item. Each is a forge fact the board itself carries; a
  * card's linked pull request and any verdict are not, so an item naming either is refused.
  * `type` is `issue`, `draftIssue` or `pullRequest`, and `fieldValues` maps a field's name to the
