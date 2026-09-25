@@ -114,3 +114,152 @@ export function readRunner(args, { send = plainly } = {}) {
   }
   return send(FORGE, args);
 }
+
+/**
+ * The argument names that name a board item. GitHub owns which they are (`D16`), and its IDs are
+ * opaque, so an item is recognised by the name of the argument carrying it and never by what its
+ * value looks like. Measured by introspecting the input of every `ProjectV2` mutation with gh
+ * 2.99.0 on 2026-09-25: `itemId` names the item in six of them, and `afterId` names a second one
+ * in `updateProjectV2ItemPosition`'s. `draftIssueId` and `contentId` name what an item holds, not
+ * the item.
+ */
+const ITEM_ARGUMENTS = new Set(['itemId', 'afterId']);
+
+/** Every argument and input-object field name in `args`, at any depth. */
+function argumentNames(args) {
+  const names = [];
+  const visit = (value) => {
+    if (value.kind === 'object') value.fields.forEach((field) => names.push(field.name) && visit(field.value));
+    if (value.kind === 'list') value.values.forEach(visit);
+  };
+  for (const arg of args) {
+    names.push(arg.name);
+    visit(arg.value);
+  }
+  return names;
+}
+
+/** Every variable `args` reads, at any depth. */
+function variablesIn(args) {
+  const found = [];
+  const visit = (value) => {
+    if (value.kind === 'variable') found.push(`$${value.name}`);
+    if (value.kind === 'object') value.fields.forEach((field) => visit(field.value));
+    if (value.kind === 'list') value.values.forEach(visit);
+  };
+  args.forEach((arg) => visit(arg.value));
+  return found;
+}
+
+/**
+ * The one mutation a write request sends, read for `runner`: its root field, which is the
+ * operation a write runner names and admits.
+ *
+ * A write is admitted only as `gh api graphql -f query=<document>` and nothing else, with every
+ * argument written in the document. A variable, a fragment at the root, a directive or a second
+ * root field each put what the request does somewhere the runner cannot name, so each is refused.
+ */
+function mutationOf(runner, args) {
+  const [subcommand, endpoint, flag, query, ...rest] = args;
+  if (subcommand !== 'api' || endpoint !== 'graphql' || flag !== '-f' || !query?.startsWith('query=') || rest.length > 0) {
+    refuse(runner, `${spelled(args)}, which is not a GraphQL document sent as \`gh api graphql -f query=\` and nothing else`);
+  }
+  const operation = operationsOf(runner, query.slice('query='.length));
+  if (operation.type !== 'mutation') refuse(runner, `${named(operation)}, which is not a mutation`);
+  if (operation.selections.some((selection) => selection.kind === 'fragment')) {
+    refuse(runner, `${named(operation)}, which puts a fragment at its root`);
+  }
+  if (operation.selections.length > 1) {
+    refuse(runner, `a request carrying more than one operation: ${operation.selections.map((field) => field.name).join(', ')}`);
+  }
+  const [field] = operation.selections;
+  const directives = [...operation.directives, ...field.directives].map((directive) => `@${directive.name}`);
+  if (directives.length > 0) refuse(runner, `${field.name}, which carries ${directives.join(', ')}`);
+  const variables = variablesIn(field.arguments);
+  if (variables.length > 0 || operation.variables) {
+    refuse(runner, `${field.name}, whose arguments carry ${variables.join(', ') || 'declared variables'}, which the document does not show`);
+  }
+  return field;
+}
+
+/** The operations the schema-write runner admits before #217: creating a field and a label. */
+const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel']);
+
+/**
+ * Sends one write to the board's fields or the repository's labels, and refuses any other
+ * request, including one on its allowlist whose arguments name a board item.
+ */
+export function schemaWriteRunner(args, { send = plainly } = {}) {
+  const field = mutationOf('schema-write', args);
+  const items = argumentNames(field.arguments).filter((name) => ITEM_ARGUMENTS.has(name));
+  if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
+  if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
+  return send(FORGE, args);
+}
+
+/** The operations the item-write runner admits in M1: the field-value write that moves a card. */
+const ITEM_WRITES = new Set(['updateProjectV2ItemFieldValue']);
+
+/** The field holding the columns, whose options are the column display names (`ARCHITECTURE.md`). */
+const COLUMNS = 'Status';
+
+/**
+ * The first line of what `gh` said, from its error stream first: a failed `gh api graphql` prints
+ * the whole response as one line on stdout and its message on stderr.
+ */
+export function firstLine(said) {
+  if (said.status === null) return `gh could not be run: ${said.error?.code ?? said.error?.message}`;
+  const lines = `${said.stderr ?? ''}\n${said.stdout ?? ''}`.split('\n').map((line) => line.trim());
+  return lines.find(Boolean) ?? `gh exited ${said.status} and said nothing`;
+}
+
+/**
+ * The fields of the one `input` a column move carries, each written as a string in the document,
+ * or a refusal naming what is not: a column move names its board, its item, its field and the
+ * option it sets, and nothing else.
+ */
+function moveInput(field) {
+  const [input, ...others] = field.arguments;
+  const fields = input?.name === 'input' && input.value.kind === 'object' && others.length === 0 ? input.value.fields : null;
+  const read = {};
+  for (const { name, value } of fields ?? []) {
+    if (Object.hasOwn(read, name)) refuse('item-write', `${field.name}, whose input gives ${name} twice`);
+    read[name] = value;
+  }
+  const option = read.value?.kind === 'object' && read.value.fields.length === 1 ? read.value.fields[0] : null;
+  const strings = ['projectId', 'itemId', 'fieldId'].every((name) => read[name]?.kind === 'string');
+  if (!fields || Object.keys(read).length !== 4 || !strings || option?.name !== 'singleSelectOptionId' || option.value.kind !== 'string') {
+    refuse('item-write', `${field.name}, whose input is not a projectId, itemId, fieldId and a value setting one singleSelectOptionId`);
+  }
+  return { projectId: read.projectId.value, fieldId: read.fieldId.value };
+}
+
+/**
+ * Which field of `projectId` holds the columns, and what the field `fieldId` is called, read
+ * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
+ */
+function columnsField(projectId, fieldId, send) {
+  const query = `query { project: node(id: ${JSON.stringify(projectId)}) { ... on ProjectV2 { field(name: ${JSON.stringify(COLUMNS)}) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: ${JSON.stringify(fieldId)}) { ... on ProjectV2FieldCommon { name } } }`;
+  const said = readRunner(['api', 'graphql', '-f', `query=${query}`], { send });
+  if (said.status !== 0) {
+    throw new Error(`the item-write runner could not read which field holds the columns, and sent no write: ${firstLine(said)}`);
+  }
+  const { data } = JSON.parse(said.stdout);
+  return { id: data?.project?.field?.id, target: data?.target?.name };
+}
+
+/**
+ * Sends one write to a board item, and refuses any other request. In M1 that write is the column
+ * move: a field-value write setting an option of the field holding the columns, which the runner
+ * reads off the board rather than taking from whoever sent the request.
+ */
+export function itemWriteRunner(args, { send = plainly } = {}) {
+  const field = mutationOf('item-write', args);
+  if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
+  const { projectId, fieldId } = moveInput(field);
+  const columns = columnsField(projectId, fieldId, send);
+  if (columns.id !== fieldId) {
+    refuse('item-write', `a field-value write on ${columns.target ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
+  }
+  return send(FORGE, args);
+}

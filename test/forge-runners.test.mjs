@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -211,4 +211,145 @@ test('the read runner refuses a GraphQL request whose document it cannot see or 
   refuses(readRunner, ['api', 'graphql'], ['api graphql']);
   refuses(readRunner, [...graphql('query { viewer { login } }'), '--input', 'body.json'], ['--input']);
   refuses(readRunner, [...graphql('query { viewer { login } }'), '-X', 'GET'], ['-X']);
+});
+
+/** Creating a single-select field, in the shape the schema-write side sends it. */
+const CREATE_FIELD = 'mutation { createProjectV2Field(input: {projectId: "PVT_1", dataType: SINGLE_SELECT, name: "Priority", singleSelectOptions: [{name: "High", color: GRAY, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }';
+
+/** Creating a label, in the shape the schema-write side sends it. */
+const CREATE_LABEL = 'mutation { createLabel(input: {repositoryId: "R_1", name: "type:change", color: "ededed"}) { label { id } } }';
+
+/**
+ * Setting a board item's `Priority`, a field-value write naming a board item: review C1's shape,
+ * a column-shaped write sent on another field.
+ */
+const SET_PRIORITY = 'mutation { updateProjectV2ItemFieldValue(input: {projectId: "PVT_1", itemId: "PVTI_1", fieldId: "PVTSSF_priority", value: {singleSelectOptionId: "p0"}}) { projectV2Item { id } } }';
+
+test('the schema-write runner sends creating a field and creating a label, which its allowlist holds', () => {
+  for (const document of [CREATE_FIELD, CREATE_LABEL]) {
+    const send = recording();
+    schemaWriteRunner(graphql(document), { send });
+    assert.deepEqual(send.sent, [['gh', ...graphql(document)]]);
+  }
+});
+
+test('the schema-write runner refuses an operation its allowlist does not hold, naming it, and sends nothing', () => {
+  // Before #217 the allowlist is the two creations. Deleting a field, editing a field's options
+  // and deleting the board are schema writes too, and none of them is admitted.
+  refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2Field(input: {fieldId: "PVTSSF_1"}) { clientMutationId } }'), ['deleteProjectV2Field']);
+  refuses(schemaWriteRunner, graphql('mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_1", singleSelectOptions: []}) { clientMutationId } }'), ['updateProjectV2Field']);
+  refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2(input: {projectId: "PVT_1"}) { clientMutationId } }'), ['deleteProjectV2']);
+});
+
+test('the schema-write runner refuses a field-value write that names a board item and sets Priority, and sends nothing', () => {
+  // Review C1's shape. It names a board item, so it is not the schema side's however it is sent.
+  refuses(schemaWriteRunner, graphql(SET_PRIORITY), ['updateProjectV2ItemFieldValue', 'itemId']);
+});
+
+test('the schema-write runner refuses an allowlisted operation whose arguments name a board item, decided by the name', () => {
+  // The defect this catches is a board item recognised by its ID's prefix: GitHub's ID formats are
+  // its own (`D16`), so an argument named for an item is what is read, whatever its value looks
+  // like, and a value that looks like an item's ID names nothing when its argument does not.
+  const naming = 'mutation { createProjectV2Field(input: {projectId: "PVT_1", itemId: "not-an-item-looking-id", dataType: SINGLE_SELECT, name: "Priority", singleSelectOptions: []}) { clientMutationId } }';
+  refuses(schemaWriteRunner, graphql(naming), ['createProjectV2Field', 'itemId']);
+  const looking = CREATE_LABEL.replace('"type:change"', '"PVTI_lADOBzomGc4Bkn7fzgd"');
+  const send = recording();
+  schemaWriteRunner(graphql(looking), { send });
+  assert.equal(send.sent.length, 1);
+});
+
+/** Moving board item `PVTI_1` to the `Status` option `opt_review`: the column move. */
+const MOVE = 'mutation { updateProjectV2ItemFieldValue(input: {projectId: "PVT_1", itemId: "PVTI_1", fieldId: "PVTSSF_status", value: {singleSelectOptionId: "opt_review"}}) { projectV2Item { id } } }';
+
+/**
+ * The forge answering the item-write runner's read of which field holds the columns, where that
+ * is `PVTSSF_status` and the field the request names is called `target`. The shape is the one
+ * GitHub answered on 2026-09-25 for the same query over IDs that resolve to nothing, with `null`s
+ * filled in as the query's selections name them.
+ */
+const holdingColumns = (target) => (command, args) => (args.at(-1).startsWith('query=query')
+  ? { status: 0, stdout: JSON.stringify({ data: { project: { field: { id: 'PVTSSF_status' } }, target: { name: target } } }), stderr: '' }
+  : { status: 0, stdout: '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}', stderr: '' });
+
+test('the item-write runner sends the column move, a field-value write on the field holding the columns', () => {
+  const send = recording(holdingColumns('Status'));
+
+  itemWriteRunner(graphql(MOVE), { send });
+
+  // First the read of which field holds the columns, through the read runner's own form, then the
+  // write it admitted.
+  assert.equal(send.sent.length, 2, JSON.stringify(send.sent));
+  assert.match(send.sent[0].at(-1), /^query=query /);
+  assert.match(send.sent[0].at(-1), /"PVT_1"/);
+  assert.deepEqual(send.sent[1], ['gh', ...graphql(MOVE)]);
+});
+
+test('the item-write runner refuses a field-value write on any field but the one holding the columns, naming it', () => {
+  // Review C1's other half: a field-value write is the item side's, and on this side it is the
+  // column move and nothing else. Which field holds the columns is read from the board, because
+  // an ID says nothing about which field it is.
+  const send = refuses(itemWriteRunner, graphql(SET_PRIORITY), ['Priority', 'PVTSSF_priority'], { answer: holdingColumns('Priority') });
+  assert.equal(send.sent.length, 1, 'more was sent than the read of which field holds the columns');
+});
+
+test('the item-write runner refuses a request that archives a board item, naming it, and sends nothing', () => {
+  refuses(itemWriteRunner, graphql('mutation { archiveProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { item { id } } }'), ['archiveProjectV2Item']);
+});
+
+test('the item-write runner refuses every operation but the column move, naming it, and sends nothing', () => {
+  // In M1 its allowlist is the column move alone. Deleting, clearing and reordering all name a
+  // board item, and none is a card's need yet; a schema write is not the item side's at all.
+  const refused = [
+    ['deleteProjectV2Item', 'mutation { deleteProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { deletedItemId } }'],
+    ['clearProjectV2ItemFieldValue', 'mutation { clearProjectV2ItemFieldValue(input: {projectId: "PVT_1", itemId: "PVTI_1", fieldId: "PVTSSF_status"}) { clientMutationId } }'],
+    ['updateProjectV2ItemPosition', 'mutation { updateProjectV2ItemPosition(input: {projectId: "PVT_1", itemId: "PVTI_1", afterId: "PVTI_2"}) { clientMutationId } }'],
+    ['createLabel', CREATE_LABEL],
+    // Carrying the column move's own input, so the allowlist is the only thing that refuses it.
+    ['deleteProjectV2Item', MOVE.replaceAll('updateProjectV2ItemFieldValue', 'deleteProjectV2Item')],
+  ];
+  for (const [operation, document] of refused) {
+    refuses(itemWriteRunner, graphql(document), [operation], { answer: holdingColumns('Status') });
+  }
+});
+
+test('the item-write runner refuses a write on the columns field that sets anything but an option, naming it', () => {
+  for (const value of ['{text: "Review"}', '{singleSelectOptionId: "opt_review", text: "x"}']) {
+    refuses(itemWriteRunner, graphql(MOVE.replace('{singleSelectOptionId: "opt_review"}', value)), ['updateProjectV2ItemFieldValue', 'value']);
+  }
+  refuses(itemWriteRunner, graphql(MOVE.replace('fieldId: "PVTSSF_status"', 'fieldId: "PVTSSF_status", fieldId: "PVTSSF_priority"')), ['fieldId']);
+});
+
+test('the item-write runner sends no write when it cannot read which field holds the columns', () => {
+  // Recorded from gh 2.99.0 on 2026-09-25, answering a query over an ID that resolves to nothing.
+  const failing = () => ({ status: 1, stdout: '{"data":{"project":null}}', stderr: "gh: Could not resolve to a node with the global id of 'PVT_1'\n" });
+  const send = recording(failing);
+  assert.throws(() => itemWriteRunner(graphql(MOVE), { send }), /Could not resolve to a node/);
+  assert.equal(send.sent.length, 1);
+});
+
+test('a write runner refuses a request carrying more than one operation, naming them, and sends nothing', () => {
+  const two = 'mutation { createLabel(input: {repositoryId: "R_1", name: "a", color: "ededed"}) { label { id } } deleteProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { deletedItemId } }';
+  refuses(schemaWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
+  refuses(itemWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
+  const documents = `${CREATE_LABEL} ${CREATE_FIELD.replace('mutation {', 'mutation Second {')}`;
+  refuses(schemaWriteRunner, graphql(documents), ['createLabel', 'Second']);
+});
+
+test('a write runner refuses a request whose operation it cannot name from the document alone, and sends nothing', () => {
+  // A variable, a fragment at the root or a directive puts what the operation does somewhere the
+  // document does not show, so the runner could not name what it would send. Any other form of
+  // request is refused for the same reason.
+  const refused = [
+    [graphql('mutation($input: CreateLabelInput!) { createLabel(input: $input) { label { id } } }'), ['$input']],
+    [graphql('mutation { ...Write } fragment Write on Mutation { deleteProjectV2(input: {projectId: "PVT_1"}) { clientMutationId } }'), ['fragment']],
+    [graphql('mutation { createLabel(input: {repositoryId: "R_1", name: "a", color: "ededed"}) @skip(if: false) { label { id } } }'), ['@skip']],
+    [graphql('query { viewer { login } }'), ['query']],
+    [[...graphql(CREATE_LABEL), '-F', 'x=1'], ['-F x=1']],
+    [['api', 'graphql', '-F', `query=${CREATE_LABEL}`], ['-F query=']],
+    [['label', 'create', 'type:change'], ['label create type:change']],
+  ];
+  for (const [args, names] of refused) {
+    refuses(schemaWriteRunner, args, names);
+    refuses(itemWriteRunner, args, names);
+  }
 });
