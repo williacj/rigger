@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CATEGORIES, SHAPES, validate, workRequires } from '../src/config/validate.mjs';
+import { CATEGORIES, SHAPES, declaredLabels, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -617,4 +617,67 @@ test('a config declaring no board owner still carries none once Rigger has loade
   assert.deepEqual(validate(loaded), []);
   assert.ok(!Object.hasOwn(loaded.board, 'owner'), `the loaded config carries a board owner: ${loaded.board.owner}`);
   assert.deepEqual(loaded, before);
+});
+
+/** This repository's config with `concurrency` declared as `value`. */
+const runningAtOnce = (value) => holding(rigger, ['concurrency'], value);
+
+test('a concurrency that is not a positive whole number is refused, and the refusal names the key and the value', () => {
+  for (const [value, spelled] of [[0, '0'], [-2, '-2'], [1.5, '1.5'], ['3', "'3'"]]) {
+    const refused = refusal(runningAtOnce(value));
+    assert.match(refused, /`concurrency`/, JSON.stringify(value));
+    assert.ok(refused.includes(spelled), `the refusal does not name ${spelled}: ${refused}`);
+  }
+});
+
+test('a concurrency no JSON can spell is refused without a throw, and the refusal names the value as written', () => {
+  // A config is a module, so it can hold values JSON has no spelling for: `Infinity` is a natural
+  // way to write "no cap", and a BigInt is a whole number of another type.
+  for (const [value, spelled] of [[Number.NaN, 'NaN'], [Infinity, 'Infinity'], [-Infinity, '-Infinity'], [3n, '3n'], [{ per: 2n }, '{ per: 2n }']]) {
+    const refused = refusal(runningAtOnce(value));
+    assert.match(refused, /`concurrency`/, String(spelled));
+    assert.ok(refused.endsWith(` ${spelled}`), `the refusal does not name ${spelled}: ${refused}`);
+  }
+});
+
+test('a concurrency that is a positive whole number is accepted, and so is a config declaring none', () => {
+  for (const value of [1, 3, 12]) assert.deepEqual(validate(runningAtOnce(value)), [], String(value));
+  assert.deepEqual(validate(without(rigger, ['concurrency'])), []);
+});
+
+test('the labels a config selects are every label its kinds and provisioning steps select, each once, and nothing else', () => {
+  // Written out by hand from the declarations below. A label two kinds share, and one a kind and a
+  // step share, are each named once; the epic label, which no kind or step selects, and a step
+  // that selects nothing name no label.
+  const config = {
+    ...rigger,
+    kinds: {
+      change: { ...rigger.kinds.change, select: { labels: ['type:change', 'area:cli'] } },
+      spec: { ...rigger.kinds.spec, select: { labels: ['type:spec', 'area:cli'] } },
+    },
+    epicLabel: 'type:epic',
+    provisioning: {
+      'npm-ci': { run: 'npm ci', required: true },
+      vhs: { run: 'brew install vhs', select: { labels: ['area:demo', 'type:spec'] } },
+    },
+  };
+  assert.deepEqual(validate(config), []);
+
+  assert.deepEqual(selectedLabels(config), ['type:change', 'area:cli', 'type:spec', 'area:demo']);
+});
+
+test('the labels a config declares are those its kinds and steps select, then its epic label, each once', () => {
+  // Written out by hand from this repository's config, which declares `type:epic`.
+  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic']);
+  const { epicLabel, ...unmarked } = rigger;
+  assert.deepEqual(validate(unmarked), []);
+  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo']);
+});
+
+test('a config with no provisioning selects the labels its kinds select', () => {
+  const { provisioning, ...config } = rigger;
+  const kinds = Object.fromEntries(Object.entries(rigger.kinds).map(([name, { provisioning: steps, ...kind }]) => [name, kind]));
+  assert.deepEqual(validate({ ...config, kinds }), []);
+
+  assert.deepEqual(selectedLabels({ ...config, kinds }), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike']);
 });

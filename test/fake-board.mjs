@@ -10,8 +10,9 @@
 const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', 'column', 'fieldValues'];
 
 /**
- * A board holding `columns` (the `Status` options, in board order), single-select `fields` as
- * `{ name, options }`, `items`, and the repository's `labels`. Each item is given the board item
+ * A board holding `columns` (the `Status` options, in board order), `fields` as `{ name, options }`
+ * or, for a field of another type, `{ name, type }` with the type as GitHub names it, `items`, and
+ * the repository's `labels`. Each item is given the board item
  * id `item-1`, `item-2` and so on, in the order given, which is what a move names.
  *
  * Its `operations` are what the forge adapter offers, and nothing else is: `writes()` and
@@ -45,7 +46,8 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     operations: {
       readItems: () => read(() => board.items),
       readColumns: () => read(() => board.columns),
-      readFields: () => read(() => board.fields),
+      readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
+      readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
       readLabels: () => read(() => board.labels),
       /**
        * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
@@ -57,6 +59,7 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
         if (!priority) return { items: board.items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
         const field = board.fields.find(({ name }) => name === priority.field);
         if (!field) throw new Error(`the fake board has no field named ${priority.field}`);
+        if (field.type !== undefined) throw new Error(`the fake board's field ${priority.field} is a ${field.type} field`);
         const items = board.items.map((item) => {
           const value = item.fieldValues?.[priority.field] ?? null;
           return { ...item, priority: { value, declared: priority.options.includes(value) } };

@@ -1,5 +1,6 @@
 // ABOUTME: Parses every module under src/ and reports each boundary it crosses: the forge adapter's
-// sides a directory may not import, the facts a layer may not touch, and what may spawn.
+// sides a directory may not import, the facts a layer may not touch, what may spawn, and who may
+// hold L3's dispatching entry point.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
@@ -40,6 +41,14 @@ const NAMES = [
   { rule: 'rule 2', directory: 'src/scheduling/', names: ['kinds', 'labels', 'body'], says: 'L3 never reads kinds, a card\'s labels or a card\'s body' },
   { rule: 'rule 4', directory: 'src/cli/', names: ['concurrency'], says: 'the CLI never reads concurrency; L3 reads N from the config it is handed' },
 ];
+
+/**
+ * L3's dispatching entry point, which no module outside src/scheduling/ may bind (rule 8; the
+ * architect's ruling 5, §4). A binding holds it as a binding holds a write side: through the
+ * hand-on steps the reader of what each binding holds follows, and no further.
+ */
+const ENTRY = { file: 'src/scheduling/loop.mjs', local: 'loop' };
+const isEntry = (definition) => definition.file === ENTRY.file && definition.local === ENTRY.local;
 
 /** The modules that may import `node:child_process`: the runners, and two local tool probes. */
 const SPAWNERS = [RUNNERS, 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
@@ -987,6 +996,10 @@ export function boundaryReport(tree) {
       report(file, error.line ?? '?', 'the unreadable-module rule', error.message);
     }
   }
+  if (!tree.has(ENTRY.file)) throw new Error(`L3's dispatching entry point has no module at ${ENTRY.file}, so rule 8 could not fail`);
+  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.local)) {
+    throw new Error(`${ENTRY.file} exports no \`${ENTRY.local}\`, L3's dispatching entry point, so rule 8 could not fail`);
+  }
   const runners = modules.get(RUNNERS);
   for (const side of SIDES) {
     if (runners && !runners.topLevel.has(runnerOf(side))) throw new Error(`${RUNNERS} declares no ${runnerOf(side)}, the ${side} side's runner, so no rule over it could fail`);
@@ -1131,6 +1144,11 @@ export function boundaryReport(tree) {
         for (const side of ruled) {
           if (sides.has(side) && barred(file) && !ownModule(file, side)) report(file, line, rule, `it imports \`${name}\`, which is the ${side} side's, and ${says}`);
         }
+      }
+    }
+    if (!file.startsWith('src/scheduling/')) {
+      for (const { line, name, definitions } of bindings) {
+        if (definitions.some(isEntry)) report(file, line, 'rule 8', `it binds \`${name}\`, which holds L3's dispatching entry point, and only src/scheduling/ may hold it`);
       }
     }
     for (const { line, name, definitions } of handedOn) {
