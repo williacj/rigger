@@ -78,9 +78,12 @@ async function setUp(board, config = CONFIG) {
   return runIn(target, board);
 }
 
-/** Runs `rigger setup-board` from `target` with a fake `gh` holding `board` first on PATH. */
-async function runIn(target, board) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-setup-board-gh-')), { ...WHERE, board });
+/**
+ * Runs `rigger setup-board` from `target` with a fake `gh` holding `board` first on PATH, as the
+ * board numbered `project`, which is the config's unless a test says otherwise.
+ */
+async function runIn(target, board, project = WHERE.project) {
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-setup-board-gh-')), { ...WHERE, project, board });
   const ran = spawnSync(process.execPath, [BIN, 'setup-board'], {
     cwd: target,
     encoding: 'utf8',
@@ -296,6 +299,61 @@ test('every option in every schema write setup-board sends carries a colour of G
   for (const [write, kind, value] of colours) {
     assert.ok(kind === 'scalar' && ENUM_COLOURS.includes(value), `${write} sent an option coloured ${kind} ${value}`);
   }
+});
+
+/** An issue of the repository the config names. */
+const ours = (number) => ({ type: 'issue', repository: WHERE.repo, number, title: `Card ${number}`, column: 'Ready' });
+
+/** An issue of `repository`, which is not the one the config names. */
+const theirs = (repository, number) => ({ type: 'issue', repository, number, title: `Theirs ${number}`, column: 'Ready' });
+
+/**
+ * A board holding everything declared but the column Owner, and `items`. The refusal tests and
+ * their control differ only in the items, so a board holding just the repository's issues is
+ * the one setup-board writes to.
+ */
+const lackingOwner = (items) => ({ ...COMPLETE, columns: ['Ready', 'Coding', 'Review', 'Done'], items });
+
+test("against a board holding only the repository's issues and lacking a declared column, setup-board creates that column", async () => {
+  // The control for the refusals below: their boards differ from this one only in an item.
+  const { ran, writes } = await setUp(lackingOwner([ours(1), ours(2)]));
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes, [{ operation: 'createColumn', args: ['Owner'] }]);
+});
+
+test("against a board holding another repository's item and lacking a declared column, setup-board leaves the write record empty", async () => {
+  const { ran, writes, sent } = await setUp(lackingOwner([ours(1), theirs('other/one', 7), ours(2)]));
+
+  assert.notEqual(ran.status, 0);
+  assert.deepEqual(writes, []);
+  assert.ok(!sent.some((args) => /^query=mutation/.test(args[3] ?? '')), 'setup-board sent a mutation');
+});
+
+test('against a board holding items of other repositories, setup-board exits non-zero and names each of them', async () => {
+  const { ran } = await setUp(lackingOwner([ours(1), theirs('other/one', 7), { type: 'pullRequest', repository: 'else/two', number: 8, title: 'A PR', column: 'Ready' }]));
+
+  assert.notEqual(ran.status, 0);
+  for (const repository of ['other/one', 'else/two']) assert.ok(ran.stderr.includes(repository), ran.stderr);
+});
+
+test('against a board holding a redacted item and lacking a declared column, setup-board leaves the write record empty and exits non-zero', async () => {
+  // The fake gh's answer for the redacted item is constructed from the schema, not captured.
+  const { ran, writes } = await setUp(lackingOwner([ours(1), { type: 'redacted' }]));
+
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr, /cannot read/);
+  assert.deepEqual(writes, []);
+});
+
+test('when the board cannot be read, setup-board leaves the write record empty and exits non-zero', async () => {
+  // The fake gh holds the board numbered one past the config's, so gh answers the config's is not there.
+  const target = repositoryIn('rigger-setup-board-', { 'rigger.config.mjs': `export default ${JSON.stringify(CONFIG)};\n` });
+  const { ran, writes } = await runIn(target, lackingOwner([ours(1)]), WHERE.project + 1);
+
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr, /Could not resolve to a ProjectV2/);
+  assert.deepEqual(writes, []);
 });
 
 // proves R-SAFE-5
