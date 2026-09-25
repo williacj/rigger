@@ -13,8 +13,9 @@ const rankOf = (card, declared) => {
 
 /**
  * The pull order over `items`, the board's cards as L0 hands them, each carrying its `column` and
- * its `priority` as `{ value, declared }`, with `columns`, the declared columns by key, and
- * `declared`, the declared priority options highest rank first, or null where none is declared.
+ * its `priority` as `{ value, declared }`, or null where no order is declared, with `columns`,
+ * the declared columns by key, and `declared`, the declared priority options highest rank first,
+ * or null where none is declared.
  * `decide` is L2's next action for a card.
  *
  * A card in the `ready` column is a Ready card. A card in the `coding` or `review` column is a

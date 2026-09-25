@@ -51,7 +51,7 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-40 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
 | R-CARD-32 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` Support C restates the title Support C++, because symbols are deleted<br>`test/form-check.test.mjs` Add - a verb restates the title Add a verb, because punctuation is deleted before whitespace is collapsed<br>`test/form-check.test.mjs` ας restates the title ΑΣ, because lower case follows the full mapping, final sigma included |
 | R-CARD-33 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` Support C restates the title Support C++, because symbols are deleted<br>`test/form-check.test.mjs` Add - a verb restates the title Add a verb, because punctuation is deleted before whitespace is collapsed |
-| R-SCHED-1 | `test/pull-order.test.mjs` the higher-priority ready card is pulled first, though the board lists the lower one first<br>`test/pull-order.test.mjs` changing the lower-priority card's value to outrank the other puts it first |
+| R-SCHED-1 | `test/forge-priority.test.mjs` through the fake gh, L0's priority read hands L3 what the fake board hands, and L3 pulls in the declared order<br>`test/pull-order.test.mjs` the higher-priority ready card is pulled first, though the board lists the lower one first<br>`test/pull-order.test.mjs` changing the lower-priority card's value to outrank the other puts it first |
 | R-SCHED-2 | **gap** |
 | R-SCHED-3 | **gap** |
 | R-SCHED-4 | **gap** |

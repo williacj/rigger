@@ -152,10 +152,20 @@ async function items(board, state, operation) {
 /** The type GitHub names a single-select field by. */
 const SINGLE_SELECT = 'SINGLE_SELECT';
 
-/** Answers a page of the board's fields, each with its name and type, whatever the type. */
-async function fieldTypes(board, state, operation) {
+/** What the typed field query selects of a page of fields: every field's name and type. */
+const TYPED_FIELD = 'pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } }';
+
+/**
+ * Answers a page of the typed field query: every field with its name and type, and a
+ * single-select field with its options too, as GitHub answers it.
+ */
+async function typedFields(board, state, operation) {
   onTheBoard(state, operation);
-  const nodes = (await board.operations.readFieldTypes()).map(({ name, type }) => ({ name, dataType: type }));
+  const selects = await fieldsOf(board);
+  const nodes = (await board.operations.readFieldTypes()).map(({ name, type }) => {
+    if (type !== SINGLE_SELECT) return { name, dataType: type };
+    return { name, dataType: type, options: selects.find((field) => field.name === name).options.map((option) => ({ name: option })) };
+  });
   return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
 }
 
@@ -184,8 +194,8 @@ const COMMANDS = {
     });
     return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
   },
-  [graphql(boardShape('fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } } }'))]: fieldTypes,
-  [graphql(boardShape('fields(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } } }'))]: fieldTypes,
+  [graphql(boardShape(`fields(first: _) { ${TYPED_FIELD} }`))]: typedFields,
+  [graphql(boardShape(`fields(first: _, after: _) { ${TYPED_FIELD} }`))]: typedFields,
   [graphql(repositoryShape('labels(first: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('labels(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('id'))]: async (board, state, operation) => {

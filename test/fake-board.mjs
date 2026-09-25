@@ -49,6 +49,23 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
       readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
       readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
       readLabels: () => read(() => board.labels),
+      /**
+       * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
+       * every item with its `priority` as `{ value, declared }`, the declared order, and the
+       * field's options in board order. With no declaration, no item has a priority and there is
+       * no order. The adapter's read takes its declaration from the config it was given.
+       */
+      readPriority: (priority) => read(() => {
+        if (!priority) return { items: board.items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
+        const field = board.fields.find(({ name }) => name === priority.field);
+        if (!field) throw new Error(`the fake board has no field named ${priority.field}`);
+        if (field.type !== undefined) throw new Error(`the fake board's field ${priority.field} is a ${field.type} field`);
+        const items = board.items.map((item) => {
+          const value = item.fieldValues?.[priority.field] ?? null;
+          return { ...item, priority: { value, declared: priority.options.includes(value) } };
+        });
+        return { items, declared: [...priority.options], options: field.options };
+      }),
       moveItem: async (itemId, column) => {
         if (!board.columns.includes(column)) {
           throw new Error(`the fake board has no column named ${column}`);
