@@ -10,6 +10,13 @@ import { consumerConfig, sourceTreeGuard } from './doctor.mjs';
 const SINGLE_SELECT = 'SINGLE_SELECT';
 
 /**
+ * A name as a printed line shows it: every control character and every line or paragraph
+ * separator written as its `\u` escape, so a name the validator accepts, which may hold any of
+ * them, prints on the one line its write is given and sends the terminal nothing but text.
+ */
+const shown = (name) => name.replace(/[\p{Cc}\u2028\u2029]/gu, (char) => `\\u${char.codePointAt(0).toString(16).padStart(4, '0')}`);
+
+/**
  * What the board holds that setup-board compares the config against: the names of its columns,
  * every field's name and type, and the repository's labels. Read before anything is written.
  */
@@ -31,20 +38,20 @@ async function survey(board) {
 function writesFor(config, held) {
   const writes = [];
   for (const name of new Set(Object.values(config.board.columns))) {
-    if (!held.columns.includes(name)) writes.push({ operation: 'createColumn', args: [name], line: `added the column ${name}` });
+    if (!held.columns.includes(name)) writes.push({ operation: 'createColumn', args: [name], line: `added the column ${shown(name)}` });
   }
   const { priority } = config.board;
   if (priority) {
     const field = held.fields.find(({ name }) => name === priority.field);
     if (field && field.type !== SINGLE_SELECT) {
-      return { refusal: `the board's field ${field.name} is a ${field.type} field, and a priority field is ${SINGLE_SELECT}, so nothing was written` };
+      return { refusal: `the board's field ${shown(field.name)} is a ${field.type} field, and a priority field is ${SINGLE_SELECT}, so nothing was written` };
     }
     if (!field) {
-      writes.push({ operation: 'createField', args: [priority.field, priority.options], line: `created the field ${priority.field} with the options ${priority.options.join(', ')}` });
+      writes.push({ operation: 'createField', args: [priority.field, priority.options], line: `created the field ${shown(priority.field)} with the options ${priority.options.map(shown).join(', ')}` });
     }
   }
   for (const name of selectedLabels(config)) {
-    if (!held.labels.includes(name)) writes.push({ operation: 'createLabel', args: [name], line: `created the label ${name}` });
+    if (!held.labels.includes(name)) writes.push({ operation: 'createLabel', args: [name], line: `created the label ${shown(name)}` });
   }
   return { writes };
 }
@@ -64,7 +71,7 @@ export async function setupBoard({ target = process.cwd() } = {}) {
   try {
     planned = writesFor(config, await survey(board));
   } catch (error) {
-    return { text: `rigger setup-board: ${error.message}, so nothing was written`, code: 1 };
+    return { text: `rigger setup-board: ${shown(error.message)}, so nothing was written`, code: 1 };
   }
   if (planned.refusal) return { text: `rigger setup-board: ${planned.refusal}`, code: 1 };
 
@@ -74,7 +81,7 @@ export async function setupBoard({ target = process.cwd() } = {}) {
     try {
       await side[operation](...args);
     } catch (error) {
-      return { text: [`rigger setup-board: ${made.length} writes to ${where} before one failed`, ...made, `  ${error.message}`].join('\n'), code: 1 };
+      return { text: [`rigger setup-board: ${made.length} writes to ${where} before one failed`, ...made, `  ${shown(error.message)}`].join('\n'), code: 1 };
     }
     made.push(`  ${line}`);
   }

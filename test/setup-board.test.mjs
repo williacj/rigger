@@ -211,6 +211,21 @@ test('setup-board prints one line for each write it made, naming what it wrote',
   assert.equal(writes.length, 4);
 });
 
+test('a write of a name holding a line break or other control character still prints as one line, and the name written is the name declared', async () => {
+  // The validator accepts any name holding something other than whitespace, so each of these is a
+  // name a consumer can declare. Every way a terminal can be made to start a line is split on.
+  const names = ['area:\ndemo', 'area:\rcli', 'area:\u2028docs', 'area:\u0085ops', 'area:\u001b[2Kbell'];
+  const config = { ...CONFIG, provisioning: { ...CONFIG.provisioning, vhs: { run: 'brew install vhs', select: { labels: names } } } };
+  const { ran, model, writes } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec'] }, config);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(writes.length, names.length);
+  const lines = ran.stdout.replace(/\n$/, '').split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/);
+  assert.equal(lines.length, 1 + names.length, JSON.stringify(ran.stdout));
+  assert.ok(!/\u001b/.test(ran.stdout), 'an escape sequence reached the terminal');
+  assert.deepEqual((await model.operations.readLabels()).slice(2), names);
+});
+
 test('against a board already holding everything, setup-board prints no line for a write', async () => {
   const { ran, writes } = await setUp(COMPLETE);
 
