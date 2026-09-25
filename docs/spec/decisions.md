@@ -644,18 +644,18 @@ architect holds.
 that file forbids a session granting itself one. So a dispatched maker read the prohibition and
 stopped, which is the behaviour the file exists to produce.
 
-That behaviour is why the permission could not live in a dispatch brief. M0 watched the gate
-refuse `--no-verify` to four sessions, and refuse `-c core.hooksPath=` even at its correct value,
-and every one of those sessions surfaced the refusal rather than routing around it. A brief
-telling a maker it may merge, against a binding document saying it may not, asks the session to
-take the brief over the document.
+That behaviour is why the permission could not live in a dispatch brief. Card #187 records what M0
+saw: sessions met the gate refusing `--no-verify`, and refusing `-c core.hooksPath=` at its
+correct value, and each surfaced the refusal rather than routing around it. A brief telling a
+maker it may merge, against a binding document saying it may not, asks the session to take the
+brief over the document.
 
 The end was settled before this entry was written. `AGENTS.md`'s "Version control" gives the gate
 rule to the owner to waive until M5, and `docs/v0-build-plan.md`'s M5 is where the hook arrives.
 So rule 3 reads a reversal the binding documents already carried, rather than inventing one.
 
-A forge ruleset sits under the permission, and it is a backstop rather than a substitute for a
-verdict. Measured with `gh api repos/williacj/rigger/rulesets/23968611` on 2026-09-24, `main`
+A forge ruleset is a backstop under the permission rather than a substitute for a verdict.
+Measured with `gh api repos/williacj/rigger/rulesets/23968611` on 2026-09-24, `main`
 carried an active ruleset. It required a pull request and the `check (20)` and `check (24)`
 status checks, blocked non-fast-forward and deletion, and held `bypass_actors` empty. So a maker
 merging through the forge could not merge a red branch or rewrite history. What no ruleset reads
