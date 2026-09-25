@@ -310,21 +310,6 @@ export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
 }
 
 /**
- * The config the consumer holds in `target`, as `{ config }`, or as `{ unread }`, one line saying
- * why it could not be read. Every verb that reads the config reads it here, because this is the one
- * place that imports it.
- */
-export async function loadConfig(target) {
-  const path = join(target, CONFIG);
-  if (!existsSync(path)) return { unread: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
-  try {
-    return { config: (await import(pathToFileURL(path))).default };
-  } catch (threw) {
-    return { unread: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
-  }
-}
-
-/**
  * Whether the config the consumer holds is one Rigger accepts, which is the validator's answer.
  *
  * `src/config/validate.mjs` decides what Rigger accepts, and every refusal it gives is carried
@@ -338,8 +323,8 @@ export async function loadConfig(target) {
  */
 export async function configValidity({ target = process.cwd() } = {}) {
   const name = 'config validity';
-  const { config, unread } = await loadConfig(target);
-  if (unread) return { name, ok: false, detail: unread };
+  const { config, problem } = await consumerConfig(target);
+  if (problem) return { name, ok: false, detail: problem };
   const refusals = validate(config);
   return {
     name,
@@ -348,6 +333,21 @@ export async function configValidity({ target = process.cwd() } = {}) {
       ? `\`${CONFIG}\` earns no refusals`
       : `\`${CONFIG}\`: ${refusals.map(oneLine).join('; ')}`,
   };
+}
+
+/**
+ * The config the consumer holds in `target`, as `{ config }`, or `{ problem }` saying in one line
+ * why there is none to read: the file is not there, or importing it threw. Every verb that reads
+ * the config reads it here, so the one dynamic import of the consumer's code is this one.
+ */
+export async function consumerConfig(target) {
+  const path = join(target, CONFIG);
+  if (!existsSync(path)) return { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
+  try {
+    return { config: (await import(pathToFileURL(path))).default };
+  } catch (threw) {
+    return { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+  }
 }
 
 /**
@@ -388,19 +388,23 @@ export function report(where, results) {
 export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
 
 /**
- * The repository `verb` is run against from `target`, as `{ named }`, or as `{ refusal }`, the
- * whole of what the verb prints where it refuses to run there (`R-SAFE-5`).
+ * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
+ * verb prints and exits with where that is the source tree this Rigger is running from, or a tree
+ * git cannot name (`R-SAFE-5`). Nothing but git is asked before this answers.
  */
-export function workingTree(verb, { target, packageRoot = PACKAGE, ask }) {
+export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PACKAGE, ask } = {}) {
   const named = repoRoot(target, ask);
   // The paths are compared whatever git said, so a tree the comparison can name is named
   // precisely even where git declines — a run from inside the installed package is the case.
   const here = named ?? real(target);
   if (sameTree(here, packageRoot)) {
     return {
-      refusal: `rigger ${verb}: ${here} is the source tree this Rigger is running from, and Rigger `
-        + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
-        + 'from there.',
+      refusal: {
+        text: `rigger ${verb}: ${here} is the source tree this Rigger is running from, and Rigger `
+          + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
+          + 'from there.',
+        code: 1,
+      },
     };
   }
   // A tree git cannot name is refused rather than checked, because the comparison above is only
@@ -410,9 +414,12 @@ export function workingTree(verb, { target, packageRoot = PACKAGE, ask }) {
   // refusing one too few costs the runtime mid-run, which is what `R-SAFE-5` is for.
   if (named === null) {
     return {
-      refusal: `rigger ${verb}: git names no repository at ${here}, so Rigger cannot tell it from the `
-        + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
-        + 'Run it in a git repository, with git on the path.',
+      refusal: {
+        text: `rigger ${verb}: git names no repository at ${here}, so Rigger cannot tell it from the `
+          + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
+          + 'Run it in a git repository, with git on the path.',
+        code: 1,
+      },
     };
   }
   return { named };
@@ -422,8 +429,8 @@ export function workingTree(verb, { target, packageRoot = PACKAGE, ask }) {
 export async function doctor({
   target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
 } = {}) {
-  const { named, refusal } = workingTree('doctor', { target, packageRoot, ask });
-  if (refusal) return { text: refusal, code: 1 };
+  const { named, refusal } = sourceTreeGuard('doctor', { target, packageRoot, ask });
+  if (refusal) return refusal;
   const results = [];
   for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
   return report(named, results);

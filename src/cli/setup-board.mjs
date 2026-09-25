@@ -4,7 +4,7 @@
 import { selectedLabels, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
-import { loadConfig, workingTree } from './doctor.mjs';
+import { consumerConfig, sourceTreeGuard } from './doctor.mjs';
 
 /** The type GitHub names a single-select field by, which is the only type a priority field may be. */
 const SINGLE_SELECT = 'SINGLE_SELECT';
@@ -51,10 +51,10 @@ function writesFor(config, held) {
 
 /** What the command prints for a `setup-board` run, and the status it exits with. */
 export async function setupBoard({ target = process.cwd() } = {}) {
-  const { named, refusal } = workingTree('setup-board', { target });
-  if (refusal) return { text: refusal, code: 1 };
-  const { config, unread } = await loadConfig(named);
-  if (unread) return { text: `rigger setup-board: ${unread}`, code: 1 };
+  const { named, refusal } = sourceTreeGuard('setup-board', { target });
+  if (refusal) return refusal;
+  const { config, problem } = await consumerConfig(named);
+  if (problem) return { text: `rigger setup-board: ${problem}`, code: 1 };
   const refusals = validate(config);
   if (refusals.length > 0) return { text: `rigger setup-board: \`${named}\`'s config earns refusals, so nothing was written: ${refusals.join('; ')}`, code: 1 };
 
