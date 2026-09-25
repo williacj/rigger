@@ -194,11 +194,25 @@ Exit:
   verdict, as re-dispatchable.
 - L3 implements the pull and drain triggers and emits its event family.
 - Verbs: `setup-board` creates columns, fields, and labels; `plan` prints the pull order; `once`
-  and `run` drive the loop; `report` derives whatever signals the events so far support. `doctor`
-  gains board reachability and field checks.
-- `docs/demo.tape` records `rigger once` against the fake board with `vhs`. The GIF it produces is
-  embedded in the README where the placeholder comment sits, and the tape is re-run for every
-  release.
+  and `run` pull and claim; `report` derives whatever signals the events so far support. `doctor`
+  gains board reachability and field checks, and fails where the board's priority options differ
+  from the options the config declares.
+- Where the config names a board that exists, `setup-board` adopts it rather than creating one. It
+  adds what the config declares and the board lacks: the `Owner` column, the priority field with
+  the config's options, and the labels. It leaves every column and field the config does not
+  declare alone.
+- `setup-board` changes this repository's real board, project 6, only after a spike in M1 has
+  reported whether adding an option to that board's `Status` field keeps every card's `Status`
+  value.
+- `once` and `run` start no dispatch in M1; M4 gives them dispatch. After claiming a card that
+  nobody worked, each exits non-zero with a message saying so.
+- `run` claims until it holds as many cards as `concurrency` allows, or until no card is left to
+  pull. It then exits, and where it claimed a card it exits non-zero naming the cards it claimed.
+- During M1, `once` and `run` never run against this repository's real board. `plan`,
+  `setup-board` and `doctor` may.
+- `docs/demo.tape` records `rigger once` against the fake board with `vhs`, as M1 builds it: the
+  claim and the non-zero exit. The GIF it produces is embedded in the README where the placeholder
+  comment sits, and the tape is re-run for every release.
 
 Exit:
 
@@ -206,10 +220,16 @@ Exit:
   (`R-STATE-1`, `R-STATE-2`).
 - A card carrying no acceptance, or one failing the acceptance form check, is not admitted, and
   `plan` names the reason (`R-CARD-7`, `R-CARD-8`).
-- `setup-board` creates this repository's real board, fields, and labels.
-- `plan` prints its real pull order (`R-SCHED-1`).
-- Concurrency comes from config. With `concurrency: 1` the engine works one card at a time; with
-  `concurrency: 3` it works three at once (`R-SCHED-2`).
+- `setup-board` adopts this repository's real board rather than creating one. It adds the columns,
+  fields, and labels the config declares and the board lacks, and leaves every other column and
+  field as it was.
+- `plan` prints its real pull order over the M1 cards themselves (`R-SCHED-1`). With the owner's
+  approval, the M1 cards are moved into the real board's Ready column and given varied Priority
+  values. The printed order puts no card after one of lower priority. The values are set so that
+  ordering the cards by issue number, or by their position in the column, would break that rule.
+- Concurrency comes from config. On a fake board holding four pullable cards, `run` claims one card
+  with `concurrency: 1` and three with `concurrency: 3`, then exits. It never holds more claims
+  than the setting allows (`R-SCHED-2`).
 - The column display names come from config: a board whose columns are named differently drives
   the same loop.
 - The demo GIF regenerates from the tape in CI.
@@ -249,6 +269,8 @@ Exit:
 - Maker and judges as headless dispatches of the configured provider CLI through M2, with the
   Claude Code adapter as the default.
 - Role names, prompts, and skills owned by the consumer; model tier per role from the card's label.
+- `once` and `run` dispatch the maker for each card they claim. M4 is the first milestone in which
+  either verb dispatches a card.
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
   session or another judge's output. Each writes its own findings, named by head SHA and judge
   role; M5 fixes the schema they are written into.
