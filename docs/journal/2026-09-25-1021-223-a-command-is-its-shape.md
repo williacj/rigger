@@ -47,5 +47,11 @@ CI runs Node 20 and 24, and `module.registerHooks` arrived in 22.15. So the reco
 adapter give different shapes. The model's `readColumns` answers the board's whole option list,
 and the adapter's answers the config's keys mapped to display names. The model's `readItems`
 answers every item with its type and repository, and the adapter's answers only this repository's
-issues, with fewer facts. "The same cards and columns" does not say which projection makes them
-comparable, and choosing one is choosing what the item proves.
+issues, with fewer facts. "The same cards and columns" did not say which projection makes them
+comparable, and choosing one is choosing what the item proves. The PM ruled for projecting the
+model onto the adapter's read contract, and split the item into three: the card read, the column
+read that succeeds, and the column read that fails. The fake already met all three when they were
+written, so each test's worth rests on mutations of the fake instead of a first red. Presenting
+another repository's issue as this one's, answering ids other than the model's, reversing the
+order, answering fixed column names and renaming the `Status` field each redded the test it aimed
+at.

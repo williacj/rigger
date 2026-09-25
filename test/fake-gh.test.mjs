@@ -93,6 +93,69 @@ test('the fake gh answers a board past one page, and its drafts, pull requests a
   assert.equal(labels.at(-1), 'label-101');
 });
 
+/**
+ * The card read's facts, read off the model directly: its items that are issues in `repo`, in the
+ * model's order, each with the six facts the adapter's card read returns. A card holding no
+ * body or labels holds them empty.
+ */
+async function cardsOf(model, repo) {
+  return (await model.operations.readItems())
+    .filter((item) => item.type === 'issue' && item.repository === repo)
+    .map(({ id, number, title, body = '', labels = [], column }) => ({ id, number, title, body, labels, column }));
+}
+
+test("the adapter's card read through the fake gh returns exactly the model's issues from the configured repository, in its order, with their six facts", async () => {
+  // Three of this repository's issues in three columns, with a draft, a pull request and another
+  // repository's issue among them, so a fake presenting any item as this repository's issue, or
+  // answering in another order, gives the adapter a card the model does not hold as one.
+  const fake = installed({
+    columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'],
+    fields: [{ name: 'Priority', options: ['P0', 'P1'] }],
+    items: [
+      { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Reads', body: '## Acceptance\n\n- "Quoted", and \\ escaped.', labels: ['type:change', 'size:s'], column: 'Coding', fieldValues: { Priority: 'P0' } },
+      { type: 'draftIssue', title: 'A thought', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'A fake board', body: 'Why.', labels: ['type:change'], column: 'Ready' },
+      { type: 'pullRequest', repository: 'williacj/rigger', number: 275, title: 'A PR', column: 'Review' },
+      { type: 'issue', repository: 'williacj/elsewhere', number: 7, title: 'Theirs', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/rigger', number: 223, title: 'A fake gh', body: '', labels: [], column: 'Done' },
+    ],
+  });
+  const expected = await cardsOf(await fake.model(), 'williacj/rigger');
+  // The projection is not empty and not the whole board, so the comparison below is not vacuous.
+  assert.deepEqual(expected.map((card) => card.number), [215, 214, 223]);
+
+  const cards = await onPath(fake, () => readSide(BOARD).readItems());
+
+  assert.deepEqual(cards, expected);
+});
+
+test("the adapter's column read through the fake gh returns each declared key mapped to its display name, beside a column the config does not declare", async () => {
+  const columns = ['Backlog', ...Object.values(COLUMNS), 'Archive'];
+  const fake = installed({ columns });
+  // Read off the model: every declared display name is one of its columns, and two are not declared.
+  const held = await (await fake.model()).operations.readColumns();
+  assert.deepEqual(held, columns);
+  assert.deepEqual(held.filter((name) => !Object.values(COLUMNS).includes(name)), ['Backlog', 'Archive']);
+
+  const read = await onPath(fake, () => readSide(BOARD).readColumns());
+
+  assert.deepEqual(read, { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' });
+});
+
+test("the adapter's column read through the fake gh fails, naming the key and display name of the declared column the model lacks", async () => {
+  // `Owner` is declared and the model does not hold it; `Needs Owner` is a column the config never names.
+  const fake = installed({ columns: ['Ready', 'Coding', 'Review', 'Needs Owner', 'Done'] });
+  assert.ok(!(await (await fake.model()).operations.readColumns()).includes('Owner'));
+
+  await onPath(fake, () =>
+    assert.rejects(readSide(BOARD).readColumns(), (error) => {
+      assert.ok(error.message.includes('owner (Owner)'), error.message);
+      assert.ok(!/\bready\b|\bcoding\b|\breview\b|\bdone\b/.test(error.message), `a column the model holds is named: ${error.message}`);
+      return true;
+    }),
+  );
+});
+
 test("each write the real adapter issues through the fake gh appears in the fake board's write record, in order", async () => {
   const fake = installed({
     columns: ['Ready', 'Coding'],
