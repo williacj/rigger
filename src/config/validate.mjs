@@ -235,8 +235,9 @@ function readPriority(priority, refusals) {
   if (!Array.isArray(options)) return;
   const where = 'board.priority.options';
   if (options.length === 0) refusals.push(`\`${where}\` must list at least one option, highest rank first`);
-  // An option is named by its display name on the board, so anything else names no option.
-  if (options.some((option) => typeof option !== 'string' || option === '')) {
+  // An option is named by its display name on the board, so anything else names no option. Read
+  // through `Array.from`, which visits every index, because `some` skips an empty slot.
+  if (Array.from(options).some((option) => typeof option !== 'string' || option === '')) {
     refusals.push(`\`${where}\` must list option display names, and holds something else`);
   }
   // An option listed twice holds two ranks, and a card holding it has no one rank to take.

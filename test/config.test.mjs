@@ -450,4 +450,6 @@ test('a priority declaration listing anything but option names is refused, and t
   for (const unnamed of [1, null, true, '', ['High'], { name: 'High' }]) {
     assert.match(refusal(ranking(['High', unnamed])), /`board\.priority\.options`/, `${JSON.stringify(unnamed)} was read as a name`);
   }
+  // An empty slot names no option either, and a list read by skipping holes never sees it.
+  assert.match(refusal(ranking(['High', , 'Low'])), /`board\.priority\.options`/, 'an empty slot was read as a name');
 });
