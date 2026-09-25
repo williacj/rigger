@@ -15,14 +15,16 @@ const selecting = (card, kinds) =>
 
 /**
  * The next action for a ready card, which is `{ number, title, body, labels }` as the forge holds
- * it, under a config's `kinds`. A card no kind selects is `{ action: 'ignore' }`, and never a
- * refusal (`R-SCHED-11`). A card more than one kind selects is refused naming every one of them,
- * in the config's order (the owner's U15 ruling). A card the form check refuses is refused with
- * the form check's reason. Otherwise it is `{ action: 'dispatch', kind }`. A refusal is
- * `{ action: 'refuse', card, reason }`, naming the card's number.
+ * it, under a config's `kinds` and its `epicLabel`. A card carrying the epic label is selected by
+ * no kind, whatever else it carries, and an absent `epicLabel` marks no card an epic. A card no
+ * kind selects is `{ action: 'ignore' }`, and never a refusal (`R-SCHED-11`). A card more than
+ * one kind selects is refused naming every one of them, in the config's order (the owner's U15
+ * ruling). A card the form check refuses is refused with the form check's reason. Otherwise it is
+ * `{ action: 'dispatch', kind }`. A refusal is `{ action: 'refuse', card, reason }`, naming the
+ * card's number.
  */
-export function nextAction(card, kinds) {
-  const names = selecting(card, kinds);
+export function nextAction(card, kinds, epicLabel) {
+  const names = card.labels.includes(epicLabel) ? [] : selecting(card, kinds);
   if (names.length === 0) return { action: 'ignore' };
   if (names.length > 1) {
     return { action: 'refuse', card: card.number, reason: `selected by more than one kind: ${names.join(', ')}` };
