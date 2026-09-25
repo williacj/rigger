@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { readSide } from '../src/substrate/forge/read.mjs';
+import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 
 /** The columns this repository's config declares, by key. */
 const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
@@ -86,8 +87,11 @@ function forge({
   labels = { null: labelPage([]) },
 } = {}) {
   const sent = [];
+  const callers = [];
   const send = (command, args) => {
     sent.push([command, ...args]);
+    // The function that handed this request to the spawn: the stack's frame below this one.
+    callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
     const document = documentOf(args);
     if (document.includes('items(')) {
       const page = pages[cursorOf(document)];
@@ -101,6 +105,7 @@ function forge({
     throw new Error(`the test forge does not answer ${document}`);
   };
   send.sent = sent;
+  send.callers = callers;
   return send;
 }
 
@@ -286,4 +291,42 @@ test("the repository's labels read back by name, across every page gh answers", 
   });
 
   assert.deepEqual(await readSide(BOARD, { send }).readLabels(), ['type:change', 'type:spec', 'area:demo']);
+});
+
+/** A full read: every read the read side offers, in turn, on a board whose items span two pages. */
+async function fullRead() {
+  const send = forge({
+    pages: {
+      null: itemPage([itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Status: 'Ready' } })], 'Y3Vyc29yOnYyOpMA'),
+      Y3Vyc29yOnYyOpMA: itemPage([itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Status: 'Coding' } })]),
+    },
+  });
+  const side = readSide(BOARD, { send });
+  for (const read of Object.values(side)) await read();
+  return send;
+}
+
+test('every command a full read runs is gh', async () => {
+  // The read side's share of `R-SAFE-2`. It declares no proof of the requirement, whose other
+  // network paths, git and the agent CLIs, this never reaches.
+  const { sent } = await fullRead();
+
+  assert.ok(sent.length >= 5, `only ${sent.length} commands were recorded`);
+  assert.deepEqual([...new Set(sent.map(([command]) => command))], ['gh']);
+});
+
+test('every request a full read issues is one the read runner receives and admits', async () => {
+  // Each request reaches the spawn from the read runner, and no other caller: a read side that
+  // handed a request to the spawn itself, or through a write runner, is named here. And the read
+  // runner admits each one again when asked, so none is a request it would have refused.
+  const { sent, callers } = await fullRead();
+
+  assert.deepEqual([...new Set(callers)], ['readRunner'], `requests reached the spawn from ${callers}`);
+  for (const [, ...args] of sent) {
+    const received = [];
+    readRunner(args, { send: (command, admitted) => received.push([command, ...admitted]) });
+    assert.deepEqual(received, [['gh', ...args]], `the read runner did not send ${args.join(' ')}`);
+    assert.throws(() => itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
+    assert.throws(() => schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
+  }
 });
