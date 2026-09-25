@@ -280,13 +280,15 @@ async function boardOf(state) {
  */
 export async function main(statePath) {
   const args = process.argv.slice(2);
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  state.sent.push(args);
+  writeFileSync(statePath, JSON.stringify(state));
   const answer = COMMANDS[commandOf(args)];
   if (!answer) {
     process.stderr.write(`the fake gh does not model \`${spelled(args)}\`\n`);
     process.exitCode = 1;
     return;
   }
-  const state = JSON.parse(readFileSync(statePath, 'utf8'));
   const board = await boardOf(state);
   let data;
   try {
@@ -305,16 +307,18 @@ export async function main(statePath) {
  * Installs a fake `gh` in `dir`, answering as `gh` would for the board numbered `project` among
  * the boards of `repo`'s owner, which holds `board`: the fake board's own arguments.
  *
- * It returns the executable's path, `gh`, and `model()`, the fake board as the fake `gh` now holds
- * it, whose write record holds every write the fake `gh` was sent.
+ * It returns the executable's path, `gh`; `model()`, the fake board as the fake `gh` now holds
+ * it, whose write record holds every write the fake `gh` was sent; and `sent()`, the arguments of
+ * every command the fake `gh` was run with, oldest first, whether or not it answered it.
  */
 export function installFakeGh(dir, { repo, project, board = {} }) {
   const statePath = join(dir, 'board.json');
-  writeFileSync(statePath, JSON.stringify({ repo, project, model: board, writes: [] }));
+  writeFileSync(statePath, JSON.stringify({ repo, project, model: board, writes: [], sent: [] }));
   const gh = join(dir, 'gh');
   // CommonJS, because nothing beside it says otherwise, and so it loads this module dynamically.
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
   writeFileSync(gh, `#!${process.execPath}\n${entry}`);
   chmodSync(gh, 0o755);
-  return { gh, model: () => boardOf(JSON.parse(readFileSync(statePath, 'utf8'))) };
+  const state = () => JSON.parse(readFileSync(statePath, 'utf8'));
+  return { gh, model: () => boardOf(state()), sent: () => state().sent };
 }

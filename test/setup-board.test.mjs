@@ -1,0 +1,258 @@
+// ABOUTME: Tests `rigger setup-board` run as the command, with the fake `gh` first on PATH: what it
+// adds to a fake board, what it leaves alone, what it prints, and where it refuses to write.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { installFakeGh } from './fake-gh.mjs';
+import { repositoryIn } from './git-repository.mjs';
+import { parseDocument } from '../src/substrate/forge/graphql.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { validate } from '../src/config/validate.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const BIN = join(ROOT, 'src', 'cli', 'rigger.mjs');
+
+/** The repository and board number every config here names, which the fake `gh` answers for. */
+const WHERE = { repo: 'octo/widgets', project: 3 };
+
+/** The column display names the config declares, by key, in declaration order. */
+const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
+
+/** The priority field the config declares: its options in an order neither alphabetical nor reversed. */
+const PRIORITY = { field: 'Priority', options: ['High', 'Normal', 'Low'] };
+
+/**
+ * A config Rigger accepts. Two kinds share `type:change`, a step selects `area:demo`, a step
+ * selects nothing, and the epic label is one no kind or step selects.
+ */
+const CONFIG = {
+  repo: WHERE.repo,
+  board: { project: WHERE.project, columns: COLUMNS, priority: PRIORITY },
+  roles: {
+    engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard' },
+    reviewer: { agent: '.claude/agents/reviewer.md', provider: 'claude', tier: 'high' },
+  },
+  kinds: {
+    change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] },
+    spec: { select: { labels: ['type:spec', 'type:change'] }, maker: 'engineer', judges: ['reviewer'] },
+  },
+  epicLabel: 'type:epic',
+  provisioning: {
+    'npm-ci': { run: 'npm ci', required: true },
+    vhs: { run: 'brew install vhs', select: { labels: ['area:demo'] } },
+  },
+};
+
+/** The labels CONFIG's kinds and steps select, written out by hand from it. */
+const SELECTED = ['type:change', 'type:spec', 'area:demo'];
+
+/**
+ * The values of GitHub's `ProjectV2SingleSelectFieldOptionColor`, as gh 2.99.0 answered
+ * `__type(name: "ProjectV2SingleSelectFieldOptionColor") { enumValues { name } }` on 2026-09-25.
+ */
+const ENUM_COLOURS = ['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE'];
+
+/** A board already holding everything CONFIG declares. */
+const COMPLETE = { columns: Object.values(COLUMNS), fields: [{ name: 'Priority', options: PRIORITY.options }], labels: [...SELECTED] };
+
+/**
+ * Runs `rigger setup-board` as the command, in a repository of its own holding `config`, with a
+ * fake `gh` holding `board` first on PATH. It returns what the command printed and exited with,
+ * the fake board afterwards, and every command the fake `gh` was run with.
+ */
+async function setUp(board, config = CONFIG) {
+  assert.deepEqual(validate(config), [], 'the config handed to setup-board is one Rigger refuses');
+  const target = repositoryIn('rigger-setup-board-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  return runIn(target, board);
+}
+
+/** Runs `rigger setup-board` from `target` with a fake `gh` holding `board` first on PATH. */
+async function runIn(target, board) {
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-setup-board-gh-')), { ...WHERE, board });
+  const ran = spawnSync(process.execPath, [BIN, 'setup-board'], {
+    cwd: target,
+    encoding: 'utf8',
+    env: { ...gitEnvironment(), PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` },
+  });
+  const model = await fake.model();
+  return { ran, model, writes: model.writes(), sent: fake.sent() };
+}
+
+/** What the fake board holds of `model`: its columns, its fields by name, and its labels. */
+async function held(model) {
+  const { operations } = model;
+  return { columns: await operations.readColumns(), fields: await operations.readFieldTypes(), labels: await operations.readLabels() };
+}
+
+test('against a board missing every declared column, every label and the priority field, setup-board creates exactly those', async () => {
+  const { ran, writes } = await setUp({ columns: [], fields: [], labels: [] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  // Both directions at once: the record holds each expected write and nothing else, written out
+  // by hand from CONFIG.
+  assert.deepEqual(writes, [
+    { operation: 'createColumn', args: ['Ready'] },
+    { operation: 'createColumn', args: ['Coding'] },
+    { operation: 'createColumn', args: ['Review'] },
+    { operation: 'createColumn', args: ['Owner'] },
+    { operation: 'createColumn', args: ['Done'] },
+    { operation: 'createField', args: ['Priority', ['High', 'Normal', 'Low']] },
+    { operation: 'createLabel', args: ['type:change'] },
+    { operation: 'createLabel', args: ['type:spec'] },
+    { operation: 'createLabel', args: ['area:demo'] },
+  ]);
+});
+
+test('the priority field setup-board creates carries exactly the config\'s options, in its order, read back from the board', async () => {
+  const { ran, model } = await setUp({ ...COMPLETE, fields: [] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(await model.operations.readFields(), [{ name: 'Priority', options: ['High', 'Normal', 'Low'] }]);
+});
+
+test('against a board whose priority field holds other options, setup-board makes no write to that field', async () => {
+  const { ran, model, writes } = await setUp({ ...COMPLETE, columns: ['Ready'], fields: [{ name: 'Priority', options: ['P0', 'P1'] }] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes.filter(({ operation }) => operation === 'createField'), []);
+  assert.deepEqual(await model.operations.readFields(), [{ name: 'Priority', options: ['P0', 'P1'] }]);
+  // The control: the same run did write, so a run that wrote nothing at all did not pass this.
+  assert.ok(writes.length > 0, 'setup-board wrote nothing at all');
+});
+
+test('the labels setup-board creates are exactly those the config\'s kinds and provisioning steps select', async () => {
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  const created = writes.filter(({ operation }) => operation === 'createLabel').map(({ args: [name] }) => name);
+  assert.deepEqual([...created].sort(), [...SELECTED].sort());
+  assert.ok(!created.includes(CONFIG.epicLabel), 'setup-board created the epic label, which no kind or step selects');
+});
+
+test('against a board already holding everything declared, setup-board makes no write', async () => {
+  const { ran, writes } = await setUp(COMPLETE);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes, []);
+});
+
+test('against a board holding columns, fields and labels the config does not declare, setup-board removes and renames none of them', async () => {
+  const board = {
+    columns: ['Backlog', 'Ready', 'Blocked'],
+    fields: [{ name: 'Model Tier', options: ['standard', 'high'] }, { name: 'Estimate', type: 'NUMBER' }],
+    labels: ['bug', 'type:change'],
+  };
+  const { ran, model, writes } = await setUp(board);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  // Every write is a creation of something the config declares, so none removes or renames.
+  const declared = { createColumn: Object.values(COLUMNS), createField: [PRIORITY.field], createLabel: SELECTED };
+  for (const { operation, args: [name] } of writes) {
+    assert.ok(declared[operation]?.includes(name), `setup-board sent ${operation} ${name}`);
+  }
+  const after = await held(model);
+  assert.deepEqual(after.columns.slice(0, 3), ['Backlog', 'Ready', 'Blocked']);
+  for (const field of [{ name: 'Model Tier', type: 'SINGLE_SELECT' }, { name: 'Estimate', type: 'NUMBER' }]) {
+    assert.ok(after.fields.some(({ name, type }) => name === field.name && type === field.type), `${field.name} is gone`);
+  }
+  assert.deepEqual(await model.operations.readFields().then((fields) => fields.find(({ name }) => name === 'Model Tier')), { name: 'Model Tier', options: ['standard', 'high'] });
+  for (const label of ['bug', 'type:change']) assert.ok(after.labels.includes(label), `${label} is gone`);
+});
+
+test('against a board with a card in each existing column, every card\'s column afterwards is its column before', async () => {
+  const columns = ['Backlog', 'Ready', 'Coding', 'Blocked'];
+  const items = columns.map((column, index) => ({ type: 'issue', repository: WHERE.repo, number: index + 1, title: `Card ${index + 1}`, column }));
+  const { ran, model, writes } = await setUp({ columns, fields: [], labels: [], items });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.ok(writes.some(({ operation }) => operation === 'createColumn'), 'setup-board added no column, so no column was put at risk');
+  const after = await model.operations.readItems();
+  assert.deepEqual(after.map(({ number, column }) => [number, column]), [[1, 'Backlog'], [2, 'Ready'], [3, 'Coding'], [4, 'Blocked']]);
+});
+
+test('against a board whose priority field is not single-select, setup-board makes no write and exits non-zero, naming the field and its type', async () => {
+  // Everything else is missing, so a check made after the first write would leave writes behind.
+  const { ran, writes } = await setUp({ columns: [], fields: [{ name: 'Priority', type: 'TEXT' }], labels: [] });
+
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr, /Priority/);
+  assert.match(ran.stderr, /TEXT/);
+  assert.deepEqual(writes, []);
+});
+
+test('given a config with no board.priority, setup-board creates no priority field', async () => {
+  const { priority, ...board } = CONFIG.board;
+  const { ran, model, writes } = await setUp({ columns: [], fields: [], labels: [] }, { ...CONFIG, board });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes.filter(({ operation }) => operation === 'createField'), []);
+  assert.deepEqual(await model.operations.readFields(), []);
+  assert.ok(writes.length > 0, 'setup-board wrote nothing at all');
+});
+
+test('setup-board prints one line for each write it made, naming what it wrote', async () => {
+  const { ran, writes } = await setUp({ columns: ['Ready', 'Coding', 'Review', 'Done'], fields: [], labels: ['type:change'] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  const [heading, ...lines] = ran.stdout.trimEnd().split('\n');
+  assert.match(heading, /4 writes/);
+  assert.deepEqual(lines.map((line) => line.trim()), [
+    'added the column Owner',
+    'created the field Priority with the options High, Normal, Low',
+    'created the label type:spec',
+    'created the label area:demo',
+  ]);
+  assert.equal(writes.length, 4);
+});
+
+test('against a board already holding everything, setup-board prints no line for a write', async () => {
+  const { ran, writes } = await setUp(COMPLETE);
+
+  assert.deepEqual(writes, []);
+  assert.deepEqual(ran.stdout.trimEnd().split('\n').slice(1), []);
+});
+
+test('every option in every schema write setup-board sends carries a colour of GitHub\'s option-colour enum, as the fake gh received it', async () => {
+  // A held column and a new one, and a new field with three options: every option either write
+  // sends is read out of the fake gh's record of the command it was run with.
+  const { ran, sent } = await setUp({ columns: ['Backlog', 'Ready'], fields: [], labels: [] });
+  assert.equal(ran.status, 0, ran.stderr);
+
+  const colours = [];
+  for (const args of sent) {
+    const [operation] = parseDocument(args[3].slice('query='.length)).operations;
+    if (operation.type !== 'mutation') continue;
+    const [field] = operation.selections;
+    const input = field.arguments.find(({ name }) => name === 'input').value;
+    const options = input.fields.find(({ name }) => name === 'singleSelectOptions')?.value.values ?? [];
+    for (const option of options) {
+      const colour = option.fields.find(({ name }) => name === 'color')?.value;
+      colours.push([field.name, colour?.kind, colour?.value]);
+    }
+  }
+
+  // Ready is held, so four columns are added, their writes sending three, four, five and six
+  // options, and the field three: 21 in all.
+  assert.equal(colours.length, 3 + 4 + 5 + 6 + 3, JSON.stringify(colours));
+  for (const [write, kind, value] of colours) {
+    assert.ok(kind === 'scalar' && ENUM_COLOURS.includes(value), `${write} sent an option coloured ${kind} ${value}`);
+  }
+});
+
+// proves R-SAFE-5
+test('setup-board run against the source tree it is running from exits non-zero, names R-SAFE-5, and writes nothing', async () => {
+  // This checkout's config names this repository's own board, so the fake gh on PATH is what
+  // stands between a defect here and a write, and it records every command it is run with.
+  const { ran, writes, sent } = await runIn(ROOT, COMPLETE);
+
+  assert.notEqual(ran.status, 0);
+  assert.match(ran.stderr, /R-SAFE-5/);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(sent, []);
+});

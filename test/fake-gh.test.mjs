@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { ANSWERED, commandOf, installFakeGh } from './fake-gh.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
+import { schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
@@ -300,6 +301,25 @@ test('no file under src/ names the fake gh or its recording, and the fake gh rea
   assert.deepEqual(files.filter((file) => namesFake.test(readFileSync(file, 'utf8'))), []);
 
   assert.doesNotMatch(readFileSync(join(HERE, 'fake-gh.mjs'), 'utf8'), /process\.env|\benv\b/);
+});
+
+test('a schema write whose option colour is no value of the enum is refused at the schema-write side, and the fake gh is run with nothing', async () => {
+  // The runner's own spawn, not a stand-in: the fake gh on PATH records every command it is run
+  // with, so a write refused only after it went, or after a read went ahead of it, shows here.
+  const fake = installed({ columns: ['Ready'] });
+  const create = (colour) => `mutation { createProjectV2Field(input: {projectId: "PVT_fake", dataType: SINGLE_SELECT, name: "Priority", singleSelectOptions: [{name: "High", color: ${colour}, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
+  const add = (colour) => `mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_Status", singleSelectOptions: [{id: "option-0", name: "Ready", color: GRAY, description: ""}, {name: "Owner", color: ${colour}, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
+
+  await onPath(fake, async () => {
+    for (const colour of ['null', '5', 'true', 'NOT_A_COLOUR', '"GRAY"', 'gray']) {
+      for (const document of [create(colour), add(colour)]) {
+        assert.throws(() => schemaWriteRunner(['api', 'graphql', '-f', `query=${document}`]), /color/, document);
+      }
+    }
+  });
+
+  assert.deepEqual(fake.sent(), []);
+  assert.deepEqual((await fake.model()).writes(), []);
 });
 
 test('given a gh command it does not model, the fake gh exits non-zero and prints the command', () => {
