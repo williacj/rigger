@@ -8,9 +8,10 @@ decision proposed and not yet ratified lives in its pull request, never here.
 `docs/spec/requirements.md` rules the same for a requirement, and its preamble carries the
 reasoning.
 
-The owner ratifies a proposed decision by returning a sound verdict on its pull request, and the
-entry binds once that pull request merges. A proposal is therefore written as it will read once
-ratified, and the pull request body is what says it is a proposal.
+The owner ratifies a proposed decision by merging its pull request, and the entry binds from that
+merge. A merge by anyone else ratifies nothing. A proposal is therefore written as it will read
+once ratified, and the pull request body is what says it is a proposal. `D21` records how the
+owner ratifies, and what would reverse it.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
@@ -57,6 +58,7 @@ its row stays in the table below so its id is never reused.
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Ratified |
 | D20 | A card's author survives its writing session | Ratified |
+| D21 | The owner's merge is the owner's ratification | Ratified |
 
 ## D1 — Redo over resume
 
@@ -701,3 +703,48 @@ an authoring role that can no longer be dispatched. Second, the event record can
 the authoring role independently of the filing session without adding state beyond the card and
 its history. Either would require a later decision on reassignment or a different authorship
 rule.
+
+## D21 — The owner's merge is the owner's ratification
+
+**Status:** Ratified.
+
+### Rule
+
+1. The owner ratifies a proposal by merging its pull request, and needs no separate verdict to do
+   so. Each register's preamble holds it.
+2. On a card whose kind names `owner` among its judges, the owner's merge is the owner's sound
+   verdict. The owner returns any other verdict on the pull request, and leaves it unmerged.
+3. So the maker of such a card never holds `R-GATE-4`'s evidence before the card merges, and under
+   `D19` the owner merges it rather than the maker. `AGENTS.md`, under "Review and merge", holds
+   it.
+4. A merge by anyone but the owner ratifies nothing. This decision leaves every other judge's
+   verdict where it found it, and leaves self-ratifying forbidden.
+
+### Notes
+
+The owner stated on 2026-09-24 that merging a proposal's pull request ratifies it. That is how
+#193, which added `D20`, and #194, #196, #199 and #200 were ratified. The owner merged each one,
+and none carries a posted owner verdict (card #203).
+
+The preambles described two events where the owner performs one. They had the owner ratify by
+returning a sound verdict, and the entry bind once the pull request merged. A reader holding that
+wording waits for a verdict nobody posts. On 2026-09-24 the M1 coordinator flagged `D20` as merged
+with no verdict. It later relayed a needs revision onto #196 after the owner's merge had ratified
+it. Under rule 2, a verdict returned after the owner's merge rules on nothing.
+
+Rule 3 follows from `D19` rather than changing it. `D19` rule 1 lets a maker merge once
+`R-GATE-4`'s evidence is in hand, and that evidence holds every configured judge's verdict. Where
+the owner is one of those judges and the merge is the owner's verdict, the evidence is complete
+only once the card has merged.
+
+The forge cannot tell the owner's merge from a session's. Sessions here act through the owner's
+account, so rules 3 and 4 hold because sessions honour them, and nothing observes a breach.
+
+This decision adds no requirement. It binds how the owner and the sessions working in this
+repository ratify and merge, and `docs/spec/requirements.md` holds only what binds Rigger.
+
+Two observations would reverse it. First, M5 installs the gate hook here, and that hook admits a
+merge only once every configured judge has returned a verdict (`R-GATE-5`). Where the hook cannot
+read the owner's merge as the owner's verdict, a later decision supersedes this one. Second, a
+merge recorded as the owner's proves to be a session's. A merge alone is then too weak a record of
+ratification, and a posted owner verdict returns.

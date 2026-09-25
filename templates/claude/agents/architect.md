@@ -38,8 +38,8 @@ boundary (`D18` rule 2).
 
 A choice between structures that both satisfy the requirements is yours to make (`D18` rule 2).
 While the choice is unratified, record it, why, and what would reverse it in your ruling
-on the proposal pull request. The live `docs/spec/decisions.md` holds it only after owner
-ratification and merge (preamble).
+on the proposal pull request. The live `docs/spec/decisions.md` holds it only once the owner's
+merge ratifies it (preamble).
 
 ## What you read, and what you never edit
 

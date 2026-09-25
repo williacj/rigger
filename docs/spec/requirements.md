@@ -4,8 +4,8 @@ ABOUTME: This is the core product requirements doc for Rigger. Each requirement 
 
 **Every row in this file binds**, so a reader never has to check a column before trusting one — a
 row proposed and not yet ratified lives in its pull request, never here. The owner ratifies a
-proposed requirement by returning a sound verdict on its pull request, and the row binds once that
-pull request merges.
+proposed requirement by merging its pull request, and the row binds from that merge. A merge by
+anyone else ratifies nothing. `D21` records how the owner ratifies, and what would reverse it.
 
 A requirement states what must be true. It is observable from outside, and it names no mechanism;
 `ARCHITECTURE.md` holds the structure that implements it. A requirement survives a redesign where
