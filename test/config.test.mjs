@@ -618,3 +618,19 @@ test('a config declaring no board owner still carries none once Rigger has loade
   assert.ok(!Object.hasOwn(loaded.board, 'owner'), `the loaded config carries a board owner: ${loaded.board.owner}`);
   assert.deepEqual(loaded, before);
 });
+
+/** This repository's config with `concurrency` declared as `value`. */
+const runningAtOnce = (value) => holding(rigger, ['concurrency'], value);
+
+test('a concurrency that is not a positive whole number is refused, and the refusal names the key and the value', () => {
+  for (const [value, spelled] of [[0, '0'], [-2, '-2'], [1.5, '1.5'], ['3', '"3"']]) {
+    const refused = refusal(runningAtOnce(value));
+    assert.match(refused, /`concurrency`/, JSON.stringify(value));
+    assert.ok(refused.includes(spelled), `the refusal does not name ${spelled}: ${refused}`);
+  }
+});
+
+test('a concurrency that is a positive whole number is accepted, and so is a config declaring none', () => {
+  for (const value of [1, 3, 12]) assert.deepEqual(validate(runningAtOnce(value)), [], String(value));
+  assert.deepEqual(validate(without(rigger, ['concurrency'])), []);
+});
