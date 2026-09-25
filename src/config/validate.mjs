@@ -371,3 +371,13 @@ export function validate(config) {
  * that cannot run the work.
  */
 export const workRequires = (step) => step?.required === true;
+
+/**
+ * Every label an accepted config's kinds and provisioning steps select, each once, kinds first and
+ * each in the order declared. These are the labels a card carries to be selected, so they are the
+ * labels `setup-board` gives the repository. The epic label is not among them: no selector names it.
+ */
+export function selectedLabels(config) {
+  const selectors = [...Object.values(config.kinds), ...Object.values(config.provisioning ?? {})];
+  return [...new Set(selectors.flatMap((selector) => selector.select?.labels ?? []))];
+}

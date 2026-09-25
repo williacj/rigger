@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CATEGORIES, SHAPES, validate, workRequires } from '../src/config/validate.mjs';
+import { CATEGORIES, SHAPES, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -617,4 +617,33 @@ test('a config declaring no board owner still carries none once Rigger has loade
   assert.deepEqual(validate(loaded), []);
   assert.ok(!Object.hasOwn(loaded.board, 'owner'), `the loaded config carries a board owner: ${loaded.board.owner}`);
   assert.deepEqual(loaded, before);
+});
+
+test('the labels a config selects are every label its kinds and provisioning steps select, each once, and nothing else', () => {
+  // Written out by hand from the declarations below. A label two kinds share, and one a kind and a
+  // step share, are each named once; the epic label, which no kind or step selects, and a step
+  // that selects nothing name no label.
+  const config = {
+    ...rigger,
+    kinds: {
+      change: { ...rigger.kinds.change, select: { labels: ['type:change', 'area:cli'] } },
+      spec: { ...rigger.kinds.spec, select: { labels: ['type:spec', 'area:cli'] } },
+    },
+    epicLabel: 'type:epic',
+    provisioning: {
+      'npm-ci': { run: 'npm ci', required: true },
+      vhs: { run: 'brew install vhs', select: { labels: ['area:demo', 'type:spec'] } },
+    },
+  };
+  assert.deepEqual(validate(config), []);
+
+  assert.deepEqual(selectedLabels(config), ['type:change', 'area:cli', 'type:spec', 'area:demo']);
+});
+
+test('a config with no provisioning selects the labels its kinds select', () => {
+  const { provisioning, ...config } = rigger;
+  const kinds = Object.fromEntries(Object.entries(rigger.kinds).map(([name, { provisioning: steps, ...kind }]) => [name, kind]));
+  assert.deepEqual(validate({ ...config, kinds }), []);
+
+  assert.deepEqual(selectedLabels({ ...config, kinds }), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike']);
 });
