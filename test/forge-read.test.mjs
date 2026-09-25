@@ -12,6 +12,9 @@ import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
+/** The item query gh was sent when board 6's item page was captured, on 2026-09-25. */
+const BOARD_6_ITEM_QUERY = 'query { repositoryOwner(login: "williacj") { ... on ProjectV2Owner { projectV2(number: 6) { items(first: 100) { pageInfo { hasNextPage endCursor } nodes { id fieldValues(first: 100) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: 100) { pageInfo { hasNextPage } nodes { name } } } } } } } } } }';
+
 /** The columns this repository's config declares, by key. */
 const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
 
@@ -142,15 +145,28 @@ test('the cards read back with their number, title, body, labels and column as g
 
 test("board 6's cards read back from the item page gh returned for it on 2026-09-25", async () => {
   // Captured on 2026-09-25 at 13:35 UTC with gh 2.99.0: the one item page gh answered to this read
-  // side's item query on board 6, kept byte for byte. The values below were read off it by hand.
+  // side's item query on board 6, kept byte for byte. The query is the one it answered, so a read
+  // asking anything else is no longer reading what this capture recorded.
   const recorded = readFileSync(join(FIXTURES, 'board-6-items-2026-09-25.json'), 'utf8');
   const send = (command, args) => {
-    assert.match(documentOf(args), /projectV2\(number: 6\) \{ items\(first: 100\)/);
+    assert.equal(documentOf(args), BOARD_6_ITEM_QUERY);
     return { status: 0, stdout: recorded, stderr: '' };
   };
 
   const cards = await readSide(BOARD, { send }).readItems();
 
+  // Every field of every card, against the values the capture holds for it. Board 6 held only
+  // this repository's issues, so every item is a card.
+  const expected = JSON.parse(recorded).data.repositoryOwner.projectV2.items.nodes.map(({ id, content, fieldValues }) => ({
+    id,
+    number: content.number,
+    title: content.title,
+    body: content.body,
+    labels: content.labels.nodes.map((label) => label.name),
+    column: fieldValues.nodes.filter((value) => value.field?.name === 'Status').map((value) => value.name)[0] ?? null,
+  }));
+  assert.deepEqual(cards, expected);
+  // And, read off the capture by hand, so the lookup above is not the only witness.
   assert.equal(cards.length, 67);
   const card = cards.find((held) => held.number === 215);
   assert.equal(card.id, 'PVTI_lAHOBzomGc4BfS2xzg8rn2U');
