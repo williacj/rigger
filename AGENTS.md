@@ -173,7 +173,7 @@ its author. Dispatch the reviewer once the branch is ready, not once it is perfe
 commit stales the verdict, and so does a revised acceptance (`R-GATE-7`), so every extra commit
 costs a round. Never work around a hook — if a gate stops you, review.
 
-A judge rules on every acceptance item and records each met or unmet, rules on whether the
+An agent judge rules on every acceptance item and records each met or unmet, rules on whether the
 acceptance covered what the card asked, and returns the card to its author rather than
 rewriting it. Its verdict goes in a marker bound to the work it read. From M5 the gate reads
 those markers against the card's judge list, and admits nothing until the consumer's own checks
@@ -182,6 +182,10 @@ have passed too.
 Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and never
 otherwise. The permission reaches the merge alone: every verdict in that evidence is another
 role's. `D19` records it and what ends it.
+
+Until M5, where a card's kind names `owner` among its judges, the owner's merge is the owner's
+verdict. So until M5 only the owner merges that card, and its maker never does. `D21` records
+both, and what M5 must settle in their place.
 
 ## Self-hosting
 
