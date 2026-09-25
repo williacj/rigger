@@ -31,11 +31,28 @@ exported destructuring, or two names in one `const`. The one exemption is keyed 
 to the argument's tokens (`pathToFileURL ( path )`), not to the file alone. The same load
 anywhere else fails.
 
-**What it cannot see, stated for the next reader.** Rule 3 reads `board.priority` as a member
-access or a destructuring off something named `board`. An alias such as
-`const b = config.board; b.priority` passes it. Two other cases pass the syntax as well: a
-`'g' + 'h'` built at run time, and a `createRequire` import. Each is a review finding rather than
-a test failure, like the generic passthrough R214-B2 already names.
+**A hand-on is a value, whatever expression carries it.** Round 1 found that the first reader
+followed `export default x` and `const y = x` only when a `;` followed, and followed no alias
+assigned later or exported by name. Matching more shapes would have left the next one open. So
+every top-level statement is now its own segment. A binding carries every name its statement gives
+it outside a function body: a default export, an alias, an assignment, an object holding the
+import. A function body is left out because it runs when called, and calling a side through L2
+is the ruled path. A function that only forwards its arguments to a side stays the review finding
+R214-B2 names.
+
+**Rule 3 bars the `board` key, not only `board.priority`.** Round 1 also found that
+`const b = config.board; b.priority` passed. Once `board` is bound to another name, the tokens
+cannot say which of its keys is read, and `board[key]` hides it entirely. So any read of the
+`board` key in `src/scheduling/` fails: a member, a string in brackets, or a key in a braced
+pattern. The Engine settings row in `ARCHITECTURE.md` gives the board's settings to L0, and L0
+hands L3 each item's rank (#224), so L3 has no need of the key. A parameter that is merely named
+`board` still passes unless `.priority` is read off it.
+
+**What it cannot see, stated for the next reader.** A `gh` built at run time, such as
+`'g' + 'h'` or `` `g${'h'}` ``, passes rule 7. A board the CLI hands L3 under another name, such as
+`pull(config.board)`, passes rule 3. Each is a review finding rather than a test failure, like the
+generic passthrough. `createRequire` and `getBuiltinModule` now fail the dynamic-import rule by
+name.
 
 **`git-environment.test.mjs` reads imports by regex.** Its check that every file importing
 `node:child_process` also spawns matched the test's own fixture strings. The fixtures now write
