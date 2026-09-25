@@ -570,24 +570,34 @@ function parsed(file, source) {
   return { file, program, imports, exported, stars, dynamic, reaches, carries, topLevel, names, strings };
 }
 
+/** The statements that run their body again, so a definition in one may run after anything. */
+const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'WhileStatement', 'DoWhileStatement']);
+
 /**
  * What each call in a module can run, read by lexical scope and by the values that reach the call.
  *
  * A name resolves to the binding its scope reaches, shadowing and hoisting included. A binding
  * holds what each of its definitions gives it: a declaration, or an assignment anywhere. A value is
- * a function, a class, an instance a `new` builds from a class, or an object literal. A member read
- * takes the member from each value its receiver can hold:
+ * a function, a class, an object literal, or an instance a `new` builds, which the `new` names so a
+ * write to one instance reaches no other. A member read takes the member from each value its
+ * receiver can hold:
  * - an object's property, or a function assigned to it;
- * - a class's static member, or an instance's method or field, with what is assigned to either;
- * - failing those, the same member of the class it extends.
+ * - an instance's own property assigned through it, and its class's method or field;
+ * - a class's static member, with what is assigned to it;
+ * - failing a class's own, the same member of the class it extends.
  *
- * `this` holds its own object, or its class and every subclass the module defines, because a
- * subclass's instance may run a base class's method. `super` holds the class extended.
+ * `this` holds its own object, or its class and every subclass that can have an instance: one the
+ * module builds or hands on, since that subclass's instance may run a base class's method. `super`
+ * holds the class extended, and reads its methods only.
  *
  * Every definition that can reach the call is kept, so where the reader cannot tell which runs, it
- * reads them all. The one it drops is a definition an unconditional replacement overwrote first: an
- * assignment statement written after it, in the same function, in a block that also holds the call
- * after the replacement, with no hoisted function declaration between the block and the call.
+ * reads them all. The one it drops is a definition an unconditional replacement overwrote first:
+ * - the replacement is an assignment statement written after it, whose receiver, if any, is one
+ *   object that runs once, not one of several or one of many a loop builds;
+ * - the definition has run for good before the replacement can: both in one function, or the
+ *   definition in module code outside a loop and the replacement in a function expression after it;
+ * - the call is written after the replacement in its block, with no hoisted function declaration
+ *   between the block and the call.
  *
  * A parameter, an import, a global, a call's result and any receiver the module does not define
  * hold nothing this reader can see. Returns the lookup: the functions the callee `node` can run.
@@ -609,6 +619,7 @@ function callables(program) {
   const classes = [];
   const memberWrites = [];
   const nameWrites = [];
+  const identifiers = [];
 
   // Every node is given the scope it is read in, and every declaration its binding, before any
   // callee is resolved, so a declaration later in its scope is already there: hoisting.
@@ -616,6 +627,7 @@ function callables(program) {
     if (!node || typeof node.type !== 'string') return;
     scopeOf.set(node, scope);
     parentOf.set(node, parent);
+    if (node.type === 'Identifier') identifiers.push(node);
     let inner = scope;
     if (node.type === 'FunctionDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
     if (node.type === 'ClassDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
@@ -670,11 +682,25 @@ function callables(program) {
     for (let node = parentOf.get(at); node && node !== block; node = parentOf.get(node)) if (node.type === 'FunctionDeclaration') return false;
     return true;
   };
+  /**
+   * Whether `definition` has run, for good, before `replacement` can: both in one function, or the
+   * definition in module code outside any loop, which runs once, and the replacement inside a
+   * function expression written after it, which cannot run before it exists.
+   */
+  const settledBefore = (definition, replacement) => {
+    const own = enclosingFunction(definition.node);
+    if (own === enclosingFunction(replacement.node)) return true;
+    if (own !== null) return false;
+    for (let at = parentOf.get(definition.node); at; at = parentOf.get(at)) if (LOOPS.has(at.type)) return false;
+    const around = [];
+    for (let at = parentOf.get(replacement.node); at; at = parentOf.get(at)) if (isFunction(at) || at.type === 'FunctionDeclaration') around.push(at);
+    return around.every((fn) => fn.type !== 'FunctionDeclaration') && around.at(-1).start >= definition.node.end;
+  };
   /** The definitions that can reach `at`: all but those an unconditional replacement overwrote. */
   const reaching = (definitions, at) => definitions.filter((definition) => !definitions.some((replacement) => {
     const block = replacement === definition ? null : statementBlock(replacement);
     return block !== null && definition.node.end <= replacement.node.start
-      && enclosingFunction(definition.node) === enclosingFunction(replacement.node) && runsAfter(at, replacement, block);
+      && settledBefore(definition, replacement) && runsAfter(at, replacement, block);
   }));
 
   /** The object literal or class `this` is in at `node`, and whether it is the class's static side. */
@@ -700,36 +726,94 @@ function callables(program) {
       seen.add(other);
       return [other, ...subclasses(other, seen)];
     });
-  const side = (klasses, statics) => klasses.map((node) => ({ kind: statics ? 'class' : 'instance', node }));
+  /**
+   * Whether an instance of `klass` can exist for a base class's method to run on: the module builds
+   * one or hands the class on. A class the module names only in its declaration and in another
+   * class's `extends` has no instance; any other mention, an export included, may make one.
+   */
+  const instantiable = (klass) => {
+    const holder = parentOf.get(klass);
+    let name;
+    if (klass.type === 'ClassDeclaration' && klass.id && !holder?.type.startsWith('Export')) name = klass.id.name;
+    else if (holder?.type === 'VariableDeclarator' && holder.init === klass && holder.id.type === 'Identifier') name = holder.id.name;
+    else return true;
+    const binding = lookup(name, scopeOf.get(klass));
+    return identifiers.some((node) => {
+      if (node.name !== name || lookup(name, scopeOf.get(node)) !== binding) return false;
+      const parent = parentOf.get(node);
+      if (parent?.type === 'MemberExpression' && parent.property === node && !parent.computed) return false;
+      if (['Property', 'MethodDefinition', 'PropertyDefinition'].includes(parent?.type) && parent.key === node && !parent.computed) return false;
+      if ((parent?.type === 'ClassDeclaration' || parent?.type === 'ClassExpression') && (parent.id === node || parent.superClass === node)) return false;
+      return !(parent?.type === 'VariableDeclarator' && parent.id === node);
+    });
+  };
 
-  /** The definitions a value holds under `key`, written in its literal or class, or assigned. */
-  const ownMembers = (value, key) => {
-    let written = [];
+  /**
+   * An instance is `{ kind: 'instance', node: its class, site }`. `site` is the `new` that built it,
+   * so a write to one instance reaches that instance alone. It is null for `this`, which may be any
+   * instance, and 'prototype' for `super`, which reads the class's methods and never an instance's.
+   */
+  const side = (klasses, statics, site = null) => klasses.map((node) => (statics ? { kind: 'class', node } : { kind: 'instance', node, site }));
+  const same = (a, b) => a.kind === b.kind && a.node === b.node
+    && (a.kind !== 'instance' || a.site === null || b.site === null || a.site === b.site);
+  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site) === i);
+
+  /** Whether `node` sits in a loop of its own function, so it may run many times in one call. */
+  const inLoop = (node) => {
+    for (let at = parentOf.get(node); at && !isFunction(at) && at.type !== 'FunctionDeclaration'; at = parentOf.get(at)) if (LOOPS.has(at.type)) return true;
+    return false;
+  };
+  /**
+   * Whether `value` is one object: an object literal or a `new` that runs once in its function,
+   * rather than any instance or one of many built by the same expression.
+   */
+  const single = (value) => {
+    if (value.kind === 'object' || value.kind === 'class') return !inLoop(value.node);
+    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !inLoop(value.site);
+  };
+  /**
+   * The writes to `key` on `value`. Each replaces what came before it only where its receiver can be
+   * one object and nothing else; a receiver that may be one of several, any instance, or one of
+   * the objects a loop builds adds a definition and replaces none.
+   */
+  const writesTo = (value, key) => memberWrites
+    .filter((write) => keyOf(write.left.property, write.left.computed) === key)
+    .flatMap((write) => {
+      const receivers = distinct(valuesOf(write.left.object));
+      if (!receivers.some((held) => same(held, value))) return [];
+      const definite = receivers.length === 1 && single(receivers[0]);
+      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' }];
+    });
+  /** The members `klass` itself writes under `key`, on its static side or its prototype. */
+  const classMembers = (klass, key, statics) => klass.body.body
+    .filter((member) => member.kind !== 'constructor' && member.kind !== 'get' && member.kind !== 'set' && member.value)
+    .filter((member) => Boolean(member.static) === statics && keyOf(member.key, member.computed) === key)
+    .map((member) => ({ node: member, value: member.value }));
+  /**
+   * The definitions a member read of `key` from `value` can meet: an object's property and what is
+   * assigned to it; an instance's own properties, then its class's prototype; a class's static
+   * members and what is assigned to them. A class that defines nothing under `key` passes the read
+   * to the class it extends.
+   */
+  const memberDefinitions = (value, key) => {
     if (value.kind === 'object') {
-      written = value.node.properties.filter((held) => held.type === 'Property' && keyOf(held.key, held.computed) === key);
-    } else if (value.kind === 'class' || value.kind === 'instance') {
-      written = value.node.body.body
-        .filter((member) => member.kind !== 'constructor' && member.kind !== 'get' && member.kind !== 'set' && member.value)
-        .filter((member) => Boolean(member.static) === (value.kind === 'class') && keyOf(member.key, member.computed) === key);
+      const written = value.node.properties.filter((held) => held.type === 'Property' && keyOf(held.key, held.computed) === key);
+      return [...written.map((held) => ({ node: held, value: held.value })), ...writesTo(value, key)];
     }
-    const assigned = memberWrites
-      .filter((write) => keyOf(write.left.property, write.left.computed) === key)
-      .filter((write) => valuesOf(write.left.object).some((held) => held.kind === value.kind && held.node === value.node));
-    return [
-      ...written.map((member) => ({ node: member, value: member.value })),
-      ...assigned.map((write) => ({ node: write, value: write.right, replaces: write.operator === '=' })),
-    ];
-  };
-  /** What a member read of `key` from `value` can give at `at`, a class's from the one it extends. */
-  const memberValues = (value, key, at, seen = new Set()) => {
-    // A chain of classes that extends itself never runs, and reads as holding nothing.
-    if (seen.has(value.node)) return [];
-    seen.add(value.node);
-    const own = ownMembers(value, key);
-    if (own.length > 0) return reaching(own, at).flatMap((definition) => valuesOf(definition.value));
     if (value.kind !== 'class' && value.kind !== 'instance') return [];
-    return superclasses(value.node).flatMap((klass) => memberValues({ kind: value.kind, node: klass }, key, at, seen));
+    const statics = value.kind === 'class';
+    const own = statics || value.site === 'prototype' ? [] : writesTo(value, key);
+    // A chain of classes that extends itself never runs, and reads as holding nothing more.
+    const seen = new Set();
+    for (let level = [value.node]; level.length > 0; level = level.flatMap(superclasses).filter((klass) => !seen.has(klass))) {
+      level.forEach((klass) => seen.add(klass));
+      const here = level.flatMap((klass) => [...classMembers(klass, key, statics), ...(statics ? writesTo({ kind: 'class', node: klass }, key) : [])]);
+      if (here.length > 0) return [...own, ...here];
+    }
+    return own;
   };
+  /** What a member read of `key` from `value` can give at `at`. */
+  const memberValues = (value, key, at) => reaching(memberDefinitions(value, key), at).flatMap((definition) => valuesOf(definition.value));
 
   // What an expression can evaluate to, through the operators Hand-ons step 7 names.
   function valuesOf(node) {
@@ -749,7 +833,7 @@ function callables(program) {
         case 'AwaitExpression': return valuesOf(node.argument);
         case 'SequenceExpression': return valuesOf(node.expressions.at(-1));
         case 'AssignmentExpression': return valuesOf(node.right);
-        case 'NewExpression': return valuesOf(node.callee).filter((value) => value.kind === 'class').map((value) => ({ kind: 'instance', node: value.node }));
+        case 'NewExpression': return side(valuesOf(node.callee).filter((value) => value.kind === 'class').map((value) => value.node), false, node);
         case 'Identifier': {
           const definitions = lookup(node.name, scopeOf.get(node));
           return definitions ? reaching(definitions, node).flatMap((definition) => valuesOf(definition.value)) : [];
@@ -758,7 +842,7 @@ function callables(program) {
           const self = thisAt(node);
           if (!self) return [];
           if (self.object.type === 'ObjectExpression') return [{ kind: 'object', node: self.object }];
-          return side([self.object, ...subclasses(self.object)], self.statics);
+          return side([self.object, ...subclasses(self.object).filter(instantiable)], self.statics);
         }
         case 'MemberExpression': {
           const key = keyOf(node.property, node.computed);
@@ -766,7 +850,7 @@ function callables(program) {
           let receivers;
           if (node.object.type === 'Super') {
             const self = thisAt(node);
-            receivers = self && self.object.type !== 'ObjectExpression' ? side(superclasses(self.object), self.statics) : [];
+            receivers = self && self.object.type !== 'ObjectExpression' ? side(superclasses(self.object), self.statics, 'prototype') : [];
           } else {
             receivers = valuesOf(node.object);
           }
@@ -823,9 +907,11 @@ function parametersGiven(node, functionsOf) {
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
  * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
  * reached through an expression whose result can be one of its operands, and a pattern takes it as
- * the value it is given, as its default, or as an argument to a function the call runs: one called
- * where it is written, or one the module defines under the name the callee spells. Any other use of the name `board` passes, so L3's board handle does; a read through an
- * alias or a computed key is a review finding (the card's Rule 3 item).
+ * the value it is given, as its default, or as an argument to a function the call can run. That is
+ * one called where it is written, or one `callables` finds the callee reaches through scope, a
+ * binding, a member of an object, class or instance the module defines, `this` or `super`. Any
+ * other use of the name `board` passes, so L3's board handle does; a read through a computed key,
+ * and a call whose callee this reader cannot follow, is a review finding (the card's Rule 3 item).
  */
 function priorityReads(program) {
   const lines = [];

@@ -93,6 +93,36 @@ logical-assignment replacement, a replacement written after the call, and one in
 that may run later. It also covers a call inside a function declaration, which could run before
 the replacement.
 
+**The third fix still had two holes, one each way.** A write to one instance's own property, as
+in `a.take = …`, counted as a member of every instance of the class, so it dropped the class's
+method for `b` and for a fresh `new Items()` too. And `this` in a base class took in every
+subclass, even one the module never built or handed on. So `new A().rank(deps)` failed on a
+subclass's override that could never run.
+
+**The final reader tells instances and classes apart.** An instance now carries the `new` that
+built it, so a write through `a` reaches `a` alone. A write replaces what came before it only
+where its receiver can be one object and nothing else. That rules out a receiver that may be one
+of several, and `this`, which may be any instance. It also rules out one of the objects a loop
+builds, because a single `new` or object literal in a loop builds a fresh one each time round.
+
+`this` takes in a subclass only where an instance of it can exist. That means the module names
+it somewhere other than its own declaration and another class's `extends`: a `new`, an export, or
+a value handed to anything. `super` reads the class's methods and never an instance's own
+properties.
+
+**A replacement drops only what it can overwrite.** A replacement may drop a definition written
+in module code outside a loop, when the replacement sits in a function expression written after
+that definition. Module code runs once, and it has run before such a function can exist. This is
+what lets `const a = new Items(); a.take = …; a.take(deps.board)` pass inside a function when
+the class is declared at the top.
+
+**What the reader still cannot tell apart.** It still conflates the objects one expression builds
+across two calls of its function. A binding outside the function that keeps an earlier call's
+object would read that object as the latest one. That is the one place the reader could drop a
+definition that still runs. Rule 3 reads only `src/scheduling/`. On 2026-09-25, before this
+card merged `main` for the last time, that directory held `pull-order.mjs` alone. A grep for
+`new ` and for a member write found neither in it.
+
 **Where values run out.** A parameter, an import, a global and a call's result hold nothing the
 reader can see. So a receiver the module does not define, such as `deps.queue`, runs nothing.
 

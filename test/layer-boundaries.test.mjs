@@ -906,6 +906,22 @@ test('rule 3 by receiver: a method on an instance, a base class, super or a nest
     // restore what the replacement overwrote, so neither lets the replacement drop a definition.
     'const queue = { take: ({ priority }) => priority };\nqueue.take = (board) => board.items();\nexport function pull(deps) { return queue.take(deps.board); }',
     'let take = (board) => board.items();\nfunction reset() { take = ({ priority }) => priority; }\ntake = (board) => board.items();\nexport const pull = (deps) => [reset, take(deps.board)];',
+    // A write to one instance's own property leaves every other instance on the class's method.
+    'class Items { take({ priority }) { return priority; } }\nconst a = new Items();\nconst b = new Items();\na.take = (board) => board.items();\nexport const rank = (config) => b.take(config.board ?? {});',
+    'class Items { take({ priority }) { return priority; } }\nconst a = new Items();\na.take = (board) => board.items();\nexport const rank = (config) => new Items().take(config.board ?? {});',
+    'class Items { take({ priority }) { return priority; } }\nconst a = new Items();\nconst b = new Items();\nconst either = Math.random() > 1 ? a : b;\neither.take = (board) => board.items();\nexport const rank = (config) => b.take(config.board);',
+    'class Items { take({ priority }) { return priority; } }\nconst a = new Items();\nconst b = new Items();\na.take = (board) => board.items();\nexport const rank = (config, flag) => (flag ? a : b).take(config.board);',
+    'class Items { take({ priority }) { return priority; } }\nclass Sub extends Items { }\nconst a = new Sub();\na.take = (board) => board.items();\nexport const rank = (config) => new Sub().take(config.board);',
+    // One `new` in a loop builds an instance each time, so a write through one leaves the others.
+    'class Items { take({ priority }) { return priority; } }\nlet first;\nlet last;\nfor (const n of [1, 2]) { last = new Items(); first ??= last; }\nlast.take = (board) => board.items();\nexport const rank = (config) => first.take(config.board);',
+    'let first;\nlet last;\nfor (const n of [1, 2]) { last = { take: ({ priority }) => priority }; first ??= last; }\nlast.take = (board) => board.items();\nexport const rank = (config) => first.take(config.board);',
+    // A subclass whose instance can reach a base method: one the module builds, or one it hands on.
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nclass B extends A { take({ priority }) { return priority; } }\nexport const pull = (deps) => new B().rank(deps);',
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nclass B extends A { take({ priority }) { return priority; } }\nexport { B };',
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nclass B extends A { take({ priority }) { return priority; } }\nexport const make = (deps) => deps.build(B);',
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nclass B extends A { take({ priority }) { return priority; } }\nclass C extends B { }\nexport default C;',
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nconst B = class extends A { take({ priority }) { return priority; } };\nexport const pull = (deps) => new B().rank(deps);',
+    'class A { static take(board) { return board.items(); } static rank(c) { return this.take(c.board); } }\nclass B extends A { static take({ priority }) { return priority; } }\nexport const pull = (deps) => B.rank(deps);',
     // A class or a function exported as the default with no name of its own.
     'export default class { take({ priority }) { return priority; } rank(c) { return this.take(c.board); } }',
     'export default function ({ priority } = config.board) { return priority; }',
@@ -931,6 +947,12 @@ test('rule 3 by receiver bars nothing more: a method the module replaced before 
     'const ranks = { inner: { take: ({ priority }) => priority }, outer: { take: (board) => board.items() } };\nexport const pull = (deps) => ranks.outer.take(deps.board);',
     'class Items { static take({ priority }) { return priority; } }\nexport const pull = (deps) => new Items().take(deps.board);',
     'class Items { take({ priority }) { return priority; } }\nexport const pull = (deps) => Items.take(deps.board);',
+    // Codex's module: a subclass nothing builds or hands on never runs the base class's method.
+    'class A {\n  take(board) { return board.items(); }\n  rank(c) { return this.take(c.board); }\n}\nclass B extends A {\n  take({ priority }) { return priority; }\n}\nexport const pull = (deps) => new A().rank(deps);',
+    'class A { take(board) { return board.items(); } rank(c) { return this.take(c.board); } }\nclass B extends A { take({ priority }) { return priority; } }\nclass C extends B { }\nexport const pull = (deps) => new A().rank(deps);',
+    // A write to an instance replaces the method for that instance, where the reader knows which.
+    'class Items { take({ priority }) { return priority; } }\nconst a = new Items();\na.take = (board) => board.items();\nexport const pull = (deps) => a.take(deps.board);',
+    'class Items { take({ priority }) { return priority; } }\nexport const pull = (deps) => { const a = new Items(); a.take = (board) => board.items(); return a.take(deps.board); };',
     'export default class { take(board) { return board.items(); } run(deps) { return this.take(deps.board); } }',
     'export default function (deps) { return deps.board.items(); }',
     'class A extends B { }\nclass B extends A { }\nexport const pull = (deps) => new A().take(deps.board);',
