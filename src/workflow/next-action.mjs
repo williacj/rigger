@@ -1,7 +1,11 @@
 // ABOUTME: L2's next action for a ready card: ignore it, refuse it with a reason, or dispatch it
 // under the one kind of work that selects it.
 
+import { sameLabel } from '../config/validate.mjs';
 import { checkAcceptanceForm } from './form-check.mjs';
+
+/** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
+const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
 
 /**
  * The names of the kinds that select a card, in the config's order: each kind any one of whose
@@ -10,7 +14,7 @@ import { checkAcceptanceForm } from './form-check.mjs';
  */
 const selecting = (card, kinds) =>
   Object.entries(kinds)
-    .filter(([, kind]) => kind.select.labels.some((label) => card.labels.includes(label)))
+    .filter(([, kind]) => kind.select.labels.some((label) => carries(card, label)))
     .map(([name]) => name);
 
 /**
@@ -24,7 +28,7 @@ const selecting = (card, kinds) =>
  * card's number.
  */
 export function nextAction(card, kinds, epicLabel) {
-  const names = card.labels.includes(epicLabel) ? [] : selecting(card, kinds);
+  const names = carries(card, epicLabel) ? [] : selecting(card, kinds);
   if (names.length === 0) return { action: 'ignore' };
   if (names.length > 1) {
     return { action: 'refuse', card: card.number, reason: `selected by more than one kind: ${names.join(', ')}` };
