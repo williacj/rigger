@@ -38,11 +38,16 @@ nothing commits both or neither. A judge's probe removed the sink's directory be
 board took the move and no event followed. Recording first only moves the gap, to an event with
 no move behind it. The owner ruled that when Rigger has acted and cannot record it, it fails loudly
 and starts no further work until it can. So L2 reports the card, both columns and the sink's error,
-and holds the event it owes. A later outcome for that card appends the owed event before anything
-else, and makes no move while the sink still refuses. Once the append goes through, the record is
-whole again, with the owed event stamped at the time it was finally written rather than the time
-of the move. The halt across every card is the architect's to place (#277); this card holds only
-the card whose move went unrecorded.
+and the event stays missing.
+
+**A hold in L2 was the wrong place for "no further work".** Round 2 had L2 remember the event it
+owed and replay it before the card's next move, refusing the move while the sink still refused.
+Both judges' second round showed what that cost. It kept card state in L2, which the Failure model
+rules out ("no card state is kept"), and a restart would have forgotten it. The replay stamped the
+event with the time it was finally written, so the record said the move happened when it did not
+(`R-RECORD-7`). The architect placed the halt on L3's starts alone (ruling on #277; #281), and a
+dispatch already running still settles. So a card whose claim went unrecorded still moves to
+`review` on a zero exit, and nothing appends its missing event later.
 
 **A red test reached the real board.** The first run of the wiring test passed a `send` that L2 did
 not yet forward, so the item-write side spawned `gh` for real. It read board 6 and sent one column
