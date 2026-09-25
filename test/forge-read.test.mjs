@@ -434,6 +434,26 @@ test('the single-select fields but Status read back with their options in board 
   ]);
 });
 
+test('every field reads back with its name and its type as GitHub names it, whatever the type', async () => {
+  // Fields of four types: a read that kept only the single-select fields, or read a type from
+  // anywhere but GitHub's answer, fails.
+  const send = forge({
+    typedFields: typedFieldPage([
+      { name: 'Title', dataType: 'TITLE' },
+      { name: 'Status', options: Object.values(COLUMNS) },
+      { name: 'Priority', dataType: 'TEXT' },
+      { name: 'Estimate', dataType: 'NUMBER' },
+    ]),
+  });
+
+  assert.deepEqual(await readSide(BOARD, { send }).readFieldTypes(), [
+    { name: 'Title', type: 'TITLE' },
+    { name: 'Status', type: 'SINGLE_SELECT' },
+    { name: 'Priority', type: 'TEXT' },
+    { name: 'Estimate', type: 'NUMBER' },
+  ]);
+});
+
 /** The board the priority read is tested on: `BOARD`, declaring its priority as this repository's config does. */
 const RANKED = { ...BOARD, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } };
 

@@ -204,10 +204,44 @@ const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel', OPTIONS_WR
 const OPTION_FIELDS = ['id', 'name', 'color', 'description'];
 
 /**
- * How way B writes each field of an option, as the parser reads it: the colour as an enum value,
- * the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ * How way B writes each field of an option, as the parser reads it: the colour as an unquoted
+ * scalar, the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ * An unquoted scalar is any bare name, number or `null`, so which colour it names is checked
+ * against `OPTION_COLOURS` separately.
  */
 const OPTION_KINDS = { id: 'string', name: 'string', color: 'scalar', description: 'string' };
+
+/**
+ * The values of GitHub's `ProjectV2SingleSelectFieldOptionColor`, the type GitHub gives `color`
+ * on `ProjectV2SingleSelectFieldOptionInput`. GitHub owns them (`D16`); this copy is what gh
+ * 2.99.0 answered to `__type(name: "ProjectV2SingleSelectFieldOptionColor") { enumValues { name } }`
+ * on 2026-09-25.
+ */
+const OPTION_COLOURS = new Set(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']);
+
+/**
+ * Refuses the schema write `field` unless its options are written one way: its arguments each
+ * given once, an `input` object giving each of its fields once, and, where that input gives
+ * `singleSelectOptions`, a list of objects each giving each of its fields once and a `color`
+ * written as an unquoted value of `OPTION_COLOURS`. So a quoted colour, `null`, a number, a
+ * boolean, another name, no colour, a lone option given where the list belongs, and any field or
+ * argument given twice are each refused, naming the write. A write carrying no options, as
+ * creating a label does, has nothing here to refuse.
+ */
+function checkColours(field) {
+  const args = fieldsOf('schema-write', field, field.arguments);
+  const input = args.input?.kind === 'object' ? fieldsOf('schema-write', field, args.input.fields) : {};
+  const options = input.singleSelectOptions;
+  if (options === undefined) return;
+  if (options.kind !== 'list') refuse('schema-write', `${field.name}, whose singleSelectOptions is not a list`);
+  for (const option of options.values) {
+    if (option.kind !== 'object') refuse('schema-write', `${field.name}, which sends an option that is not an object`);
+    const { name, color } = fieldsOf('schema-write', field, option.fields);
+    if (color?.kind !== 'scalar' || !OPTION_COLOURS.has(color.value)) {
+      refuse('schema-write', `${field.name}, which sends the option ${name?.value ?? 'with no name'} with a color that is no value of ProjectV2SingleSelectFieldOptionColor`);
+    }
+  }
+}
 
 /**
  * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
@@ -273,6 +307,7 @@ function optionsInput(field) {
  */
 function checkOptionsWrite(field, send) {
   const { fieldId, sent } = optionsInput(field);
+  checkColours(field);
   const held = heldOptions(fieldId, send);
   if (held.name !== COLUMNS) {
     refuse('schema-write', `${field.name} on ${held.name ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
@@ -308,6 +343,7 @@ export function schemaWriteRunner(args, { send = plainly } = {}) {
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
   if (field.name === OPTIONS_WRITE) checkOptionsWrite(field, send);
+  else checkColours(field);
   return send(FORGE, args);
 }
 
