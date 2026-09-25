@@ -1,5 +1,6 @@
 // ABOUTME: Tests L2's column changes: the claim's move to coding, a returned dispatch's move to
-// review, no move for a failed one, the event each move writes, and a move the board refuses.
+// review, no move for a failed one, the event each move writes, a move the board refuses, and a
+// move the sink will not record.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
