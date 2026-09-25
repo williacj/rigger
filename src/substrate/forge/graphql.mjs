@@ -249,3 +249,10 @@ export function parseDocument(source) {
   if (operations.length === 0) throw new Error('the document holds no operation');
   return { operations };
 }
+
+/**
+ * A GraphQL string literal holding `value`. JSON's string syntax is a subset of GraphQL's, and
+ * `JSON.stringify` escapes every quote, backslash and control character, so a value can never
+ * close the literal and write GraphQL of its own.
+ */
+export const literal = (value) => JSON.stringify(String(value));

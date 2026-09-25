@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 
 import { gitEnvironment } from '../git-environment.mjs';
-import { parseDocument } from './graphql.mjs';
+import { literal, parseDocument } from './graphql.mjs';
 
 /**
  * The one spawn every runner makes, and the only place the forge's command is named.
@@ -57,6 +57,9 @@ function named(operation) {
   const fields = operation.selections.map((selection) => selection.name ?? '...').join(', ');
   return `${operation.type}${operation.name ? ` ${operation.name}` : ''} (${fields})`;
 }
+
+/** A `gh api graphql` request carrying `document`: the one form a write runner admits. */
+export const graphqlRequest = (document) => ['api', 'graphql', '-f', `query=${document}`];
 
 /**
  * The operations of the GraphQL document `query` carries, read for `runner`, which refuses a
@@ -201,7 +204,7 @@ export function schemaWriteRunner(args, { send = plainly } = {}) {
 const ITEM_WRITES = new Set(['updateProjectV2ItemFieldValue']);
 
 /** The field holding the columns, whose options are the column display names (`ARCHITECTURE.md`). */
-const COLUMNS = 'Status';
+export const COLUMNS = 'Status';
 
 /**
  * The first line of what `gh` said, from its error stream first: a failed `gh api graphql` prints
@@ -239,8 +242,8 @@ function moveInput(field) {
  * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
  */
 function columnsField(projectId, fieldId, send) {
-  const query = `query { project: node(id: ${JSON.stringify(projectId)}) { ... on ProjectV2 { field(name: ${JSON.stringify(COLUMNS)}) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: ${JSON.stringify(fieldId)}) { ... on ProjectV2FieldCommon { name } } }`;
-  const said = readRunner(['api', 'graphql', '-f', `query=${query}`], { send });
+  const query = `query { project: node(id: ${literal(projectId)}) { ... on ProjectV2 { field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: ${literal(fieldId)}) { ... on ProjectV2FieldCommon { name } } }`;
+  const said = readRunner(graphqlRequest(query), { send });
   if (said.status !== 0) {
     throw new Error(`the item-write runner could not read which field holds the columns, and sent no write: ${firstLine(said)}`);
   }
