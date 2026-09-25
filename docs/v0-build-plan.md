@@ -36,14 +36,15 @@ files, the review skill, and the hooks are at once what builds Rigger and what R
 consumer's configuration. Self-hosting therefore costs no production lines, because L4 carries no
 budget.
 
-**What gets used when.** Each verb is used against this repository as soon as it exists. The
-dispatch loop is last, because it needs the execution core and the roles beneath it:
+**What gets used when.** Each verb is used against this repository as soon as it exists, except
+`once` and `run`, which never run against this repository's real board during M1. The dispatch
+loop is last, because it needs the execution core and the roles beneath it:
 
 | From | Rigger builds Rigger by |
 |---|---|
 | M0 | `rigger init` writes this repository's own config and forks the role templates into it |
 | M0 | `rigger doctor` runs against this repository |
-| M1 | `rigger setup-board` creates this repository's real board, fields, and labels |
+| M1 | `rigger setup-board` adopts this repository's real board and adds the columns, fields, and labels the config declares and it lacks |
 | M1 | `rigger plan` prints this repository's real pull order; read-only, so it is safe long before the loop exists |
 | M1 | `rigger report` over whatever events exist by then |
 | M3 | worktrees and provisioning steps run against this repository's own cards |
@@ -194,11 +195,25 @@ Exit:
   verdict, as re-dispatchable.
 - L3 implements the pull and drain triggers and emits its event family.
 - Verbs: `setup-board` creates columns, fields, and labels; `plan` prints the pull order; `once`
-  and `run` drive the loop; `report` derives whatever signals the events so far support. `doctor`
-  gains board reachability and field checks.
-- `docs/demo.tape` records `rigger once` against the fake board with `vhs`. The GIF it produces is
-  embedded in the README where the placeholder comment sits, and the tape is re-run for every
-  release.
+  and `run` pull and claim; `report` derives whatever signals the events so far support. `doctor`
+  gains board reachability and field checks, and fails where the board's priority options differ
+  from the options the config declares.
+- Where the config names a board that exists, `setup-board` adopts it rather than creating one. It
+  adds what the config declares and the board lacks: the `Owner` column, the priority field with
+  the config's options, and the labels. It leaves every column and field the config does not
+  declare alone.
+- `setup-board` changes this repository's real board, project 6, only after a spike in M1 has
+  reported whether adding an option to that board's `Status` field keeps every card's `Status`
+  value.
+- `once` and `run` start no dispatch in M1; M4 gives them dispatch. After claiming a card that
+  nobody worked, each exits non-zero with a message saying so.
+- `run` claims until it holds as many cards as `concurrency` allows, or until no card is left to
+  pull. It then exits, and where it claimed a card it exits non-zero naming the cards it claimed.
+- During M1, `once` and `run` never run against this repository's real board. `plan`,
+  `setup-board` and `doctor` may.
+- `docs/demo.tape` records `rigger once` against the fake board with `vhs`, as M1 builds it: the
+  claim and the non-zero exit. The GIF it produces is embedded in the README where the placeholder
+  comment sits, and the tape is re-run for every release.
 
 Exit:
 
@@ -206,12 +221,20 @@ Exit:
   (`R-STATE-1`, `R-STATE-2`).
 - A card carrying no acceptance, or one failing the acceptance form check, is not admitted, and
   `plan` names the reason (`R-CARD-7`, `R-CARD-8`).
-- `setup-board` creates this repository's real board, fields, and labels.
-- `plan` prints its real pull order (`R-SCHED-1`).
-- Concurrency comes from config. With `concurrency: 1` the engine works one card at a time; with
-  `concurrency: 3` it works three at once (`R-SCHED-2`).
-- The column display names come from config: a board whose columns are named differently drives
-  the same loop.
+- `setup-board` adopts this repository's real board rather than creating one. It adds the columns,
+  fields, and labels the config declares and the board lacks, and leaves every other column and
+  field as it was.
+- `plan` prints its real pull order over the M1 cards themselves (`R-SCHED-1`). With the owner's
+  approval, the M1 cards are moved into the real board's Ready column and given varied Priority
+  values. The printed order is exactly the config's declared priority order, with ties broken by
+  issue number, oldest first. The values are set so that this order differs from each of four
+  orders that ignore priority: issue number ascending, issue number descending, column position,
+  and column position reversed.
+- Concurrency comes from config. On a fake board holding four pullable cards, `run` claims one card
+  with `concurrency: 1` and three with `concurrency: 3`, then exits. It never holds more claims
+  than the setting allows (`R-SCHED-2`).
+- The column display names come from config: Rigger reads, pulls from, and claims from a fake
+  board whose columns are named differently exactly as it does one with the default names.
 - The demo GIF regenerates from the tape in CI.
 
 **M2. Execution core.**
@@ -249,6 +272,8 @@ Exit:
 - Maker and judges as headless dispatches of the configured provider CLI through M2, with the
   Claude Code adapter as the default.
 - Role names, prompts, and skills owned by the consumer; model tier per role from the card's label.
+- `once` and `run` dispatch the maker for each card they claim. M4 is the first milestone in which
+  either verb dispatches a card.
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
   session or another judge's output. Each writes its own findings, named by head SHA and judge
   role; M5 fixes the schema they are written into.
