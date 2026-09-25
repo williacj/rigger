@@ -143,6 +143,15 @@ test('a fence closes only on a run of at least as many of the same character', (
 });
 
 // proves R-CARD-26
+test('a line closes a fence only when it opens with the run, so text, a second run, a no-break space or a tab before it leaves the fence open', () => {
+  const lines = { text: 'a```', 'second run': '``` ```', 'text and space': 'x ```', 'no-break space': ' ```', tab: '\t```' };
+  const verdicts = Object.fromEntries(
+    Object.entries(lines).map(([name, line]) => [name, check(card(50, '```', line, '## Acceptance', '', `- ${ITEM}`)).reason]),
+  );
+  assert.deepEqual(verdicts, Object.fromEntries(Object.keys(lines).map((name) => [name, MISSING])));
+});
+
+// proves R-CARD-26
 test('a fence closer followed only by spaces or a tab closes the fence, so a bullet after it counts', () => {
   const closers = { spaces: '```  ', tab: '```\t' };
   const verdicts = Object.fromEntries(

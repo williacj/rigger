@@ -93,7 +93,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-CARD-27 | — a whitespace character is any of U+0009 to U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF; | the engine | the test suite | D2 |
 | R-CARD-28 | — text trimmed is that text with every whitespace character at its start and at its end removed; | the engine | the test suite | D2 |
 | R-CARD-35 | — a fenced code block opens at a line outside every fenced code block, indented at most three spaces, that opens with a run of three or more backticks or of three or more tildes, its opening run; | the engine | the test suite | D2 |
-| R-CARD-26 | — a fenced code block closes at the next line indented at most three spaces that holds a run of its opening run's character, at least as long as its opening run, then only spaces or tabs (U+0009); | the engine | the test suite | D2 |
+| R-CARD-26 | — a fenced code block closes at the next line indented at most three spaces that opens with a run of its opening run's character, at least as long as its opening run, then holds only spaces or tabs (U+0009); | the engine | the test suite | D2 |
 | R-CARD-17 | — a fenced code block never closed runs to the end of the body; | the engine | the test suite | D2 |
 | R-CARD-18 | — every line from a fenced code block's opening line to its closing line is inside it, and no line inside it is an item; | the engine | the test suite | D2 |
 | R-CARD-19 | — an ATX heading line is a line outside every fenced code block, indented at most three spaces, that opens with one to six `#`, then a space or the line's end; | the engine | the test suite | D2 |
