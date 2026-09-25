@@ -362,10 +362,12 @@ test('a kind whose judges are not an ordered list is refused, because their orde
   assert.match(refusal(withKind({ judges: 'reviewer' })), /`kinds\.change\.judges`/);
 });
 
+// proves R-SCHED-14
 test('a kind whose select.labels is empty is refused, and the refusal names that kind', () => {
   assert.match(refusal(withKind({ select: { labels: [] } })), /`kinds\.change\.select\.labels`/);
 });
 
+// proves R-SCHED-14
 test('a kind selecting one label or two is accepted', () => {
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change', 'type:fix'] } })), []);

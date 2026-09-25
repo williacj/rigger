@@ -89,17 +89,24 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-CARD-12 | Rigger reads a card's acceptance from the source text of the card's body, never from a rendering of it, as follows: | the engine | the test suite | D2 |
 | R-CARD-13 | — the body splits into lines at each line feed, and at each carriage return directly followed by a line feed, and nowhere else; | the engine | the test suite | D2 |
 | R-CARD-14 | — a line's indentation is the run of space characters at its start, and what the line opens with is what follows that run; | the engine | the test suite | D2 |
-| R-CARD-15 | — a fenced code block opens at a line indented at most three spaces that opens with three or more backticks or three or more tildes; | the engine | the test suite | D2 |
-| R-CARD-16 | — a fenced code block closes at the next line indented at most three spaces that holds only a run of at least as many of the same character; | the engine | the test suite | D2 |
+| R-CARD-27 | — a whitespace character is any of U+0009 to U+000D, U+0020, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF; | the engine | the test suite | D2 |
+| R-CARD-28 | — text trimmed is that text with every whitespace character at its start and at its end removed; | the engine | the test suite | D2 |
+| R-CARD-15 | — a fenced code block opens at a line outside every fenced code block, indented at most three spaces, that opens with three or more backticks or three or more tildes; | the engine | the test suite | D2 |
+| R-CARD-26 | — a fenced code block closes at the next line indented at most three spaces that holds a run of at least as many of the same character, then only spaces or tabs; | the engine | the test suite | D2 |
 | R-CARD-17 | — a fenced code block never closed runs to the end of the body; | the engine | the test suite | D2 |
 | R-CARD-18 | — every line from a fenced code block's opening line to its closing line is inside it, and no line inside it is an item; | the engine | the test suite | D2 |
 | R-CARD-19 | — an ATX heading line is a line outside every fenced code block, indented at most three spaces, that opens with one to six `#`, then a space or the line's end; | the engine | the test suite | D2 |
-| R-CARD-20 | — a heading's level is its count of `#`, and its text is the rest of the line, trimmed, stripped of any closing run of `#`, and trimmed again; | the engine | the test suite | D2 |
+| R-CARD-20 | — an ATX heading line's level is its count of `#`, and its text is the rest of the line, trimmed, stripped of any closing run of `#`, and trimmed again; | the engine | the test suite | D2 |
 | R-CARD-21 | — the acceptance is every item in every section that opens at an ATX heading line whose text is exactly `Acceptance`; | the engine | the test suite | D2 |
 | R-CARD-22 | — a section ends at the next ATX heading line of the same level or higher, meaning one with as many `#` or fewer; | the engine | the test suite | D2 |
 | R-CARD-23 | — an item is a line in a section, indented at most three spaces, that opens with `-`, `*` or `+` and a space; | the engine | the test suite | D2 |
 | R-CARD-24 | — an item's text is the rest of its line after the marker and the one space that follows it; | the engine | the test suite | D2 |
-| R-CARD-25 | — a task-list item, whose text opens with `[ ]`, `[x]` or `[X]`, and a bullet whose text is empty or only whitespace, are never items. | the engine | the test suite | D2 |
+| R-CARD-25 | — a task-list item, whose text opens with `[ ]`, `[x]` or `[X]`, and an item whose text is empty or only whitespace characters, are never items; | the engine | the test suite | D2 |
+| R-CARD-29 | — an item whose text, trimmed, opens with `<!--` and ends with a `-->` sharing no character with that `<!--` is never an item; | the engine | the test suite | D2 |
+| R-CARD-30 | — an item's text never takes in a line below it, even where that line holds the `-->` that closes a `<!--` in the item's text; | the engine | the test suite | D2 |
+| R-CARD-31 | — an item whose line holds only space characters and three or more of one of `-`, `*` or `+` is never an item, and a line holding a tab is never such a line; | the engine | the test suite | D2 |
+| R-CARD-32 | — a text's compared form is that text lowercased by Unicode's default mapping, stripped of every character in Unicode's punctuation and symbol categories, then with each run of whitespace characters made one space, then trimmed; | the engine | the test suite | D2 |
+| R-CARD-33 | — an acceptance only restates the card's title, as `R-CARD-8` uses the phrase, when every item's compared form equals the title's compared form. | the engine | the test suite | D2 |
 
 ## R-SCHED — what runs, and when
 
@@ -117,6 +124,8 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-SCHED-10 | Rigger refuses a configuration naming anything it does not offer, and says what it refused. | the config validator | the test suite | |
 | R-SCHED-11 | Rigger never pulls a ready card no kind of work selects, never reports it as a card it refused, and leaves it on the board. Work the consumer marked as an epic is selected by no kind, so Rigger never pulls an epic and never reports one as refused. | the engine, and the consumer's configuration for what each kind selects | the test suite | |
 | R-SCHED-12 | Rigger never pulls a ready card that two or more kinds of work select. It refuses the card, and the refusal names every kind that selects it, in the order the configuration declares them. | the engine | the test suite | |
+| R-SCHED-13 | A kind of work selects every card, epics apart, that carries any one of the labels the consumer's configuration names for that kind. The card need not carry the others. | the engine | the test suite | |
+| R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 
 ## R-WORK — isolation and exclusivity
 
