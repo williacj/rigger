@@ -30,4 +30,4 @@ repository. Nothing here widens it; what follows is what is true of you in parti
 - **You never close a card you could not finish.** Escalate it, naming which of the three
   categories it is. An acceptance item you cannot meet is `ambiguous`, and the escalation names
   the item.
-- **You never judge your own work, and you never merge it.**
+- **You never judge your own work.**
