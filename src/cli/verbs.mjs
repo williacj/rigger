@@ -3,6 +3,7 @@
 
 import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
+import { plan } from './plan.mjs';
 
 /**
  * Every verb, in the order the README's "Install and usage" block lists them, each with the help
@@ -31,7 +32,7 @@ export const VERBS = [
  * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
  * the test would drift from this one the day a verb lands.
  */
-export const LANDED = { init, doctor };
+export const LANDED = { init, doctor, plan };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
