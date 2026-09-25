@@ -204,6 +204,12 @@ const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel', OPTIONS_WR
 const OPTION_FIELDS = ['id', 'name', 'color', 'description'];
 
 /**
+ * How way B writes each field of an option, as the parser reads it: the colour as an enum value,
+ * the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ */
+const OPTION_KINDS = { id: 'string', name: 'string', color: 'scalar', description: 'string' };
+
+/**
  * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
  * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
  */
@@ -230,7 +236,9 @@ function fieldsOf(runner, field, fields) {
 /**
  * The field ID and the options an options write sends, each option as its fields' values by
  * name, or a refusal naming what is not way B's: one `input` of a `fieldId` string and a
- * `singleSelectOptions` list, each option carrying no field but an option's own, and no `id` twice.
+ * `singleSelectOptions` list, each option a name, colour and description written as
+ * `OPTION_KINDS` says and an `id` or none, no `id` twice, and at least one option with no `id`,
+ * which is the option the write adds.
  */
 function optionsInput(field) {
   const [input, ...others] = field.arguments;
@@ -242,12 +250,17 @@ function optionsInput(field) {
   const sent = read.singleSelectOptions.values.map((option) => {
     if (option.kind !== 'object') refuse('schema-write', `${field.name}, which sends an option that is not an object`);
     const entry = fieldsOf('schema-write', field, option.fields);
-    const foreign = Object.keys(entry).filter((name) => !OPTION_FIELDS.includes(name));
+    const foreign = Object.keys(entry).filter((name) => !Object.hasOwn(OPTION_KINDS, name));
     if (foreign.length > 0) refuse('schema-write', `${field.name}, which sends an option carrying ${foreign.join(', ')}`);
+    const wrong = Object.keys(OPTION_KINDS).filter((name) => (name !== 'id' || entry.id) && entry[name]?.kind !== OPTION_KINDS[name]);
+    if (wrong.length > 0) {
+      refuse('schema-write', `${field.name}, which sends an option whose ${wrong.join(', ')} is not given as way B gives it`);
+    }
     return Object.fromEntries(Object.entries(entry).map(([name, value]) => [name, value.value]));
   });
   const twice = sent.filter((entry, i) => entry.id !== undefined && sent.findIndex((other) => other.id === entry.id) !== i);
   if (twice.length > 0) refuse('schema-write', `${field.name}, which sends ${twice.map((entry) => `${entry.name} (${entry.id})`).join(', ')} twice`);
+  if (!sent.some((entry) => entry.id === undefined)) refuse('schema-write', `${field.name}, which adds no option`);
   return { fieldId: read.fieldId.value, sent };
 }
 

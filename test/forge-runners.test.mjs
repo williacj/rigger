@@ -407,18 +407,55 @@ test('the schema-write runner refuses a held Status option sent with its id but 
     ['description', { ...HELD[1], description: 'Waiting' }],
   ];
   for (const [what, option] of changed) {
-    const document = optionsUpdate(HELD.map((held) => (held.id === option.id ? option : held)));
+    const document = optionsUpdate([...HELD.map((held) => (held.id === option.id ? option : held)), OWNER]);
     refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Ready (4a17efad)', what], { answer: holdingOptions() });
   }
   // With no colour or description at all.
-  const bare = optionsUpdate(HELD).replace(', color: BLUE, description: ""', '');
-  refuses(schemaWriteRunner, graphql(bare), ['updateProjectV2Field', 'Ready (4a17efad)'], { answer: holdingOptions() });
+  const bare = optionsUpdate([...HELD, OWNER]).replace(', color: BLUE, description: ""', '');
+  refuses(schemaWriteRunner, graphql(bare), ['updateProjectV2Field', 'color, description']);
 });
 
 test('the schema-write runner refuses a new option carrying an id the field does not hold, naming it', () => {
   // A new option carries no id in way B. An id the field does not hold names no option of it.
-  const document = optionsUpdate([...HELD, { ...OWNER, id: '0badf00d' }]);
+  const document = optionsUpdate([...HELD, { ...OWNER, id: '0badf00d' }, { ...OWNER, name: 'Parked' }]);
   refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Owner', '0badf00d'], { answer: holdingOptions() });
+});
+
+test('the schema-write runner refuses a new option that is not a name, colour and description alone, naming it, and sends nothing', () => {
+  // Way B's new option carries a name, a colour and a description and no id (#212's report, "The
+  // ways tried"). Anything short of those, or any of them as the wrong kind of value, is not way B.
+  const refused = [
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{}'), 'name'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: "Owner"}'), 'color'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: "Owner", color: GRAY}'), 'description'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{color: GRAY, description: ""}'), 'name'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: "Owner", color: "GRAY", description: ""}'), 'color'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: Owner, color: GRAY, description: ""}'), 'name'],
+    [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: "Owner", color: GRAY, description: null}'), 'description'],
+  ];
+  for (const [document, what] of refused) {
+    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+  }
+});
+
+test('the schema-write runner refuses a held option whose id, colour or description is written as the wrong kind of value', () => {
+  // A held option echoed back is way B only as the read gave it: its id and description strings, its colour an enum.
+  const ready = '{id: "4a17efad", name: "Ready", color: BLUE, description: ""}';
+  const refused = [
+    [WAY_B.replace(ready, '{id: "4a17efad", name: "Ready", color: "BLUE", description: ""}'), 'color'],
+    [WAY_B.replace(ready, '{id: 4a17efad, name: "Ready", color: BLUE, description: ""}'), 'id'],
+    [WAY_B.replace(ready, '{id: "4a17efad", name: "Ready", color: BLUE, description: null}'), 'description'],
+  ];
+  for (const [document, what] of refused) {
+    assert.ok(document !== WAY_B, 'the replacement did not apply');
+    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+  }
+});
+
+test('the schema-write runner refuses an options write that adds no option, and sends it nothing', () => {
+  // Way B adds an option. One sending back only what the field holds adds none, so it is not way B.
+  const send = refuses(schemaWriteRunner, graphql(optionsUpdate(HELD)), ['updateProjectV2Field', 'adds no option'], { answer: holdingOptions() });
+  assert.ok(send.sent.length <= 1);
 });
 
 test('the schema-write runner refuses an options write whose input carries more than way B\'s field ID and options, naming what', () => {
