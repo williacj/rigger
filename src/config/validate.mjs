@@ -49,6 +49,15 @@ export const SHAPES = {
   board: {
     project: { required: true, placeholder: PLACEHOLDER.project },
     columns: { required: true, keys: 'columns' },
+    // Optional: a board that declares no priority ranks every card alike, oldest first, which is
+    // the Engine settings row's shared bottom rank with nothing above it.
+    priority: { keys: 'priority' },
+  },
+  // The board field holding a card's priority, and that field's option display names, highest
+  // rank first. The declared order ranks cards, whatever order the board's own field holds.
+  priority: {
+    field: { required: true },
+    options: { required: true, type: 'array' },
   },
   // Every column the config declares, which M1 reads off the board. A display name has no
   // default: a board whose columns are named differently drives the same loop only because the
@@ -215,6 +224,30 @@ function readKinds(config, refusals) {
   }
 }
 
+/**
+ * What a priority declaration's options may be: the ranking itself, highest first, so it names at
+ * least one option.
+ */
+function readPriority(priority, refusals) {
+  const options = priority?.options;
+  // A declaration that is no set of declarations, or options that are no list, earned their
+  // refusal where the shape was read.
+  if (!Array.isArray(options)) return;
+  const where = 'board.priority.options';
+  if (options.length === 0) refusals.push(`\`${where}\` must list at least one option, highest rank first`);
+  // An option is named by its display name on the board, so anything else names no option.
+  if (options.some((option) => typeof option !== 'string' || option === '')) {
+    refusals.push(`\`${where}\` must list option display names, and holds something else`);
+  }
+  // An option listed twice holds two ranks, and a card holding it has no one rank to take.
+  const seen = new Set();
+  const repeated = new Set();
+  for (const option of options) (seen.has(option) ? repeated : seen).add(option);
+  for (const option of repeated) {
+    refusals.push(`\`${where}\` names \`${option}\` more than once, so it holds no one rank`);
+  }
+}
+
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
@@ -223,6 +256,7 @@ export function validate(config) {
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
+  readPriority(config.board?.priority, refusals);
   for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
     if (!CATEGORIES.includes(category)) {
       refusals.push(`\`escalate\` names \`${category}\`, which is no escalation category Rigger offers`);

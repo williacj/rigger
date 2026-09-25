@@ -15,7 +15,7 @@
 // what you changed.
 export default {
   repo: 'williacj/rigger',
-  board: { project: 6, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } },
+  board: { project: 6, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
   roles: {
     engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard' },

@@ -426,3 +426,28 @@ test('a role called owner is refused, because the owner is the one judge that is
   const declared = { ...rigger, roles: { ...rigger.roles, owner: { agent: 'a.md', provider: 'claude', tier: 'high' } } };
   assert.match(refusal(declared), /`roles\.owner`/);
 });
+
+test('a config declaring no priority is accepted, because a board need not rank its cards', () => {
+  assert.ok(Object.hasOwn(rigger.board, 'priority'), 'this repository declares no priority, so its absence went untested');
+  assert.deepEqual(validate(without(rigger, ['board', 'priority'])), []);
+});
+
+/** This repository's config with its priority declaration listing these options. */
+const ranking = (options) => holding(rigger, ['board', 'priority', 'options'], options);
+
+test('a priority declaration listing no options is refused, and the refusal names the key', () => {
+  assert.match(refusal(ranking([])), /`board\.priority\.options`/);
+});
+
+test('a priority declaration naming one option twice is refused, and the refusal names the option', () => {
+  // The repeated name is one the rest of the list does not hold, so a refusal naming whichever
+  // option it met first, or the last, does not pass by accident.
+  assert.match(refusal(ranking(['High', 'Urgent', 'Low', 'Urgent'])), /`Urgent`/);
+});
+
+test('a priority declaration listing anything but option names is refused, and the refusal names the key', () => {
+  // An option is named by its display name on the board, which is a string with something in it.
+  for (const unnamed of [1, null, true, '', ['High'], { name: 'High' }]) {
+    assert.match(refusal(ranking(['High', unnamed])), /`board\.priority\.options`/, `${JSON.stringify(unnamed)} was read as a name`);
+  }
+});
