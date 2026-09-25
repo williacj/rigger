@@ -216,6 +216,9 @@ const COMMANDS = {
   },
 };
 
+/** Every command the fake `gh` answers, as `commandOf` writes it. */
+export const ANSWERED = Object.keys(COMMANDS);
+
 /** The board a fake `gh` answers from: the model it was given, with every write since replayed. */
 async function boardOf(state) {
   const board = createFakeBoard(state.model);

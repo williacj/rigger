@@ -4,15 +4,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { installFakeGh } from './fake-gh.mjs';
+import { ANSWERED, commandOf, installFakeGh } from './fake-gh.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Where the fake `gh` says its board lives: this repository's board, as its config names it. */
 const WHERE = { repo: 'williacj/rigger', project: 6 };
@@ -112,6 +115,56 @@ test("each write the real adapter issues through the fake gh appears in the fake
     { operation: 'createLabel', args: ['type:change'] },
   ]);
   assert.deepEqual((await model.operations.readItems()).map((item) => item.column), ['Coding', 'Ready']);
+});
+
+/** The tests of #215 (M1-02), the board reads, and of #216 (M1-03), the adapter's sides and runners. */
+const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs'];
+
+/**
+ * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
+ * running it under `gh-recording.mjs`, which writes what it recorded to the path it is given.
+ */
+function commandsIssuedBy(file) {
+  const into = join(mkdtempSync(join(tmpdir(), 'rigger-gh-recording-')), 'requests.json');
+  // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` reports to this run's
+  // runner instead, in a form only that runner reads.
+  const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
+  const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', join(HERE, file), into], {
+    encoding: 'utf8',
+    env,
+  });
+  const passed = Number(/^# pass (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
+  assert.ok(run.status === 0 && passed > 0, `${file} did not run and pass while it was recorded:\n${run.stdout}${run.stderr}`);
+  return JSON.parse(readFileSync(into, 'utf8'));
+}
+
+test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {
+  // Recorded rather than listed: each file runs as it does in the suite, and every request the
+  // adapter's read, item-write and schema-write sides hand a runner is kept, with the item-write
+  // runner's own read. A runner sends every request as `gh` (`R-SAFE-2`), so a request is its
+  // arguments. What a test hands a runner itself is the test's command, not the adapter's, and
+  // is not recorded.
+  const issued = new Set(ADAPTER_TESTS.flatMap(commandsIssuedBy).map(commandOf));
+  assert.ok(issued.size >= 5, `only ${issued.size} commands were recorded, so the recording read the wrong thing`);
+
+  assert.deepEqual([...issued].filter((command) => !ANSWERED.includes(command)), [], 'the adapter issues a command the fake gh does not answer');
+  assert.deepEqual(ANSWERED.filter((command) => !issued.has(command)), [], 'the fake gh answers a command the adapter never issues');
+});
+
+test('no file under src/ names the fake gh or its recording, and the fake gh reads no environment variable', () => {
+  // Nothing selects the fake but `PATH`, which the test sets (ruling 1, U9). The pattern is
+  // checked against this file first, which names both, so it cannot pass having matched nothing.
+  const namesFake = /fake-gh|fake `?gh|gh-recording/;
+  assert.match(readFileSync(fileURLToPath(import.meta.url), 'utf8'), namesFake);
+
+  const src = join(HERE, '..', 'src');
+  const files = readdirSync(src, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath ?? entry.path, entry.name));
+  assert.ok(files.length > 0, 'found no file under src/, so it could have found no mention');
+  assert.deepEqual(files.filter((file) => namesFake.test(readFileSync(file, 'utf8'))), []);
+
+  assert.doesNotMatch(readFileSync(join(HERE, 'fake-gh.mjs'), 'utf8'), /process\.env|\benv\b/);
 });
 
 test('given a gh command it does not model, the fake gh exits non-zero and prints the command', () => {
