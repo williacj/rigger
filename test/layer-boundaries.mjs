@@ -126,19 +126,6 @@ function boundBy(pattern) {
   }
 }
 
-/** The expressions a function hands back when it is called: its body, or its return statements'. */
-function returnedBy(fn) {
-  if (fn.body.type !== 'BlockStatement') return [fn.body];
-  const found = [];
-  const visit = (node) => {
-    if (node.type === 'ReturnStatement' && node.argument) found.push(node.argument);
-    if (node !== fn.body && (isFunction(node) || node.type === 'FunctionDeclaration')) return;
-    for (const child of childrenOf(node)) visit(child);
-  };
-  visit(fn.body);
-  return found;
-}
-
 /** The name a resolvable dynamic `import()` of `specifier` is carried under: that module, whole. */
 const IMPORTED = 'import:';
 
@@ -162,92 +149,216 @@ function calledFunction(callee) {
   }
 }
 
-/**
- * What a function called where it is written hands back. Its parameters hold what the call
- * passes them, `passed` giving one list of values per parameter, or their defaults. A name the
- * function declares or assigns in its own scope holds what it is given there.
- */
-function invoked(fn, passed, env) {
-  const scope = new Map(env);
-  fn.params.forEach((param, i) => {
-    const given = param.type === 'RestElement' ? passed.slice(i).flat() : passed[i] ?? [];
-    const defaults = param.type === 'AssignmentPattern' ? valuesOf(param.right, scope) : [];
-    for (const bound of boundBy(param)) scope.set(bound, [...given, ...defaults]);
-  });
-  const aliases = [];
-  const visit = (node) => {
-    if (node !== fn.body && (isFunction(node) || node.type === 'FunctionDeclaration')) return;
-    if (node.type === 'VariableDeclarator') aliases.push([boundBy(node.id), node.init]);
-    if (node.type === 'AssignmentExpression') aliases.push([boundBy(node.left), node.right]);
-    for (const child of childrenOf(node)) visit(child);
-  };
-  if (fn.body.type === 'BlockStatement') {
-    visit(fn.body);
-    for (const [names] of aliases) for (const bound of names) scope.set(bound, []);
-  }
-  // Each round lets one more alias in a chain take what the one before it was given.
-  for (let round = 0; round <= aliases.length; round++) {
-    for (const [names, value] of aliases) {
-      const given = valuesOf(value, scope);
-      for (const bound of names) scope.set(bound, [...new Set([...scope.get(bound), ...given])]);
-    }
-  }
-  return returnedBy(fn).flatMap((returned) => valuesOf(returned, scope));
-}
+/** Whether a node opens a scope of its own for `let`, `const`, `class` and `function`. */
+const BLOCKS = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement', 'CatchClause', 'StaticBlock']);
 
 /**
- * The names whose values an expression can evaluate to, where `env` holds what each name in a
- * called function's scope was given. A function is a value of its own and hands on nothing until
- * it is called, because calling a side through L2 is the ruled path; a function called where it
- * is written hands on what it returns. A call to anything else may hand back its callee or any
- * argument, so it carries all of them. A resolvable dynamic `import()` carries its module whole.
+ * Reads what every binding in one module holds, scope by scope, and gives each top-level binding
+ * in `carries` the names whose values it can hold. Module scope is where a name resolves to the
+ * module's own binding or import; every block and every function has a scope of its own, which
+ * persists across passes so a chain of aliases settles.
  */
-function valuesOf(node, env = new Map()) {
-  if (!node) return [];
-  const of = (held) => valuesOf(held, env);
-  switch (node.type) {
-    case 'Identifier': return env.get(node.name) ?? [node.name];
-    case 'MemberExpression': return of(node.object);
-    case 'ChainExpression': return of(node.expression);
-    case 'ConditionalExpression': return [...of(node.consequent), ...of(node.alternate)];
-    case 'LogicalExpression': return [...of(node.left), ...of(node.right)];
-    case 'SequenceExpression': return of(node.expressions.at(-1));
-    case 'AssignmentExpression': return of(node.right);
-    case 'AwaitExpression':
-    case 'SpreadElement':
-    case 'YieldExpression': return of(node.argument);
-    case 'ArrayExpression': return node.elements.flatMap(of);
-    case 'ObjectExpression':
-      return node.properties.flatMap((held) => {
-        if (held.type === 'SpreadElement') return of(held.argument);
-        return held.kind === 'init' && !held.method ? of(held.value) : [];
-      });
-    case 'ClassExpression':
-    case 'ClassDeclaration':
-      return node.body.body.filter((member) => member.static && member.type === 'PropertyDefinition').flatMap((member) => of(member.value));
-    case 'ImportExpression': {
-      const specifier = fixed(node.source);
-      return specifier === undefined ? [] : [`${IMPORTED}${specifier}`];
+function holdings(program, topLevel, carries) {
+  const scopes = new WeakMap();
+  const returns = new WeakMap();
+  const moduleScope = { vars: null, parent: null, fn: null };
+  let changed = false;
+
+  const scopeFor = (node, parent, fn) => {
+    if (!scopes.has(node)) scopes.set(node, { vars: new Map(), parent, fn });
+    return scopes.get(node);
+  };
+  const functionScope = (scope) => {
+    let at = scope;
+    while (at.vars && !at.fn) at = at.parent;
+    return at;
+  };
+  const addAll = (set, names) => {
+    for (const held of names) {
+      if (!set.has(held)) {
+        set.add(held);
+        changed = true;
+      }
     }
-    case 'CallExpression':
-    case 'NewExpression': {
-      const called = calledFunction(node.callee);
-      const given = node.arguments.map(of);
-      if (!called) return [...of(node.callee), ...given.flat()];
-      if (called.mode === 'direct') return invoked(called.fn, given, env);
-      if (called.mode === 'call') return invoked(called.fn, given.slice(1), env);
-      const list = node.arguments[1];
-      const spread = list?.type === 'ArrayExpression' ? list.elements.map(of) : called.fn.params.map(() => of(list));
-      return invoked(called.fn, spread, env);
+  };
+  // A name in `scope` resolves to the nearest scope declaring it, or to the module's own binding.
+  const lookup = (name, scope) => {
+    for (let at = scope; at.vars; at = at.parent) if (at.vars.has(name)) return [...at.vars.get(name)];
+    return [name];
+  };
+  const declare = (scope, names, values) => {
+    for (const bound of names) {
+      if (!scope.vars) {
+        if (carries.has(bound)) addAll(carries.get(bound), values.filter((held) => held !== bound));
+        continue;
+      }
+      if (!scope.vars.has(bound)) scope.vars.set(bound, new Set());
+      addAll(scope.vars.get(bound), values);
     }
-    case 'TaggedTemplateExpression': {
-      const called = calledFunction(node.tag);
-      const given = node.quasi.expressions.map(of);
-      if (!called) return [...of(node.tag), ...given.flat()];
-      return invoked(called.fn, called.mode === 'call' ? given : [[], ...given], env);
+  };
+  // An assignment writes into the nearest scope declaring the name, else the module's binding.
+  const assign = (names, values, scope) => {
+    for (const bound of names) {
+      let at = scope;
+      while (at.vars && !at.vars.has(bound)) at = at.parent;
+      declare(at, [bound], values);
     }
-    default: return [];
+  };
+
+  /**
+   * Reads a function's body in its own scope, its parameters holding `passed` (one list of values
+   * per parameter) or their defaults, and returns that scope. A function not called where it is
+   * written is read with its parameters holding nothing, so what its body writes into a module
+   * binding is still seen.
+   */
+  const readFunction = (fn, parent, passed = []) => {
+    const scope = scopeFor(fn, parent, fn);
+    if (!returns.has(fn)) returns.set(fn, new Set());
+    if (fn.id && fn.type === 'FunctionExpression') declare(scope, [fn.id.name], []);
+    fn.params.forEach((param, i) => {
+      const given = param.type === 'RestElement' ? passed.slice(i).flat() : passed[i] ?? [];
+      const defaults = param.type === 'AssignmentPattern' ? valuesOf(param.right, scope) : [];
+      declare(scope, boundBy(param), [...given, ...defaults]);
+      if (param.type === 'AssignmentPattern') read(param.right, scope);
+    });
+    if (fn.body.type === 'BlockStatement') for (const statement of fn.body.body) read(statement, scope);
+    else {
+      addAll(returns.get(fn), valuesOf(fn.body, scope));
+      read(fn.body, scope);
+    }
+    return scope;
+  };
+
+  /** What a function called where it is written hands back, given what the call passes it. */
+  const invoked = (fn, passed, scope) => {
+    readFunction(fn, scope, passed);
+    return [...returns.get(fn)];
+  };
+
+  /**
+   * The names whose values an expression can evaluate to in `scope`. A function is a value of its
+   * own and hands on nothing until it is called, because calling a side through L2 is the ruled
+   * path; a function called where it is written hands on what it returns. A call to anything else
+   * may hand back its callee or any argument, so it carries all of them. A resolvable dynamic
+   * `import()` carries its module whole.
+   */
+  const valuesOf = (node, scope) => {
+    if (!node) return [];
+    const of = (held) => valuesOf(held, scope);
+    switch (node.type) {
+      case 'Identifier': return lookup(node.name, scope);
+      case 'MemberExpression': return of(node.object);
+      case 'ChainExpression': return of(node.expression);
+      case 'ConditionalExpression': return [...of(node.consequent), ...of(node.alternate)];
+      case 'LogicalExpression': return [...of(node.left), ...of(node.right)];
+      case 'SequenceExpression': return of(node.expressions.at(-1));
+      case 'AssignmentExpression': return of(node.right);
+      case 'AwaitExpression':
+      case 'SpreadElement':
+      case 'YieldExpression': return of(node.argument);
+      case 'ArrayExpression': return node.elements.flatMap(of);
+      case 'ObjectExpression':
+        return node.properties.flatMap((held) => {
+          if (held.type === 'SpreadElement') return of(held.argument);
+          return held.kind === 'init' && !held.method ? of(held.value) : [];
+        });
+      case 'ClassExpression':
+      case 'ClassDeclaration':
+        return node.body.body.filter((member) => member.static && member.type === 'PropertyDefinition').flatMap((member) => of(member.value));
+      case 'ImportExpression': {
+        const specifier = fixed(node.source);
+        return specifier === undefined ? [] : [`${IMPORTED}${specifier}`];
+      }
+      case 'CallExpression':
+      case 'NewExpression': {
+        const called = calledFunction(node.callee);
+        const given = node.arguments.map(of);
+        if (!called) return [...of(node.callee), ...given.flat()];
+        if (called.mode === 'direct') return invoked(called.fn, given, scope);
+        if (called.mode === 'call') return invoked(called.fn, given.slice(1), scope);
+        const list = node.arguments[1];
+        const spread = list?.type === 'ArrayExpression' ? list.elements.map(of) : called.fn.params.map(() => of(list));
+        return invoked(called.fn, spread, scope);
+      }
+      case 'TaggedTemplateExpression': {
+        const called = calledFunction(node.tag);
+        const given = node.quasi.expressions.map(of);
+        if (!called) return [...of(node.tag), ...given.flat()];
+        return invoked(called.fn, called.mode === 'call' ? given : [[], ...given], scope);
+      }
+      default: return [];
+    }
+  };
+
+  /** Reads `node` in `scope`: every declaration, assignment, call and return in it. */
+  const read = (node, scope) => {
+    if (!node || typeof node.type !== 'string') return;
+    switch (node.type) {
+      case 'ImportDeclaration':
+        return;
+      case 'FunctionDeclaration':
+        declare(scope, [node.id.name], []);
+        readFunction(node, scope);
+        return;
+      case 'FunctionExpression':
+      case 'ArrowFunctionExpression':
+        readFunction(node, scope);
+        return;
+      case 'ClassDeclaration':
+        declare(scope, [node.id.name], valuesOf(node, scope));
+        break;
+      case 'VariableDeclaration':
+        for (const each of node.declarations) {
+          declare(node.kind === 'var' ? functionScope(scope) : scope, boundBy(each.id), valuesOf(each.init, scope));
+          read(each.init, scope);
+        }
+        return;
+      case 'ExportDefaultDeclaration':
+        if (!node.declaration.id) declare(moduleScope, [DEFAULT], valuesOf(node.declaration, scope));
+        break;
+      case 'ReturnStatement': {
+        const fn = functionScope(scope).fn;
+        if (fn && node.argument) addAll(returns.get(fn), valuesOf(node.argument, scope));
+        break;
+      }
+      case 'AssignmentExpression':
+        assign(boundBy(node.left), valuesOf(node.right, scope), scope);
+        break;
+      case 'CallExpression':
+      case 'NewExpression':
+      case 'TaggedTemplateExpression': {
+        const args = node.type === 'TaggedTemplateExpression' ? node.quasi.expressions : node.arguments;
+        const callee = node.type === 'TaggedTemplateExpression' ? node.tag : node.callee;
+        // A call handed a binding, or made on one, may put any argument into it.
+        const receivers = [
+          ...args.filter((held) => held.type === 'Identifier').map((held) => held.name),
+          ...(callee.type === 'MemberExpression' ? boundBy(callee.object) : []),
+        ];
+        assign(receivers, args.flatMap((held) => valuesOf(held, scope)), scope);
+        if (calledFunction(callee)) {
+          valuesOf(node, scope);
+          for (const held of args) read(held, scope);
+          return;
+        }
+        break;
+      }
+      default:
+        if (BLOCKS.has(node.type)) {
+          const inner = scopeFor(node, scope, null);
+          for (const child of childrenOf(node)) read(child, inner);
+          return;
+        }
+    }
+    for (const child of childrenOf(node)) read(child, scope);
+  };
+
+  // Each pass lets one more link in a chain of aliases take what the link before it was given.
+  for (let pass = 0; pass < 50; pass++) {
+    changed = false;
+    for (const statement of program.body) read(statement, moduleScope);
+    if (!changed) return;
   }
+  throw new Error('what its bindings hold did not settle in 50 passes');
 }
 
 /**
@@ -277,6 +388,13 @@ function parsed(file, source) {
     if (declaration?.type === 'VariableDeclaration') declaration.declarations.forEach((each) => boundBy(each.id).forEach((bound) => topLevel.add(bound)));
     if (declaration?.id && ['FunctionDeclaration', 'ClassDeclaration'].includes(declaration.type)) topLevel.add(declaration.id.name);
   }
+  // A `var` in a top-level block belongs to the module, as one written at its top level does.
+  const hoisted = (node) => {
+    if (isFunction(node) || node.type === 'FunctionDeclaration') return;
+    if (node.type === 'VariableDeclaration' && node.kind === 'var') node.declarations.forEach((each) => boundBy(each.id).forEach((bound) => topLevel.add(bound)));
+    for (const child of childrenOf(node)) hoisted(child);
+  };
+  hoisted(program);
   const reaches = new Map([...topLevel].map((bound) => [bound, new Set()]));
   const carries = new Map([...topLevel].map((bound) => [bound, new Set()]));
   const give = (map, targets, names) => {
@@ -320,30 +438,21 @@ function parsed(file, source) {
       const declaration = statement.declaration;
       const named = declaration.id && ['FunctionDeclaration', 'ClassDeclaration'].includes(declaration.type);
       exported.set('default', { local: named ? declaration.id.name : DEFAULT, line });
-      if (!named) give(carries, [DEFAULT], valuesOf(declaration));
     }
 
     // What the statement declares: each name reaches every name its own declarator or
-    // declaration references, and carries the values its initialiser can evaluate to.
+    // declaration references, which is how the runners module's bindings join a side.
     const declaration = statement.type.startsWith('Export') ? statement.declaration : statement;
     if (statement.type === 'ExportDefaultDeclaration') give(reaches, [DEFAULT], namesIn(declaration));
     if (declaration?.type === 'VariableDeclaration') {
-      for (const each of declaration.declarations) {
-        give(reaches, boundBy(each.id), namesIn(each));
-        give(carries, boundBy(each.id), valuesOf(each.init));
-      }
+      for (const each of declaration.declarations) give(reaches, boundBy(each.id), namesIn(each));
     }
     if (declaration?.id && ['FunctionDeclaration', 'ClassDeclaration'].includes(declaration.type)) {
       give(reaches, [declaration.id.name], namesIn(declaration));
-      if (declaration.type === 'ClassDeclaration') give(carries, [declaration.id.name], valuesOf(declaration));
     }
     walk(statement, (node) => {
-      // A write into a top-level binding, wherever it sits, gives that binding what is written.
-      if (node.type === 'AssignmentExpression') {
-        const written = boundBy(node.left).filter((bound) => topLevel.has(bound));
-        give(reaches, written, namesIn(node.right));
-        give(carries, written, valuesOf(node.right));
-      }
+      // A write into a top-level binding, wherever it sits, reaches what is written.
+      if (node.type === 'AssignmentExpression') give(reaches, boundBy(node.left).filter((bound) => topLevel.has(bound)), namesIn(node.right));
       // A call handed a top-level binding, or made on one, may put any argument into it.
       if (node.type === 'CallExpression' || node.type === 'NewExpression') {
         const receivers = [
@@ -351,10 +460,10 @@ function parsed(file, source) {
           ...(node.callee.type === 'MemberExpression' ? boundBy(node.callee.object) : []),
         ].filter((bound) => topLevel.has(bound));
         give(reaches, receivers, node.arguments.flatMap(namesIn));
-        give(carries, receivers, node.arguments.flatMap((held) => valuesOf(held)));
       }
     });
   }
+  holdings(program, topLevel, carries);
 
   const names = [];
   const strings = [];

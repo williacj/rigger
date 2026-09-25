@@ -340,6 +340,23 @@ const STEPS = {
   'step 8, as a template\'s tag, by a parameter': "import { NAME } from 'SIDE';\nexport const held = ((strings, x) => x)`${NAME}`;",
   'step 8, a parameter passed the side': "import { NAME } from 'SIDE';\nexport const held = ((x) => x)(NAME);",
   'step 8, a parameter\'s default': "import { NAME } from 'SIDE';\nexport const held = ((x = NAME) => x)();",
+  // Round 4's routes: a binding in a block or a called function's scope, then a module binding.
+  'step 1, a block var exported by name': "import { NAME } from 'SIDE';\n{ var held = NAME; }\nexport { held };",
+  'step 1, a namespace held by a block var': "import * as ns from 'SIDE';\n{ var held = ns; }\nexport { held };",
+  'step 2, a dynamic import assigned from a block': "export let held;\n{ const m = await import('SIDE'); held = m; }",
+  'step 2, a dynamic import assigned from a called async function': "export let held;\nawait (async () => { const m = await import('SIDE'); held = m; })();",
+  'step 3, a var in an if, re-exported under another name': "import { NAME } from 'SIDE';\nif (true) { var w = NAME; }\nexport { w as held };",
+  'step 4, a block alias assigned into a module binding': "import { NAME } from 'SIDE';\nexport let held;\n{ const a = NAME; held = a; }",
+  'step 4, a block alias assigned, then exported by name': "import { NAME } from 'SIDE';\nlet held;\n{ const inner = NAME; held = inner; }\nexport { held };",
+  'step 4, nested blocks': "import { NAME } from 'SIDE';\nexport let held;\n{ const a = NAME; { const b = a; held = b; } }",
+  'step 4, an alias a loop reads before it is given the side': "import { NAME } from 'SIDE';\nexport let held;\n{ let a; for (let i = 0; i < 2; i++) { held = a; a = NAME; } }",
+  'step 5, a block alias of a property read': "import * as ns from 'SIDE';\nexport let held;\n{ const a = ns.NAME; held = a; }",
+  'step 6, a block object assigned': "import { NAME } from 'SIDE';\nexport let held;\n{ const o = { NAME }; held = o; }",
+  'step 6, a class declared in a called function': "import { NAME } from 'SIDE';\nexport const held = (() => { class C { static go = NAME; } return C; })();",
+  'step 7, a block ?? assigned': "import { NAME } from 'SIDE';\nexport let held;\n{ const a = null ?? NAME; held = a; }",
+  'step 8, a called arrow\'s parameter assigned into a module binding': "import { NAME } from 'SIDE';\nexport let held;\n((x) => { held = x; })(NAME);",
+  'step 8, a parameter assigned through .call': "import { NAME } from 'SIDE';\nexport let held;\n(function (x) { held = x; }).call(null, NAME);",
+  'step 8, a called function\'s local assigned': "import { NAME } from 'SIDE';\nexport let held;\n(() => { const a = NAME; held = a; })();",
 };
 
 /** The default-export module step 1's default import reads, handing each side on as its default. */

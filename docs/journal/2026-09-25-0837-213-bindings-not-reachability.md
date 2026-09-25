@@ -55,6 +55,20 @@ every route outside them is a review finding. The reader follows each step:
 
 The proof tests run a hand-on through every step, for both write sides.
 
+**Holding is read scope by scope.** Round 4 found a side aliased in a block, or in a called
+function's parameters or locals, and then assigned into a module binding, such as
+`{ const a = side; out = a; }`. The reader looked names up only at module level, so it dropped
+the block's `a`. With the owner's leave for one more commit, the reader now keeps a scope for
+the module, for each block and for each function:
+- `let`, `const`, `class` and `function` bind in their block, and `var` binds in its function or
+  in the module;
+- an assignment writes into the nearest scope that declares the name;
+- a module binding takes what the value holds in the scope where the assignment is written;
+- a function called where it is written is read with its parameters bound to what the call
+  passes, and what it returns is gathered from its return statements in their own scopes.
+
+The module is read again until nothing it holds grows, so a chain of aliases settles.
+
 **Rule 3, and who drew its line.** Round 1 found `const b = config.board; b.priority` passing, and
 round 2's fix barred the `board` key in `src/scheduling/` outright. That caught the board handle
 #227 gives L3. The reviewer returned the item to its author under `R-LOOP-6`, and the PM revised
