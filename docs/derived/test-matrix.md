@@ -71,7 +71,7 @@ reports no gap of its own; the register carries the reason.
 | R-WORK-4 | nothing yet |
 | R-WORK-5 | **gap** |
 | R-WORK-6 | **gap** |
-| R-WORK-7 | `test/forge-board-owner.test.mjs` every request a full read sends that addresses the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request moveItem sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createField sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` with no board owner declared, every request that addresses the board names the owner of the repository repo names |
+| R-WORK-7 | `test/forge-board-owner.test.mjs` every request a full read sends that addresses the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request moveItem sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createField sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createColumn sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` with no board owner declared, every request that addresses the board names the owner of the repository repo names |
 | R-LOOP-1 | **gap** |
 | R-LOOP-2 | **gap** |
 | R-LOOP-3 | `test/config.test.mjs` a kind naming one role as both its maker and a judge is refused, and the refusal names it |

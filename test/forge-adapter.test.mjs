@@ -1,6 +1,6 @@
 // ABOUTME: Tests the forge adapter's write sides against recorded `gh` answers: the column move,
-// creating a field and creating a label, each one write through its own side's runner. It also
-// holds the adapter's operations to the fake board's.
+// creating a field, adding a column and creating a label, each one write through its own side's
+// runner. It also holds the adapter's operations to the fake board's.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,9 +15,10 @@ import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate
 const BOARD = { repo: 'williacj/rigger', project: 6 };
 
 /**
- * The board's `Status` field and options as GitHub answers the board read, with the IDs of the
- * throwaway board #212's spike recorded (`docs/spikes/status-option-through-gh.md`) and the
- * option names this repository's config declares.
+ * The board's `Status` field and options as GitHub answers the board read, with the IDs, colours
+ * and descriptions of the throwaway board #212's spike recorded
+ * (`docs/spikes/status-option-through-gh.md`) and the option names this repository's config
+ * declares.
  */
 const BOARD_READ = {
   data: {
@@ -26,7 +27,11 @@ const BOARD_READ = {
         id: 'PVT_kwHOBzomGc4Bkn7f',
         field: {
           id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc',
-          options: [{ id: 'f75ad846', name: 'Ready' }, { id: '47fc9ee4', name: 'Coding' }, { id: '98236657', name: 'Review' }],
+          options: [
+            { id: 'f75ad846', name: 'Ready', color: 'GREEN', description: "This item hasn't been started" },
+            { id: '47fc9ee4', name: 'Coding', color: 'YELLOW', description: 'This is actively being worked on' },
+            { id: '98236657', name: 'Review', color: 'PURPLE', description: 'This has been completed' },
+          ],
         },
       },
     },
@@ -54,6 +59,8 @@ function forge(write = () => ok({})) {
     if (!document.startsWith('query')) return write(document);
     if (document.includes('repositoryOwner')) return ok(BOARD_READ.data);
     if (document.includes('repository(')) return ok({ repository: { id: 'R_kgDOTcdlSg' } });
+    // The schema-write runner's own read of the options the field holding the columns holds.
+    if (document.includes('field: node(')) return ok({ field: { name: 'Status', options: BOARD_READ.data.repositoryOwner.projectV2.field.options } });
     return ok({ project: { field: { id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc' } }, target: { name: 'Status' } });
   };
   send.sent = sent;
@@ -134,10 +141,36 @@ test('creating a label issues exactly one write, through the schema-write runner
   assert.ok(!admits(readRunner, writes[0]));
 });
 
+test('adding a column issues exactly one write, through the schema-write runner, sending every held option with its id and the new one without', async () => {
+  const send = forge();
+
+  await schemaWriteSide(BOARD, { send }).createColumn('Owner');
+
+  const writes = send.writes();
+  assert.equal(writes.length, 1, JSON.stringify(send.sent));
+  // Way B, as #212's report sent it (`docs/spikes/status-option-through-gh.md`, "The ways tried"),
+  // written out by hand from BOARD_READ, with the new option given the neutral grey.
+  assert.equal(
+    documentOf(writes[0].slice(1)),
+    'mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc", singleSelectOptions: ['
+      + '{id: "f75ad846", name: "Ready", color: GREEN, description: "This item hasn\'t been started"}, '
+      + '{id: "47fc9ee4", name: "Coding", color: YELLOW, description: "This is actively being worked on"}, '
+      + '{id: "98236657", name: "Review", color: PURPLE, description: "This has been completed"}, '
+      + '{name: "Owner", color: GRAY, description: ""}'
+      + ']}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }',
+  );
+  assert.ok(admits(schemaWriteRunner, writes[0]));
+  assert.ok(!admits(itemWriteRunner, writes[0]));
+  assert.ok(!admits(readRunner, writes[0]));
+  // And it went through that runner, whose own read of the field's options comes just before it.
+  assert.match(documentOf(send.sent.at(-2).slice(1)), /field: node\(id: "PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc"\)/);
+});
+
 test('a write gh refuses fails naming the operation, the board number and gh\'s first line, and writes nothing more', async () => {
   const calls = {
     moveItem: (send) => itemWriteSide(BOARD, { send }).moveItem('PVTI_1', 'Review'),
     createField: (send) => schemaWriteSide(BOARD, { send }).createField('Priority', ['High']),
+    createColumn: (send) => schemaWriteSide(BOARD, { send }).createColumn('Owner'),
     createLabel: (send) => schemaWriteSide(BOARD, { send }).createLabel('type:change'),
   };
   for (const [operation, call] of Object.entries(calls)) {
@@ -163,17 +196,15 @@ test('a read gh fails before a write fails naming the operation, the board numbe
   assert.equal(sent.length, 1);
 });
 
-test('the adapter\'s operations, reads and writes alike, are exactly the fake board\'s, but createColumn, compared both ways', async () => {
+test('the adapter\'s operations, reads and writes alike, are exactly the fake board\'s, compared both ways', async () => {
   // The defects this catches are an adapter operation the fake cannot stand in for, and a fake
-  // operation the adapter lacks. `createColumn`, the write adding a `Status` option, is excepted
-  // only while #217 has not merged: it is the fake's, and the adapter gains it there.
-  const excepted = ['createColumn'];
+  // operation the adapter lacks.
   const fake = Object.keys(createFakeBoard().operations);
   const adapter = [...Object.keys(readSide(BOARD)), ...Object.keys(itemWriteSide(BOARD)), ...Object.keys(schemaWriteSide(BOARD))];
 
-  assert.ok(fake.includes('createColumn') && !adapter.includes('createColumn'), 'the exception no longer names an operation only the fake offers');
+  assert.ok(fake.length > 0, 'the fake board offers no operation, so the comparison is vacuous');
   assert.deepEqual(adapter.filter((name) => !fake.includes(name)), [], 'the adapter offers an operation the fake board lacks');
-  assert.deepEqual(fake.filter((name) => !adapter.includes(name) && !excepted.includes(name)), [], 'the fake board offers an operation the adapter lacks');
+  assert.deepEqual(fake.filter((name) => !adapter.includes(name)), [], 'the fake board offers an operation the adapter lacks');
 });
 
 test('every command the forge adapter runs is gh', async () => {
@@ -183,9 +214,10 @@ test('every command the forge adapter runs is gh', async () => {
   const send = forge();
   await itemWriteSide(BOARD, { send }).moveItem('PVTI_1', 'Review');
   await schemaWriteSide(BOARD, { send }).createField('Priority', ['High']);
+  await schemaWriteSide(BOARD, { send }).createColumn('Owner');
   await schemaWriteSide(BOARD, { send }).createLabel('type:change');
   readRunner(['auth', 'status'], { send });
 
-  assert.ok(send.sent.length >= 7, `only ${send.sent.length} commands were recorded`);
+  assert.ok(send.sent.length >= 10, `only ${send.sent.length} commands were recorded`);
   assert.deepEqual([...new Set(send.sent.map(([command]) => command))], ['gh']);
 });
