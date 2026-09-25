@@ -1,6 +1,5 @@
-ABOUTME: Records card #195, which landed the M1 placement deltas in ARCHITECTURE.md, why the
-config's priority list ranks cards rather than the board's own option order, and what round 2 of
-its review added.
+ABOUTME: Records card #195, which landed the M1 placement deltas in ARCHITECTURE.md, and why the
+config's priority list ranks cards rather than the board's own option order.
 
 # 2026-09-24 — The list that ranks
 
@@ -30,18 +29,3 @@ The original clause was written before U23 existed, as a conditional on U3. A co
 survives its condition being met in a different shape than the one it assumed, and still reads as
 ratifiable. The coordinator's brief caught it, by reading the rulings against the clause rather
 than the clause alone.
-
-## Round 2: what the row left to the journal
-
-The owner ruled round 1 needs revision on two gaps. The text named no form for the declaration, so
-M1's config card would have had to invent the key. It also left open whether a card with an
-undeclared value ranks with a card holding none, and the journal said so where `ARCHITECTURE.md`
-did not.
-
-A sentence that settles a question in the journal settles nothing, because the journal binds
-nothing. The round 2 text puts the shared rank in the row itself, and states the declaration as
-`board.priority`, with its field name and ranked options, in the line the shape would carry.
-
-The declaration sits beside the shape block rather than inside it, because `test/config.test.mjs`
-holds the validator to that block in both directions. The paragraph saying the block does not carry
-it is true only until M1's config card lands the key, and that card deletes it.

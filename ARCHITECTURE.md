@@ -181,7 +181,7 @@ export default {
 
 The priority declaration is one key under `board`: `priority`, an object whose `field` is the
 board field's display name and whose `options` lists that field's option display names, highest
-rank first. The shape above does not carry it, and with it the shape's `board` line reads:
+rank first. With it declared, the shape's `board` line reads:
 
 `board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },`
 
