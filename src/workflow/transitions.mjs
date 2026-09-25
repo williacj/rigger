@@ -21,17 +21,38 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
   const { columns } = config.board;
 
   /**
+   * Each move the board took whose event the sink refused, by board item, as the event it owes.
+   * The owner ruled that when Rigger has acted and cannot record it, it fails loudly and starts no
+   * further work until it can (#220; #277), so a card here moves again only once its event is in.
+   */
+  const unrecorded = new Map();
+
+  /** Appends `card`'s transition event, or fails naming the card, both columns and the sink's error. */
+  const record = (card, transition) => {
+    try {
+      sink.emitter({ layer: 'L2', card: card.number }).emit('transition', transition);
+      unrecorded.delete(card.id);
+    } catch (refusal) {
+      unrecorded.set(card.id, transition);
+      const { from, to } = transition;
+      throw new Error(`card #${card.number} moved from ${from} to ${to}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
+    }
+  };
+
+  /**
    * Moves `card` for `cause`, then records the move as one `transition` event. A move the board
-   * refuses is recorded as nothing, and its caller is told which card and column it was.
+   * refuses is recorded as nothing, and its caller is told which card and column it was. A card
+   * whose last move went unrecorded has that event recorded first, and is not moved while it can't be.
    */
   const change = async (card, cause) => {
+    if (unrecorded.has(card.id)) record(card, unrecorded.get(card.id));
     const { from, to } = CHANGES[cause];
     try {
       await items.moveItem(card.id, columns[to]);
     } catch (refusal) {
       throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
     }
-    sink.emitter({ layer: 'L2', card: card.number }).emit('transition', { from, to, cause });
+    record(card, { from, to, cause });
   };
 
   return {
