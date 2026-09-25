@@ -28,13 +28,14 @@ test('a ready card selected by a kind other than the first is dispatched under t
   assert.deepEqual(nextAction(card(15, ['type:spec']), KINDS), { action: 'dispatch', kind: 'spec' });
 });
 
+// proves R-SCHED-13
 test('a two-label kind selects a card carrying either one of its labels without the other', () => {
   const kinds = { ...KINDS, change: { ...KINDS.change, select: { labels: ['type:change', 'type:fix'] } } };
   assert.deepEqual(nextAction(card(17, ['type:fix']), kinds), { action: 'dispatch', kind: 'change' });
   assert.deepEqual(nextAction(card(18, ['type:change']), kinds), { action: 'dispatch', kind: 'change' });
 });
 
-// proves R-SCHED-11
+// proves R-SCHED-11, R-SCHED-13
 test('a ready card no kind selects is ignored, not refused', () => {
   assert.deepEqual(nextAction(card(8, ['area:demo']), KINDS), { action: 'ignore' });
 });

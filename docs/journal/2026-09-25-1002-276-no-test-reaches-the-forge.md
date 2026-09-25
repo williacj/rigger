@@ -28,3 +28,13 @@ installed-tarball runs in `test/package.test.mjs` declare their stand-ins that w
 
 The check that `doctor`'s answer agrees with `gh auth status` keeps its relation against a
 stand-in `gh` that answers each recorded result in turn, as the owner confirmed on #276.
+
+#286 (the fake `gh`, #223) merged while this was in review, and the two broke each other. Its
+in-process tests put the fake first on the path without declaring it, so the guard refused them.
+Its recording ran each adapter test file as plain `node` with `NODE_TEST_CONTEXT` taken out, so
+the guard was off inside those files, and this card's own guard tests failed there. It took the
+variable out because `child-v8` sends the child's report to the parent's runner. With Node
+26.5.0, a file run by `node --test-reporter=tap` with the variable set to a value the runner
+does not read still prints its own TAP report. So the recording now sets such a value, and the
+guard stays on in the recorded files. The fake is declared by its path wherever a test puts it
+first.
