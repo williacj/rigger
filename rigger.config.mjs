@@ -63,6 +63,9 @@ export default {
       provisioning: ['npm-ci'],
     },
   },
+  // A card carrying this label is an epic: no kind selects it, whatever else it carries, so Rigger
+  // never pulls it (`R-SCHED-11`). No kind may select this label itself.
+  epicLabel: 'type:epic',
   provisioning: {
     'npm-ci': { run: 'npm ci', required: true },
     // Only cards that touch the demo tape pay for this, and it declares nothing about whether the
