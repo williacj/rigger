@@ -48,7 +48,6 @@ const NAMES = [
  * without a binding: bindings, not reachability, as the write sides are read.
  */
 const ENTRY = { file: 'src/scheduling/loop.mjs', local: 'loop' };
-const callsEntry = (definitions) => definitions.some((definition) => definition.file === ENTRY.file && definition.local === ENTRY.local);
 
 /** The modules that may import `node:child_process`: the runners, and two local tool probes. */
 const SPAWNERS = [RUNNERS, 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
@@ -425,6 +424,55 @@ function holdings(program, topLevel, carries) {
 }
 
 /**
+ * The names whose values `node` hands back as values, for rule 8: a name it evaluates to, and what
+ * any function it holds returns, however deep. A call hands back what its callee returns, never
+ * the callee, so a function that calls a name and returns the result hands that name to nobody.
+ * `aliases` maps each local binding the enclosing function declares to what initialised it.
+ */
+function escapes(node, aliases = new Map(), seen = new Set()) {
+  const of = (held) => escapes(held, aliases, seen);
+  switch (node?.type) {
+    case 'Identifier': {
+      if (!aliases.has(node.name)) return [node.name];
+      if (seen.has(node.name)) return [];
+      seen.add(node.name);
+      return of(aliases.get(node.name));
+    }
+    case 'MemberExpression': return of(node.object);
+    case 'ChainExpression': return of(node.expression);
+    case 'ConditionalExpression': return [...of(node.consequent), ...of(node.alternate)];
+    case 'LogicalExpression': return [...of(node.left), ...of(node.right)];
+    case 'SequenceExpression': return of(node.expressions.at(-1));
+    case 'AssignmentExpression': return of(node.right);
+    case 'AwaitExpression':
+    case 'SpreadElement':
+    case 'YieldExpression': return of(node.argument);
+    case 'ArrayExpression': return node.elements.flatMap(of);
+    case 'ObjectExpression': return node.properties.flatMap((held) => of(held.type === 'SpreadElement' ? held.argument : held.value));
+    case 'ImportExpression': {
+      const specifier = fixed(node.source);
+      return specifier === undefined ? [] : [`${IMPORTED}${specifier}`];
+    }
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression':
+    case 'FunctionDeclaration': {
+      const inner = new Map(aliases);
+      const returned = [];
+      const visit = (held) => {
+        if (held !== node && (isFunction(held) || held.type === 'FunctionDeclaration')) return;
+        if (held.type === 'VariableDeclarator' && held.id.type === 'Identifier' && held.init) inner.set(held.id.name, held.init);
+        if (held.type === 'ReturnStatement' && held.argument) returned.push(held.argument);
+        for (const child of childrenOf(held)) visit(child);
+      };
+      visit(node.body);
+      if (node.body.type !== 'BlockStatement') returned.push(node.body);
+      return returned.flatMap((held) => escapes(held, inner, seen));
+    }
+    default: return [];
+  }
+}
+
+/**
  * One module parsed: what it imports and exports, its dynamic imports, and for each top-level
  * binding the names it references (`reaches`, which the runners module's sides are read from) and
  * the names it was given as a value (`carries`, which a hand-on is read from). Throws, naming the
@@ -528,6 +576,18 @@ function parsed(file, source) {
   }
   holdings(program, topLevel, carries);
 
+  // What each top-level binding hands back as a value, for rule 8: its initialiser, or the
+  // function it declares, read by `escapes`.
+  const yields = new Map();
+  for (const statement of program.body) {
+    const declaration = statement.type.startsWith('Export') ? statement.declaration : statement;
+    if (declaration?.type === 'VariableDeclaration') {
+      for (const each of declaration.declarations) if (each.id.type === 'Identifier' && each.init) yields.set(each.id.name, escapes(each.init));
+    }
+    if (declaration?.type === 'FunctionDeclaration' && declaration.id) yields.set(declaration.id.name, escapes(declaration));
+    if (statement.type === 'ExportDefaultDeclaration' && !declaration.id) yields.set(DEFAULT, escapes(declaration));
+  }
+
   const names = [];
   const strings = [];
   walk(program, (node) => {
@@ -539,7 +599,7 @@ function parsed(file, source) {
     const value = fixed(node);
     if (value !== undefined) strings.push({ value, line: lineOf(node) });
   });
-  return { file, program, imports, exported, stars, dynamic, reaches, carries, topLevel, names, strings };
+  return { file, program, imports, exported, stars, dynamic, reaches, carries, yields, topLevel, names, strings };
 }
 
 /**
@@ -694,6 +754,20 @@ export function boundaryReport(tree) {
 
   const ownModule = (file, side) => file === sideModule(side) || file === RUNNERS;
 
+  /**
+   * Whether a definition holds L3's dispatching entry point: it is the entry point, or it hands
+   * the entry point back as a value, as a function returning it does, however many steps away.
+   */
+  const holdsEntry = ({ file, local }, seen = new Set()) => {
+    if (file === ENTRY.file && local === ENTRY.local) return true;
+    const key = `${file}@${local}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const module = modules.get(file);
+    const named = (held) => held.startsWith(IMPORTED) || module.topLevel.has(held) || module.imports.some((entry) => entry.local === held);
+    return (module.yields.get(local) ?? []).filter(named).some((held) => resolveLocal(file, held).some((definition) => holdsEntry(definition, seen)));
+  };
+
   for (const module of modules.values()) {
     const { file } = module;
     const attempt = (line, action) => {
@@ -753,7 +827,7 @@ export function boundaryReport(tree) {
     }
     if (!file.startsWith('src/scheduling/')) {
       for (const { line, name, definitions } of bindings) {
-        if (callsEntry(definitions)) report(file, line, 'rule 8', `it binds \`${name}\`, which is L3's dispatching entry point, and only src/scheduling/ calls it`);
+        if (definitions.some((definition) => holdsEntry(definition))) report(file, line, 'rule 8', `it binds \`${name}\`, which is L3's dispatching entry point, and only src/scheduling/ calls it`);
       }
     }
     for (const { line, name, definitions } of handedOn) {

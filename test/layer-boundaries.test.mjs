@@ -557,3 +557,41 @@ test('rule 8: a tree with no dispatching entry point is refused rather than read
   renamed.set('src/scheduling/loop.mjs', 'export function run(deps) { return deps; }');
   assert.throws(() => boundaryReport(renamed), /`loop`/);
 });
+
+test('rule 8: a module outside src/scheduling/ binding the entry point a src/scheduling/ function returns fails, in each shape', () => {
+  const shapes = {
+    'an arrow returning it': 'export const getLoop = () => loop;',
+    'a declared function returning it': 'export function getLoop() { return loop; }',
+    'a function returning a local alias of it': 'export function getLoop() { const found = loop; return found; }',
+    'a function returning a function that returns it': 'export const getLoop = () => () => loop;',
+    'a function returning an object holding it': 'export const getLoop = () => ({ loop });',
+    'an object whose method returns it': 'export const getLoop = { get: () => loop };',
+  };
+  for (const [shape, factory] of Object.entries(shapes)) {
+    const modules = {
+      'src/scheduling/factory.mjs': `import { loop } from './loop.mjs';\n${factory}`,
+      'src/cli/start.mjs': "import { getLoop } from '../scheduling/factory.mjs';\nexport const start = (deps) => getLoop(deps);",
+    };
+    const found = messages(modules);
+    assert.ok(
+      found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:')),
+      `${shape}: expected src/cli/start.mjs to break rule 8; the report says:\n${found.join('\n') || '(nothing)'}`,
+    );
+  }
+});
+
+test('rule 8: src/cli/ calling getLoop()(deps).pull(), where a src/scheduling/ getLoop returns the entry point, fails', () => {
+  const modules = {
+    'src/scheduling/factory.mjs': "import { loop } from './loop.mjs';\nexport const getLoop = () => loop;",
+    'src/cli/start.mjs': "import { getLoop } from '../scheduling/factory.mjs';\nexport const start = (deps) => getLoop()(deps).pull();",
+  };
+  assertBreaks(modules, 'src/cli/start.mjs', 'rule 8');
+});
+
+test('rule 8: a src/scheduling/ function that calls the entry point and returns what the call gives hands the entry point to nobody', () => {
+  const modules = {
+    'src/scheduling/tick.mjs': "import { loop } from './loop.mjs';\nexport const tick = (deps) => loop(deps).pull();",
+    'src/cli/start.mjs': "import { tick } from '../scheduling/tick.mjs';\nexport const start = (deps) => tick(deps);",
+  };
+  assert.deepEqual(messages(modules), []);
+});
