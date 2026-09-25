@@ -80,6 +80,9 @@ export function paragraphs(text) {
  *
  * The registers hold every requirement and decision in a row, so each cell is read for its
  * sentences exactly as a paragraph is. A row is one line, and a cell ends at the next pipe.
+ *
+ * An escaped pipe, `\|`, ends a cell here where markdown would not. That splits one cell's text
+ * in two, so its count comes out low, the direction `sentences` discloses as hiding a finding.
  */
 export function rows(text) {
   const found = [];
