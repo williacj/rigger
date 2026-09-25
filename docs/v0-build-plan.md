@@ -232,7 +232,7 @@ Exit:
   and column position reversed.
 - Concurrency comes from config. On a fake board holding four pullable cards, `run` claims one card
   with `concurrency: 1` and three with `concurrency: 3`, then exits. It never holds more claims
-  than the setting allows (`R-SCHED-2`).
+  than the setting allows.
 - The column display names come from config: Rigger reads, pulls from, and claims from a fake
   board whose columns are named differently exactly as it does one with the default names.
 - The demo GIF regenerates from the tape in CI.
@@ -293,6 +293,12 @@ Exit:
 - The judge configured as `owner` is not dispatched (`R-LOOP-11`).
 - Two judges at one head receive the same card, base SHA and diff, and what each was given is in
   the event stream. What they write their findings into is M5's.
+- Concurrency holds across a restart. On a fake board holding four pullable cards, `run`
+  dispatches under `concurrency: 2`, and one maker leaves a grandchild alive after its parent
+  exits. Rigger is SIGKILLed while two makers run, then restarted under `concurrency: 1`. A card
+  counts as running while any process its dispatch started is alive, the killed run's included.
+  No more than two cards are running before the kill, and no more than one from the restarted
+  engine's first dispatch onward (`R-SCHED-2`).
 
 **M5. Gate and merge.**
 
