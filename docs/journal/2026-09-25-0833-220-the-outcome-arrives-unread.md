@@ -10,10 +10,17 @@ beside the next action they follow from.
 **The outcome is what `Promise.allSettled` makes of the dispatch.** R4-B2 has L3 pass every
 outcome to L2 without inspecting it. M1 has no L1 yet, and nothing fixed what an outcome looks
 like. The settled record is the one shape L3 can build without reading anything:
-`{ status: 'fulfilled', value }` for a dispatch that returned, `{ status: 'rejected', reason }`
-for one that failed. L2 reads `status` and nothing else. Anything else is refused, naming the card,
-because reading an unknown shape as a failure would hide a fault in L3. From M2, whether a failure
-is the work's or the environment's is L2's too, and it will read `value` and `reason` for that.
+`{ status: 'fulfilled', value }` for a dispatch that ran, where `value` is L1's result
+`{ exit, output }`, and `{ status: 'rejected', reason }` for one that threw before it ran. Anything
+else is refused, naming the card, because reading an unknown shape as a failure would hide a fault
+in L3.
+
+**The wrapper is not the verdict.** The first cut read every fulfilled outcome as returned, so a
+dispatch that ran and exited non-zero reached `review`. Both round-1 judges found it. L1 resolves
+for a dispatch that ran whatever it exited, because what the result means is not L1's to decide,
+so "did not throw" says nothing about whether the work failed. The owner ruled that the exit code
+alone decides: zero moves the card to `review` whatever the output says, and anything else leaves
+it in `coding`. The tests pair each exit code with output saying the opposite.
 
 **The event follows the move, never the other way.** The event is written once the board has
 taken the move, so a refused move records nothing and its caller is told the card and the column.
