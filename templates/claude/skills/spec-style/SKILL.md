@@ -53,14 +53,15 @@ A sequence of more than three steps, or a rule with three or more conditions, be
 or bulleted list. State the discriminating test before the list it governs, so that a reader
 knows what they are sorting by before they start sorting.
 
-A register table cannot hold a list, so there a rule with three or more conditions takes a lead
-row, then continuation rows each holding one condition. `docs/spec/requirements.md`'s `R-GATE-4`
-to `R-GATE-8` are the exemplar.
-
 `docs/spec/requirements.md`'s `checked by` passage is one exemplar: it says the two columns differ
 and why, then gives the five forms as a numbered list. `docs/spec/decisions.md`'s **Deferred, and
 what returns it** tables are the other — one row per deferred thing, one column for the evidence
 that returns it, and no prose carrying what the table holds better.
+
+A register table cannot hold a list, so there a rule with three or more conditions takes a lead
+row, then continuation rows each holding one condition. `docs/spec/requirements.md`'s `R-GATE-4`
+to `R-GATE-8` are the exemplar. The split is by condition, never inside one definition: a
+continuation row that defines one term may hold that term's several parts.
 
 A structure that neither a list nor a table carries — a set of things and the relations between
 them — becomes a diagram. `docs/spec/decisions.md`'s `D15` holds when a diagram is admitted, what

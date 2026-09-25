@@ -371,6 +371,9 @@ test('rule 4 gives a register table its own form for a rule with three or more c
   assert.match(rule, /lead\s+row/);
   assert.match(rule, /continuation\s+rows\s+each\s+holding\s+one\s+condition/);
   assert.match(rule, /`R-GATE-4`\s+to\s+`R-GATE-8`/);
+  // The owner's ruling of 2026-09-25: the split is by condition, never inside one definition, so a
+  // judge reading rule 4 does not demand that a term's parts each take a row.
+  assert.match(rule, /defines\s+one\s+term\s+may\s+hold\s+that\s+term's\s+several\s+parts/);
 });
 
 test('the skill states the ownership rule a passage is read against', () => {
