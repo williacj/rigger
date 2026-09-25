@@ -172,6 +172,58 @@ test('given a config with no epicLabel key, against a repository holding no labe
   assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED].sort());
 });
 
+/**
+ * Whether two label names differ only in letter case. Written with `toLowerCase`, independently of
+ * the code under test, and every name compared here is ASCII (#301's scope).
+ */
+const caseOnly = (one, other) => one.toLowerCase() === other.toLowerCase();
+
+/** A kind of CONFIG's shape selected by `labels` alone. */
+const kindSelecting = (labels) => ({ select: { labels }, maker: 'engineer', judges: ['reviewer'] });
+
+// GitHub holds label names case-insensitively (#301's measurement), so a repository holding
+// `type:epic` already holds the label a config declares as `Type:Epic`.
+test('given the epic label Type:Epic and a repository holding type:epic, setup-board creates no label differing from Type:Epic only in letter case', async () => {
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...SELECTED, 'type:epic'] }, { ...CONFIG, epicLabel: 'Type:Epic' });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(labelsCreated(writes).filter((name) => caseOnly(name, 'Type:Epic')), []);
+});
+
+test('given a kind selecting Type:Bug and a repository holding type:bug, setup-board creates no label differing from Type:Bug only in letter case', async () => {
+  const config = { ...CONFIG, kinds: { ...CONFIG.kinds, bug: kindSelecting(['Type:Bug']) } };
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...DECLARED_LABELS, 'type:bug'] }, config);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(labelsCreated(writes).filter((name) => caseOnly(name, 'Type:Bug')), []);
+});
+
+test('given kinds selecting both bug and Bug and a repository holding neither, setup-board creates one label for them, spelled as one of the two', async () => {
+  const config = { ...CONFIG, kinds: { ...CONFIG.kinds, lower: kindSelecting(['bug']), title: kindSelecting(['Bug']) } };
+  const { ran, writes } = await setUp(COMPLETE, config);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  const created = labelsCreated(writes).filter((name) => caseOnly(name, 'bug'));
+  assert.equal(created.length, 1, JSON.stringify(created));
+  assert.ok(['bug', 'Bug'].includes(created[0]), JSON.stringify(created[0]));
+});
+
+test('given the epic label Type:Epic and a repository holding no label differing from it only in letter case, setup-board creates Type:Epic as spelled', async () => {
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...SELECTED] }, { ...CONFIG, epicLabel: 'Type:Epic' });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(labelsCreated(writes), ['Type:Epic']);
+});
+
+test('against a repository holding every declared label under another letter case, setup-board prints no line saying it created a label', async () => {
+  const labels = ['TYPE:CHANGE', 'Type:Spec', 'AREA:demo', 'type:EPIC'];
+  assert.ok(labels.every((name, i) => name !== DECLARED_LABELS[i] && caseOnly(name, DECLARED_LABELS[i])));
+  const { ran } = await setUp({ ...COMPLETE, labels });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.doesNotMatch(ran.stdout, /created the label/);
+});
+
 test('against a board already holding everything declared, setup-board makes no write', async () => {
   const { ran, writes } = await setUp(COMPLETE);
 

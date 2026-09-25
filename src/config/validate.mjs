@@ -394,8 +394,10 @@ export function selectedLabels(config) {
 
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
- * epic label where it declares one. These are the labels `setup-board` gives the repository.
+ * epic label where it declares one. These are the labels `setup-board` gives the repository. Two
+ * names GitHub holds as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
-  return [...new Set([...selectedLabels(config), ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : [])])];
+  const declared = [...selectedLabels(config), ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : [])];
+  return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));
 }
