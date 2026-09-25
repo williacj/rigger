@@ -186,15 +186,36 @@ is not a bar."
 
 **A bar with no floor at all.** The card this entry belongs to carries one. Card #37's third item
 asks for a reviewer session that "produces findings" and says nothing about what a finding must be,
-so an idle session returning three trivial ones meets it as written. Its author recorded that
-rather than amending it mid-card, which is what `R-CARD-5` requires of them.
+so an idle session returning three trivial ones meets it as written. Its author recorded it rather
+than amending it mid-card. `R-CARD-5` permits the author that amendment — what it bars is the maker
+changing the bar it is judged against — so what made recording the better move is the cost:
+`R-LOOP-8` spends a round on an acceptance change, and `R-GATE-7` requires every verdict to have
+ruled against the current acceptance, so an amendment stales the verdicts already returned.
 
-The finding underneath these four shapes is not that the acceptance skill lacks a rule. It has one,
-and it has had it throughout: `git log -- .claude/skills/acceptance/` at `306d5e9` ends at
-`b22652f`, dated 2026-09-22, and every defect above was written on 09-23 or 09-24. So each of them
-happened under the rule, and not one of them has moved the skill since. The asset that went wrong
-on first use is the acceptance skill, and what went wrong is that stating the rule did not make it
-run.
+The finding underneath these shapes is not that the acceptance skill lacks a rule. It has one, and
+four of the five cards above were written with it already in place. The rule requiring a named
+falsifier arrived in `fb67f6f` and `7d224de`, authored `2026-09-18T17:05:04-05:00` and `17:15:46`
+(`git log --format=%aI`). Cards #57, #109, #157 and #166 were created after that — `2026-09-20`,
+`2026-09-23` and two on `2026-09-24` by `gh issue view --json createdAt` — and each was last edited
+later still, so the rule was in place on either reading of when its acceptance was written. The
+skill has not moved since: `git log -- .claude/skills/acceptance/` at `306d5e9` ends at `b22652f`,
+authored `2026-09-22T15:31:51-05:00`. So four defects were written under the rule and none of them
+has changed it.
+
+Card #37 is the fifth, and it is not one of those four. Its acceptance was written at
+`2026-09-17T21:32:33Z` — `16:32:33-05:00` — and never edited, `createdAt` and `updatedAt` being the
+same instant. The acceptance skill's **first** commit, `0fcc8ef`, is authored
+`2026-09-17T16:42:47-05:00`, ten minutes and fourteen seconds later. `git grep -i falsif` at
+`0fcc8ef` finds nothing, and the falsifier rule is a day younger still. So the one shape this
+entry's own card contributes is the one the asset could not have caught, because the asset did not
+exist when the bar was written.
+
+That separation is the finding, and it is worth more than the count. A defect the rule did not
+prevent and a defect the rule could not have prevented are different failures with different fixes.
+Four of these are the first kind: the asset that went wrong on first use is the acceptance skill,
+and what went wrong is that stating the rule did not make it run. The fifth is the second kind, and
+it is the cost of a milestone whose first cards were written before the assets that govern them —
+which is what M0 is.
 
 ### False greens
 
