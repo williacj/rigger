@@ -93,20 +93,24 @@ function forge({
 } = {}) {
   const sent = [];
   const callers = [];
+  const asked = new Set();
+  // Each page once, and only a page the test holds: a read that stopped passing its cursor on
+  // would otherwise ask for the first page for ever, and the test would hang, not fail.
+  const answer = (connection, held, document) => {
+    const cursor = cursorOf(document);
+    assert.ok(!asked.has(`${connection} ${cursor}`), `the ${connection} page after ${cursor} was asked for twice`);
+    assert.ok(Object.hasOwn(held, String(cursor)), `the ${connection} page after ${cursor} is not one gh answered`);
+    asked.add(`${connection} ${cursor}`);
+    return said(held[cursor]) ? held[cursor] : ok(held[cursor]);
+  };
   const send = (command, args) => {
     sent.push([command, ...args]);
     // The function that handed this request to the spawn: the stack's frame below this one.
     callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
     const document = documentOf(args);
-    if (document.includes('items(')) {
-      const page = pages[cursorOf(document)];
-      return said(page) ? page : ok(page);
-    }
+    if (document.includes('items(')) return answer('item', pages, document);
     if (document.includes('fields(')) return ok(fields);
-    if (document.includes('repository(')) {
-      const page = labels[cursorOf(document)];
-      return said(page) ? page : ok(page);
-    }
+    if (document.includes('repository(')) return answer('label', labels, document);
     throw new Error(`the test forge does not answer ${document}`);
   };
   send.sent = sent;
@@ -180,6 +184,24 @@ test('a board holding more cards than one page reads every card once, across the
 
   assert.deepEqual(cards.map((card) => card.number), numbers);
   assert.equal(send.sent.length, 2);
+});
+
+test('a card gh answers on two adjacent pages reads back once, where it first appeared', async () => {
+  // Items are paged by cursor while the board can change between the requests, so a card moved
+  // after the first page is read can be answered again on the second. Here item 100 closes the
+  // first page and opens the second.
+  const numbers = Array.from({ length: 101 }, (_, i) => i + 1);
+  const node = (number) => itemNode({ id: `PVTI_${number}`, content: issue({ number }), values: { Status: 'Ready' } });
+  const send = forge({
+    pages: {
+      null: itemPage(numbers.slice(0, 100).map(node), 'Y3Vyc29yOnYyOpMA'),
+      Y3Vyc29yOnYyOpMA: itemPage(numbers.slice(99).map(node)),
+    },
+  });
+
+  const cards = await readSide(BOARD, { send }).readItems();
+
+  assert.deepEqual(cards.map((card) => card.number), numbers);
 });
 
 test("only the configured repository's issues read back as cards, beside a draft, a pull request and another repository's issue", async () => {

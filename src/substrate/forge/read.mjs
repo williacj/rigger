@@ -148,11 +148,17 @@ export function readSide(board, { send } = {}) {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
       return everyPage('readLabels', board, send, query, (data) => data?.repository?.labels).map((label) => label.name);
     },
-    /** Every card on the board, in board order. */
+    /**
+     * Every card on the board, in board order, each once. The board can change between one page
+     * and the next, so an item moved meanwhile can be answered on both: it is kept where it
+     * first appeared.
+     */
     readItems: async () => {
       const query = (page) => boardQuery('readItems', board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
       const nodes = everyPage('readItems', board, send, query, (data) => data?.repositoryOwner?.projectV2?.items);
-      return nodes.filter((node) => isCard(board, node)).map((node) => cardOf('readItems', board, node));
+      const seen = new Set();
+      const once = nodes.filter((node) => !seen.has(node.id) && seen.add(node.id));
+      return once.filter((node) => isCard(board, node)).map((node) => cardOf('readItems', board, node));
     },
   };
 }
