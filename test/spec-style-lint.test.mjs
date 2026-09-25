@@ -10,7 +10,6 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  HELD,
   check,
   findings,
   lintFiles,
@@ -289,41 +288,6 @@ test('the lint exits non-zero on a row whose cell holds a 41-word sentence, and 
 test('the lint exits zero on the same row with that sentence at 40 words', () => {
   const run = lintCommand(repositoryWithRow(sentenceOf(40)));
   assert.equal(run.status, 0, run.stderr);
-});
-
-test('a held finding is reported apart from the findings, and does not fail the lint', () => {
-  const root = repositoryWithRow(sentenceOf(41));
-  const held = [{ path: 'docs/spec/decisions.md', row: 'D1', words: 41, why: 'the owner is ruling on it' }];
-  const result = check(root, held);
-  assert.deepEqual(result.findings, []);
-  assert.deepEqual(result.held.map(({ path, line, row, words }) => ({ path, line, row, words })), [
-    { path: 'docs/spec/decisions.md', line: 3, row: 'D1', words: 41 },
-  ]);
-  assert.equal(result.failing, false);
-});
-
-test('a hold covers only the length it names, so a rewording that changes it is read afresh', () => {
-  const root = repositoryWithRow(sentenceOf(42));
-  const held = [{ path: 'docs/spec/decisions.md', row: 'D1', words: 41, why: 'the owner is ruling on it' }];
-  assert.deepEqual(check(root, held).findings.map(({ row, words }) => ({ row, words })), [{ row: 'D1', words: 42 }]);
-});
-
-test('the lint prints each held finding with why it is held, and exits zero on this repository', () => {
-  // A hold is a question put to the owner, so it stays in view on every run rather than going quiet.
-  const run = lintCommand(repository);
-  assert.equal(run.status, 0, run.stderr);
-  for (const hold of HELD) {
-    assert.ok(run.stdout.includes(`${hold.path}:`), `${hold.path} is not printed`);
-    assert.ok(run.stdout.includes(`sentence of ${hold.words} words in row ${hold.row}, held: ${hold.why}`));
-  }
-});
-
-test('every held finding is still raised by the document it names', () => {
-  // A hold outliving its finding would go on excusing whatever that row says next, so a hold the
-  // documents no longer raise is a stale one to delete.
-  const { held } = check(repository);
-  const stale = HELD.filter((hold) => !held.some((one) => one.path === hold.path && one.row === hold.row));
-  assert.deepEqual(stale, []);
 });
 
 test('a retired register row past the ceiling is not read', () => {

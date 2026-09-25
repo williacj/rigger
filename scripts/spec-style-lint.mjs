@@ -11,18 +11,6 @@ import { countWords } from './instruction-budget.mjs';
 const SKILL = '.claude/skills/spec-style/SKILL.md';
 
 /**
- * Cell findings the binding documents already raised when the lint first read table cells, held
- * while the owner rules on them, because restyling a ratified row is the owner's to approve.
- *
- * A hold names a row and the length of the sentence it excuses, and nothing looser: a rewording
- * that changes the length is read afresh. A hold the documents no longer raise is stale, and
- * `test/spec-style-lint.test.mjs` refuses it, so each one goes when its row is restyled.
- */
-export const HELD = [
-  { path: 'ARCHITECTURE.md', row: '**L2 Workflow**', words: 50, why: 'card #251 escalated it to the owner' },
-];
-
-/**
  * A document's lines, trimmed, with every line of a fenced block — its fences included — blanked.
  *
  * A fenced block is code rather than a sentence at all, and a blank line is what every reader
@@ -198,21 +186,14 @@ export function lintFiles(root, skill) {
   });
 }
 
-/**
- * Every rule the documents the lint reads break, in the order it reads them, with the ones a hold
- * names set apart. Only the rest fail the lint.
- */
-export function check(root, holds = HELD) {
+/** Every rule the documents the lint reads break, in the order it reads them. */
+export function check(root) {
   const skill = readFileSync(join(root, SKILL), 'utf8');
   const rules = { ceiling: sentenceCeiling(skill), terms: ruledOutTerms(skill) };
   const documents = lintFiles(root, skill);
   const found = documents.flatMap((path) =>
     findings(readFileSync(join(root, path), 'utf8'), rules).map((one) => ({ path, ...one })));
-  const holdFor = (one) => holds.find((hold) =>
-    hold.path === one.path && hold.row === one.row && hold.words === one.words);
-  const held = found.filter(holdFor).map((one) => ({ ...one, why: holdFor(one).why }));
-  const failing = found.filter((one) => !holdFor(one));
-  return { documents, findings: failing, held, failing: failing.length > 0 };
+  return { documents, findings: found, failing: found.length > 0 };
 }
 
 /**
@@ -248,16 +229,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // CI passes no argument and this repository is read. A path reads that repository instead,
   // which is how a test watches the lint refuse one.
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const { documents, findings: found, held, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
-  const describe = ({ path, line, rule, term, words, row, text }) => {
+  const { documents, findings: found, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
+  for (const { path, line, rule, term, words, row, text } of found) {
     const where = row === undefined ? '' : ` in row ${row}`;
-    const what = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words${where}`;
-    return [`${path}:${line}  ${what}`, `\n        ${text}`];
-  };
-  for (const one of found) console.error(describe(one).join(''));
-  for (const one of held) {
-    const [where, text] = describe(one);
-    console.log(`${where}, held: ${one.why}${text}`);
+    const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words${where}`;
+    console.error(`${path}:${line}  ${why}\n        ${text}`);
   }
   for (const path of documents) {
     console.log(`${String(found.filter((one) => one.path === path).length).padStart(6)}  ${path}`);

@@ -25,7 +25,21 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-9 | **gap** |
 | R-CARD-10 | **gap** |
 | R-CARD-11 | **gap** |
-| R-SCHED-1 | nothing yet |
+| R-CARD-12 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
+| R-CARD-13 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused<br>`test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet |
+| R-CARD-14 | `test/form-check.test.mjs` a section whose only bullet is indented by a tab is missing acceptance |
+| R-CARD-15 | `test/form-check.test.mjs` an acceptance heading and bullet inside a backtick fence are missing acceptance<br>`test/form-check.test.mjs` an acceptance heading and bullet inside a tilde fence are missing acceptance |
+| R-CARD-16 | `test/form-check.test.mjs` a fence closes only on a run of at least as many of the same character |
+| R-CARD-17 | `test/form-check.test.mjs` a fence the section never closes hides the bullet that follows it |
+| R-CARD-18 | `test/form-check.test.mjs` a fence the section never closes hides the bullet that follows it |
+| R-CARD-19 | `test/form-check.test.mjs` acceptance headings at levels #, ## and ### each holding one item that does not restate the title are admitted<br>`test/form-check.test.mjs` a setext Acceptance heading underlined with --- is missing acceptance<br>`test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
+| R-CARD-20 | `test/form-check.test.mjs` the heading ## Acceptance ## holding one item that does not restate the title is admitted |
+| R-CARD-21 | `test/form-check.test.mjs` bullets under Acceptance criteria and under no acceptance heading are missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## acceptance, in lower case, is missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## **Acceptance** is missing acceptance |
+| R-CARD-22 | `test/form-check.test.mjs` an acceptance section holding no plain bullet is missing acceptance<br>`test/form-check.test.mjs` a deeper ### heading does not end the section, so its bullet that does not restate the title admits the card |
+| R-CARD-23 | `test/form-check.test.mjs` a section whose only bullet is indented four spaces is missing acceptance<br>`test/form-check.test.mjs` a nested bullet indented two spaces that does not restate the title admits the card |
+| R-CARD-24 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance |
+| R-CARD-25 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance<br>`test/form-check.test.mjs` a section whose only bullet is - followed only by spaces is missing acceptance |
+| R-SCHED-1 | **gap** |
 | R-SCHED-2 | **gap** |
 | R-SCHED-3 | **gap** |
 | R-SCHED-4 | **gap** |
@@ -36,6 +50,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-9 | **gap** |
 | R-SCHED-10 | `test/config.test.mjs` a declaration Rigger does not offer is refused wherever it sits, and the refusal names it<br>`test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions<br>`test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
 | R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config |
+| R-SCHED-12 | `test/next-action.test.mjs` a ready card two kinds select and the form check admits is refused with a reason naming both kinds<br>`test/next-action.test.mjs` a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds |
 | R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |
 | R-WORK-3 | **gap** |

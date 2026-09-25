@@ -362,6 +362,31 @@ test('a kind whose judges are not an ordered list is refused, because their orde
   assert.match(refusal(withKind({ judges: 'reviewer' })), /`kinds\.change\.judges`/);
 });
 
+test('a kind whose select.labels is empty is refused, and the refusal names that kind', () => {
+  assert.match(refusal(withKind({ select: { labels: [] } })), /`kinds\.change\.select\.labels`/);
+});
+
+// The engine reads `select.labels` as a list when it selects cards, so a value that is no list
+// would reach it as a throw rather than being refused when the config loads.
+test('a kind whose select.labels is not a list is refused, and the refusal names that key', () => {
+  for (const labels of ['type:change', 3, { change: 'type:change' }, null]) {
+    assert.match(refusal(withKind({ select: { labels } })), /`kinds\.change\.select\.labels`/, JSON.stringify(labels));
+  }
+});
+
+// A card carries labels by name, so an entry that is no non-empty string names no label a card
+// could carry.
+test('a kind whose select.labels holds an entry that is no label name is refused, and the refusal names that key', () => {
+  for (const labels of [[''], ['type:change', 3], [null]]) {
+    assert.match(refusal(withKind({ select: { labels } })), /`kinds\.change\.select\.labels`/, JSON.stringify(labels));
+  }
+});
+
+test('a kind selecting one label or two is accepted', () => {
+  assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);
+  assert.deepEqual(validate(withKind({ select: { labels: ['type:change', 'type:fix'] } })), []);
+});
+
 // proves R-LOOP-11
 test('a kind naming the owner anywhere but last is refused, and the refusal names the position', () => {
   // None of these names `engineer`, which is this kind's maker: a fixture that named it would
