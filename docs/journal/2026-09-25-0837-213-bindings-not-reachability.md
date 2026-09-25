@@ -80,6 +80,18 @@ owner's leave for a third extra commit:
   hold anything the spread or a later argument holds;
 - a function's own `arguments` holds everything the call passed.
 
+**The final commit: four edges.** Round 6 found four routes, and the owner granted one final
+commit for them:
+- **`?.` in Rule 3.** Acorn wraps an optional chain in its own node, so `const { priority } =
+  config?.board` read as no board at all. Rule 3 now reads through the wrapper.
+- **`.apply` with its arguments spread.** `.apply(...[null, [f]])` hid which argument was the
+  list. Every value any argument holds now reaches every parameter.
+- **`.apply` as a template tag.** It takes its first substitution as the list. It is read the same
+  way.
+- **A `var` assigned before its declaration.** In `(() => { a = f; var a; held = a; })()`, the
+  assignment ran before the binding existed on the first pass. Creating the binding changed
+  nothing, so no second pass came. Creating a binding is now a change.
+
 The pass cap of 50 is gone. What a binding holds only grows, and only from the module's own
 names, so the passes end on their own. A 60-link chain that the cap misreported as unreadable
 now settles.

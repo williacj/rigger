@@ -381,6 +381,12 @@ const STEPS = {
   'step 4, a logical assignment': "import { NAME } from 'SIDE';\nexport let held;\nheld ??= NAME;",
   'step 8, a spread of unknown length before the side': "import { NAME } from 'SIDE';\nconst list = [];\nexport const held = ((a, b) => b)(...list, NAME);",
   'step 8, a default reading an earlier parameter': "import { NAME } from 'SIDE';\nexport const held = ((a, b = a) => b)(NAME);",
+  // Round 6's routes: .apply spread or used as a tag, and a var assigned before it is declared.
+  'step 8, .apply with its whole argument list spread': "import { NAME } from 'SIDE';\nexport const held = (function (x) { return x; }).apply(...[null, [NAME]]);",
+  'step 8, .apply as a template tag': "import { NAME } from 'SIDE';\nexport const held = (function (x) { return x; }).apply`${[NAME]}`;",
+  'step 4, a var assigned before its declaration in a called function': "import { NAME } from 'SIDE';\nexport let held;\n(() => { a = NAME; var a; held = a; })();",
+  'step 2, a dynamic import assigned to a var before its declaration': "export let held;\nawait (async () => { a = await import('SIDE'); var a; held = a; })();",
+  'step 4, a var destructured into before its declaration': "import { NAME } from 'SIDE';\nexport let held;\n(() => { ({ a } = { a: NAME }); var a; held = a; })();",
 };
 
 /** The default-export module step 1's default import reads, handing each side on as its default. */
@@ -454,6 +460,17 @@ test('rule 3: the spelled path fails whatever the object before board, and a str
     'export const rank = (board) => board.priority;',
     'export const rank = (config) => { const { board: { priority: p } } = config; return p; };',
     'export const rank = (config) => { let priority; ({ priority } = config.board); return priority; };',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 3: the spelled path fails through optional chaining wherever it appears', () => {
+  const shapes = [
+    'export const rank = (config) => { const { priority } = config?.board; return priority; };',
+    'export const rank = (config) => { let priority; ({ priority } = config?.board); return priority; };',
+    'export const rank = (config) => (config?.board).priority;',
+    'export const rank = (config) => config?.board?.priority;',
+    "export const rank = (config) => config?.['board']?.['priority'];",
   ];
   for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
 });

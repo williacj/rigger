@@ -192,7 +192,12 @@ function holdings(program, topLevel, carries) {
         if (carries.has(bound)) addAll(carries.get(bound), values.filter((held) => held !== bound));
         continue;
       }
-      if (!scope.vars.has(bound)) scope.vars.set(bound, new Set());
+      // A binding first met on this pass is a change: an assignment read earlier in the pass, as
+      // to a `var` before its declaration, went past it and lands only on the next pass.
+      if (!scope.vars.has(bound)) {
+        scope.vars.set(bound, new Set());
+        changed = true;
+      }
       addAll(scope.vars.get(bound), values);
     }
   };
@@ -316,7 +321,10 @@ function holdings(program, topLevel, carries) {
         if (called.mode === 'direct') return invoked(called.fn, given, scope);
         if (called.mode === 'call') return invoked(called.fn, withoutFirst(given), scope);
         // `.apply` passes the elements of its second argument, laid out as a call would lay them.
-        const list = node.arguments[1];
+        // Where a spread hides which argument is the list, every value any argument holds may land
+        // at any position.
+        const [self, list] = node.arguments;
+        if ([self, list].some((held) => held?.type === 'SpreadElement')) return invoked(called.fn, { slots: [], tail: node.arguments.flatMap(of) }, scope);
         const applied = list?.type === 'ArrayExpression' ? argumentsOf(list.elements, scope) : { slots: [], tail: of(list) };
         return invoked(called.fn, applied, scope);
       }
@@ -325,7 +333,11 @@ function holdings(program, topLevel, carries) {
         const expressions = node.quasi.expressions;
         if (!called) return [...of(node.tag), ...expressions.flatMap(of)];
         const given = argumentsOf(expressions, scope);
-        return invoked(called.fn, called.mode === 'call' ? given : { slots: [[], ...given.slots], tail: given.tail }, scope);
+        // As a tag, `.call` takes the strings as its `this`, and `.apply` takes the first
+        // substitution as its list, which may land at any position.
+        if (called.mode === 'call') return invoked(called.fn, given, scope);
+        if (called.mode === 'apply') return invoked(called.fn, { slots: [], tail: expressions.flatMap(of) }, scope);
+        return invoked(called.fn, { slots: [[], ...given.slots], tail: given.tail }, scope);
       }
       default: return [];
     }
@@ -530,8 +542,13 @@ function parsed(file, source) {
  */
 function priorityReads(program) {
   const lines = [];
-  const isBoard = (node) => (node?.type === 'Identifier' && node.name === 'board')
-    || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
+  // An optional chain is the member access it wraps, so `config?.board` is read as `config.board`.
+  const unchained = (node) => (node?.type === 'ChainExpression' ? node.expression : node);
+  const isBoard = (wrapped) => {
+    const node = unchained(wrapped);
+    return (node?.type === 'Identifier' && node.name === 'board')
+      || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
+  };
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
