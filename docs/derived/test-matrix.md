@@ -20,8 +20,8 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-4 | nothing yet |
 | R-CARD-5 | **gap** |
 | R-CARD-6 | **gap** |
-| R-CARD-7 | **gap** |
-| R-CARD-8 | **gap** |
+| R-CARD-7 | `test/form-check.test.mjs` a card with no acceptance heading outside a fence is refused<br>`test/form-check.test.mjs` the refusal of a card with no acceptance names the card and missing acceptance |
+| R-CARD-8 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` the refusal of a card whose acceptance only restates its title names the card and restated title<br>`test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused<br>`test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet |
 | R-CARD-9 | **gap** |
 | R-CARD-10 | **gap** |
 | R-CARD-11 | **gap** |
