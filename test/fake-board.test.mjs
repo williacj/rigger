@@ -225,7 +225,10 @@ test('every operation the fake board offers carries a sample call', () => {
   assert.deepEqual(lacking, [], `operations with no sample call: ${lacking.join(', ')}`);
 });
 
-const callSample = (fake, name) => fake.operations[name](...structuredClone(sampleCalls[name]));
+function callSample(fake, name) {
+  assert.ok(Object.hasOwn(sampleCalls, name), `${name} has no sample call`);
+  return fake.operations[name](...structuredClone(sampleCalls[name]));
+}
 
 test("every write's sample call changes what a read of the board returns", async () => {
   // A write is an operation whose sample call adds to the write record; every other operation is
