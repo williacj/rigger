@@ -115,12 +115,14 @@ function addressesOnly(owner, other, documents, operation) {
   }
 }
 
+// proves R-WORK-7
 test("every request a full read sends that addresses the board names the declared board owner, and never the repository's owner", async () => {
   for (const operation of ['readItems', 'readColumns', 'readFields']) {
     addressesOnly(DECLARED, REPOSITORY_OWNER, await sentBy(operation, ownedBy(DECLARED)), operation);
   }
 });
 
+// proves R-WORK-7
 test("the request moveItem sends to find the board names the declared board owner, and never the repository's owner", async () => {
   const sent = await sentBy('moveItem', ownedBy(DECLARED));
 
@@ -129,6 +131,7 @@ test("the request moveItem sends to find the board names the declared board owne
   assert.match(sent.at(-1), new RegExp(`updateProjectV2ItemFieldValue\\(input: \\{projectId: "${boardId(DECLARED)}"`));
 });
 
+// proves R-WORK-7
 test("the request createField sends to find the board names the declared board owner, and never the repository's owner", async () => {
   const sent = await sentBy('createField', ownedBy(DECLARED));
 
@@ -136,6 +139,7 @@ test("the request createField sends to find the board names the declared board o
   assert.match(sent.at(-1), new RegExp(`createProjectV2Field\\(input: \\{projectId: "${boardId(DECLARED)}"`));
 });
 
+// proves R-WORK-7
 test("with no board owner declared, every request that addresses the board names the owner of the repository repo names", async () => {
   assert.ok(!Object.hasOwn(rigger.board, 'owner'), 'this repository declares a board owner, so its absence went untested');
   for (const operation of ['readItems', 'readColumns', 'readFields', 'moveItem', 'createField']) {

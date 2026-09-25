@@ -142,6 +142,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-4 | One engine at a time has sole control of a repository's board and its workspaces. Two engines never work one repository. | the consumer's configuration | nothing yet | |
 | R-WORK-5 | Rigger keeps the board current as a card progresses, because the board is what a restart reads. | the engine | the event record, by a transition the board never received | D1 |
 | R-WORK-6 | A card's work is delivered as a change a judge can read and rule on before it lands, never as a change already in place. | the engine | the repository's history, against the record | |
+| R-WORK-7 | Rigger works the board the consumer's configuration names, and no other, whichever user or organisation owns it. | the engine | the test suite | |
 
 ## R-LOOP — maker, judges, and rounds
 
