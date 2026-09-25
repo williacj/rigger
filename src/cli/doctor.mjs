@@ -7,11 +7,13 @@ import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
+import { readRunner } from '../substrate/forge/runners.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 
 /**
- * Runs a command and hands back what it answered, which is every authority this verb asks.
+ * Runs a command and hands back what it answered, which is every authority this verb asks but the
+ * forge. The forge is L0's, and `ghAuth` asks it through the forge adapter's read runner.
  *
  * The environment is the one `gitEnvironment` hands a git child. A `doctor` run from inside a git
  * hook, a `git rebase --exec` or a `git bisect run` inherits variables naming the repository that
@@ -229,11 +231,15 @@ const reason = (said) => said.error?.code ?? said.error?.message ?? 'it answered
  * `D16` rule 1: gh owns the fact. Its exit status is the whole of what is read — measured with
  * gh 2.96.0 as 0 authenticated and 1 not — and the line carries gh's own first line so a
  * consumer reads what to do about it. `--show-token` is never passed: it is the one argument
- * that would put a credential into a report (`AGENTS.md`, never log a secret).
+ * that would put a credential into a report (`AGENTS.md`, never log a secret), and the read
+ * runner's allowlist admits the request only without it.
+ *
+ * It is a forge read, so it goes through the forge adapter's read runner, which names the command
+ * (the architect's ruling on #214, R214-B4). `ask` stands in for the runner's spawn in tests.
  */
-export function ghAuth({ ask = asked } = {}) {
+export function ghAuth({ ask } = {}) {
   const name = 'gh authentication';
-  const said = ask('gh', ['auth', 'status']);
+  const said = readRunner(['auth', 'status'], { send: ask });
   if (said.status === null) {
     return { name, ok: null, detail: `\`gh auth status\` could not be run here: ${reason(said)}` };
   }
@@ -376,7 +382,7 @@ export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
 
 /** What the command prints for a `doctor` run, and the status it exits with. */
 export async function doctor({
-  target = process.cwd(), packageRoot = PACKAGE, ask = asked, checks = CHECKS,
+  target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
 } = {}) {
   const named = repoRoot(target, ask);
   // The paths are compared whatever git said, so a tree the comparison can name is named
