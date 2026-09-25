@@ -42,6 +42,9 @@ export const SHAPES = {
     concurrency: {},
     roles: { required: true, entries: 'role' },
     kinds: { required: true, entries: 'kind' },
+    // Optional: where it is absent no label marks an epic, and every card is selected by the
+    // kinds' own labels alone (`ARCHITECTURE.md`, below the extension-point table).
+    epicLabel: {},
     provisioning: { entries: 'step' },
     escalate: { type: 'array' },
     telemetry: { keys: 'telemetry' },
@@ -265,6 +268,31 @@ function readKinds(config, refusals) {
 }
 
 /**
+ * What the epic label may be: one label name, which a card carries to mark it an epic. A config
+ * that declares none marks no card, so only a declared one has anything to read.
+ *
+ * No kind may select it. Every card that kind selected would be an epic, which Rigger never pulls
+ * (`R-SCHED-11`), so the kind's work would never run and nobody would be told why.
+ */
+function readEpicLabel(config, refusals) {
+  if (!Object.hasOwn(config, 'epicLabel')) return;
+  const { epicLabel } = config;
+  if (!names(epicLabel)) {
+    refusals.push('`epicLabel` must be one label name');
+    return;
+  }
+  // Kinds that are no set of declarations, and labels that are no list, earned their refusal
+  // where they were read.
+  if (!declares(config.kinds)) return;
+  for (const [name, kind] of Object.entries(config.kinds)) {
+    const labels = kind?.select?.labels;
+    if (Array.isArray(labels) && labels.includes(epicLabel)) {
+      refusals.push(`\`epicLabel\` names \`${epicLabel}\`, which \`kinds.${name}\` selects, so no card that kind selects would ever be pulled`);
+    }
+  }
+}
+
+/**
  * What each provisioning step's selector may be. A step that selects nothing is selected by the
  * kinds that name it, so only a step that declares `select` has labels to read.
  */
@@ -308,6 +336,7 @@ export function validate(config) {
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
+  readEpicLabel(config, refusals);
   readProvisioning(config.provisioning, refusals);
   readPriority(config.board?.priority, refusals);
   for (const category of Array.isArray(config.escalate) ? config.escalate : []) {

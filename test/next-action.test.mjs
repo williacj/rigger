@@ -79,6 +79,35 @@ test('a ready card labelled type:epic is ignored under this repository config', 
   assert.deepEqual(nextAction(card(13, ['type:epic']), config.kinds), { action: 'ignore' });
 });
 
+// proves R-SCHED-11
+test('a ready card carrying the declared epic label and type:change is ignored under this repository config, not pulled and not refused', () => {
+  const given = card(19, ['type:epic', 'type:change']);
+  assert.deepEqual(nextAction(given, config.kinds, config.epicLabel), { action: 'ignore' });
+});
+
+test('a ready card carrying the epic label and the labels of two kinds is ignored, not refused for being selected by two kinds', () => {
+  const given = card(20, ['type:epic', 'type:change', 'type:spec']);
+  assert.deepEqual(nextAction(given, KINDS, 'type:epic'), { action: 'ignore' });
+});
+
+test('a config declaring kind:epic has cards carrying kind:epic ignored, and type:epic read as an ordinary label', () => {
+  assert.deepEqual(nextAction(card(21, ['kind:epic', 'type:change']), KINDS, 'kind:epic'), { action: 'ignore' });
+  assert.deepEqual(
+    nextAction(card(22, ['type:epic', 'type:change']), KINDS, 'kind:epic'),
+    { action: 'dispatch', kind: 'change' },
+  );
+});
+
+// ARCHITECTURE.md, below the extension-point table: where the declaration is absent no label marks
+// an epic, and every card is selected by the kinds' own labels alone.
+test('a config declaring no epic label marks no card an epic, so type:epic is an ordinary label', () => {
+  assert.deepEqual(
+    nextAction(card(23, ['type:epic', 'type:change']), KINDS),
+    { action: 'dispatch', kind: 'change' },
+  );
+  assert.deepEqual(nextAction(card(24, ['type:epic']), KINDS), { action: 'ignore' });
+});
+
 test('the body of issue #182, labelled type:change, is dispatched under the change kind', () => {
   const issue = JSON.parse(readFileSync(new URL('./fixtures/issue-182.json', import.meta.url), 'utf8'));
   assert.equal(issue.number, 182);
