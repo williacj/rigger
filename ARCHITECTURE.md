@@ -171,6 +171,7 @@ export default {
     spike:     { select: { labels: ['type:spike'] },     maker: 'spikeEngineer', judges: ['reviewer'],
                  provisioning: ['npm-ci'] },
   },
+  epicLabel: 'type:epic',
   provisioning: {
     'npm-ci': { run: 'npm ci', required: true },
     // Only cards that touch the demo tape pay for this.

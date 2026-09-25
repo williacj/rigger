@@ -382,6 +382,20 @@ test('a kind whose select.labels holds an entry that is no label name is refused
   }
 });
 
+test('a declared epic label that is one label name is accepted', () => {
+  for (const epicLabel of ['type:epic', 'kind:epic']) {
+    assert.deepEqual(validate({ ...rigger, epicLabel }), [], epicLabel);
+  }
+});
+
+// A card carries labels by name, so an epic label that is no name marks no card, and a list
+// declares more than the one label that marks an epic.
+test('a declared epic label that is not one label name is refused, and the refusal names the key', () => {
+  for (const epicLabel of ['', '   ', 3, null, undefined, true, ['type:epic'], { label: 'type:epic' }]) {
+    assert.match(refusal({ ...rigger, epicLabel }), /`epicLabel`/, JSON.stringify(epicLabel) ?? 'undefined');
+  }
+});
+
 test('a kind selecting one label or two is accepted', () => {
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change', 'type:fix'] } })), []);
