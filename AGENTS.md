@@ -183,8 +183,9 @@ Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and
 otherwise. The permission reaches the merge alone: every verdict in that evidence is another
 role's. `D19` records it and what ends it.
 
-Where a card's kind names `owner` among its judges, the owner's merge is the owner's verdict. So
-only the owner merges that card, and its maker never does. `D21` records it.
+Until M5, where a card's kind names `owner` among its judges, the owner's merge is the owner's
+verdict. So until M5 only the owner merges that card, and its maker never does. `D21` records
+both, and what M5 must settle in their place.
 
 ## Self-hosting
 
