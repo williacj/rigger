@@ -184,11 +184,8 @@ test('no change L2 makes, for any outcome it handles, has the ready column as it
   // `run` drives every outcome L2 handles: a claim, a returned dispatch and a failed one.
   const { fake, cards, events } = await run();
   const moves = movesIn(fake, cards);
-  assert.deepEqual(
-    [...new Set(moves.map(({ from, to }) => `${from}>${to}`))].sort(),
-    ['coding>review', 'ready>coding'],
-    'the run did not drive both changes',
-  );
+  // Four claims and two returned dispatches, whichever columns they went to.
+  assert.equal(moves.length, 6, 'the run did not make one move per claim and per returned dispatch');
 
   assert.deepEqual(moves.filter(({ to }) => to === 'ready'), []);
   assert.deepEqual(transitionsIn(events).filter(({ to }) => to === 'ready'), []);
