@@ -160,6 +160,12 @@ test('a bullet holding only HTML comments beside a qualifying bullet leaves the 
   admitted(card(36, '## Acceptance', '', `- ${ITEM}`, '- <!-- note --> <!-- another -->'));
 });
 
+test('a section whose only bullet-like line is a thematic break is missing acceptance', () => {
+  const lines = ['- - -', '* * *', '+ + +', '-  -  -'];
+  const verdicts = Object.fromEntries(lines.map((line) => [line, check(card(37, '## Acceptance', '', line)).reason]));
+  assert.deepEqual(verdicts, Object.fromEntries(lines.map((line) => [line, MISSING])));
+});
+
 test('an item linking the title is compared on its source text, URL included', () => {
   admitted(card(27, '## Acceptance', '', `- [${TITLE}](https://example.com)`));
 });
