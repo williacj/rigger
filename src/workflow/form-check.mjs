@@ -7,8 +7,9 @@
  * lines below a bullet are not modelled.
  */
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const HEADING = /^ {0,3}(#{1,6})(?: (.*))?$/;
-const BULLET = /^ {0,3}[-*+] (.*)$/;
+// The `s` flag lets `.` take a stray CR, U+2028 or U+2029, which the rule leaves inside a line.
+const HEADING = /^ {0,3}(#{1,6})(?: (.*))?$/s;
+const BULLET = /^ {0,3}[-*+] (.*)$/s;
 const TASK = /^\[[ xX]\]/;
 
 /** The two reasons a card is refused, which `R-CARD-8` makes the whole of the check. */

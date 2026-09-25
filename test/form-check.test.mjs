@@ -221,6 +221,20 @@ test('any card whose section holds a plain bullet that does not restate its titl
   assert.equal(count, 2 * 3 * 4 * 5 * 2 * 5);
 });
 
+// proves R-CARD-8
+test('a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet', () => {
+  const bodies = {
+    'a stray CR after the heading': `## Acceptance\r\r\n\r\n- ${ITEM}\r\n`,
+    'a stray CR after the bullet': `## Acceptance\r\n\r\n- ${ITEM}\r\r\n`,
+    'U+2028 after the heading': `## Acceptance \n\n- ${ITEM}`,
+    'U+2028 inside the bullet': `## Acceptance\n\n- The verb prints its help.`,
+  };
+  const verdicts = Object.fromEntries(
+    Object.entries(bodies).map(([name, text]) => [name, check({ number: 35, title: TITLE, body: text }).admitted]),
+  );
+  assert.deepEqual(verdicts, Object.fromEntries(Object.keys(bodies).map((name) => [name, true])));
+});
+
 test('the body of issue #182, as gh issue view 182 --json number,title,body returned it on 2026-09-24, passes', () => {
   const given = JSON.parse(readFileSync(new URL('./fixtures/issue-182.json', import.meta.url), 'utf8'));
   assert.equal(given.number, 182);
