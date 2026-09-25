@@ -46,24 +46,12 @@ const boardOf = (items) => createFakeBoard({
 });
 
 /**
- * Stands in for #224's hand-off from L0: each item with its priority value and whether the
- * declaration names that value, and the declared order. With no declaration there is no order and
- * no value.
- */
-const handOff = (items, priority) => ({
-  items: items.map((held) => {
-    const value = priority ? (held.fieldValues[priority.field] ?? null) : null;
-    return { ...held, priority: { value, declared: value !== null && priority.options.includes(value) } };
-  }),
-  declared: priority ? [...priority.options] : null,
-});
-
-/**
- * L3's pull order over `fake`'s board as it reads now. L2's next action is the real one, with
- * freshness injected: a card `fresh` answers true for is one L2 has nothing to do for.
+ * L3's pull order over `fake`'s board as it reads now, handed on as L0's priority read hands it
+ * for the declaration `priority`. L2's next action is the real one, with freshness injected: a
+ * card `fresh` answers true for is one L2 has nothing to do for.
  */
 async function planOf(fake, { priority = PRIORITY, fresh = () => false } = {}) {
-  const { items, declared } = handOff(await fake.operations.readItems(), priority);
+  const { items, declared } = await fake.operations.readPriority(priority);
   const l2 = (card) => (fresh(card) ? { action: 'ignore' } : nextAction(card, KINDS));
   return pullOrder({ items, columns: COLUMNS, declared }, l2);
 }

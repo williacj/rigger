@@ -77,6 +77,16 @@ function fieldPage(fields, others = 2) {
   return { repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MTA' }, nodes } } } };
 }
 
+/**
+ * The priority read's field answer: every field of the board with its name and type, and a
+ * single-select field with its options too. `fields` are `{ name, dataType, options }`, and a
+ * field given no `dataType` is a single-select one.
+ */
+function typedFieldPage(fields) {
+  const nodes = fields.map(({ name, dataType = 'SINGLE_SELECT', options }) => ({ name, dataType, ...(options ? { options: options.map((option) => ({ name: option })) } : {}) }));
+  return { repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MTc' }, nodes } } } };
+}
+
 /** A page of the label read, holding `names`, pointing on to the page `next` when there is one. */
 function labelPage(names, next = null) {
   const nodes = names.map((name) => ({ name }));
@@ -98,12 +108,17 @@ function pathsOf(value, at = '', into = new Set()) {
 
 /**
  * The key paths gh printed on 2026-09-25, with gh 2.99.0, for each of the read side's queries: its
- * item page and its field query on board 6, and its label page on this repository. A constructed
- * answer holding any other path carries a field the query does not select, or nests one where gh
- * does not.
+ * item page, its field query and the priority read's typed field query on board 6, and its label
+ * page on this repository. A constructed answer holding any other path carries a field the query
+ * does not select, or nests one where gh does not.
  */
 const PRINTED = Object.fromEntries(
-  [['item', 'board-6-items-2026-09-25.json'], ['field', 'board-6-fields-2026-09-25.json'], ['label', 'rigger-labels-2026-09-25.json']]
+  [
+    ['item', 'board-6-items-2026-09-25.json'],
+    ['field', 'board-6-fields-2026-09-25.json'],
+    ['typed field', 'board-6-field-types-2026-09-25.json'],
+    ['label', 'rigger-labels-2026-09-25.json'],
+  ]
     .map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
 
@@ -122,6 +137,7 @@ function forge({
   pages = { null: itemPage([]) },
   fields = fieldPage([{ name: 'Status', options: Object.values(COLUMNS) }]),
   labels = { null: labelPage([]) },
+  typedFields = typedFieldPage([{ name: 'Status', options: Object.values(COLUMNS) }]),
 } = {}) {
   const sent = [];
   const callers = [];
@@ -147,6 +163,7 @@ function forge({
     callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
     const document = documentOf(args);
     if (document.includes('items(')) return answer('item', pages, document);
+    if (document.includes('dataType')) return printed('typed field', typedFields);
     if (document.includes('fields(')) return printed('field', fields);
     if (document.includes('repository(')) return answer('label', labels, document);
     throw new Error(`the test forge does not answer ${document}`);
@@ -417,6 +434,142 @@ test('the single-select fields but Status read back with their options in board 
   ]);
 });
 
+/** The board the priority read is tested on: `BOARD`, declaring its priority as this repository's config does. */
+const RANKED = { ...BOARD, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } };
+
+test("the priority read returns each card's value in the declared field, and that field's options in the board's order", async () => {
+  // The board lists Priority's options in an order unlike the declared one, and a second field
+  // holds options of the same names, so a value read from the wrong field shows.
+  const send = forge({
+    typedFields: typedFieldPage([
+      { name: 'Title', dataType: 'TITLE' },
+      { name: 'Status', options: Object.values(COLUMNS) },
+      { name: 'Priority', options: ['Low', 'High', 'Normal'] },
+      { name: 'Model Tier', options: ['High', 'Low'] },
+    ]),
+    pages: {
+      null: itemPage([
+        itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Status: 'Ready', Priority: 'High' } }),
+        itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Status: 'Coding', 'Model Tier': 'High' } }),
+        itemNode({ id: 'PVTI_three', content: issue({ number: 216 }), values: { Priority: 'Low', 'Model Tier': 'High' } }),
+      ]),
+    },
+  });
+
+  const read = await readSide(RANKED, { send }).readPriority();
+
+  assert.deepEqual(read.options, ['Low', 'High', 'Normal']);
+  assert.deepEqual(read.items.map((card) => [card.number, card.priority.value]), [[214, 'High'], [215, null], [216, 'Low']]);
+});
+
+test("on a board whose options are ordered Low, High, Normal, the order the priority read hands on is the config's declared order", async () => {
+  const send = forge({ typedFields: typedFieldPage([{ name: 'Status', options: Object.values(COLUMNS) }, { name: 'Priority', options: ['Low', 'High', 'Normal'] }]) });
+
+  const read = await readSide(RANKED, { send }).readPriority();
+
+  assert.deepEqual(read.declared, ['High', 'Normal', 'Low']);
+  assert.deepEqual(read.options, ['Low', 'High', 'Normal']);
+});
+
+test("the priority read hands on, with each card, whether the declaration names the card's value", async () => {
+  // `Urgent` is an option of the board's field that the config does not declare.
+  const send = forge({
+    typedFields: typedFieldPage([{ name: 'Priority', options: ['Urgent', 'High', 'Normal', 'Low'] }]),
+    pages: {
+      null: itemPage([
+        itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Priority: 'Normal' } }),
+        itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Priority: 'Urgent' } }),
+        itemNode({ id: 'PVTI_three', content: issue({ number: 216 }), values: { Status: 'Ready' } }),
+      ]),
+    },
+  });
+
+  const read = await readSide(RANKED, { send }).readPriority();
+
+  assert.deepEqual(read.items.map((card) => [card.number, card.priority]), [
+    [214, { value: 'Normal', declared: true }],
+    [215, { value: 'Urgent', declared: false }],
+    [216, { value: null, declared: false }],
+  ]);
+});
+
+/** The query gh was sent when board 6's fields were captured with their types, on 2026-09-25. */
+const BOARD_6_FIELD_TYPES_QUERY = 'query { repositoryOwner(login: "williacj") { ... on ProjectV2Owner { projectV2(number: 6) { fields(first: 100) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } } } } } }';
+
+/**
+ * A forge answering as board 6 did on 2026-09-25: the priority read's field query from the capture
+ * made at 17:27 UTC with gh 2.99.0 by running the read side's own command for this repository's
+ * config (the command #224's maker named on the card before running it), and the item query from
+ * the capture made at 13:35 UTC. Each is answered only to the query it answered then.
+ */
+function board6() {
+  const sent = [];
+  const send = (command, args) => {
+    const document = documentOf(args);
+    sent.push(document);
+    const [query, file] = document.includes('items(')
+      ? [BOARD_6_ITEM_QUERY, 'board-6-items-2026-09-25.json']
+      : [BOARD_6_FIELD_TYPES_QUERY, 'board-6-field-types-2026-09-25.json'];
+    assert.equal(document, query, 'the read asked board 6 something its capture did not answer');
+    return { status: 0, stdout: readFileSync(join(FIXTURES, file), 'utf8'), stderr: '' };
+  };
+  send.sent = sent;
+  return send;
+}
+
+test("board 6's priority read from its captures gives issue #20 the value Normal, which the declaration names", async () => {
+  const send = board6();
+
+  const read = await readSide(boardFor(rigger), { send }).readPriority();
+
+  assert.deepEqual(send.sent, [BOARD_6_FIELD_TYPES_QUERY, BOARD_6_ITEM_QUERY]);
+  assert.deepEqual(read.items.find((card) => card.number === 20).priority, { value: 'Normal', declared: true });
+  // Read off the captures by hand: board 6's Priority options, and #20 the one card holding a value.
+  assert.deepEqual(read.options, ['High', 'Normal', 'Low']);
+  assert.deepEqual(read.items.filter((card) => card.priority.value !== null).map((card) => card.number), [20]);
+});
+
+test('a declared priority field the board does not hold fails the priority read, naming the field', async () => {
+  // Board 6 holds no field named Urgency.
+  const config = { ...rigger, board: { ...rigger.board, priority: { field: 'Urgency', options: ['High', 'Low'] } } };
+
+  await assert.rejects(readSide(boardFor(config), { send: board6() }).readPriority(), (error) => {
+    assert.equal(error.message, 'readPriority on board 6 failed: the board has no field named Urgency');
+    return true;
+  });
+});
+
+test('a declared priority field that is not a single-select field fails the priority read, naming the field and its type', async () => {
+  // Board 6's Milestone field is of the type gh answered as MILESTONE.
+  const config = { ...rigger, board: { ...rigger.board, priority: { field: 'Milestone', options: ['High', 'Low'] } } };
+
+  await assert.rejects(readSide(boardFor(config), { send: board6() }).readPriority(), (error) => {
+    assert.equal(error.message, "readPriority on board 6 failed: the board's field Milestone is a MILESTONE field, not a single-select field");
+    return true;
+  });
+});
+
+test('with no priority declared, the priority read hands no declared order and no value, and queries no field', async () => {
+  // The cards hold Priority values on the board, so a read that took them anyway shows.
+  const send = forge({
+    typedFields: typedFieldPage([{ name: 'Status', options: Object.values(COLUMNS) }, { name: 'Priority', options: ['High', 'Low'] }]),
+    pages: {
+      null: itemPage([
+        itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Status: 'Ready', Priority: 'High' } }),
+        itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Status: 'Ready', Priority: 'Low' } }),
+      ]),
+    },
+  });
+
+  const read = await readSide(BOARD, { send }).readPriority();
+
+  assert.equal(read.declared, null);
+  assert.equal(read.options, null);
+  assert.deepEqual(read.items.map((card) => [card.number, card.priority]), [[214, null], [215, null]]);
+  // One request, and it is the item read: no field of the board was asked for.
+  assert.deepEqual(send.sent.map(([, ...args]) => documentOf(args).includes('items(')), [true]);
+});
+
 test("the repository's labels read back by name, across every page gh answers", async () => {
   const send = forge({
     labels: {
@@ -428,17 +581,27 @@ test("the repository's labels read back by name, across every page gh answers", 
   assert.deepEqual(await readSide(BOARD, { send }).readLabels(), ['type:change', 'type:spec', 'area:demo']);
 });
 
-/** A full read: every read the read side offers, in turn, on a board whose items span two pages. */
+/**
+ * A full read: every read the read side offers, in turn, on a board declaring its priority whose
+ * items span two pages. Each read is answered by a forge of its own, since two of them read the
+ * items, and the requests all of them sent are returned together.
+ */
 async function fullRead() {
-  const send = forge({
-    pages: {
-      null: itemPage([itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Status: 'Ready' } })], 'Y3Vyc29yOnYyOpMA'),
-      Y3Vyc29yOnYyOpMA: itemPage([itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Status: 'Coding' } })]),
-    },
-  });
-  const side = readSide(BOARD, { send });
-  for (const read of Object.values(side)) await read();
-  return send;
+  const sent = [];
+  const callers = [];
+  for (const name of Object.keys(readSide(RANKED))) {
+    const send = forge({
+      pages: {
+        null: itemPage([itemNode({ id: 'PVTI_one', content: issue({ number: 214 }), values: { Status: 'Ready' } })], 'Y3Vyc29yOnYyOpMA'),
+        Y3Vyc29yOnYyOpMA: itemPage([itemNode({ id: 'PVTI_two', content: issue({ number: 215 }), values: { Status: 'Coding' } })]),
+      },
+      typedFields: typedFieldPage([{ name: 'Status', options: Object.values(COLUMNS) }, { name: 'Priority', options: ['High', 'Normal', 'Low'] }]),
+    });
+    await readSide(RANKED, { send })[name]();
+    sent.push(...send.sent);
+    callers.push(...send.callers);
+  }
+  return { sent, callers };
 }
 
 test('every command a full read runs is gh', async () => {

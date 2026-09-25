@@ -65,6 +65,11 @@ function forge() {
     if (document.includes('items(')) {
       return ok({ repositoryOwner: { projectV2: { items: { pageInfo: { hasNextPage: false, endCursor: 'MA' }, nodes: [] } } } });
     }
+    if (document.includes('dataType')) {
+      const typed = (name, options) => ({ name, dataType: 'SINGLE_SELECT', options: options.map((option) => ({ name: option })) });
+      const nodes = [typed('Status', Object.values(rigger.board.columns)), typed(rigger.board.priority.field, rigger.board.priority.options)];
+      return ok({ repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes } } } });
+    }
     if (document.includes('fields(')) {
       const options = Object.values(rigger.board.columns).map((name) => ({ name }));
       return ok({ repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [{}, { name: 'Status', options }] } } } });
@@ -93,6 +98,7 @@ const OPERATIONS = {
   readColumns: (board, send) => readSide(board, { send }).readColumns(),
   readFields: (board, send) => readSide(board, { send }).readFields(),
   readLabels: (board, send) => readSide(board, { send }).readLabels(),
+  readPriority: (board, send) => readSide(board, { send }).readPriority(),
   moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
   createField: (board, send) => schemaWriteSide(board, { send }).createField('Priority', ['High']),
   createColumn: (board, send) => schemaWriteSide(board, { send }).createColumn('Owner'),
@@ -123,7 +129,7 @@ function addressesOnly(owner, other, documents, operation) {
 
 // proves R-WORK-7
 test("every request a full read sends that addresses the board names the declared board owner, and never the repository's owner", async () => {
-  for (const operation of ['readItems', 'readColumns', 'readFields']) {
+  for (const operation of ['readItems', 'readColumns', 'readFields', 'readPriority']) {
     addressesOnly(DECLARED, REPOSITORY_OWNER, await sentBy(operation, ownedBy(DECLARED)), operation);
   }
 });
@@ -157,7 +163,7 @@ test("the request createColumn sends to find the board names the declared board 
 // proves R-WORK-7
 test("with no board owner declared, every request that addresses the board names the owner of the repository repo names", async () => {
   assert.ok(!Object.hasOwn(rigger.board, 'owner'), 'this repository declares a board owner, so its absence went untested');
-  for (const operation of ['readItems', 'readColumns', 'readFields', 'moveItem', 'createField', 'createColumn']) {
+  for (const operation of ['readItems', 'readColumns', 'readFields', 'readPriority', 'moveItem', 'createField', 'createColumn']) {
     addressesOnly(REPOSITORY_OWNER, DECLARED, await sentBy(operation, rigger), operation);
   }
 });
@@ -175,7 +181,7 @@ test('the operations the tests above record are every forge adapter operation th
       if ((await sentBy(operation, config)).some(findsBoard) && !addressing.includes(operation)) addressing.push(operation);
     }
   }
-  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFields', 'readItems']);
+  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFields', 'readItems', 'readPriority']);
 });
 
 test("with a board owner declared, readLabels and createLabel address the repository repo names, and no board", async () => {
