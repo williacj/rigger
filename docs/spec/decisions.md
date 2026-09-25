@@ -56,6 +56,7 @@ its row stays in the table below so its id is never reused.
 | D17 | A requirement older than this decision is a counted gap | Ratified |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Ratified |
+| D20 | A card's author survives its writing session | Ratified |
 
 ## D1 — Redo over resume
 
@@ -666,3 +667,37 @@ Rigger's behaviour, and `docs/spec/requirements.md` holds only the second.
 
 One signal ends the permission before M5. Where a maker merges on evidence a judge later rules
 incomplete, the permission is costing more than the round it saves, and the owner withdraws it.
+
+## D20 — A card's author survives its writing session
+
+**Status:** Ratified.
+
+### Rule
+
+1. Authorship belongs to the owner or role that wrote a card's initial acceptance, not to one
+   dispatch or session. For a decomposed card, the decomposing role is the author.
+2. Filing a card written by another role does not transfer authorship to the filer. A later
+   session acting as the author may revise the acceptance, subject to `R-CARD-5`.
+3. The identity recorded for each acceptance change distinguishes the authoring owner or role
+   from the session that made the change. `R-CARD-6` holds the record obligation.
+
+### Notes
+
+`R-CARD-3` names the decomposing role, and `R-CARD-5` reserves revisions to the card's author.
+A session ends, but the role can be dispatched again. Keeping authorship with that role lets
+`R-LOOP-6` return an insufficient acceptance to someone who can revise it. It also means a
+different session can file the card without taking over its acceptance.
+
+The event record must let a reader distinguish a role's continuing authority from the particular
+session that acted. The actor on an acceptance change still matters: two sessions of one role
+must not become one indistinguishable writer. This choice uses the identities `R-CARD-3` and
+`R-CARD-6` already require; it adds no requirement.
+
+The cost is that a filer cannot fix an acceptance merely because it filed the card. It must
+return the card to the authoring role, even when that means another dispatch.
+
+Two observations would reverse this choice. First, `report` shows cards repeatedly waiting for
+an authoring role that can no longer be dispatched. Second, the event record cannot identify
+the authoring role independently of the filing session without adding state beyond the card and
+its history. Either would require a later decision on reassignment or a different authorship
+rule.
