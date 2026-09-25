@@ -81,22 +81,40 @@ const FLAG_IN_PATH_SLOT = [
  * probe is the suite's one sanctioned exception, because its request goes only to its own local
  * proxy (the architect's ruling on #276, section 4). No other test reads the variable.
  *
- * An empty entry is the working directory to a spawn, so it is searched as that.
+ * It is found as `ghOn` finds any `gh`.
  */
 function installedGh() {
   const refusing = process.env.RIGGER_REFUSING_GH_DIR;
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    const gh = resolve(dir || '.', 'gh');
-    if (refusing !== undefined && resolve(dir || '.') === resolve(refusing)) continue;
+  const gh = ghOn(process.env.PATH, refusing === undefined ? null : resolve(refusing));
+  return gh ?? assert.fail('no gh is installed on this PATH, so gh cannot be asked which method it sends');
+}
+
+/**
+ * The `gh` a spawn finds on `path`, by its absolute path, passing over the directory `skipping`,
+ * or null where there is none. An empty entry is the working directory to a spawn.
+ */
+function ghOn(path = '', skipping = null) {
+  for (const dir of path.split(delimiter).map((entry) => resolve(entry || '.'))) {
+    if (dir === skipping) continue;
     try {
-      accessSync(gh, constants.X_OK);
-      return gh;
+      accessSync(join(dir, 'gh'), constants.X_OK);
+      return join(dir, 'gh');
     } catch {
       // Not here, so the next directory is where a spawn would look.
     }
   }
-  assert.fail('no gh is installed on this PATH, so gh cannot be asked which method it sends');
+  return null;
 }
+
+test('npm test puts its refusing gh first on the path every test inherits', () => {
+  // #276: a test that fails to pass its stand-in through, in its own process or in a child that
+  // inherits its path, reaches the `gh` this path resolves. `npm test` puts one there that refuses
+  // and records, and fails the run when it was called. The defect this catches is a suite run
+  // with that `gh` gone or behind another one, where such a test reaches the installed `gh`.
+  const refusing = process.env.RIGGER_REFUSING_GH_DIR;
+  assert.ok(refusing, 'this run put no refusing gh on the path: run the suite with `npm test`, which runs test/suite.sh');
+  assert.equal(ghOn(process.env.PATH), resolve(refusing, 'gh'));
+});
 
 /**
  * The method and body `gh` really sends for `gh api` given `args`, caught by a proxy on this
