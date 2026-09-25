@@ -180,6 +180,33 @@ function readShape(value, shape, path, refusals) {
 }
 
 /**
+ * What a kind's `select.labels` may be: the labels a card carries to be selected by it, as a list
+ * the engine reads when it selects cards.
+ *
+ * A select that is no set of declarations, or that does not name `labels`, earned its refusal
+ * where the shape was read.
+ */
+function readLabels(select, where, name, refusals) {
+  if (!declares(select) || !Object.hasOwn(select, 'labels')) return;
+  const { labels } = select;
+  // The engine reads the value as a list, so anything else reaches it as a throw.
+  if (!Array.isArray(labels)) {
+    refusals.push(`\`${where}\` must be a list of label names`);
+    return;
+  }
+  // A kind selects a card carrying any one of its labels, so a kind naming none selects nothing
+  // and its work would never run.
+  if (labels.length === 0) {
+    refusals.push(`\`${where}\` names no label, so the kind \`${name}\` selects no card`);
+  }
+  // A card carries labels by name, so an entry that is no name selects nothing. Read through
+  // `Array.from`, which visits every index, because `some` skips an empty slot.
+  if (Array.from(labels).some((label) => typeof label !== 'string' || label === '')) {
+    refusals.push(`\`${where}\` must list label names, and holds something else`);
+  }
+}
+
+/**
  * What each kind of work may name: one maker role, and the judges that review it.
  *
  * The names a kind uses are the ones the config declares under `roles`, so a kind naming anything
@@ -199,11 +226,7 @@ function readKinds(config, refusals) {
     if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
       refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
     }
-    // A kind selects a card carrying any one of its labels, so a kind naming none selects nothing
-    // and its work would never run.
-    if (Array.isArray(kind?.select?.labels) && kind.select.labels.length === 0) {
-      refusals.push(`\`${where}.select.labels\` names no label, so the kind \`${name}\` selects no card`);
-    }
+    readLabels(kind?.select, `${where}.select.labels`, name, refusals);
     if (kind?.judges === undefined) continue;
     if (!Array.isArray(kind.judges) || kind.judges.length === 0) {
       // One maker and at least one judge, in the order they judge in (`README.md`, "The
