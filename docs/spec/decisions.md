@@ -55,6 +55,7 @@ its row stays in the table below so its id is never reused.
 | D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified |
 | D17 | A requirement older than this decision is a counted gap | Ratified |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
+| D19 | Until M5, a maker merges its own card | Ratified |
 
 ## D1 — Redo over resume
 
@@ -623,3 +624,45 @@ Rules 2 and 3 are written as what the architect decides and never decides, so th
 against `ARCHITECTURE.md`'s layer table rather than beside it. Rule 3 is the load-bearing half: L4
 is the owner's, so what good means for a kind of work stays the owner's however much structure the
 architect holds.
+
+## D19 — Until M5, a maker merges its own card
+
+**Status:** Ratified.
+
+### Rule
+
+1. Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and never
+   otherwise. `AGENTS.md`, under "Review and merge", holds it.
+2. The permission reaches the merge alone. This decision leaves self-ratifying and judging one's
+   own work exactly where it found them, so every verdict the merge rests on is another role's.
+3. M5 reverses this decision. `docs/v0-build-plan.md` installs the git gate hook there, and the
+   permission ends with it.
+
+### Notes
+
+`AGENTS.md` forbade a maker merging its own work in words carrying no exception, and rule #1 of
+that file forbids a session granting itself one. So a dispatched maker read the prohibition and
+stopped, which is the behaviour the file exists to produce.
+
+That behaviour is why the permission could not live in a dispatch brief. M0 watched the gate
+refuse `--no-verify` to four sessions, and refuse `-c core.hooksPath=` even at its correct value,
+and every one of those sessions surfaced the refusal rather than routing around it. A brief
+telling a maker it may merge, against a binding document saying it may not, asks the session to
+take the brief over the document.
+
+The end was settled before this entry was written. `AGENTS.md`'s "Version control" gives the gate
+rule to the owner to waive until M5, and `docs/v0-build-plan.md`'s M5 is where the hook arrives.
+So rule 3 reads a reversal the binding documents already carried, rather than inventing one.
+
+A forge ruleset sits under the permission, and it is a backstop rather than a substitute for a
+verdict. Measured with `gh api repos/williacj/rigger/rulesets/23968611` on 2026-09-24, `main`
+carried an active ruleset. It required a pull request and the `check (20)` and `check (24)`
+status checks, blocked non-fast-forward and deletion, and held `bypass_actors` empty. So a maker
+merging through the forge could not merge a red branch or rewrite history. What no ruleset reads
+is a verdict, which is what rule 1 asks for.
+
+This decision adds no requirement. It binds the sessions working in this repository rather than
+Rigger's behaviour, and `docs/spec/requirements.md` holds only the second.
+
+One signal ends the permission before M5. Where a maker merges on evidence a judge later rules
+incomplete, the permission is costing more than the round it saves, and the owner withdraws it.
