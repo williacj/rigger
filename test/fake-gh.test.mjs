@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
 import { installFakeGh } from './fake-gh.mjs';
+import { readSide } from '../src/substrate/forge/read.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 /** Where the fake `gh` says its board lives: this repository's board, as its config names it. */
@@ -16,6 +17,76 @@ const WHERE = { repo: 'williacj/rigger', project: 6 };
 
 /** A fake `gh` holding `board`, installed in a directory of its own. */
 const installed = (board = {}) => installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, board });
+
+/**
+ * Runs `use` with the fake `gh`'s directory first on `PATH`, as ruling 1 (U9) places it, so the
+ * forge runners' own spawn of `gh` reaches it, and puts `PATH` back after.
+ */
+async function onPath(fake, use) {
+  const held = process.env.PATH;
+  process.env.PATH = `${dirname(fake.gh)}${delimiter}${held}`;
+  try {
+    return await use();
+  } finally {
+    process.env.PATH = held;
+  }
+}
+
+/** The columns this repository's config declares, by key. */
+const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
+
+/** The board the real adapter is pointed at, named as a config names it. */
+const BOARD = { ...WHERE, columns: COLUMNS };
+
+test('the real adapter reads cards, columns, fields and labels through the fake gh', async () => {
+  const fake = installed({
+    columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'],
+    fields: [{ name: 'Priority', options: ['P1', 'P0', 'P2'] }],
+    labels: ['type:change', 'type:spec'],
+    items: [
+      { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'A fake board', body: 'Why.', labels: ['type:change'], column: 'Ready', fieldValues: { Priority: 'P1' } },
+      { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Reads', body: '', labels: [], column: 'Coding' },
+    ],
+  });
+
+  const read = await onPath(fake, async () => {
+    const side = readSide(BOARD);
+    return { items: await side.readItems(), columns: await side.readColumns(), fields: await side.readFields(), labels: await side.readLabels() };
+  });
+
+  assert.deepEqual(read, {
+    items: [
+      { id: 'item-1', number: 214, title: 'A fake board', body: 'Why.', labels: ['type:change'], column: 'Ready' },
+      { id: 'item-2', number: 215, title: 'Reads', body: '', labels: [], column: 'Coding' },
+    ],
+    columns: COLUMNS,
+    fields: [{ name: 'Priority', options: ['P1', 'P0', 'P2'] }],
+    labels: ['type:change', 'type:spec'],
+  });
+});
+
+test('the fake gh answers a board past one page, and its drafts, pull requests and other repositories\' issues, as GitHub does', async () => {
+  // A hundred and one issues span two of the pages the adapter asks for, and the three items that
+  // are not cards reach the adapter as GitHub answers them, which is what it leaves out.
+  const issues = Array.from({ length: 101 }, (_, i) => ({ type: 'issue', repository: 'williacj/rigger', number: i + 1, title: `Card ${i + 1}`, column: 'Ready' }));
+  const fake = installed({
+    columns: ['Ready'],
+    labels: Array.from({ length: 101 }, (_, i) => `label-${i + 1}`),
+    items: [
+      { type: 'draftIssue', title: 'A thought', column: 'Ready' },
+      { type: 'pullRequest', repository: 'williacj/rigger', number: 900, title: 'A PR', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/elsewhere', number: 7, title: 'Theirs', column: 'Ready' },
+      ...issues,
+    ],
+  });
+
+  const { cards, labels } = await onPath(fake, async () => ({ cards: await readSide(BOARD).readItems(), labels: await readSide(BOARD).readLabels() }));
+
+  assert.deepEqual(cards.map((card) => card.number), issues.map((issue) => issue.number));
+  assert.equal(cards[0].id, 'item-4');
+  assert.equal(labels.length, 101);
+  assert.equal(labels.at(-1), 'label-101');
+});
 
 test('given a gh command it does not model, the fake gh exits non-zero and prints the command', () => {
   const fake = installed({ columns: ['Ready'] });
