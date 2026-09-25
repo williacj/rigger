@@ -13,8 +13,10 @@ const BULLET = /^ {0,3}[-*+] (.*)$/s;
 const TASK = /^\[[ xX]\]/;
 // A thematic break: three or more of one marker, with spaces between them allowed.
 const BREAK = /^ {0,3}([-*+])(?: *\1){2,} *$/;
-// Text holding nothing but HTML comments and whitespace, such as `<!-- fill in -->`.
-const COMMENTS = /^(?:\s*<!--.*?-->)+\s*$/s;
+// Text holding nothing but HTML comments and whitespace, such as `<!-- fill in -->`. Each comment
+// ends at its first `-->`, so text between two comments, as in `<!-- a --> real <!-- b -->`, is
+// never swallowed into one (the owner's (c) ruling of 2026-09-25).
+const COMMENTS = /^(?:\s*<!--(?:(?!-->).)*-->)+\s*$/s;
 
 /** The two reasons a card is refused, which `R-CARD-8` makes the whole of the check. */
 const MISSING = 'missing acceptance';
