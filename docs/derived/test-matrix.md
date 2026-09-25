@@ -20,8 +20,8 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-4 | nothing yet |
 | R-CARD-5 | **gap** |
 | R-CARD-6 | **gap** |
-| R-CARD-7 | **gap** |
-| R-CARD-8 | **gap** |
+| R-CARD-7 | `test/form-check.test.mjs` a card with no heading named exactly Acceptance is refused<br>`test/form-check.test.mjs` the refusal of a card with no acceptance names the card and missing acceptance |
+| R-CARD-8 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused |
 | R-CARD-9 | **gap** |
 | R-CARD-10 | **gap** |
 | R-CARD-11 | **gap** |
