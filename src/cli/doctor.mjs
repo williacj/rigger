@@ -323,16 +323,8 @@ export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
  */
 export async function configValidity({ target = process.cwd() } = {}) {
   const name = 'config validity';
-  const path = join(target, CONFIG);
-  if (!existsSync(path)) {
-    return { name, ok: false, detail: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
-  }
-  let config;
-  try {
-    config = (await import(pathToFileURL(path))).default;
-  } catch (threw) {
-    return { name, ok: false, detail: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
-  }
+  const { config, problem } = await consumerConfig(target);
+  if (problem) return { name, ok: false, detail: problem };
   const refusals = validate(config);
   return {
     name,
@@ -341,6 +333,21 @@ export async function configValidity({ target = process.cwd() } = {}) {
       ? `\`${CONFIG}\` earns no refusals`
       : `\`${CONFIG}\`: ${refusals.map(oneLine).join('; ')}`,
   };
+}
+
+/**
+ * The config the consumer holds in `target`, as `{ config }`, or `{ problem }` saying in one line
+ * why there is none to read: the file is not there, or importing it threw. Every verb that reads
+ * the config reads it here, so the one dynamic import of the consumer's code is this one.
+ */
+export async function consumerConfig(target) {
+  const path = join(target, CONFIG);
+  if (!existsSync(path)) return { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
+  try {
+    return { config: (await import(pathToFileURL(path))).default };
+  } catch (threw) {
+    return { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+  }
 }
 
 /**
@@ -380,20 +387,24 @@ export function report(where, results) {
  */
 export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
 
-/** What the command prints for a `doctor` run, and the status it exits with. */
-export async function doctor({
-  target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
-} = {}) {
+/**
+ * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
+ * verb prints and exits with where that is the source tree this Rigger is running from, or a tree
+ * git cannot name (`R-SAFE-5`). Nothing but git is asked before this answers.
+ */
+export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PACKAGE, ask } = {}) {
   const named = repoRoot(target, ask);
   // The paths are compared whatever git said, so a tree the comparison can name is named
   // precisely even where git declines — a run from inside the installed package is the case.
   const here = named ?? real(target);
   if (sameTree(here, packageRoot)) {
     return {
-      text: `rigger doctor: ${here} is the source tree this Rigger is running from, and Rigger `
-        + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
-        + 'from there.',
-      code: 1,
+      refusal: {
+        text: `rigger ${verb}: ${here} is the source tree this Rigger is running from, and Rigger `
+          + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
+          + 'from there.',
+        code: 1,
+      },
     };
   }
   // A tree git cannot name is refused rather than checked, because the comparison above is only
@@ -403,12 +414,23 @@ export async function doctor({
   // refusing one too few costs the runtime mid-run, which is what `R-SAFE-5` is for.
   if (named === null) {
     return {
-      text: `rigger doctor: git names no repository at ${here}, so Rigger cannot tell it from the `
-        + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
-        + 'Run it in a git repository, with git on the path.',
-      code: 1,
+      refusal: {
+        text: `rigger ${verb}: git names no repository at ${here}, so Rigger cannot tell it from the `
+          + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
+          + 'Run it in a git repository, with git on the path.',
+        code: 1,
+      },
     };
   }
+  return { named };
+}
+
+/** What the command prints for a `doctor` run, and the status it exits with. */
+export async function doctor({
+  target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
+} = {}) {
+  const { named, refusal } = sourceTreeGuard('doctor', { target, packageRoot, ask });
+  if (refusal) return refusal;
   const results = [];
   for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
   return report(named, results);
