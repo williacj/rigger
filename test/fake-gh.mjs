@@ -164,6 +164,56 @@ const COMMANDS = {
   },
   [graphql(repositoryShape('labels(first: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
   [graphql(repositoryShape('labels(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { name } }'))]: labels,
+  [graphql(repositoryShape('id'))]: async (board, state, operation) => {
+    inTheRepository(state, operation);
+    return { repository: { id: REPOSITORY_ID } };
+  },
+  [graphql(boardShape('id field(name: _) { ... on ProjectV2SingleSelectField { id options { id name } } }'))]: async (board, state, operation) => {
+    onTheBoard(state, operation);
+    const named = valueOf(fieldIn(operation.selections, 'field'), 'name');
+    const field = (await fieldsOf(board)).find(({ name }) => name === named);
+    const options = field?.options.map((name, index) => ({ id: optionId(index), name }));
+    return { repositoryOwner: { projectV2: { id: PROJECT_ID, field: field ? { id: fieldId(field.name), options } : null } } };
+  },
+  // The item-write runner's own read: which field of the board holds the columns, and what the
+  // field a write names is called. Its two nodes are answered under the aliases it gives them.
+  [graphql('query { project: node(id: _) { ... on ProjectV2 { field(name: _) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: _) { ... on ProjectV2FieldCommon { name } } }')]: async (board, state, operation) => {
+    const [project, target] = operation.selections;
+    const fields = await fieldsOf(board);
+    const field = fields.find(({ name }) => fieldId(name) === valueOf(target, 'id'));
+    const named = valueOf(fieldIn(project.selections, 'field'), 'name');
+    const held = fields.some(({ name }) => name === named);
+    return {
+      project: valueOf(project, 'id') === PROJECT_ID ? { field: held ? { id: fieldId(named) } : null } : null,
+      target: field ? { name: field.name } : null,
+    };
+  },
+  [graphql('mutation { updateProjectV2ItemFieldValue(input: {projectId: _, itemId: _, fieldId: _, value: {singleSelectOptionId: _}}) { projectV2Item { id } } }')]: async (board, state, operation) => {
+    const input = argument(operation.selections[0], 'input');
+    const [projectId, itemId, field] = ['projectId', 'itemId', 'fieldId'].map((name) => valueOf(input, name));
+    const option = valueOf(argument(input, 'value'), 'singleSelectOptionId');
+    const columns = await board.operations.readColumns();
+    const column = columns.find((_, index) => optionId(index) === option);
+    const item = (await board.operations.readItems()).find(({ id }) => id === itemId);
+    for (const [id, found] of [[projectId, projectId === PROJECT_ID], [itemId, item], [field, field === fieldId(COLUMNS)], [option, column]]) {
+      if (!found) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${id}'`);
+    }
+    await board.operations.moveItem(itemId, column);
+    return { updateProjectV2ItemFieldValue: { projectV2Item: { id: itemId } } };
+  },
+  [graphql('mutation { createProjectV2Field(input: {projectId: _, dataType: SINGLE_SELECT, name: _, singleSelectOptions: []}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }')]: async (board, state, operation) => {
+    const input = argument(operation.selections[0], 'input');
+    if (valueOf(input, 'projectId') !== PROJECT_ID) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${valueOf(input, 'projectId')}'`);
+    const name = valueOf(input, 'name');
+    await board.operations.createField(name, argument(input, 'singleSelectOptions').values.map((option) => valueOf(option, 'name')));
+    return { createProjectV2Field: { projectV2Field: { id: fieldId(name) } } };
+  },
+  [graphql('mutation { createLabel(input: {repositoryId: _, name: _, color: _}) { label { id } } }')]: async (board, state, operation) => {
+    const input = argument(operation.selections[0], 'input');
+    if (valueOf(input, 'repositoryId') !== REPOSITORY_ID) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${valueOf(input, 'repositoryId')}'`);
+    await board.operations.createLabel(valueOf(input, 'name'));
+    return { createLabel: { label: { id: `LA_${valueOf(input, 'name')}` } } };
+  },
 };
 
 /** The board a fake `gh` answers from: the model it was given, with every write since replayed. */

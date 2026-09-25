@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
 import { installFakeGh } from './fake-gh.mjs';
+import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
+import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 /** Where the fake `gh` says its board lives: this repository's board, as its config names it. */
@@ -86,6 +88,30 @@ test('the fake gh answers a board past one page, and its drafts, pull requests a
   assert.equal(cards[0].id, 'item-4');
   assert.equal(labels.length, 101);
   assert.equal(labels.at(-1), 'label-101');
+});
+
+test("each write the real adapter issues through the fake gh appears in the fake board's write record, in order", async () => {
+  const fake = installed({
+    columns: ['Ready', 'Coding'],
+    items: [
+      { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'Moved', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Left', column: 'Ready' },
+    ],
+  });
+
+  await onPath(fake, async () => {
+    await itemWriteSide(BOARD).moveItem('item-1', 'Coding');
+    await schemaWriteSide(BOARD).createField('Priority', ['High', 'Low']);
+    await schemaWriteSide(BOARD).createLabel('type:change');
+  });
+
+  const model = await fake.model();
+  assert.deepEqual(model.writes(), [
+    { operation: 'moveItem', args: ['item-1', 'Coding'] },
+    { operation: 'createField', args: ['Priority', ['High', 'Low']] },
+    { operation: 'createLabel', args: ['type:change'] },
+  ]);
+  assert.deepEqual((await model.operations.readItems()).map((item) => item.column), ['Coding', 'Ready']);
 });
 
 test('given a gh command it does not model, the fake gh exits non-zero and prints the command', () => {
