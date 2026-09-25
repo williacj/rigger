@@ -57,7 +57,7 @@ test('an acceptance section holding no plain bullet is missing acceptance', () =
   refusedAsMissing(card(3, '## Acceptance', '', 'Prose that states what done means.', '', '## Notes', '', `- ${ITEM}`));
 });
 
-// proves R-CARD-24, R-CARD-25
+// proves R-CARD-24, R-CARD-37
 test('a section whose only bullets are task-list items is missing acceptance', () => {
   refusedAsMissing(card(4, '## Acceptance', '', `- [ ] ${ITEM}`, `- [x] ${ITEM}`, `- [X] ${ITEM}`));
 });
@@ -115,17 +115,17 @@ test('a nested bullet indented two spaces that does not restate the title admits
   admitted(card(14, '## Acceptance', '', `  - ${ITEM}`));
 });
 
-// proves R-CARD-15
+// proves R-CARD-35
 test('an acceptance heading and bullet inside a backtick fence are missing acceptance', () => {
   refusedAsMissing(card(15, 'Context.', '', '```md', '## Acceptance', '', `- ${ITEM}`, '```'));
 });
 
-// proves R-CARD-15
+// proves R-CARD-35
 test('an acceptance heading and bullet inside a tilde fence are missing acceptance', () => {
   refusedAsMissing(card(16, 'Context.', '', '~~~', '## Acceptance', '', `- ${ITEM}`, '~~~'));
 });
 
-// proves R-CARD-15
+// proves R-CARD-35
 test('a tilde line inside a backtick fence opens no fence, so a section after the backtick closer counts', () => {
   admitted(card(41, '```', '~~~', '```', '## Acceptance', '', `- ${ITEM}`));
 });
@@ -180,17 +180,17 @@ test('a setext Notes heading underlined with === does not end the section', () =
   admitted(card(24, '## Acceptance', '', `- ${TITLE}`, '', 'Notes', '=====', '', `- ${ITEM}`));
 });
 
-// proves R-CARD-25
+// proves R-CARD-38
 test('a section whose only bullet is - followed only by spaces is missing acceptance', () => {
   refusedAsMissing(card(25, '## Acceptance', '', '-   '));
 });
 
-// proves R-CARD-29
+// proves R-CARD-29, R-CARD-39
 test('a section whose only bullet is - <!-- fill in --> is missing acceptance', () => {
   refusedAsMissing(card(26, '## Acceptance', '', '- <!-- fill in -->'));
 });
 
-// proves R-CARD-29
+// proves R-CARD-29, R-CARD-39
 test('a bullet holding only HTML comments beside a qualifying bullet leaves the card admitted', () => {
   admitted(card(36, '## Acceptance', '', '- <!-- note -->', `- ${ITEM}`));
   admitted(card(36, '## Acceptance', '', `- ${ITEM}`, '- <!-- note --> <!-- another -->'));
@@ -201,14 +201,17 @@ test('an item opening a comment that a later line closes is still an item', () =
   admitted(card(42, '## Acceptance', '', '- <!-- start', 'continued -->'));
 });
 
+// proves R-CARD-29, R-CARD-39
 test('a bullet holding text between two comments is an item, so it alone admits the card', () => {
   admitted(card(43, '## Acceptance', '', '- <!-- a --> real <!-- b -->'));
 });
 
+// proves R-CARD-29, R-CARD-39
 test('a section whose only bullet is - <!-- a --> <!-- b --> is missing acceptance', () => {
   refusedAsMissing(card(44, '## Acceptance', '', '- <!-- a --> <!-- b -->'));
 });
 
+// proves R-CARD-29, R-CARD-39
 test('a section whose only bullet is - <!-- a --> followed by spaces is missing acceptance', () => {
   refusedAsMissing(card(45, '## Acceptance', '', '- <!-- a -->   '));
 });
@@ -252,7 +255,13 @@ test('Support C restates the title Support C++, because symbols are deleted', ()
 
 // proves R-CARD-32, R-CARD-33
 test('Add - a verb restates the title Add a verb, because punctuation is deleted before whitespace is collapsed', () => {
-  assert.deepEqual(check(card(44, '## Acceptance', '', '- Add - a verb')), { admitted: false, card: 44, reason: RESTATED });
+  assert.deepEqual(check(card(47, '## Acceptance', '', '- Add - a verb')), { admitted: false, card: 47, reason: RESTATED });
+});
+
+// proves R-CARD-32
+test('ας restates the title ΑΣ, because lower case follows the full mapping, final sigma included', () => {
+  const given = { number: 49, title: 'ΑΣ', body: body('## Acceptance', '', '- ας') };
+  assert.deepEqual(check(given), { admitted: false, card: 49, reason: RESTATED });
 });
 
 test('a card with one item that restates the title and one that does not is admitted', () => {
@@ -283,7 +292,7 @@ function* qualifyingCards() {
             }
 }
 
-// proves R-CARD-8, R-CARD-12, R-CARD-13, R-CARD-19
+// proves R-CARD-8, R-CARD-12, R-CARD-13, R-CARD-19, R-CARD-36, R-CARD-40
 test('any card whose section holds a plain bullet that does not restate its title is not refused', () => {
   let count = 0;
   for (const given of qualifyingCards()) {
@@ -309,7 +318,14 @@ test('a stray CR or a U+2028 on a heading or bullet line does not hide a qualify
 
 // proves R-CARD-27, R-CARD-28
 test('a no-break space after the heading text is trimmed, so the heading still opens the section', () => {
-  admitted(card(43, '## Acceptance ', '', `- ${ITEM}`));
+  admitted(card(46, '## Acceptance ', '', `- ${ITEM}`));
+});
+
+// proves R-CARD-34
+test('a no-break space is no space, so it neither indents, nor ends a heading run of #, nor follows a list marker', () => {
+  refusedAsMissing(card(48, '## Acceptance', '', ` - ${ITEM}`));
+  refusedAsMissing(card(48, '## Acceptance', '', `- ${ITEM}`));
+  refusedAsMissing(card(48, '## Acceptance', '', `- ${ITEM}`));
 });
 
 // proves R-CARD-13
