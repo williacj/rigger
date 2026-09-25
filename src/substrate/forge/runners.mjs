@@ -27,12 +27,15 @@ const FORGE = 'gh';
 /** The variable naming the stand-in `gh` a test declared, by its path. */
 export const STAND_IN = 'RIGGER_GH_STAND_IN';
 
-/** The executable `command` names on `path`, as a spawn would find it, or null where none is. */
+/**
+ * The executable `command` names on `path`, as a spawn would find it, or null where none is. An
+ * empty entry is the working directory to a spawn, so it is searched as that.
+ */
 function found(command, path = '') {
-  for (const dir of path.split(delimiter).filter(Boolean)) {
+  for (const dir of path.split(delimiter)) {
     try {
-      accessSync(join(dir, command), constants.X_OK);
-      return join(dir, command);
+      accessSync(join(dir || '.', command), constants.X_OK);
+      return join(dir || '.', command);
     } catch {
       // Not here, so the next directory is where a spawn would look.
     }

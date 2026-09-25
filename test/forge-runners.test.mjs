@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { stubGh } from './stub-gh.mjs';
@@ -423,6 +423,19 @@ test('under the test runner a runner spawns only the stand-in its test declared,
 
   const elsewhere = { ...declared.declared(), PATH: other.first() };
   assert.throws(() => withEnvironment(elsewhere, () => readRunner(['auth', 'status'])), /under the test runner/);
+  assert.deepEqual(declared.calls(), ['auth status']);
+  assert.deepEqual(other.calls(), []);
+
+  // An empty entry on the path is the working directory to a spawn, so a `gh` there is the one it
+  // runs, ahead of the stand-in declared behind it.
+  const cwd = process.cwd();
+  process.chdir(other.dir);
+  try {
+    const emptyFirst = { ...declared.declared(), PATH: `${delimiter}${declared.first('')}` };
+    assert.throws(() => withEnvironment(emptyFirst, () => readRunner(['auth', 'status'])), /under the test runner/);
+  } finally {
+    process.chdir(cwd);
+  }
   assert.deepEqual(declared.calls(), ['auth status']);
   assert.deepEqual(other.calls(), []);
 });
