@@ -357,6 +357,30 @@ const STEPS = {
   'step 8, a called arrow\'s parameter assigned into a module binding': "import { NAME } from 'SIDE';\nexport let held;\n((x) => { held = x; })(NAME);",
   'step 8, a parameter assigned through .call': "import { NAME } from 'SIDE';\nexport let held;\n(function (x) { held = x; }).call(null, NAME);",
   'step 8, a called function\'s local assigned': "import { NAME } from 'SIDE';\nexport let held;\n(() => { const a = NAME; held = a; })();",
+  // Round 5's routes: a spread that shifts a call's arguments, and a default inside a pattern.
+  'step 8, a spread shifting the side to a later parameter': "import { NAME } from 'SIDE';\nexport const held = ((a, x) => x)(...[0, NAME]);",
+  'step 8, a spread through .call': "import { NAME } from 'SIDE';\nexport const held = (function (a, x) { return x; }).call(null, ...[0, NAME]);",
+  'step 8, a spread inside .apply\'s list': "import { NAME } from 'SIDE';\nexport const held = (function (a, x) { return x; }).apply(null, [...[0, NAME]]);",
+  'step 8, a spread of a list held in a binding': "import { NAME } from 'SIDE';\nconst list = [0, NAME];\nexport const held = ((a, x) => x)(...list);",
+  'step 8, a spread assigning a parameter into a module binding': "import { NAME } from 'SIDE';\nexport let held;\n((a, x) => { held = x; })(...[0, NAME]);",
+  'step 8, a spread of a dynamic import': "export const held = ((a, x) => x)(...[0, await import('SIDE')]);",
+  'step 8, a spread in a block, of an alias': "import { NAME } from 'SIDE';\nexport let held;\n{ const a = NAME; held = ((z, x) => x)(...[0, a]); }",
+  'step 8, a rest parameter': "import { NAME } from 'SIDE';\nexport const held = ((first, ...rest) => rest)(0, NAME);",
+  'step 8, a called function\'s arguments': "import { NAME } from 'SIDE';\nexport const held = (function () { return arguments; })(0, NAME);",
+  'step 4, a default in a destructured declaration': "import { NAME } from 'SIDE';\nexport const { held = NAME } = {};",
+  'step 4, a default in an array pattern': "import { NAME } from 'SIDE';\nexport const [held = NAME] = [];",
+  'step 4, a default in a destructuring assignment': "import { NAME } from 'SIDE';\nexport let held;\n({ x: held = NAME } = {});",
+  'step 4, a default in a block\'s destructuring': "import { NAME } from 'SIDE';\nexport let held;\n{ const { a = NAME } = {}; held = a; }",
+  'step 3, a destructuring default re-exported under another name': "import { NAME } from 'SIDE';\nconst { w = NAME } = {};\nexport { w as held };",
+  'step 2, a dynamic import as a destructuring default': "export const { held = await import('SIDE') } = {};",
+  'step 8, a default inside a destructured parameter': "import { NAME } from 'SIDE';\nexport const held = (({ x = NAME }) => x)({});",
+  'step 8, a default inside an array-pattern parameter': "import { NAME } from 'SIDE';\nexport const held = (([x = NAME]) => x)([]);",
+  // Their siblings: every other way a pattern or an argument list moves a value into a binding.
+  'step 4, a rest element in an array pattern': "import { NAME } from 'SIDE';\nexport const [, ...held] = [0, NAME];",
+  'step 4, a rest element in an object pattern': "import { NAME } from 'SIDE';\nexport const { a, ...held } = { a: 0, NAME };",
+  'step 4, a logical assignment': "import { NAME } from 'SIDE';\nexport let held;\nheld ??= NAME;",
+  'step 8, a spread of unknown length before the side': "import { NAME } from 'SIDE';\nconst list = [];\nexport const held = ((a, b) => b)(...list, NAME);",
+  'step 8, a default reading an earlier parameter': "import { NAME } from 'SIDE';\nexport const held = ((a, b = a) => b)(NAME);",
 };
 
 /** The default-export module step 1's default import reads, handing each side on as its default. */
@@ -443,6 +467,22 @@ test('rule 7: a gh assembled from constant strings fails as the literal does', (
 test('a module loading another through createRequire or getBuiltinModule fails, because what it binds is unknown', () => {
   assertBreaks({ 'src/workflow/load.mjs': "import { createRequire } from 'node:module';\nexport const load = createRequire(import.meta.url);" }, 'src/workflow/load.mjs', 'the dynamic-import rule');
   assertBreaks({ 'src/workflow/load.mjs': "export const load = () => process.getBuiltinModule('node:child_process');" }, 'src/workflow/load.mjs', 'the dynamic-import rule');
+});
+
+test('a chain of aliases settles however long it is, and still holds the side at its end', () => {
+  // Each alias is given the one before it only after it is read, so every pass of the reader
+  // moves the side one link along; a reader that stops after a fixed number of passes reds here.
+  const links = 60;
+  const names = Array.from({ length: links }, (_, i) => `a${i}`);
+  const steps = names.slice(1).map((name, i) => `${name} = ${names[i]};`).reverse().join(' ');
+  const relay = [
+    "import { write } from '../substrate/forge/item-write.mjs';",
+    'export let held;',
+    `{ let ${names.join(', ')}; for (let i = 0; i < ${links}; i++) { held = a${links - 1}; ${steps} a0 = write; } }`,
+  ].join('\n');
+  const found = messages({ 'src/workflow/relay.mjs': relay, 'src/cli/promote.mjs': "import { held } from '../workflow/relay.mjs';" });
+  assert.ok(found.some((message) => message.startsWith('src/cli/promote.mjs ') && message.includes('breaks rule 5:')), found.join('\n') || '(nothing)');
+  assert.ok(!found.some((message) => message.includes('unreadable')), found.join('\n'));
 });
 
 test('a module that does not parse is refused, naming the file and its line, rather than read as clean', () => {

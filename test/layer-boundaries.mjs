@@ -206,20 +206,59 @@ function holdings(program, topLevel, carries) {
   };
 
   /**
-   * Reads a function's body in its own scope, its parameters holding `passed` (one list of values
-   * per parameter) or their defaults, and returns that scope. A function not called where it is
-   * written is read with its parameters holding nothing, so what its body writes into a module
-   * binding is still seen.
+   * Each name a pattern binds, with what it holds when the pattern takes `values`: the value it
+   * destructures, or the default written beside it for when that value is missing.
    */
-  const readFunction = (fn, parent, passed = []) => {
+  const patternHoldings = (pattern, values, scope) => {
+    switch (pattern?.type) {
+      case 'Identifier': return [[pattern.name, values]];
+      case 'MemberExpression': return boundBy(pattern).map((bound) => [bound, values]);
+      case 'AssignmentPattern': return patternHoldings(pattern.left, [...values, ...valuesOf(pattern.right, scope)], scope);
+      case 'RestElement': return patternHoldings(pattern.argument, values, scope);
+      case 'ArrayPattern': return pattern.elements.flatMap((element) => patternHoldings(element, values, scope));
+      case 'ObjectPattern':
+        return pattern.properties.flatMap((held) => patternHoldings(held.type === 'RestElement' ? held.argument : held.value, values, scope));
+      default: return [];
+    }
+  };
+  const declarePattern = (scope, pattern, values, readIn = scope) => {
+    for (const [bound, held] of patternHoldings(pattern, values, readIn)) declare(scope, [bound], held);
+  };
+  const assignPattern = (pattern, values, scope) => {
+    for (const [bound, held] of patternHoldings(pattern, values, scope)) assign([bound], held, scope);
+  };
+
+  /**
+   * What a call passes each parameter, from its argument list: one list of values per position
+   * before the first spread, and `tail`, what every position from that spread on may hold. A
+   * spread can land its elements at any position from its own, so all of them are given to each.
+   */
+  const argumentsOf = (args, scope) => {
+    const first = args.findIndex((held) => held?.type === 'SpreadElement');
+    const before = first === -1 ? args : args.slice(0, first);
+    const from = first === -1 ? [] : args.slice(first);
+    return { slots: before.map((held) => valuesOf(held, scope)), tail: from.flatMap((held) => valuesOf(held, scope)) };
+  };
+  /** The same passing with its first position dropped, as `.call` drops its `this`. */
+  const withoutFirst = ({ slots, tail }) => (slots.length > 0 ? { slots: slots.slice(1), tail } : { slots, tail });
+
+  /**
+   * Reads a function's body in its own scope, its parameters holding what `passed` gives each
+   * position (see `argumentsOf`) or their defaults, and returns that scope. A function not called
+   * where it is written is read with its parameters holding nothing, so what its body writes into
+   * a module binding is still seen.
+   */
+  const readFunction = (fn, parent, passed = { slots: [], tail: [] }) => {
     const scope = scopeFor(fn, parent, fn);
     if (!returns.has(fn)) returns.set(fn, new Set());
     if (fn.id && fn.type === 'FunctionExpression') declare(scope, [fn.id.name], []);
+    const at = (i) => [...(passed.slots[i] ?? []), ...passed.tail];
+    // A function's own `arguments` holds everything the call passes; an arrow has none of its own.
+    if (fn.type !== 'ArrowFunctionExpression') declare(scope, ['arguments'], [...passed.slots.flat(), ...passed.tail]);
     fn.params.forEach((param, i) => {
-      const given = param.type === 'RestElement' ? passed.slice(i).flat() : passed[i] ?? [];
-      const defaults = param.type === 'AssignmentPattern' ? valuesOf(param.right, scope) : [];
-      declare(scope, boundBy(param), [...given, ...defaults]);
-      if (param.type === 'AssignmentPattern') read(param.right, scope);
+      const given = param.type === 'RestElement' ? [...passed.slots.slice(i).flat(), ...passed.tail] : at(i);
+      declarePattern(scope, param, given);
+      read(param, scope);
     });
     if (fn.body.type === 'BlockStatement') for (const statement of fn.body.body) read(statement, scope);
     else {
@@ -272,19 +311,21 @@ function holdings(program, topLevel, carries) {
       case 'CallExpression':
       case 'NewExpression': {
         const called = calledFunction(node.callee);
-        const given = node.arguments.map(of);
-        if (!called) return [...of(node.callee), ...given.flat()];
+        if (!called) return [...of(node.callee), ...node.arguments.flatMap(of)];
+        const given = argumentsOf(node.arguments, scope);
         if (called.mode === 'direct') return invoked(called.fn, given, scope);
-        if (called.mode === 'call') return invoked(called.fn, given.slice(1), scope);
+        if (called.mode === 'call') return invoked(called.fn, withoutFirst(given), scope);
+        // `.apply` passes the elements of its second argument, laid out as a call would lay them.
         const list = node.arguments[1];
-        const spread = list?.type === 'ArrayExpression' ? list.elements.map(of) : called.fn.params.map(() => of(list));
-        return invoked(called.fn, spread, scope);
+        const applied = list?.type === 'ArrayExpression' ? argumentsOf(list.elements, scope) : { slots: [], tail: of(list) };
+        return invoked(called.fn, applied, scope);
       }
       case 'TaggedTemplateExpression': {
         const called = calledFunction(node.tag);
-        const given = node.quasi.expressions.map(of);
-        if (!called) return [...of(node.tag), ...given.flat()];
-        return invoked(called.fn, called.mode === 'call' ? given : [[], ...given], scope);
+        const expressions = node.quasi.expressions;
+        if (!called) return [...of(node.tag), ...expressions.flatMap(of)];
+        const given = argumentsOf(expressions, scope);
+        return invoked(called.fn, called.mode === 'call' ? given : { slots: [[], ...given.slots], tail: given.tail }, scope);
       }
       default: return [];
     }
@@ -309,7 +350,8 @@ function holdings(program, topLevel, carries) {
         break;
       case 'VariableDeclaration':
         for (const each of node.declarations) {
-          declare(node.kind === 'var' ? functionScope(scope) : scope, boundBy(each.id), valuesOf(each.init, scope));
+          declarePattern(node.kind === 'var' ? functionScope(scope) : scope, each.id, valuesOf(each.init, scope), scope);
+          read(each.id, scope);
           read(each.init, scope);
         }
         return;
@@ -322,7 +364,7 @@ function holdings(program, topLevel, carries) {
         break;
       }
       case 'AssignmentExpression':
-        assign(boundBy(node.left), valuesOf(node.right, scope), scope);
+        assignPattern(node.left, valuesOf(node.right, scope), scope);
         break;
       case 'CallExpression':
       case 'NewExpression':
@@ -353,12 +395,12 @@ function holdings(program, topLevel, carries) {
   };
 
   // Each pass lets one more link in a chain of aliases take what the link before it was given.
-  for (let pass = 0; pass < 50; pass++) {
+  // What a binding holds only grows, and only from the module's own names and specifiers, so the
+  // passes end: the last one is the pass in which nothing grew.
+  do {
     changed = false;
     for (const statement of program.body) read(statement, moduleScope);
-    if (!changed) return;
-  }
-  throw new Error('what its bindings hold did not settle in 50 passes');
+  } while (changed);
 }
 
 /**

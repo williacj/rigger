@@ -69,6 +69,21 @@ the module, for each block and for each function:
 
 The module is read again until nothing it holds grows, so a chain of aliases settles.
 
+**Where a value enters a binding.** Round 5 found two more gaps, both in how a value reaches a name.
+A spread in a call's arguments, `((a, x) => x)(...[0, side])`, gave the whole spread to the first
+parameter. A default inside a pattern, `const { held = side } = {}`, was dropped, because the
+reader bound every name in a pattern to the pattern's source and never read the defaults. With the
+owner's leave for a third extra commit:
+- a pattern now gives each name what it destructures plus the default written beside it, in a
+  declaration, an assignment and a parameter alike;
+- a call's arguments are laid out by position, and from the first spread on, every position may
+  hold anything the spread or a later argument holds;
+- a function's own `arguments` holds everything the call passed.
+
+The pass cap of 50 is gone. What a binding holds only grows, and only from the module's own
+names, so the passes end on their own. A 60-link chain that the cap misreported as unreadable
+now settles.
+
 **Rule 3, and who drew its line.** Round 1 found `const b = config.board; b.priority` passing, and
 round 2's fix barred the `board` key in `src/scheduling/` outright. That caught the board handle
 #227 gives L3. The reviewer returned the item to its author under `R-LOOP-6`, and the PM revised
