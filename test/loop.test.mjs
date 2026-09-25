@@ -1,6 +1,7 @@
 // ABOUTME: Tests L3's loop over the fake board with an injected dispatch: at most N cards in
-// flight, a claim taken before any await, a claim held only until its slot is released, and every
-// read failure, refused claim move and dispatch outcome passed on.
+// flight, a claim taken before any await, a claim held only until its slot is released, every
+// read failure, refused claim move and dispatch outcome passed on, and a run that refills each
+// freed slot and leaves each card in the column its outcome settles, by the config's column names.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -151,6 +152,9 @@ function world({
   return { fake, l2, dispatches, sequence, loop: loop({ config: settings, board, decide, l2, dispatch }) };
 }
 
+/** Each card on `fake` by number, with the display name of the column it is in now. */
+const columnsOf = async (fake) => Object.fromEntries((await fake.operations.readItems()).map((item) => [item.number, item.column]));
+
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
  * dispatch, until a round starts nothing. Returns what `world` built.
@@ -197,6 +201,118 @@ test('given concurrency 2 and cards A, B and C, where A\'s dispatch returns befo
   assert.deepEqual(built.dispatches.holding(), [2, 3], "B's dispatch has not returned");
   built.dispatches.releaseAll();
   await run;
+});
+
+test('in one record of board writes and dispatch starts, each card\'s move to the coding column comes before its dispatch starts', async () => {
+  const built = world({ cards: [1, 2, 3], concurrency: 2 });
+
+  await drive(built);
+
+  const starts = built.sequence.filter((entry) => entry.start).map((entry) => entry.start);
+  assert.deepEqual([...starts].sort(), ['item-1', 'item-2', 'item-3']);
+  for (const id of starts) {
+    const moved = built.sequence.findIndex((entry) => entry.move === id && entry.column === COLUMNS.coding);
+    const started = built.sequence.findIndex((entry) => entry.start === id);
+    assert.ok(moved !== -1 && moved < started, `${id} moved to ${COLUMNS.coding} before its dispatch started: ${JSON.stringify(built.sequence)}`);
+  }
+});
+
+test('a card whose dispatch returns ends the run in the review column', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+
+  await drive(built);
+
+  assert.deepEqual(built.dispatches.started, [1]);
+  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.review });
+});
+
+/** The two ways a dispatch fails: it ran and exited non-zero, or it threw before it ran. */
+const FAILURES = {
+  'exits non-zero': () => ({ exit: 1, output: '' }),
+  throws: () => new Error('the dispatch could not start'),
+};
+
+for (const [how, failed] of Object.entries(FAILURES)) {
+  test(`a card whose dispatch ${how} frees its slot, and the next pullable card is dispatched`, async () => {
+    const built = world({ cards: [1, 2], concurrency: 1, answer: (card) => (card.number === 1 ? failed() : { exit: 0, output: '' }) });
+
+    const run = built.loop.run();
+    await quiesce();
+    assert.deepEqual(built.dispatches.holding(), [1]);
+    built.dispatches.release(1);
+    await quiesce();
+
+    assert.deepEqual(built.dispatches.holding(), [2], "card 1's slot is free, and card 2 holds it");
+    built.dispatches.releaseAll();
+    await run;
+  });
+
+  test(`a card whose dispatch ${how} ends the run outside the review column`, async () => {
+    const built = world({ cards: [1], concurrency: 1, answer: failed });
+
+    await drive(built);
+
+    assert.deepEqual(built.dispatches.started, [1]);
+    assert.notEqual((await columnsOf(built.fake))[1], COLUMNS.review);
+  });
+}
+
+// proves R-SCHED-1
+test("given concurrency 1, a run dispatches its cards in #221's pull order: redos first, then by declared priority, then oldest first", async () => {
+  // The board lists its Priority options Low, High, Normal and its cards out of every order, so
+  // only the declared order High, Normal, Low, with redos ahead and oldest first, gives 35, 32, 34, 31, 33.
+  const fake = createFakeBoard({
+    columns: Object.values(COLUMNS),
+    fields: [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }],
+    items: [
+      cardIn(31, COLUMNS.ready, { Priority: 'Low' }),
+      cardIn(33, COLUMNS.ready),
+      cardIn(34, COLUMNS.ready, { Priority: 'Normal' }),
+      cardIn(32, COLUMNS.ready, { Priority: 'High' }),
+      cardIn(35, COLUMNS.coding, { Priority: 'Low' }),
+    ],
+  });
+  const built = world({ fake, concurrency: 1, priority: config.board.priority });
+
+  await drive(built);
+
+  assert.deepEqual(built.dispatches.started, [35, 32, 34, 31, 33]);
+});
+
+// proves R-SCHED-11
+test('a ready card L2 ignores is in the ready column after the run, and the write record holds no move of it', async () => {
+  const ignored = { ...readyCard(40), labels: [] };
+  const built = world({ cards: [ignored, 41], concurrency: 1 });
+  assert.deepEqual(nextAction(ignored, KINDS), { action: 'ignore' });
+
+  await drive(built);
+
+  assert.deepEqual(built.dispatches.started, [41]);
+  assert.equal((await columnsOf(built.fake))[40], COLUMNS.ready);
+  const moves = built.fake.writes().filter(({ operation }) => operation === 'moveItem');
+  assert.ok(moves.length > 0, 'the run moved the card L2 dispatched');
+  assert.deepEqual(moves.filter(({ args: [id] }) => id === 'item-1'), []);
+});
+
+test('the same run on a board whose five columns carry other display names, with a config naming them, makes the same dispatches and the same moves by column key', async () => {
+  const renamed = { ready: 'To do', coding: 'In progress', review: 'In review', owner: 'Blocked', done: 'Shipped' };
+  const answer = (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' });
+  const ran = async (columns) => {
+    const built = world({ cards: [1, 2, { ...readyCard(3, columns), labels: [] }, 4], columns, concurrency: 2, answer });
+    await drive(built);
+    const keyOf = Object.fromEntries(Object.entries(columns).map(([key, name]) => [name, key]));
+    const moves = built.fake.writes().map(({ operation, args: [id, column] }) => [operation, id, keyOf[column]]);
+    return { started: built.dispatches.started, moves };
+  };
+
+  const named = await ran(COLUMNS);
+  const other = await ran(renamed);
+
+  assert.deepEqual(named.moves, [
+    ['moveItem', 'item-1', 'coding'], ['moveItem', 'item-2', 'coding'], ['moveItem', 'item-1', 'review'],
+    ['moveItem', 'item-4', 'coding'], ['moveItem', 'item-4', 'review'],
+  ]);
+  assert.deepEqual(other, named);
 });
 
 test('given concurrency 1 and four cards L2 would dispatch, the most cards in flight at any moment is exactly 1', async () => {
