@@ -81,6 +81,33 @@ function labelPage(names, next = null) {
   return { repository: { labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MTAw' }, nodes } } };
 }
 
+/** Every key path `value` holds, each written as `.key` or `[]` steps from its root. */
+function pathsOf(value, at = '', into = new Set()) {
+  if (Array.isArray(value)) {
+    for (const held of value) pathsOf(held, `${at}[]`, into);
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, held] of Object.entries(value)) {
+      into.add(`${at}.${key}`);
+      pathsOf(held, `${at}.${key}`, into);
+    }
+  }
+  return into;
+}
+
+/**
+ * The key paths gh printed on 2026-09-25, with gh 2.99.0, for each of the read side's queries: its
+ * item page and its field query on board 6, and its label page on this repository. A constructed
+ * answer holding any other path carries a field the query does not select, or nests one where gh
+ * does not.
+ */
+const PRINTED = Object.fromEntries(
+  [['item', 'board-6-items-2026-09-25.json'], ['field', 'board-6-fields-2026-09-25.json'], ['label', 'rigger-labels-2026-09-25.json']]
+    .map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
+);
+
+/** The paths of `answer` that gh did not print for the query of kind `kind`. */
+const unprinted = (kind, answer) => [...pathsOf(answer)].filter((path) => !PRINTED[kind].has(path));
+
 /** Whether `page` is what `gh` said rather than the data it answered. */
 const said = (page) => Object.hasOwn(page, 'status');
 
@@ -104,7 +131,13 @@ function forge({
     assert.ok(!asked.has(`${connection} ${cursor}`), `the ${connection} page after ${cursor} was asked for twice`);
     assert.ok(Object.hasOwn(held, String(cursor)), `the ${connection} page after ${cursor} is not one gh answered`);
     asked.add(`${connection} ${cursor}`);
-    return said(held[cursor]) ? held[cursor] : ok(held[cursor]);
+    return said(held[cursor]) ? held[cursor] : printed(connection, held[cursor]);
+  };
+  // Every answer this forge gives is shaped as gh printed it for the same query.
+  const printed = (kind, data) => {
+    const answer = ok(data);
+    assert.deepEqual(unprinted(kind, JSON.parse(answer.stdout)), [], `the ${kind} answer is not shaped as gh prints it`);
+    return answer;
   };
   const send = (command, args) => {
     sent.push([command, ...args]);
@@ -112,7 +145,7 @@ function forge({
     callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
     const document = documentOf(args);
     if (document.includes('items(')) return answer('item', pages, document);
-    if (document.includes('fields(')) return ok(fields);
+    if (document.includes('fields(')) return printed('field', fields);
     if (document.includes('repository(')) return answer('label', labels, document);
     throw new Error(`the test forge does not answer ${document}`);
   };
@@ -121,7 +154,24 @@ function forge({
   return send;
 }
 
-test('the cards read back with their number, title, body, labels and column as gh recorded them', async () => {
+test("the answers this file constructs are refused where they hold a field the query does not select, or nest one where gh does not", () => {
+  // The check every constructed answer above passes through. `url` is a field of an issue the
+  // item query never selects, and a label's name directly under `labels` is the nesting gh uses
+  // for `nodes` only; a draft answering with only its type is what gh prints for one.
+  const node = itemNode({ id: 'PVTI_one', content: issue({ number: 214, labels: ['type:change'] }), values: { Status: 'Ready' } });
+  assert.deepEqual(unprinted('item', { data: itemPage([node]) }), []);
+  assert.deepEqual(unprinted('item', { data: itemPage([itemNode({ id: 'PVTI_draft', content: { __typename: 'DraftIssue' } })]) }), []);
+
+  const selectsMore = structuredClone(node);
+  selectsMore.content.url = 'https://github.com/williacj/rigger/issues/214';
+  assert.deepEqual(unprinted('item', { data: itemPage([selectsMore]) }), ['.data.repositoryOwner.projectV2.items.nodes[].content.url']);
+
+  const nestsOtherwise = structuredClone(node);
+  nestsOtherwise.content.labels = [{ name: 'type:change' }];
+  assert.deepEqual(unprinted('item', { data: itemPage([nestsOtherwise]) }), ['.data.repositoryOwner.projectV2.items.nodes[].content.labels[].name']);
+});
+
+test("the cards read back with their number, title, body, labels and column as gh's answer holds them", async () => {
   const send = forge({
     pages: {
       null: itemPage([
