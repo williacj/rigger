@@ -525,3 +525,17 @@ test('a priority declaration listing anything but option names is refused, and t
   // An empty slot names no option either, and a list read by skipping holes never sees it.
   assert.match(refusal(ranking(['High', , 'Low'])), /`board\.priority\.options`/, 'an empty slot was read as a name');
 });
+
+// An option holding only whitespace names no board option a card could hold, so every card
+// holding that value would rank as undeclared while the config was accepted.
+test('a priority declaration listing an option holding only whitespace is refused, and the refusal names the key', () => {
+  for (const blank of ['  ', '\t', ' ']) {
+    assert.match(refusal(ranking(['High', blank])), /`board\.priority\.options`/, `${JSON.stringify(blank)} was read as a name`);
+  }
+});
+
+test('a priority declaration listing only non-empty option names is accepted', () => {
+  for (const options of [['High', 'Normal', 'Low'], ['P0'], ['Very high', ' Low ']]) {
+    assert.deepEqual(validate(ranking(options)), [], JSON.stringify(options));
+  }
+});
