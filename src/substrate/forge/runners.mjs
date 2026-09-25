@@ -185,8 +185,118 @@ function mutationOf(runner, args) {
   return field;
 }
 
-/** The operations the schema-write runner admits before #217: creating a field and a label. */
-const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel']);
+/**
+ * The write that adds an option to the field holding the columns, which the schema-write runner
+ * admits only in the shape #212's spike found keeps every item's column
+ * (`docs/spikes/status-option-through-gh.md`, "Conclusion").
+ */
+const OPTIONS_WRITE = 'updateProjectV2Field';
+
+/** The operations the schema-write runner admits: creating a field and a label, and the options write. */
+const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel', OPTIONS_WRITE]);
+
+/**
+ * What an option of a single-select field is, and what way B sends back of every held option.
+ * GitHub requires a `color` and a `description` on every option sent (`ProjectV2SingleSelect-
+ * FieldOptionInput`, introspected with gh 2.99.0 on 2026-09-25), so a held option sent without
+ * its own is changed.
+ */
+const OPTION_FIELDS = ['id', 'name', 'color', 'description'];
+
+/**
+ * How way B writes each field of an option, as the parser reads it: the colour as an enum value,
+ * the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ */
+const OPTION_KINDS = { id: 'string', name: 'string', color: 'scalar', description: 'string' };
+
+/**
+ * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
+ * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
+ */
+function heldOptions(fieldId, send) {
+  const query = `query { field: node(id: ${literal(fieldId)}) { ... on ProjectV2SingleSelectField { name options { id name color description } } } }`;
+  const said = readRunner(graphqlRequest(query), { send });
+  if (said.status !== 0) {
+    throw new Error(`the schema-write runner could not read the options of ${fieldId}, and sent no write: ${firstLine(said)}`);
+  }
+  const { data } = JSON.parse(said.stdout);
+  return { name: data?.field?.name, options: data?.field?.options ?? [] };
+}
+
+/** The fields of an input object `field` carries, by name, or `runner`'s refusal naming one given twice. */
+function fieldsOf(runner, field, fields) {
+  const read = {};
+  for (const { name, value } of fields) {
+    if (Object.hasOwn(read, name)) refuse(runner, `${field.name}, whose input gives ${name} twice`);
+    read[name] = value;
+  }
+  return read;
+}
+
+/**
+ * The field ID and the options an options write sends, each option as its fields' values by
+ * name, or a refusal naming what is not way B's: one `input` of a `fieldId` string and a
+ * `singleSelectOptions` list, each option a name, colour and description written as
+ * `OPTION_KINDS` says and an `id` or none, no `id` twice, and at least one option with no `id`,
+ * which is the option the write adds.
+ */
+function optionsInput(field) {
+  const [input, ...others] = field.arguments;
+  const read = input?.name === 'input' && input.value.kind === 'object' && others.length === 0 ? fieldsOf('schema-write', field, input.value.fields) : null;
+  const extra = read ? Object.keys(read).filter((name) => name !== 'fieldId' && name !== 'singleSelectOptions') : [];
+  if (!read || extra.length > 0 || read.fieldId?.kind !== 'string' || read.singleSelectOptions?.kind !== 'list') {
+    refuse('schema-write', `${field.name}, whose input is not a fieldId and singleSelectOptions alone${extra.length > 0 ? `: it carries ${extra.join(', ')}` : ''}`);
+  }
+  const sent = read.singleSelectOptions.values.map((option) => {
+    if (option.kind !== 'object') refuse('schema-write', `${field.name}, which sends an option that is not an object`);
+    const entry = fieldsOf('schema-write', field, option.fields);
+    const foreign = Object.keys(entry).filter((name) => !Object.hasOwn(OPTION_KINDS, name));
+    if (foreign.length > 0) refuse('schema-write', `${field.name}, which sends an option carrying ${foreign.join(', ')}`);
+    const wrong = Object.keys(OPTION_KINDS).filter((name) => (name !== 'id' || entry.id) && entry[name]?.kind !== OPTION_KINDS[name]);
+    if (wrong.length > 0) {
+      refuse('schema-write', `${field.name}, which sends an option whose ${wrong.join(', ')} is not given as way B gives it`);
+    }
+    return Object.fromEntries(Object.entries(entry).map(([name, value]) => [name, value.value]));
+  });
+  const twice = sent.filter((entry, i) => entry.id !== undefined && sent.findIndex((other) => other.id === entry.id) !== i);
+  if (twice.length > 0) refuse('schema-write', `${field.name}, which sends ${twice.map((entry) => `${entry.name} (${entry.id})`).join(', ')} twice`);
+  if (!sent.some((entry) => entry.id === undefined)) refuse('schema-write', `${field.name}, which adds no option`);
+  return { fieldId: read.fieldId.value, sent };
+}
+
+/**
+ * Refuses the options write `field` unless it is #212's way B on the field holding the columns:
+ * its input is the field's ID and its options, and every option the field holds, as read now,
+ * is sent with its `id`, name, colour and description. Way C, the same options with no `id`, gave
+ * every option a new ID and cleared every item's column, so a held option sent without its `id`
+ * is refused like one left out.
+ */
+function checkOptionsWrite(field, send) {
+  const { fieldId, sent } = optionsInput(field);
+  const held = heldOptions(fieldId, send);
+  if (held.name !== COLUMNS) {
+    refuse('schema-write', `${field.name} on ${held.name ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
+  }
+  const request = `${field.name} on ${COLUMNS} (${fieldId})`;
+  const dropped = held.options.filter((option) => !sent.some((entry) => entry.id === option.id));
+  if (dropped.length > 0) {
+    const named = dropped.map((option) => `${option.name} (${option.id})`).join(', ');
+    refuse('schema-write', `${request}, which does not send the held option${dropped.length > 1 ? 's' : ''} ${named} with its id`);
+  }
+  for (const option of held.options) {
+    const entry = sent.find((candidate) => candidate.id === option.id);
+    const differs = OPTION_FIELDS.filter((name) => entry[name] !== option[name]);
+    if (differs.length > 0) {
+      refuse('schema-write', `${request}, which sends the held option ${option.name} (${option.id}) without its own ${differs.join(', ')}`);
+    }
+  }
+  const unheld = sent.filter((entry) => entry.id !== undefined && !held.options.some((option) => option.id === entry.id));
+  if (unheld.length > 0) {
+    const named = unheld.map((entry) => `${entry.name} (${entry.id})`).join(', ');
+    refuse('schema-write', `${request}, which sends ${named} with an id the field does not hold`);
+  }
+  return fieldId;
+}
 
 /**
  * Sends one write to the board's fields or the repository's labels, and refuses any other
@@ -197,6 +307,7 @@ export function schemaWriteRunner(args, { send = plainly } = {}) {
   const items = argumentNames(field.arguments).filter((name) => ITEM_ARGUMENTS.has(name));
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
+  if (field.name === OPTIONS_WRITE) checkOptionsWrite(field, send);
   return send(FORGE, args);
 }
 
@@ -224,11 +335,7 @@ export function firstLine(said) {
 function moveInput(field) {
   const [input, ...others] = field.arguments;
   const fields = input?.name === 'input' && input.value.kind === 'object' && others.length === 0 ? input.value.fields : null;
-  const read = {};
-  for (const { name, value } of fields ?? []) {
-    if (Object.hasOwn(read, name)) refuse('item-write', `${field.name}, whose input gives ${name} twice`);
-    read[name] = value;
-  }
+  const read = fieldsOf('item-write', field, fields ?? []);
   const option = read.value?.kind === 'object' && read.value.fields.length === 1 ? read.value.fields[0] : null;
   const strings = ['projectId', 'itemId', 'fieldId'].every((name) => read[name]?.kind === 'string');
   if (!fields || Object.keys(read).length !== 4 || !strings || option?.name !== 'singleSelectOptionId' || option.value.kind !== 'string') {

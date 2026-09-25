@@ -104,6 +104,13 @@ async function fieldsOf(board) {
   return [{ name: COLUMNS, options: columns }, ...(await board.operations.readFields())];
 }
 
+/**
+ * A field's options as GitHub answers them, each with its ID, colour and description. The fake
+ * board holds an option's name alone, so every option is given the neutral grey and no
+ * description, which is what the schema-write side gives an option it adds.
+ */
+const optionsOf = (field) => field.options.map((name, index) => ({ id: optionId(index), name, color: 'GRAY', description: '' }));
+
 /** The content of an item as the item read's selection answers it, by the item's type. */
 function contentOf(item, operation) {
   if (item.type === 'draftIssue') return { __typename: 'DraftIssue' };
@@ -168,12 +175,35 @@ const COMMANDS = {
     inTheRepository(state, operation);
     return { repository: { id: REPOSITORY_ID } };
   },
-  [graphql(boardShape('id field(name: _) { ... on ProjectV2SingleSelectField { id options { id name } } }'))]: async (board, state, operation) => {
+  [graphql(boardShape('id field(name: _) { ... on ProjectV2SingleSelectField { id options { id name color description } } }'))]: async (board, state, operation) => {
     onTheBoard(state, operation);
     const named = valueOf(fieldIn(operation.selections, 'field'), 'name');
     const field = (await fieldsOf(board)).find(({ name }) => name === named);
-    const options = field?.options.map((name, index) => ({ id: optionId(index), name }));
-    return { repositoryOwner: { projectV2: { id: PROJECT_ID, field: field ? { id: fieldId(field.name), options } : null } } };
+    return { repositoryOwner: { projectV2: { id: PROJECT_ID, field: field ? { id: fieldId(field.name), options: optionsOf(field) } : null } } };
+  },
+  // The schema-write runner's own read: the name and options of the field an options write names.
+  [graphql('query { field: node(id: _) { ... on ProjectV2SingleSelectField { name options { id name color description } } } }')]: async (board, state, operation) => {
+    const [node] = operation.selections;
+    const field = (await fieldsOf(board)).find(({ name }) => fieldId(name) === valueOf(node, 'id'));
+    if (!field) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${valueOf(node, 'id')}'`);
+    return { field: { name: field.name, options: optionsOf(field) } };
+  },
+  // Way B, the one options write the fake models: every held option sent with its id, name, colour
+  // and description as the fake answers them, and at least one new option without an id, which it
+  // adds as a column in the order sent. Anything else it does not model.
+  [graphql('mutation { updateProjectV2Field(input: {fieldId: _, singleSelectOptions: []}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }')]: async (board, state, operation) => {
+    const input = argument(operation.selections[0], 'input');
+    const id = valueOf(input, 'fieldId');
+    if (id !== fieldId(COLUMNS)) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${id}'`);
+    const sent = argument(input, 'singleSelectOptions').values;
+    const held = optionsOf((await fieldsOf(board))[0]);
+    const echoed = (option) => sent.some((entry) => ['id', 'name', 'color', 'description'].every((name) => valueOf(entry, name) === option[name]));
+    const added = sent.filter((option) => valueOf(option, 'id') === undefined);
+    if (!held.every(echoed) || added.length === 0) {
+      throw new GhFailure('the fake gh does not model an updateProjectV2Field that leaves out or changes a held option, or adds none');
+    }
+    for (const entry of added) await board.operations.createColumn(valueOf(entry, 'name'));
+    return { updateProjectV2Field: { projectV2Field: { id } } };
   },
   // The item-write runner's own read: which field of the board holds the columns, and what the
   // field a write names is called. Its two nodes are answered under the aliases it gives them.

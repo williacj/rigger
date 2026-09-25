@@ -43,6 +43,9 @@ const ownerAsked = (document) => document.match(/repositoryOwner\(login: "([^"]*
  */
 const findsBoard = (document) => document.includes('projectV2(number:');
 
+/** The options each board's field holding the columns answers with, as gh answers them. */
+const HELD = [{ id: 'f75ad846', name: 'Review', color: 'GREEN', description: '' }];
+
 /** The board ID each owner's board answers with, so a request naming one names whose board it is. */
 const boardId = (owner) => `PVT_${owner}`;
 
@@ -66,13 +69,15 @@ function forge() {
       const options = Object.values(rigger.board.columns).map((name) => ({ name }));
       return ok({ repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [{}, { name: 'Status', options }] } } } });
     }
+    // The schema-write runner's own read of the options of the field an options write names.
+    if (document.includes('field: node(id:')) return ok({ field: { name: 'Status', options: HELD } });
     // The item-write runner's own read of the columns field, which names the board by its ID.
     if (document.includes('node(id:')) {
       const projectId = document.match(/node\(id: "([^"]*)"\)/)[1];
       return ok({ project: { field: { id: `PVTSSF_${projectId.slice('PVT_'.length)}` } }, target: { name: 'Status' } });
     }
     if (document.includes('field(name:')) {
-      return ok({ repositoryOwner: { projectV2: { id: boardId(owner), field: { id: `PVTSSF_${owner}`, options: [{ id: 'f75ad846', name: 'Review' }] } } } });
+      return ok({ repositoryOwner: { projectV2: { id: boardId(owner), field: { id: `PVTSSF_${owner}`, options: HELD } } } });
     }
     if (document.includes('labels(')) return ok({ repository: { labels: { pageInfo: { hasNextPage: false, endCursor: 'MA' }, nodes: [] } } });
     if (document.includes('repository(')) return ok({ repository: { id: 'R_kgDOTcdlSg' } });
@@ -90,6 +95,7 @@ const OPERATIONS = {
   readLabels: (board, send) => readSide(board, { send }).readLabels(),
   moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
   createField: (board, send) => schemaWriteSide(board, { send }).createField('Priority', ['High']),
+  createColumn: (board, send) => schemaWriteSide(board, { send }).createColumn('Owner'),
   createLabel: (board, send) => schemaWriteSide(board, { send }).createLabel('type:change'),
 };
 
@@ -140,9 +146,18 @@ test("the request createField sends to find the board names the declared board o
 });
 
 // proves R-WORK-7
+test("the request createColumn sends to find the board names the declared board owner, and never the repository's owner", async () => {
+  const sent = await sentBy('createColumn', ownedBy(DECLARED));
+
+  addressesOnly(DECLARED, REPOSITORY_OWNER, sent, 'createColumn');
+  // The options write names the field holding the columns on the board that request found.
+  assert.match(sent.at(-1), new RegExp(`updateProjectV2Field\\(input: \\{fieldId: "PVTSSF_${DECLARED}"`));
+});
+
+// proves R-WORK-7
 test("with no board owner declared, every request that addresses the board names the owner of the repository repo names", async () => {
   assert.ok(!Object.hasOwn(rigger.board, 'owner'), 'this repository declares a board owner, so its absence went untested');
-  for (const operation of ['readItems', 'readColumns', 'readFields', 'moveItem', 'createField']) {
+  for (const operation of ['readItems', 'readColumns', 'readFields', 'moveItem', 'createField', 'createColumn']) {
     addressesOnly(REPOSITORY_OWNER, DECLARED, await sentBy(operation, rigger), operation);
   }
 });
@@ -160,7 +175,7 @@ test('the operations the tests above record are every forge adapter operation th
       if ((await sentBy(operation, config)).some(findsBoard) && !addressing.includes(operation)) addressing.push(operation);
     }
   }
-  assert.deepEqual(addressing.sort(), ['createField', 'moveItem', 'readColumns', 'readFields', 'readItems']);
+  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFields', 'readItems']);
 });
 
 test("with a board owner declared, readLabels and createLabel address the repository repo names, and no board", async () => {
