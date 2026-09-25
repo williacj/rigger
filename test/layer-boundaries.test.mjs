@@ -841,6 +841,56 @@ test('rule 3 bars nothing more by name: a function the module defines passes whe
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
 
+test('rule 3 by name follows scope and receiver: a call reaching only another function, or a receiver the module does not define, passes', () => {
+  const HELPER = 'const take = ({ priority }) => priority;\nexport const ranks = (items) => items.map(take);';
+  const handles = [
+    // The two judges' modules: a shadowing take, and a receiver the module does not define.
+    `${HELPER}\nexport const pull = (deps) => { const take = (board) => board.items(); return take(deps.board); };`,
+    `${HELPER}\nexport const pull = (deps) => deps.queue.take(deps.board);`,
+    'const byItem = { load: ({ priority }) => priority };\nexport const ranks = (items) => items.map(byItem.load);\nexport const pull = (deps) => deps.store.load(deps.board);',
+    'const take = ({ priority }) => priority;\nexport function pull(deps) {\n  const take = (board) => board.items();\n  return take(deps.board);\n}',
+    // Every other way a name can be shadowed: a parameter, a hoisted declaration, a catch
+    // parameter, a block, a var, an import, and a named function expression's own name.
+    `${HELPER}\nexport const pull = (take, deps) => take(deps.board);`,
+    `${HELPER}\nexport function pull(deps) { return take(deps.board); function take(board) { return board.items(); } }`,
+    `${HELPER}\nexport const pull = (deps) => { try { return 0; } catch (take) { return take(deps.board); } };`,
+    `${HELPER}\nexport const pull = (deps) => { { const take = (board) => board.items(); return take(deps.board); } };`,
+    `${HELPER}\nexport function pull(deps) { if (deps) { var take = (board) => board.items(); } return take(deps.board); }`,
+    `${HELPER}\nexport const pull = (deps) => { for (const take of deps.steps) take(deps.board); };`,
+    `${HELPER}\nexport const pull = function take(deps) { return deps.board ? 0 : take({ board: deps.board }); };`,
+    // A member of another object, or of another class, sharing only the key.
+    `${HELPER}\nconst queue = { take: (board) => board.items() };\nexport const pull = (deps) => queue.take(deps.board);`,
+    'const byItem = { take: ({ priority }) => priority };\nconst queue = { take: (board) => board.items() };\nexport const pull = (deps) => [byItem, queue.take(deps.board)];',
+    'class Items { take({ priority }) { return priority; } }\nexport class Pull { take(board) { return board.items(); } run(deps) { return [Items, this.take(deps.board)]; } }',
+    'class Items { static take({ priority }) { return priority; } }\nclass Queue { static take(board) { return board.items(); } }\nexport const pull = (deps) => [Items, Queue.take(deps.board)];',
+    'export class Pull { static take({ priority }) { return priority; } run(deps) { return this.take(deps.board); } }',
+    'export const pull = (deps) => deps.board.items().map(({ priority }) => priority);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3 by name reaches through scope: a call in an inner scope, before a hoisted declaration, or on this, still fails', () => {
+  const shapes = [
+    'const take = ({ priority }) => priority;\nexport function rank(config) {\n  return take(config.board ?? {});\n}',
+    'const take = ({ priority }) => priority;\nexport function rank(config) { { if (config) { return take(config.board); } } return 0; }',
+    'export function rank(config) { return take(config.board); }\nfunction take({ priority }) { return priority; }',
+    'export function rank(config) { return take(config.board); function take({ priority }) { return priority; } }',
+    'export function rank(config) { if (config) { var take = ({ priority }) => priority; } return take(config.board); }',
+    'const take = ({ priority }) => priority;\nexport const rank = (config) => (() => () => take(config.board ?? {}))()();',
+    'export class Ranks { take({ priority }) { return priority; } rank(config) { return [0].map(() => this.take(config.board)); } }',
+    'export class Ranks { static take({ priority }) { return priority; } static rank(config) { return this.take(config.board); } }',
+    'export const ranks = { take({ priority }) { return priority; }, rank(config) { return this.take(config.board ?? {}); } };',
+    'const ranks = {};\nranks.take = ({ priority }) => priority;\nexport const rank = (config) => ranks.take(config.board);',
+    'export const rank = (config) => { const take = ({ priority }) => priority; { const other = 1; return take(config.board ?? {}); } };',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('a computed key that reads a loader fails, as a read anywhere else does', () => {
+  assertBreaks({ 'src/workflow/rules.mjs': 'export const rules = { [require]: 1 };' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
+  assertBreaks({ 'src/workflow/rules.mjs': 'export class Rules { [mainModule] = 1; }' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
+});
+
 test('a loader name that only keys an object or a class member passes, and one read as a value fails', () => {
   const keys = [
     'export const rules = { require: true };',

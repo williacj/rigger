@@ -549,12 +549,14 @@ function parsed(file, source) {
 
   const names = [];
   const strings = [];
-  // The keys an object literal or a class defines, which name a member and read no value. A walk
-  // meets the literal or the class member before its key, so each key is known when it is met.
+  // The keys an object literal or a class defines, which name a member and read no value: a plain
+  // name, or a string in brackets. A computed key of any other kind is an expression, read as one.
+  // A walk meets the literal or the class member before its key, so each key is known when met.
   const keys = new Set();
+  const defines = (held) => (!held.computed || held.key.type === 'Literal') && keys.add(held.key);
   walk(program, (node) => {
-    if (node.type === 'ObjectExpression') node.properties.forEach((held) => held.type === 'Property' && keys.add(held.key));
-    if (node.type === 'MethodDefinition' || node.type === 'PropertyDefinition') keys.add(node.key);
+    if (node.type === 'ObjectExpression') node.properties.forEach((held) => held.type === 'Property' && defines(held));
+    if (node.type === 'MethodDefinition' || node.type === 'PropertyDefinition') defines(node);
     if (node.type === 'ImportExpression') {
       const specifier = fixed(node.source);
       dynamic.push({ line: lineOf(node), specifier: specifier ?? null, argument: source.slice(node.source.start, node.source.end) });
@@ -567,43 +569,108 @@ function parsed(file, source) {
   return { file, program, imports, exported, stars, dynamic, reaches, carries, topLevel, names, strings };
 }
 
-/**
- * Every function a module defines under a name, keyed by that name: a function declaration, a
- * named function expression, and a function or arrow bound to a name or a key by a declaration, an
- * assignment, an object literal or a class member. A method is keyed by its own name.
- */
-function functionsByName(program) {
-  const named = new Map();
-  const add = (name, fn) => {
-    if (name === undefined || !isFunction(fn) && fn?.type !== 'FunctionDeclaration') return;
-    if (!named.has(name)) named.set(name, []);
-    named.get(name).push(fn);
-  };
-  // A class is called through its constructor, under the class's name or the binding holding it.
-  const constructorOf = (node) => (node?.type === 'ClassExpression' || node?.type === 'ClassDeclaration'
-    ? node.body.body.find((member) => member.kind === 'constructor')?.value : node);
-  walk(program, (node) => {
-    if ((node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression') && node.id) add(node.id.name, node);
-    if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) add(node.id.name, constructorOf(node));
-    if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') add(node.id.name, constructorOf(node.init));
-    if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') add(node.left.name, node.right);
-    if (node.type === 'AssignmentExpression' && node.left.type === 'MemberExpression') add(keyOf(node.left.property, node.left.computed), node.right);
-    if (['Property', 'MethodDefinition', 'PropertyDefinition'].includes(node.type)) add(keyOf(node.key, node.computed), node.value);
-  });
-  return named;
-}
+/** The function a value runs when called: a function or arrow itself, or a class's constructor. */
+const runs = (node) => {
+  if (isFunction(node)) return [node];
+  if (node?.type === 'ClassExpression' || node?.type === 'ClassDeclaration') return node.body.body.filter((member) => member.kind === 'constructor').map((member) => member.value);
+  return [];
+};
 
 /**
- * The argument expressions a call gives each parameter of a function it runs, as
- * `[parameter, arguments]` pairs: one called where it is written, or one `named` holds under the
- * name the callee spells, as a name or as a member's key. None where the callee is anything else.
- * An argument after a spread may land at any parameter from the spread's position on, and a rest
- * parameter is left out.
+ * What each call in a module can run, read by lexical scope. A name resolves to the binding its
+ * scope reaches, shadowing and hoisting included, and a binding runs the function or class it was
+ * declared or assigned. A member call runs a method only of an object or class the module defines
+ * and binds by name, or of the object or class `this` is in. A parameter, an import, a global and a
+ * receiver the module does not define run nothing this reader can see. Returns the lookup: the
+ * functions the callee `node` can run.
  */
-function parametersGiven(node, named) {
-  const tagged = node.type === 'TaggedTemplateExpression';
-  const { node: callee, mode } = unwrapCall(tagged ? node.tag : node.callee);
-  // The functions a callee can be, through the operators Hand-ons step 7 names.
+function callables(program) {
+  const scopeOf = new Map();
+  const parentOf = new Map();
+  const newScope = (parent, fn) => ({ parent, fn, names: new Map() });
+  const moduleScope = newScope(null, true);
+  const declare = (scope, name) => {
+    if (!scope.names.has(name)) scope.names.set(name, { fns: [], objects: [], members: new Map() });
+    return scope.names.get(name);
+  };
+  const functionScope = (scope) => (scope.fn ? scope : functionScope(scope.parent));
+  const lookup = (name, scope) => (scope ? scope.names.get(name) ?? lookup(name, scope.parent) : null);
+  const later = [];
+
+  // Every node is given the scope it is read in, and every declaration its binding, before any
+  // callee is resolved, so a declaration later in its scope is already there: hoisting.
+  const visit = (node, scope, parent) => {
+    if (!node || typeof node.type !== 'string') return;
+    scopeOf.set(node, scope);
+    parentOf.set(node, parent);
+    let inner = scope;
+    if (node.type === 'FunctionDeclaration') declare(scope, node.id.name).fns.push(node);
+    if (node.type === 'ClassDeclaration') declare(scope, node.id.name).objects.push(node);
+    if (isFunction(node) || node.type === 'FunctionDeclaration') {
+      inner = newScope(scope, true);
+      if (node.type === 'FunctionExpression' && node.id) declare(inner, node.id.name).fns.push(node);
+      for (const param of node.params) for (const bound of boundBy(param)) declare(inner, bound);
+    } else if (node.type === 'ClassExpression' || node.type === 'ClassDeclaration') {
+      inner = newScope(scope, false);
+      if (node.type === 'ClassExpression' && node.id) declare(inner, node.id.name).objects.push(node);
+    } else if (node.type === 'CatchClause') {
+      inner = newScope(scope, false);
+      for (const bound of boundBy(node.param)) declare(inner, bound);
+    } else if (BLOCKS.has(node.type)) {
+      inner = newScope(scope, false);
+    } else if (node.type === 'ImportDeclaration') {
+      for (const specifier of node.specifiers) declare(scope, specifier.local.name);
+    } else if (node.type === 'VariableDeclaration') {
+      const target = node.kind === 'var' ? functionScope(scope) : scope;
+      for (const each of node.declarations) {
+        for (const bound of boundBy(each.id)) {
+          const binding = declare(target, bound);
+          if (each.id.type === 'Identifier') later.push(() => binding.fns.push(...runs(each.init)));
+          if (each.id.type === 'Identifier' && ['ObjectExpression', 'ClassExpression'].includes(each.init?.type)) binding.objects.push(each.init);
+        }
+      }
+    } else if (node.type === 'AssignmentExpression') {
+      later.push(() => {
+        const { left } = node;
+        if (left.type === 'Identifier') lookup(left.name, scope)?.fns.push(...runs(node.right));
+        if (left.type === 'MemberExpression' && left.object.type === 'Identifier') {
+          const binding = lookup(left.object.name, scope);
+          const key = keyOf(left.property, left.computed);
+          if (binding && key !== undefined) binding.members.set(key, [...(binding.members.get(key) ?? []), ...runs(node.right)]);
+        }
+      });
+    }
+    for (const child of childrenOf(node)) visit(child, inner, node);
+  };
+  visit(program, moduleScope, null);
+  for (const step of later) step();
+
+  /** The functions an object literal or a class defines under `key`: its static side, or not. */
+  const membersOf = (object, key, statics) => {
+    if (object.type === 'ObjectExpression') {
+      return object.properties.filter((held) => held.type === 'Property' && keyOf(held.key, held.computed) === key).flatMap((held) => runs(held.value));
+    }
+    return object.body.body
+      .filter((member) => member.kind !== 'constructor' && member.kind !== 'get' && member.kind !== 'set')
+      .filter((member) => Boolean(member.static) === statics && keyOf(member.key, member.computed) === key)
+      .flatMap((member) => runs(member.value));
+  };
+  /** The object literal or class `this` is in at `node`, and whether it is the class's static side. */
+  const thisAt = (node) => {
+    for (let at = node, from = null; at; from = at, at = parentOf.get(at)) {
+      if (at.type === 'PropertyDefinition' && from === at.value) return { object: parentOf.get(parentOf.get(at)), statics: Boolean(at.static) };
+      if (at.type === 'StaticBlock') return { object: parentOf.get(parentOf.get(at)), statics: true };
+      if (at.type === 'FunctionExpression' || at.type === 'FunctionDeclaration') {
+        const holder = parentOf.get(at);
+        if (holder?.type === 'MethodDefinition') return { object: parentOf.get(parentOf.get(holder)), statics: Boolean(holder.static) };
+        if (holder?.type === 'Property' && parentOf.get(holder)?.type === 'ObjectExpression') return { object: parentOf.get(holder), statics: false };
+        return null;
+      }
+    }
+    return null;
+  };
+
+  // The functions a callee can run, through the operators Hand-ons step 7 names.
   const functionsOf = (held) => {
     switch (held?.type) {
       case 'ChainExpression': return functionsOf(held.expression);
@@ -611,11 +678,38 @@ function parametersGiven(node, named) {
       case 'LogicalExpression': return [...functionsOf(held.left), ...functionsOf(held.right)];
       case 'AwaitExpression': return functionsOf(held.argument);
       case 'SequenceExpression': return functionsOf(held.expressions.at(-1));
-      case 'Identifier': return named.get(held.name) ?? [];
-      case 'MemberExpression': return named.get(keyOf(held.property, held.computed)) ?? [];
-      default: return isFunction(held) ? [held] : [];
+      case 'Identifier': {
+        const binding = lookup(held.name, scopeOf.get(held));
+        return binding ? [...binding.fns, ...binding.objects.flatMap(runs)] : [];
+      }
+      case 'MemberExpression': {
+        const key = keyOf(held.property, held.computed);
+        if (key === undefined) return [];
+        if (held.object.type === 'ThisExpression') {
+          const self = thisAt(held);
+          return self ? membersOf(self.object, key, self.statics) : [];
+        }
+        if (held.object.type !== 'Identifier') return [];
+        const binding = lookup(held.object.name, scopeOf.get(held.object));
+        if (!binding) return [];
+        return [...binding.objects.flatMap((object) => membersOf(object, key, true)), ...(binding.members.get(key) ?? [])];
+      }
+      default: return runs(held);
     }
   };
+  return functionsOf;
+}
+
+/**
+ * The argument expressions a call gives each parameter of a function it runs, as
+ * `[parameter, arguments]` pairs: one called where it is written, or one `functionsOf` (see
+ * `callables`) finds the callee can run. None where the callee runs nothing the module defines.
+ * An argument after a spread may land at any parameter from the spread's position on, and a rest
+ * parameter is left out.
+ */
+function parametersGiven(node, functionsOf) {
+  const tagged = node.type === 'TaggedTemplateExpression';
+  const { node: callee, mode } = unwrapCall(tagged ? node.tag : node.callee);
   const fns = functionsOf(callee);
   // A tag's first argument is its strings, which no expression in the source spells.
   let args = tagged ? [null, ...node.quasi.expressions] : node.arguments;
@@ -643,7 +737,7 @@ function parametersGiven(node, named) {
  */
 function priorityReads(program) {
   const lines = [];
-  const named = functionsByName(program);
+  const functionsOf = callables(program);
   // An optional chain is the member access it wraps, so `config?.board` is read as `config.board`.
   const unchained = (node) => (node?.type === 'ChainExpression' ? node.expression : node);
   const isBoard = (wrapped) => {
@@ -678,7 +772,7 @@ function priorityReads(program) {
     if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
     if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
     if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
-      for (const [param, given] of parametersGiven(node, named)) {
+      for (const [param, given] of parametersGiven(node, functionsOf)) {
         if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
       }
     }
