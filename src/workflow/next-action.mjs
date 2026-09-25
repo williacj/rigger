@@ -5,8 +5,8 @@ import { checkAcceptanceForm } from './form-check.mjs';
 
 /**
  * The names of the kinds that select a card, in the config's order: each kind any one of whose
- * `select.labels` the card carries (the owner's 1-A ruling). A kind naming no label is refused by
- * the config validator, so every kind read here names at least one.
+ * `select.labels` the card carries (the owner's 1-A ruling). A kind whose labels are not a list of
+ * one or more label names is refused by the config validator, so every kind read here holds one.
  */
 const selecting = (card, kinds) =>
   Object.entries(kinds)
