@@ -48,17 +48,32 @@ const CHILD_PROCESS = ['node:child_process', 'child_process'];
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };
 
-/** The loaders besides `import()` that bind a module at run time, out of the import graph's sight. */
-const LOADERS = ['createRequire', 'getBuiltinModule'];
+/**
+ * The loaders besides `import()` that bind a module at run time, out of the import graph's sight,
+ * refused wherever a module names one, as a name or as a string. `require` is among them however a
+ * module reaches it, by that name, through a binding or as `module.require`, so this test never
+ * has to follow what it loads; `process.mainModule` is a CommonJS module, holding its `require`.
+ */
+const LOADERS = ['createRequire', 'getBuiltinModule', 'require', 'mainModule'];
+
+/** The built-in whose exports reach `require` by routes no name or string shows. */
+const LOADER_MODULES = ['node:module', 'module'];
+
+/**
+ * A module this test cannot read as an ES module: a `.cjs` module, whose wrapper hands it
+ * `require`, `module` and `arguments`, and a `package.json`, which can make the `.js` modules beside
+ * it CommonJS.
+ */
+const isCommonJs = (file) => file.endsWith('.cjs') || posix.basename(file) === 'package.json';
 
 /** The local name a default export that declares no name of its own is held under. */
 const DEFAULT = '*default*';
 
-/** Every module under `src/`, as a map of its repository path to its source. */
+/** Every module and every `package.json` under `src/`, as a map of its repository path to its source. */
 export function sourceTree(root = ROOT) {
   const tree = new Map();
   for (const entry of readdirSync(join(root, 'src'), { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile() || !/\.(?:m|c)?js$/.test(entry.name)) continue;
+    if (!entry.isFile() || !(/\.(?:m|c)?js$/.test(entry.name) || entry.name === 'package.json')) continue;
     const path = posix.join('src', posix.relative(join(root, 'src'), join(entry.parentPath, entry.name)).split('\\').join('/'));
     tree.set(path, readFileSync(join(root, path), 'utf8'));
   }
@@ -370,6 +385,13 @@ function holdings(program, topLevel, carries) {
       case 'ExportDefaultDeclaration':
         if (!node.declaration.id) declare(moduleScope, [DEFAULT], valuesOf(node.declaration, scope));
         break;
+      case 'CatchClause': {
+        // What is thrown is a review finding, so the parameter holds only its pattern's defaults.
+        const inner = scopeFor(node, scope, null);
+        declarePattern(inner, node.param, []);
+        for (const child of childrenOf(node)) read(child, inner);
+        return;
+      }
       case 'ReturnStatement': {
         const fn = functionScope(scope).fn;
         if (fn && node.argument) addAll(returns.get(fn), valuesOf(node.argument, scope));
@@ -534,11 +556,34 @@ function parsed(file, source) {
 }
 
 /**
+ * The argument expressions a call gives each parameter of a function it calls where it is written,
+ * as `[parameter, arguments]` pairs; none where the callee is anything else. An argument after a
+ * spread may land at any parameter from the spread's position on, and a rest parameter is left out.
+ */
+function parametersGiven(node) {
+  const tagged = node.type === 'TaggedTemplateExpression';
+  const called = calledFunction(tagged ? node.tag : node.callee);
+  if (!called) return [];
+  // A tag's first argument is its strings, which no expression in the source spells.
+  let args = tagged ? [null, ...node.quasi.expressions] : node.arguments;
+  if (called.mode === 'call') args = args.slice(1);
+  if (called.mode === 'apply') args = args[1]?.type === 'ArrayExpression' ? args[1].elements : [];
+  const first = args.findIndex((held) => held?.type === 'SpreadElement');
+  const spread = first === -1 ? args.length : first;
+  const after = args.slice(spread).filter((held) => held && held.type !== 'SpreadElement');
+  return called.fn.params
+    .map((param, i) => [param, i < spread ? [args[i]] : after])
+    .filter(([param]) => param.type !== 'RestElement');
+}
+
+/**
  * The lines on which a module spells the config path `board.priority`: a member access from
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
- * that takes `priority` from a `board` key or from what `board` names. Any other use of the name
- * `board` passes, so L3's board handle does; a read through an alias or a computed key is a review
- * finding (the card's Rule 3 item).
+ * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
+ * reached through an expression whose result can be one of its operands, and a pattern takes it as
+ * the value it is given, as its default, or as an argument to a function called where it is
+ * written. Any other use of the name `board` passes, so L3's board handle does; a read through an
+ * alias or a computed key is a review finding (the card's Rule 3 item).
  */
 function priorityReads(program) {
   const lines = [];
@@ -549,11 +594,22 @@ function priorityReads(program) {
     return (node?.type === 'Identifier' && node.name === 'board')
       || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
   };
+  // `board`, or an expression whose result can be an operand that is: Hand-ons step 7's list.
+  const namesBoard = (wrapped) => {
+    const node = unchained(wrapped);
+    switch (node?.type) {
+      case 'ConditionalExpression': return namesBoard(node.consequent) || namesBoard(node.alternate);
+      case 'LogicalExpression': return namesBoard(node.left) || namesBoard(node.right);
+      case 'AwaitExpression': return namesBoard(node.argument);
+      case 'SequenceExpression': return namesBoard(node.expressions.at(-1));
+      default: return isBoard(node);
+    }
+  };
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
   walk(program, (node) => {
-    if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && isBoard(node.object)) {
+    if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && namesBoard(node.object)) {
       lines.push(node.loc.start.line);
     }
     if (node.type === 'ObjectPattern') {
@@ -561,8 +617,14 @@ function priorityReads(program) {
         if (held.type === 'Property' && keyOf(held.key, held.computed) === 'board' && takesPriority(unwrapped(held.value))) lines.push(held.loc.start.line);
       }
     }
-    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && isBoard(node.init)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && isBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && namesBoard(node.init)) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
+      for (const [param, given] of parametersGiven(node)) {
+        if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
+      }
+    }
   });
   return lines;
 }
@@ -586,6 +648,10 @@ export function boundaryReport(tree) {
   const exempt = [];
   const report = (file, line, rule, what) => violations.push({ file, line, rule, message: `${file} line ${line} breaks ${rule}: ${what}` });
   for (const [file, source] of tree) {
+    if (isCommonJs(file)) {
+      report(file, 1, 'the CommonJS rule', 'it is CommonJS or makes modules CommonJS, and this test reads ES modules only, so what it loads through `require` is unknown');
+      continue;
+    }
     try {
       modules.set(file, parsed(file, source));
     } catch (error) {
@@ -757,13 +823,17 @@ export function boundaryReport(tree) {
     }
 
     // A loader the import graph cannot follow binds something nobody can name.
-    for (const { value, line } of module.names) {
+    for (const { value, line } of [...module.names, ...module.strings]) {
       if (LOADERS.includes(value)) report(file, line, 'the dynamic-import rule', `it names \`${value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
+    }
+    const loaded = [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars];
+    for (const entry of loaded) {
+      if (LOADER_MODULES.includes(entry.from)) report(file, entry.line, 'the dynamic-import rule', `it imports \`${entry.from}\`, whose loaders bind modules this test cannot follow`);
     }
 
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
-      for (const entry of [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars]) {
+      for (const entry of loaded) {
         if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the forge runners, doctor.mjs and init.mjs may`);
       }
     }

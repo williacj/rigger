@@ -1,6 +1,9 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
 // may import, and to the config keys, card facts and processes its layer may touch.
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -524,4 +527,259 @@ test('a side with no module, or no runner, is refused rather than read as clean'
   const renamed = new Map(Object.entries(ADAPTER));
   renamed.set('src/substrate/forge/runners.mjs', ADAPTER['src/substrate/forge/runners.mjs'].replace('itemWriteRunner(args) {', 'moveRunner(args) {'));
   assert.throws(() => boundaryReport(renamed), /itemWriteRunner/);
+});
+
+/** Asserts that `modules` breaks some rule in `file`, the file named first in the message. */
+function assertRefused(modules, file, label = file) {
+  const found = messages(modules);
+  assert.ok(
+    found.some((message) => message.startsWith(`${file} `)),
+    `${label}: expected ${file} to break a rule; the report says:\n${found.join('\n') || '(nothing)'}`,
+  );
+}
+
+/** Each way a module can reach CommonJS's `require` and call it on `SPEC`. */
+const REQUIRES = {
+  'require by name': "export const loaded = require('SPEC');",
+  'require through a binding that holds it': "const load = require;\nexport const loaded = load('SPEC');",
+  'require through a binding destructured from module': "const { require: load } = module;\nexport const loaded = load('SPEC');",
+  'module.require': "export const loaded = module.require('SPEC');",
+  "module['require']": "export const loaded = module['require']('SPEC');",
+  'require through a key held in a binding': "const key = 'require';\nexport const loaded = module[key]('SPEC');",
+};
+
+/** The extensions a module under src/ may carry. */
+const EXTENSIONS = ['cjs', 'js', 'mjs'];
+
+test('rule 7 by require: a module outside the spawners loading child_process through require fails, as .cjs, .js and .mjs, however it reaches require', () => {
+  for (const specifier of ['node:child_process', 'child_process']) {
+    for (const [way, template] of Object.entries(REQUIRES)) {
+      for (const extension of EXTENSIONS) {
+        const file = `src/workflow/spawn.${extension}`;
+        assertRefused({ [file]: template.replaceAll('SPEC', specifier) }, file, `${way}, ${specifier}, .${extension}`);
+      }
+    }
+  }
+});
+
+test('a CommonJS module is refused whole, so a route to require that only its wrapper hands it fails too', () => {
+  const routes = [
+    "const load = arguments[1];\nload('node:child_process');",
+    "const key = ['re', 'quire'].join('');\nmodule[key]('node:child_process');",
+    "(function f() { return f.caller.arguments[1]; })()('node:child_process');",
+    '',
+  ];
+  for (const source of routes) assertBreaks({ 'src/workflow/spawn.cjs': source }, 'src/workflow/spawn.cjs', 'the CommonJS rule');
+});
+
+test('a package.json under src/ is refused, because it can make the .js modules beside it CommonJS', () => {
+  const modules = { 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/spawn.js': "const load = arguments[1];\nload('node:child_process');" };
+  assertBreaks(modules, 'src/workflow/package.json', 'the CommonJS rule');
+});
+
+test('the source tree carries a package.json under src/, so the whole-tree run meets it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layer-boundaries-'));
+  try {
+    const files = { ...ADAPTER, 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/move.js': 'export const move = 1;' };
+    for (const [path, source] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), source);
+    }
+    const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
+    assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importing node:module fails, because its loaders reach require by routes this test cannot follow', () => {
+  for (const source of ["import { Module } from 'node:module';", "import * as loaders from 'module';", "export { Module } from 'node:module';", "export * from 'node:module';"]) {
+    assertBreaks({ 'src/workflow/load.mjs': source }, 'src/workflow/load.mjs', 'the dynamic-import rule');
+  }
+});
+
+test('process.mainModule fails, because it holds a CommonJS module whose require a run-time key could reach', () => {
+  for (const source of ['export const main = process.mainModule;', "export const main = process['mainModule'];", 'const { mainModule } = process;\nexport const load = (key) => mainModule[key];']) {
+    assertBreaks({ 'src/workflow/load.mjs': source }, 'src/workflow/load.mjs', 'the dynamic-import rule');
+  }
+});
+
+test('a loader named by a string fails as one named by a name does', () => {
+  for (const source of ["export const load = process['getBuiltinModule'];", "export const load = Reflect.get(module, 'require');", "export const load = module['create' + 'Require'];"]) {
+    assertBreaks({ 'src/workflow/load.mjs': source }, 'src/workflow/load.mjs', 'the dynamic-import rule');
+  }
+});
+
+/**
+ * What a barred directory may load through require, per side: the side's module, the runners
+ * module, and a module exporting a binding that holds the side, with the relay that exports it.
+ */
+const REQUIRED_SIDES = [
+  {
+    side: 'item-write',
+    importers: ['src/cli/promote', 'src/scheduling/pull'],
+    relay: { 'src/workflow/relay.mjs': "import { write } from '../substrate/forge/item-write.mjs';\nexport const held = write;" },
+    targets: ['../substrate/forge/item-write.mjs', '../substrate/forge/runners.mjs', '../workflow/relay.mjs'],
+  },
+  {
+    side: 'schema-write',
+    importers: ['src/workflow/shape', 'src/scheduling/pull'],
+    relay: { 'src/cli/relay.mjs': "import { shape } from '../substrate/forge/schema-write.mjs';\nexport const held = shape;" },
+    targets: ['../substrate/forge/schema-write.mjs', '../substrate/forge/runners.mjs', '../cli/relay.mjs'],
+  },
+];
+
+test('Hand-ons step 1 by require: a barred directory loading a write side through require fails, on both sides, however it reaches require', () => {
+  for (const { side, importers, relay, targets } of REQUIRED_SIDES) {
+    for (const importer of importers) {
+      for (const target of targets) {
+        for (const [way, template] of Object.entries(REQUIRES)) {
+          for (const extension of EXTENSIONS) {
+            const file = `${importer}.${extension}`;
+            assertRefused({ ...relay, [file]: template.replaceAll('SPEC', target) }, file, `${side}: ${way} of ${target}, .${extension}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('require of what the test cannot read fails, naming the file', () => {
+  const calls = ['require(name)', "require('./missing.mjs')", "require('some-package')", 'require(`../${name}.mjs`)', 'module.require(name)'];
+  for (const call of calls) {
+    for (const extension of EXTENSIONS) {
+      const file = `src/workflow/load.${extension}`;
+      assertRefused({ [file]: `export const load = (name) => ${call};` }, file, `${call}, .${extension}`);
+    }
+  }
+});
+
+/**
+ * A hand-on through a catch clause's parameter whose destructuring default holds the side, handed
+ * on by each Hand-ons step. `SIDE`, `NAME` and `RUNNER` are as in `STEPS`.
+ */
+const CATCHES = {
+  'step 4, a catch default assigned into a module binding': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = a; }",
+  'step 4, a catch default in an array pattern': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw []; } catch ([a = NAME]) { held = a; }",
+  'step 4, a catch default nested in an object pattern': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw { x: {} }; } catch ({ x: { a = NAME } }) { held = a; }",
+  'step 4, a catch default in an array in an object': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw { x: [] }; } catch ({ x: [a = NAME] }) { held = a; }",
+  'step 4, a catch default on a nested pattern': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ x: { a } = { a: NAME } }) { held = a; }",
+  'step 4, a catch default reading an earlier default': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME, b = a }) { held = b; }",
+  'step 4, a catch default under a rest element': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw []; } catch ([, ...[a = NAME]]) { held = a; }",
+  'step 4, a catch default held by a var in the catch': "import { NAME } from 'SIDE';\ntry { throw {}; } catch ({ a = NAME }) { var v = a; }\nexport { v as held };",
+  'step 4, a catch default in a block': "import { NAME } from 'SIDE';\nexport let held;\n{ try { throw {}; } catch ({ a = NAME }) { const b = a; held = b; } }",
+  'step 4, a catch default in a called function': "import { NAME } from 'SIDE';\nexport let held;\n(() => { try { throw {}; } catch ({ a = NAME }) { held = a; } })();",
+  'step 4, a catch default beside a finally': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = a; } finally { }",
+  'step 1, a namespace as a catch default': "import * as ns from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = ns }) { held = a; }",
+  'step 1, the runner as a catch default': "import { RUNNER } from '../substrate/forge/runners.mjs';\nexport let held;\ntry { throw {}; } catch ({ a = RUNNER }) { held = a; }",
+  'step 2, a dynamic import as a catch default': "export let held;\ntry { throw {}; } catch ({ a = await import('SIDE') }) { held = a; }",
+  'step 5, a property read from a catch default': "import * as ns from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = ns }) { held = a.NAME; }",
+  'step 6, a catch default held in an object': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = { a }; }",
+  'step 6, a catch default held in an array': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = [a]; }",
+  'step 7, a catch default through ??': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = null ?? a; }",
+  'step 7, a catch default whose value is a ?? of the side': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = null ?? NAME }) { held = a; }",
+  'step 8, a catch default passed to a called arrow': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = NAME }) { held = ((x) => x)(a); }",
+  'step 8, a called arrow as a catch default': "import { NAME } from 'SIDE';\nexport let held;\ntry { throw {}; } catch ({ a = (() => NAME)() }) { held = a; }",
+};
+
+test('Hand-ons step 4 by a catch parameter: a destructuring default holding the item-write side, handed on, fails at any depth', () => {
+  const importers = [['src/cli/promote.mjs', 'rule 5'], ['src/scheduling/pull.mjs', 'rule 1']];
+  const missed = missedHandOns('item-write', 'write', 'src/workflow/relay.mjs', importers, CATCHES);
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
+});
+
+test('Hand-ons step 4 by a catch parameter: a destructuring default holding the schema-write side, handed on, fails at any depth', () => {
+  const importers = [['src/workflow/shape.mjs', 'rule 6'], ['src/scheduling/pull.mjs', 'rule 1']];
+  const missed = missedHandOns('schema-write', 'shape', 'src/cli/relay.mjs', importers, CATCHES);
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
+});
+
+test('rule 3: a pattern taking priority with board as its default fails, on every kind of parameter and nested in another pattern', () => {
+  const shapes = [
+    // Finding 2's four shapes.
+    'export const rank = (config, { priority } = config.board) => priority;',
+    'export function rank(config, { priority } = config.board) { return priority; }',
+    'export const rank = (config) => (item, { priority } = config.board) => priority;',
+    'export const rank = (config, { priority } = config?.board) => priority;',
+    // Each other kind of parameter, and each spelling of the access.
+    'export const rank = function (config, { priority } = config.board) { return priority; };',
+    'export const ranks = { rank(config, { priority } = config.board) { return priority; } };',
+    'export class Ranks { rank(config, { priority } = config.board) { return priority; } }',
+    'export class Ranks { static rank(config, { priority } = config.board) { return priority; } }',
+    'export const ranks = { set rank({ priority } = config.board) { } };',
+    "export const rank = (config, { priority } = config['board']) => priority;",
+    "export const rank = (config, { priority } = config?.['board']) => priority;",
+    'export const rank = (board, { priority } = board) => priority;',
+    'export const rank = (deps, { priority: p = 0 } = deps.config.board) => p;',
+    "export const rank = (config, { 'priority': p } = config.board) => p;",
+    // Nested inside another pattern.
+    'export const rank = (config, { inner: { priority } = config.board } = {}) => priority;',
+    'export const rank = (config, [{ priority } = config.board] = []) => priority;',
+    'export const rank = (config) => { const { inner: { priority } = config.board } = {}; return priority; };',
+    'export const rank = (config) => { let priority; ({ inner: { priority } = config.board } = {}); return priority; };',
+    'export const rank = (config) => { try { throw {}; } catch ({ inner: { priority } = config.board }) { return priority; } };',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 3: a pattern taking priority whose value or default is an operand expression holding board fails', () => {
+  const shapes = [
+    'export const rank = (config) => { const { priority } = config.board ?? {}; return priority; };',
+    'export const rank = (config) => { const { priority } = config.board || {}; return priority; };',
+    'export const rank = (config, ready) => { const { priority } = ready && config.board; return priority; };',
+    'export const rank = (config, ready) => { const { priority } = ready ? config.board : {}; return priority; };',
+    'export const rank = (config, ready) => { const { priority } = ready ? {} : config.board; return priority; };',
+    'export const rank = async (config) => { const { priority } = await config.board; return priority; };',
+    'export const rank = (config) => { const { priority } = (0, config.board); return priority; };',
+    'export const rank = (config) => { const { priority } = (config?.board ?? {}); return priority; };',
+    "export const rank = (config) => { const { priority } = config['board'] ?? {}; return priority; };",
+    'export const rank = (board) => { const { priority } = board ?? {}; return priority; };',
+    'export const rank = (config, ready) => { const { priority } = (ready ? config.board : null) ?? {}; return priority; };',
+    'export const rank = async (config) => { const { priority } = await (config.board ?? {}); return priority; };',
+    'export const rank = (config) => { let priority; ({ priority } = config.board ?? {}); return priority; };',
+    'export const rank = (config, { priority } = config.board ?? {}) => priority;',
+    // A function called where it is written gives its parameters what the call passes.
+    'export const rank = (config) => (({ priority }) => priority)(config.board);',
+    'export const rank = (config) => (({ priority }) => priority)(config.board ?? {});',
+    'export const rank = (config) => (function (a, { priority }) { return priority; })(0, config.board);',
+    'export const rank = (config) => (function ({ priority }) { return priority; }).call(null, config.board ?? {});',
+    'export const rank = (config) => (function ({ priority }) { return priority; }).apply(null, [config.board]);',
+    'export const rank = (config) => ((strings, { priority }) => priority)`${config.board}`;',
+    'export const rank = (config) => (({ priority } = {}) => priority)(config.board);',
+    'export const rank = (config, list) => ((a, { priority }) => priority)(...list, config.board);',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 3: priority read by a member access from an operand expression holding board fails', () => {
+  const shapes = [
+    'export const rank = (config) => (config.board ?? {}).priority;',
+    'export const rank = (config) => (config.board || {}).priority;',
+    'export const rank = (config, ready) => (ready && config.board).priority;',
+    'export const rank = (config, ready) => (ready ? config.board : {}).priority;',
+    'export const rank = async (config) => (await config.board).priority;',
+    'export const rank = (config) => (0, config.board).priority;',
+    'export const rank = (config) => (config.board ?? {})?.priority;',
+    "export const rank = (config) => (config.board ?? {})['priority'];",
+    'export const rank = (config) => (config?.board ?? {}).priority;',
+    'export const rank = (board) => (board ?? {}).priority;',
+    'export const rank = (config, ready) => ((ready ? config.board : null) ?? {}).priority;',
+  ];
+  for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 3 bars nothing more: the board handle as a parameter default, a destructured key, a member or an operand passes when no priority is read from it', () => {
+  const handles = [
+    'export const pull = (deps, board = deps.board) => board.items();',
+    'export const pull = (deps, { board } = deps) => board.items();',
+    'export const pull = (deps, { items } = deps.board) => items();',
+    'export const pull = (deps) => { const { items } = deps.board ?? {}; return items(); };',
+    'export const pull = (deps) => (deps.board ?? deps.fallback).items();',
+    'export const pull = (deps) => ((b) => b.items())(deps.board);',
+    'export const pull = (deps, item) => ((board, { priority }) => [board.items(), priority])(deps.board, item);',
+    'export const pull = (item, fallback) => (item ?? fallback).priority;',
+    'export const pull = (deps, { priority } = deps.item ?? {}) => priority;',
+    'export const pull = (deps) => { try { return deps.board.items(); } catch ({ board = deps.board }) { return board; } };',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
