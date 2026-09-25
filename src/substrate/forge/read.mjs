@@ -159,6 +159,16 @@ export function readSide(board, { send } = {}) {
     },
     /** The board's single-select fields but the one holding the columns, as `{ name, options }`. */
     readFields: async () => singleSelectFields('readFields', board, send).filter((field) => field.name !== COLUMNS),
+    /**
+     * Every field on the board, whatever its type, as `{ name, type }`, the type as GitHub's
+     * `dataType` names it. Read by listing rather than by name, because `gh` answers a field named
+     * but not held by exiting 1 (measured with gh 2.99.0 on board 6, 2026-09-25).
+     */
+    readFieldTypes: async () => {
+      const query = (page) => boardQuery('readFieldTypes', board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } } }`);
+      return everyPage('readFieldTypes', board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board))
+        .map((field) => ({ name: field.name, type: field.dataType }));
+    },
     /** The names of the labels the board's repository holds. */
     readLabels: async () => {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);

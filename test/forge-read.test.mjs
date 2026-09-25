@@ -77,6 +77,15 @@ function fieldPage(fields, others = 2) {
   return { repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MTA' }, nodes } } } };
 }
 
+/**
+ * A page of the field-type read, holding `fields` as `{ name, type }`, pointing on to the page
+ * `next` when there is one. Every field answers, whatever its type.
+ */
+function fieldTypePage(fields, next = null) {
+  const nodes = fields.map(({ name, type }) => ({ name, dataType: type }));
+  return { repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MTc' }, nodes } } } };
+}
+
 /** A page of the label read, holding `names`, pointing on to the page `next` when there is one. */
 function labelPage(names, next = null) {
   const nodes = names.map((name) => ({ name }));
@@ -98,12 +107,13 @@ function pathsOf(value, at = '', into = new Set()) {
 
 /**
  * The key paths gh printed on 2026-09-25, with gh 2.99.0, for each of the read side's queries: its
- * item page and its field query on board 6, and its label page on this repository. A constructed
+ * item page, its field query and its field-type query on board 6, and its label page on this
+ * repository. A constructed
  * answer holding any other path carries a field the query does not select, or nests one where gh
  * does not.
  */
 const PRINTED = Object.fromEntries(
-  [['item', 'board-6-items-2026-09-25.json'], ['field', 'board-6-fields-2026-09-25.json'], ['label', 'rigger-labels-2026-09-25.json']]
+  [['item', 'board-6-items-2026-09-25.json'], ['field', 'board-6-fields-2026-09-25.json'], ['fieldType', 'board-6-field-types-2026-09-25.json'], ['label', 'rigger-labels-2026-09-25.json']]
     .map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
 
@@ -122,6 +132,7 @@ function forge({
   pages = { null: itemPage([]) },
   fields = fieldPage([{ name: 'Status', options: Object.values(COLUMNS) }]),
   labels = { null: labelPage([]) },
+  fieldTypes = { null: fieldTypePage([{ name: 'Status', type: 'SINGLE_SELECT' }]) },
 } = {}) {
   const sent = [];
   const callers = [];
@@ -147,6 +158,7 @@ function forge({
     callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
     const document = documentOf(args);
     if (document.includes('items(')) return answer('item', pages, document);
+    if (document.includes('dataType')) return answer('fieldType', fieldTypes, document);
     if (document.includes('fields(')) return printed('field', fields);
     if (document.includes('repository(')) return answer('label', labels, document);
     throw new Error(`the test forge does not answer ${document}`);
@@ -414,6 +426,24 @@ test('the single-select fields but Status read back with their options in board 
   assert.deepEqual(fields, [
     { name: 'Priority', options: ['Urgent', 'Low', 'High', 'Medium'] },
     { name: 'Model Tier', options: ['standard', 'high'] },
+  ]);
+});
+
+test('every field reads back with its name and its type as GitHub names it, whatever the type, across every page gh answers', async () => {
+  // Two pages, and among them fields of four types: a read that kept only the single-select
+  // fields, stopped at the first page, or read a type from anywhere but GitHub's answer, fails.
+  const send = forge({
+    fieldTypes: {
+      null: fieldTypePage([{ name: 'Title', type: 'TITLE' }, { name: 'Status', type: 'SINGLE_SELECT' }], 'Mg'),
+      Mg: fieldTypePage([{ name: 'Priority', type: 'TEXT' }, { name: 'Estimate', type: 'NUMBER' }]),
+    },
+  });
+
+  assert.deepEqual(await readSide(BOARD, { send }).readFieldTypes(), [
+    { name: 'Title', type: 'TITLE' },
+    { name: 'Status', type: 'SINGLE_SELECT' },
+    { name: 'Priority', type: 'TEXT' },
+    { name: 'Estimate', type: 'NUMBER' },
   ]);
 });
 

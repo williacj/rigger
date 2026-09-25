@@ -92,6 +92,7 @@ const OPERATIONS = {
   readItems: (board, send) => readSide(board, { send }).readItems(),
   readColumns: (board, send) => readSide(board, { send }).readColumns(),
   readFields: (board, send) => readSide(board, { send }).readFields(),
+  readFieldTypes: (board, send) => readSide(board, { send }).readFieldTypes(),
   readLabels: (board, send) => readSide(board, { send }).readLabels(),
   moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
   createField: (board, send) => schemaWriteSide(board, { send }).createField('Priority', ['High']),
@@ -123,7 +124,7 @@ function addressesOnly(owner, other, documents, operation) {
 
 // proves R-WORK-7
 test("every request a full read sends that addresses the board names the declared board owner, and never the repository's owner", async () => {
-  for (const operation of ['readItems', 'readColumns', 'readFields']) {
+  for (const operation of ['readItems', 'readColumns', 'readFields', 'readFieldTypes']) {
     addressesOnly(DECLARED, REPOSITORY_OWNER, await sentBy(operation, ownedBy(DECLARED)), operation);
   }
 });
@@ -157,7 +158,7 @@ test("the request createColumn sends to find the board names the declared board 
 // proves R-WORK-7
 test("with no board owner declared, every request that addresses the board names the owner of the repository repo names", async () => {
   assert.ok(!Object.hasOwn(rigger.board, 'owner'), 'this repository declares a board owner, so its absence went untested');
-  for (const operation of ['readItems', 'readColumns', 'readFields', 'moveItem', 'createField', 'createColumn']) {
+  for (const operation of ['readItems', 'readColumns', 'readFields', 'readFieldTypes', 'moveItem', 'createField', 'createColumn']) {
     addressesOnly(REPOSITORY_OWNER, DECLARED, await sentBy(operation, rigger), operation);
   }
 });
@@ -175,7 +176,7 @@ test('the operations the tests above record are every forge adapter operation th
       if ((await sentBy(operation, config)).some(findsBoard) && !addressing.includes(operation)) addressing.push(operation);
     }
   }
-  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFields', 'readItems']);
+  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFieldTypes', 'readFields', 'readItems']);
 });
 
 test("with a board owner declared, readLabels and createLabel address the repository repo names, and no board", async () => {
