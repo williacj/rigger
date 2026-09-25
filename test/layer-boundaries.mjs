@@ -139,44 +139,113 @@ function returnedBy(fn) {
   return found;
 }
 
+/** The name a resolvable dynamic `import()` of `specifier` is carried under: that module, whole. */
+const IMPORTED = 'import:';
+
 /**
- * The names whose values an expression can evaluate to. A function is a value of its own and
- * hands on nothing until it is called, because calling a side through L2 is the ruled path; a
- * function called where it is written hands on what it returns. A call to anything else may
- * hand back its callee or any argument, so it carries all of them.
+ * The function expression a call runs where it is written, however the call wraps it: a comma
+ * whose last operand it is, `.call` or `.apply` on it, or both. `mode` says how the call passes
+ * its arguments. Null where the callee is anything else.
  */
-function valuesOf(node) {
+function calledFunction(callee) {
+  let node = callee;
+  let mode = 'direct';
+  for (;;) {
+    if (node?.type === 'SequenceExpression') {
+      node = node.expressions.at(-1);
+    } else if (mode === 'direct' && node?.type === 'MemberExpression' && ['call', 'apply'].includes(keyOf(node.property, node.computed))) {
+      mode = keyOf(node.property, node.computed);
+      node = node.object;
+    } else {
+      return isFunction(node) ? { fn: node, mode } : null;
+    }
+  }
+}
+
+/**
+ * What a function called where it is written hands back. Its parameters hold what the call
+ * passes them, `passed` giving one list of values per parameter, or their defaults. A name the
+ * function declares or assigns in its own scope holds what it is given there.
+ */
+function invoked(fn, passed, env) {
+  const scope = new Map(env);
+  fn.params.forEach((param, i) => {
+    const given = param.type === 'RestElement' ? passed.slice(i).flat() : passed[i] ?? [];
+    const defaults = param.type === 'AssignmentPattern' ? valuesOf(param.right, scope) : [];
+    for (const bound of boundBy(param)) scope.set(bound, [...given, ...defaults]);
+  });
+  const aliases = [];
+  const visit = (node) => {
+    if (node !== fn.body && (isFunction(node) || node.type === 'FunctionDeclaration')) return;
+    if (node.type === 'VariableDeclarator') aliases.push([boundBy(node.id), node.init]);
+    if (node.type === 'AssignmentExpression') aliases.push([boundBy(node.left), node.right]);
+    for (const child of childrenOf(node)) visit(child);
+  };
+  if (fn.body.type === 'BlockStatement') {
+    visit(fn.body);
+    for (const [names] of aliases) for (const bound of names) scope.set(bound, []);
+  }
+  // Each round lets one more alias in a chain take what the one before it was given.
+  for (let round = 0; round <= aliases.length; round++) {
+    for (const [names, value] of aliases) {
+      const given = valuesOf(value, scope);
+      for (const bound of names) scope.set(bound, [...new Set([...scope.get(bound), ...given])]);
+    }
+  }
+  return returnedBy(fn).flatMap((returned) => valuesOf(returned, scope));
+}
+
+/**
+ * The names whose values an expression can evaluate to, where `env` holds what each name in a
+ * called function's scope was given. A function is a value of its own and hands on nothing until
+ * it is called, because calling a side through L2 is the ruled path; a function called where it
+ * is written hands on what it returns. A call to anything else may hand back its callee or any
+ * argument, so it carries all of them. A resolvable dynamic `import()` carries its module whole.
+ */
+function valuesOf(node, env = new Map()) {
   if (!node) return [];
+  const of = (held) => valuesOf(held, env);
   switch (node.type) {
-    case 'Identifier': return [node.name];
-    case 'MemberExpression': return valuesOf(node.object);
-    case 'ChainExpression': return valuesOf(node.expression);
-    case 'ConditionalExpression': return [...valuesOf(node.consequent), ...valuesOf(node.alternate)];
-    case 'LogicalExpression': return [...valuesOf(node.left), ...valuesOf(node.right)];
-    case 'SequenceExpression': return valuesOf(node.expressions.at(-1));
-    case 'AssignmentExpression': return valuesOf(node.right);
+    case 'Identifier': return env.get(node.name) ?? [node.name];
+    case 'MemberExpression': return of(node.object);
+    case 'ChainExpression': return of(node.expression);
+    case 'ConditionalExpression': return [...of(node.consequent), ...of(node.alternate)];
+    case 'LogicalExpression': return [...of(node.left), ...of(node.right)];
+    case 'SequenceExpression': return of(node.expressions.at(-1));
+    case 'AssignmentExpression': return of(node.right);
     case 'AwaitExpression':
     case 'SpreadElement':
-    case 'YieldExpression': return valuesOf(node.argument);
-    case 'ArrayExpression': return node.elements.flatMap(valuesOf);
+    case 'YieldExpression': return of(node.argument);
+    case 'ArrayExpression': return node.elements.flatMap(of);
     case 'ObjectExpression':
       return node.properties.flatMap((held) => {
-        if (held.type === 'SpreadElement') return valuesOf(held.argument);
-        return held.kind === 'init' && !held.method ? valuesOf(held.value) : [];
+        if (held.type === 'SpreadElement') return of(held.argument);
+        return held.kind === 'init' && !held.method ? of(held.value) : [];
       });
     case 'ClassExpression':
     case 'ClassDeclaration':
-      return node.body.body.filter((member) => member.static && member.type === 'PropertyDefinition').flatMap((member) => valuesOf(member.value));
+      return node.body.body.filter((member) => member.static && member.type === 'PropertyDefinition').flatMap((member) => of(member.value));
+    case 'ImportExpression': {
+      const specifier = fixed(node.source);
+      return specifier === undefined ? [] : [`${IMPORTED}${specifier}`];
+    }
     case 'CallExpression':
     case 'NewExpression': {
-      const { callee } = node;
-      const called = isFunction(callee) ? callee
-        : callee.type === 'MemberExpression' && isFunction(callee.object) && ['call', 'apply'].includes(keyOf(callee.property, callee.computed)) ? callee.object
-          : null;
-      const given = node.arguments.flatMap(valuesOf);
-      return called ? [...returnedBy(called).flatMap(valuesOf), ...given] : [...valuesOf(callee), ...given];
+      const called = calledFunction(node.callee);
+      const given = node.arguments.map(of);
+      if (!called) return [...of(node.callee), ...given.flat()];
+      if (called.mode === 'direct') return invoked(called.fn, given, env);
+      if (called.mode === 'call') return invoked(called.fn, given.slice(1), env);
+      const list = node.arguments[1];
+      const spread = list?.type === 'ArrayExpression' ? list.elements.map(of) : called.fn.params.map(() => of(list));
+      return invoked(called.fn, spread, env);
     }
-    case 'TaggedTemplateExpression': return valuesOf(node.tag);
+    case 'TaggedTemplateExpression': {
+      const called = calledFunction(node.tag);
+      const given = node.quasi.expressions.map(of);
+      if (!called) return [...of(node.tag), ...given.flat()];
+      return invoked(called.fn, called.mode === 'call' ? given : [[], ...given], env);
+    }
     default: return [];
   }
 }
@@ -282,7 +351,7 @@ function parsed(file, source) {
           ...(node.callee.type === 'MemberExpression' ? boundBy(node.callee.object) : []),
         ].filter((bound) => topLevel.has(bound));
         give(reaches, receivers, node.arguments.flatMap(namesIn));
-        give(carries, receivers, node.arguments.flatMap(valuesOf));
+        give(carries, receivers, node.arguments.flatMap((held) => valuesOf(held)));
       }
     });
   }
@@ -399,11 +468,12 @@ export function boundaryReport(tree) {
     const key = `${file}@${local}`;
     if (seen.has(key)) return [];
     seen.add(key);
+    if (local.startsWith(IMPORTED)) return resolveExport(target(file, local.slice(IMPORTED.length)), '*', seen);
     const module = modules.get(file);
     const imported = module.imports.find((entry) => entry.local === local);
     if (imported) return resolveExport(target(file, imported.from), imported.imported, seen);
     const given = [...(module.carries.get(local) ?? [])]
-      .filter((held) => module.topLevel.has(held) || module.imports.some((entry) => entry.local === held));
+      .filter((held) => held.startsWith(IMPORTED) || module.topLevel.has(held) || module.imports.some((entry) => entry.local === held));
     return [{ file, local }, ...given.flatMap((held) => resolveLocal(file, held, seen))];
   };
 

@@ -42,6 +42,19 @@ package still installs with none. Statements, declarators and patterns now come 
 tree, so destructuring and a second declarator are read rather than refused. A module that does
 not parse fails the test, naming the line.
 
+**The last commit: the author draws where holding ends.** Round 3 found two more routes. A side
+bound by a dynamic `import()` and handed on passed, and so did `(0, (() => side))()`. Each round
+had been judging against a class with no stated edge. With the owner's leave for one commit past
+the round limit, the PM revised #213 (comment 5835018240). Rules 1, 5 and 6 and the re-export item
+now share a "Hand-ons: what holds a side" item. Its eight steps are the whole definition, and
+every route outside them is a review finding. The reader follows each step:
+- a resolvable `import()` carries its module whole, awaited or not;
+- a called function is found through any comma, `.call`, `.apply` or template tag wrapped round it;
+- its parameters take what the call passes, or their defaults;
+- its own aliases take what they are given.
+
+The proof tests run a hand-on through every step, for both write sides.
+
 **Rule 3, and who drew its line.** Round 1 found `const b = config.board; b.priority` passing, and
 round 2's fix barred the `board` key in `src/scheduling/` outright. That caught the board handle
 #227 gives L3. The reviewer returned the item to its author under `R-LOOP-6`, and the PM revised

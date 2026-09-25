@@ -273,10 +273,11 @@ const HAND_ONS = {
  * The findings each hand-on in `HAND_ONS` misses: `relay` hands on `name` from `side`, and each of
  * `importers` is a module barred from that side, importing `relay` whole, with the rule barring it.
  */
-function missedHandOns(side, name, relay, importers) {
+function missedHandOns(side, name, relay, importers, shapes = HAND_ONS, extra = {}) {
   const missed = [];
-  for (const [shape, template] of Object.entries(HAND_ONS)) {
-    const modules = { [relay]: template.replaceAll('SIDE', `../substrate/forge/${side}.mjs`).replaceAll('NAME', name) };
+  const runner = `${side.replace(/-(\w)/g, (_, letter) => letter.toUpperCase())}Runner`;
+  for (const [shape, template] of Object.entries(shapes)) {
+    const modules = { ...extra, [relay]: template.replaceAll('SIDE', `../substrate/forge/${side}.mjs`).replaceAll('NAME', name).replaceAll('RUNNER', runner) };
     for (const [file] of importers) modules[file] = `import * as all from '../${relay.slice('src/'.length)}';`;
     const found = messages(modules);
     const says = (file, rule) => found.some((message) => message.startsWith(`${file} `) && message.includes(`breaks ${rule}:`));
@@ -289,12 +290,71 @@ function missedHandOns(side, name, relay, importers) {
 
 test('a hand-on of an item-write binding is the item-write side\'s, in every shape, so importing it from a barred directory fails', () => {
   const importers = [['src/cli/promote.mjs', 'rule 5'], ['src/scheduling/pull.mjs', 'rule 1']];
-  assert.deepEqual(missedHandOns('item-write', 'write', 'src/workflow/relay.mjs', importers), []);
+  const missed = missedHandOns('item-write', 'write', 'src/workflow/relay.mjs', importers);
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
 });
 
 test('a hand-on of a schema-write binding is the schema-write side\'s, in every shape, so importing it from a barred directory fails', () => {
   const importers = [['src/workflow/shape.mjs', 'rule 6'], ['src/scheduling/pull.mjs', 'rule 1']];
-  assert.deepEqual(missedHandOns('schema-write', 'shape', 'src/cli/relay.mjs', importers), []);
+  const missed = missedHandOns('schema-write', 'shape', 'src/cli/relay.mjs', importers);
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
+});
+
+/**
+ * A hand-on through each of the eight steps of the card's "Hand-ons: what holds a side" item,
+ * each named for its step. `SIDE` is the side module's path, `NAME` its export and `RUNNER` its
+ * runner; every shape exports a binding holding the side.
+ */
+const STEPS = {
+  'step 1, an import by name': "import { NAME } from 'SIDE';\nexport { NAME as held };",
+  'step 1, an import as a namespace': "import * as ns from 'SIDE';\nexport const held = ns;",
+  'step 1, an import as a default': "import held from '../substrate/forge/index-default.mjs';\nexport { held };",
+  'step 1, an import of the runner': "import { RUNNER } from '../substrate/forge/runners.mjs';\nexport { RUNNER as held };",
+  'step 2, a dynamic import awaited and bound (D1)': "export const side = await import('SIDE');",
+  'step 2, a dynamic import bound and not awaited': "export const side = import('SIDE');",
+  'step 2, a dynamic import awaited and destructured (D3)': "const { NAME } = await import('SIDE');\nexport { NAME as shape };",
+  'step 2, a dynamic import bound, then read': "const ns = await import('SIDE');\nexport const held = ns.NAME;",
+  'step 3, a re-export under the same name': "export { NAME } from 'SIDE';",
+  'step 3, a re-export under another name': "export { NAME as held } from 'SIDE';",
+  'step 4, an alias by assignment': "import { NAME } from 'SIDE';\nexport let held;\nheld = NAME;",
+  'step 4, an alias by destructuring': "import { NAME } from 'SIDE';\nexport const [held] = [NAME];",
+  'step 4, an alias in a called function\'s scope': "import { NAME } from 'SIDE';\nexport const held = (() => { const inner = NAME; return inner; })();",
+  'step 5, a property read from a namespace': "import * as ns from 'SIDE';\nexport const held = ns.NAME;",
+  'step 5, a property read from an object holding it': "import { NAME } from 'SIDE';\nconst box = { NAME };\nexport const held = box.NAME;",
+  'step 6, an object literal': "import { NAME } from 'SIDE';\nexport const held = { go: NAME };",
+  'step 6, an array literal': "import { NAME } from 'SIDE';\nexport const held = [NAME];",
+  'step 6, a spread': "import { NAME } from 'SIDE';\nconst box = { NAME };\nexport const held = { ...box };",
+  'step 6, a class\'s static field': "import { NAME } from 'SIDE';\nexport class Held { static go = NAME; }",
+  'step 7, a conditional': "import { NAME } from 'SIDE';\nexport const held = Math.random() > 1 ? null : NAME;",
+  'step 7, &&': "import { NAME } from 'SIDE';\nexport const held = true && NAME;",
+  'step 7, ||': "import { NAME } from 'SIDE';\nexport const held = false || NAME;",
+  'step 7, ??': "import { NAME } from 'SIDE';\nexport const held = null ?? NAME;",
+  'step 7, await': "import { NAME } from 'SIDE';\nexport const held = await NAME;",
+  'step 7, the last operand of a comma': "import { NAME } from 'SIDE';\nexport const held = (0, NAME);",
+  'step 8, an arrow called in parentheses': "import { NAME } from 'SIDE';\nexport const held = (() => NAME)();",
+  'step 8, a function called where it is written': "import { NAME } from 'SIDE';\nexport const held = (function () { return NAME; })();",
+  'step 8, the comma IIFE (0, (() => side))()': "import { NAME } from 'SIDE';\nexport const held = (0, (() => NAME))();",
+  'step 8, through .call, by a parameter': "import { NAME } from 'SIDE';\nexport const held = (function (x) { return x; }).call(null, NAME);",
+  'step 8, through .apply, by a parameter': "import { NAME } from 'SIDE';\nexport const held = (function (x) { return x; }).apply(null, [NAME]);",
+  'step 8, as a template\'s tag, returning it': "import { NAME } from 'SIDE';\nexport const held = (() => NAME)``;",
+  'step 8, as a template\'s tag, by a parameter': "import { NAME } from 'SIDE';\nexport const held = ((strings, x) => x)`${NAME}`;",
+  'step 8, a parameter passed the side': "import { NAME } from 'SIDE';\nexport const held = ((x) => x)(NAME);",
+  'step 8, a parameter\'s default': "import { NAME } from 'SIDE';\nexport const held = ((x = NAME) => x)();",
+};
+
+/** The default-export module step 1's default import reads, handing each side on as its default. */
+const indexDefault = (side, name) => ({ 'src/substrate/forge/index-default.mjs': `import { ${name} } from './${side}.mjs';\nexport default ${name};` });
+
+test('the proof: a hand-on through each of the eight steps holds the item-write side, and importing it from a barred directory fails', () => {
+  const importers = [['src/cli/promote.mjs', 'rule 5'], ['src/scheduling/pull.mjs', 'rule 1']];
+  const missed = missedHandOns('item-write', 'write', 'src/workflow/relay.mjs', importers, STEPS, indexDefault('item-write', 'write'));
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
+});
+
+test('the proof: a hand-on through each of the eight steps holds the schema-write side, and importing it from a barred directory fails', () => {
+  const importers = [['src/workflow/shape.mjs', 'rule 6'], ['src/scheduling/pull.mjs', 'rule 1']];
+  const missed = missedHandOns('schema-write', 'shape', 'src/cli/relay.mjs', importers, STEPS, indexDefault('schema-write', 'shape'));
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
 });
 
 test('a function that calls a side is not a hand-on of it, with or without semicolons', () => {
