@@ -33,8 +33,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts; the review loop; the gate rule; escalation routing; whether a failure is the work's or the environment's | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority, concurrency, claims taken synchronously before any await, the repo lane, admission and the hold that closes it, and the three trigger kinds | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check; every change to a card's column; the review loop; the gate rule; escalation routing; whether a failure is the work's or the environment's | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category | Spec rows, ratified by the owner | `src/workflow/` |
+| **L3 Scheduling** | Pull order by priority, concurrency, claims taken synchronously before any await, the repo lane, admission, which is whether any card may be pulled, and the hold that closes it, and the three trigger kinds | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -47,7 +47,9 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output. L2 gives L3 next
-   actions. L3 gives L1 dispatches. L4 gives the layers below it names, procedures and settings. If a layer needs to
+   actions. L3 gives L1 dispatches. L0's forge adapter gives L3 the board's items and L2 a card's
+   facts. It carries L2's column changes back to the board, and no other layer changes a card's
+   column. L4 gives the layers below it names, procedures and settings. If a layer needs to
    know something from two layers down, the design is wrong; fix the boundary, do not reach
    through it.
 3. **The meta loop may target the core, on conditions.** A proposal against L0 through L3 must
@@ -82,6 +84,9 @@ flowchart TB
   L3 -->|dispatches| L1
   L1 -->|exit codes and output| L2
   L0 -->|exit code| L1
+  L0 -->|board items| L3
+  L0 -->|card facts| L2
+  L2 -->|column changes| L0
   L0 -.->|events| L5
   L1 -.->|events| L5
   L2 -.->|events| L5
@@ -111,8 +116,8 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board and its column display names, the concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
-| **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind | L2 for the loop and gate; L3 for provisioning | Yes |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field, the board field holding a card's priority and that field's options in rank order, the concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes. The declared order ranks cards, whatever order or options the board's own field holds. Ties break by issue number, oldest first. A card with no value, or with a value the consumer did not declare, ranks after every declared option | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
+| **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind | L2 for which kind selects a card, the loop and the gate; L3 for provisioning | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
