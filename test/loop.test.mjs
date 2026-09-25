@@ -202,12 +202,15 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
   };
   const built = world({ fake, concurrency: 1, items });
 
-  await assert.rejects(built.loop.pull(), (failure) => {
+  const first = assert.rejects(built.loop.pull(), (failure) => {
     assert.match(failure.errors[0].message, /card #8's move from ready to coding .* was refused: the board refused the move/);
     return true;
   });
+  await quiesce();
   assert.deepEqual(built.dispatches.started, []);
   assert.deepEqual(fake.writes(), []);
+  built.dispatches.releaseAll();
+  await first;
 
   // Concurrency is 1, so the card is pulled and dispatched on the next tick only if its slot was freed.
   const next = built.loop.pull();
