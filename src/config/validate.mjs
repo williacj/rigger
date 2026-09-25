@@ -124,6 +124,19 @@ const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof
 const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
+ * Whether a value is a name: a string holding something other than whitespace. A label and a
+ * priority option are each read by name, and a string of only whitespace names nothing either
+ * could match.
+ */
+const names = (value) => typeof value === 'string' && value.trim() !== '';
+
+/**
+ * Whether a list holds anything that is no name. Read through `Array.from`, which visits every
+ * index, because `some` skips an empty slot.
+ */
+const holdsUnnamed = (list) => Array.from(list).some((entry) => !names(entry));
+
+/**
  * The refusal a value earns where Rigger reads declarations and finds something else.
  *
  * Refused where it sits rather than read as an empty set, which would report every key under it
@@ -199,10 +212,8 @@ function readLabels(select, where, refusals) {
   if (labels.length === 0) {
     refusals.push(`\`${where}\` names no label, so it selects no card`);
   }
-  // A card carries labels by name, so an entry that is no name selects nothing, and one holding
-  // only whitespace is no name. Read through `Array.from`, which visits every index, because
-  // `some` skips an empty slot.
-  if (Array.from(labels).some((label) => typeof label !== 'string' || label.trim() === '')) {
+  // A card carries labels by name, so an entry that is no name selects nothing.
+  if (holdsUnnamed(labels)) {
     refusals.push(`\`${where}\` must list label names, and holds something else`);
   }
 }
@@ -276,9 +287,8 @@ function readPriority(priority, refusals) {
   if (!Array.isArray(options)) return;
   const where = 'board.priority.options';
   if (options.length === 0) refusals.push(`\`${where}\` must list at least one option, highest rank first`);
-  // An option is named by its display name on the board, so anything else names no option. Read
-  // through `Array.from`, which visits every index, because `some` skips an empty slot.
-  if (Array.from(options).some((option) => typeof option !== 'string' || option === '')) {
+  // An option is named by its display name on the board, so anything else names no option.
+  if (holdsUnnamed(options)) {
     refusals.push(`\`${where}\` must list option display names, and holds something else`);
   }
   // An option listed twice holds two ranks, and a card holding it has no one rank to take.

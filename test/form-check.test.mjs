@@ -188,6 +188,18 @@ test('a bullet holding only HTML comments beside a qualifying bullet leaves the 
   admitted(card(36, '## Acceptance', '', `- ${ITEM}`, '- <!-- note --> <!-- another -->'));
 });
 
+test('a bullet holding text between two comments is an item, so it alone admits the card', () => {
+  admitted(card(43, '## Acceptance', '', '- <!-- a --> real <!-- b -->'));
+});
+
+test('a section whose only bullet is - <!-- a --> <!-- b --> is missing acceptance', () => {
+  refusedAsMissing(card(44, '## Acceptance', '', '- <!-- a --> <!-- b -->'));
+});
+
+test('a section whose only bullet is - <!-- a --> followed by spaces is missing acceptance', () => {
+  refusedAsMissing(card(45, '## Acceptance', '', '- <!-- a -->   '));
+});
+
 test('a section whose only bullet-like line is a thematic break is missing acceptance', () => {
   const lines = ['- - -', '* * *', '+ + +', '-  -  -'];
   const verdicts = Object.fromEntries(lines.map((line) => [line, check(card(37, '## Acceptance', '', line)).reason]));
