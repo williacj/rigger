@@ -11,33 +11,43 @@ import { countWords } from './instruction-budget.mjs';
 const SKILL = '.claude/skills/spec-style/SKILL.md';
 
 /**
- * The prose paragraphs of a markdown document, each with the line its first word sits on.
+ * A document's lines, trimmed, with every line of a fenced block — its fences included — blanked.
  *
- * Only prose is read for sentence length, and the skill is what decides that: a list, a table and
- * a diagram are rule 4's answer to a structure prose carries badly, so measuring one as a
- * sentence would fail a document for doing the thing the register asks of it. A fenced block is
- * code rather than a sentence at all.
+ * A fenced block is code rather than a sentence at all, and a blank line is what every reader
+ * below already treats as ending whatever ran before it.
  */
-export function paragraphs(text) {
-  const found = [];
-  let open = null;
+function unfenced(text) {
   let fence = null;
-  const close = () => {
-    if (open) found.push(open);
-    open = null;
-  };
-  text.split('\n').forEach((raw, index) => {
+  return text.split('\n').map((raw) => {
     const line = raw.trim();
     const marker = line.match(/^(```+|~~~+)/);
     if (fence) {
       if (marker && line.startsWith(fence)) fence = null;
-      return;
+      return '';
     }
     if (marker) {
-      close();
       fence = marker[1];
-      return;
+      return '';
     }
+    return line;
+  });
+}
+
+/**
+ * The prose paragraphs of a markdown document, each with the line its first word sits on.
+ *
+ * A list and a diagram are rule 4's answer to a structure prose carries badly, so measuring one
+ * as a sentence would fail a document for doing the thing the register asks of it. A table row
+ * is not prose either, and `rows` reads it instead.
+ */
+export function paragraphs(text) {
+  const found = [];
+  let open = null;
+  const close = () => {
+    if (open) found.push(open);
+    open = null;
+  };
+  unfenced(text).forEach((line, index) => {
     // A blank line, a table row, a heading, a block quote and a list marker all end the prose
     // that ran before them, and none of them opens prose of its own. A line under a list marker
     // belongs to the item and ends with it, which is why nothing reopens until the next
@@ -54,7 +64,26 @@ export function paragraphs(text) {
 }
 
 /**
- * The sentences in one paragraph.
+ * The table rows of a markdown document, each with its line and the text of its cells.
+ *
+ * The registers hold every requirement and decision in a row, so each cell is read for its
+ * sentences exactly as a paragraph is. A row is one line, and a cell ends at the next pipe.
+ *
+ * An escaped pipe, `\|`, ends a cell here where markdown would not. That splits one cell's text
+ * in two, so its count comes out low, the direction `sentences` discloses as hiding a finding.
+ */
+export function rows(text) {
+  const found = [];
+  unfenced(text).forEach((line, index) => {
+    if (!line.startsWith('|')) return;
+    const cells = line.replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim());
+    found.push({ line: index + 1, cells });
+  });
+  return found;
+}
+
+/**
+ * The sentences in one paragraph, or in one table cell.
  *
  * A sentence ends at a full stop, question mark or exclamation, once whatever closes the sentence
  * is past — a quote, a bracket, a backtick, an emphasis marker. The next word settles whether the
@@ -110,8 +139,16 @@ export function findings(text, { ceiling, terms }) {
       if (words > ceiling) found.push({ rule: 'sentence', line: paragraph.line, words, text: sentence });
     }
   }
-  // Every line is read for a term, a table row and a fenced block included. Those two carry no
-  // sentence, but they do carry words, and rule 1 is about which words the binding documents use.
+  // A row's first cell is its id wherever a register has one, so it is what takes a reader to the
+  // row a finding is about.
+  for (const { line, cells } of rows(text)) {
+    for (const sentence of cells.flatMap(sentences)) {
+      const words = countWords(sentence);
+      if (words > ceiling) found.push({ rule: 'sentence', line, row: cells[0], words, text: sentence });
+    }
+  }
+  // Every line is read for a term, a table row and a fenced block included. A fenced block carries
+  // no sentence, but it does carry words, and rule 1 is about which words the binding documents use.
   for (const term of terms) {
     const boundary = new RegExp(`\\b${term}\\b`, 'i');
     lines.forEach((line, index) => {
@@ -193,8 +230,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // which is how a test watches the lint refuse one.
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const { documents, findings: found, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
-  for (const { path, line, rule, term, words, text } of found) {
-    const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words`;
+  for (const { path, line, rule, term, words, row, text } of found) {
+    const where = row === undefined ? '' : ` in row ${row}`;
+    const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words${where}`;
     console.error(`${path}:${line}  ${why}\n        ${text}`);
   }
   for (const path of documents) {

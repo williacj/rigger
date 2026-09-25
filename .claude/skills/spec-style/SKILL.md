@@ -58,6 +58,11 @@ and why, then gives the five forms as a numbered list. `docs/spec/decisions.md`'
 what returns it** tables are the other — one row per deferred thing, one column for the evidence
 that returns it, and no prose carrying what the table holds better.
 
+A register table cannot hold a list, so there a rule with three or more conditions takes a lead
+row, then continuation rows each holding one condition. `docs/spec/requirements.md`'s `R-GATE-4`
+to `R-GATE-8` are the exemplar. The split is by condition, never inside one definition: a
+continuation row that defines one term may hold that term's several parts.
+
 A structure that neither a list nor a table carries — a set of things and the relations between
 them — becomes a diagram. `docs/spec/decisions.md`'s `D15` holds when a diagram is admitted, what
 it owns in each venue, and the one form it takes. `ARCHITECTURE.md`'s layer map is the exemplar.
@@ -87,11 +92,12 @@ sentence introducing it defines. A term that is neither fails.
   changing before you draft.
 - **Not all of it lintable.** `scripts/spec-style-lint.mjs` reads rules 1 and 2 off this file and
   applies them to `README.md`, `ARCHITECTURE.md`, `docs/spec/decisions.md`, and
-  `docs/spec/requirements.md`. It skips the retired registers, whose historical text is kept.
-  A ruled-out term is a finding, and so is a sentence past the ceiling. Rules 3 and 4 ask whether
-  an actor matters and whether a structure fits its meaning. Those are judgments, so they hold
-  because an author applies them and a reviewer reads for them. Rule 5 asks who owns a fact, and
-  holds the same way.
+  `docs/spec/requirements.md`. It reads every prose paragraph and every table cell, and skips
+  fenced code and the retired registers, whose historical text is kept. A ruled-out term is a
+  finding, and so is a sentence past the ceiling, in a paragraph or a cell alike. Rules 3 and 4
+  ask whether an actor matters and whether a structure fits its meaning. Those are judgments, so
+  they hold because an author applies them and a reviewer reads for them. Rule 5 asks who owns a
+  fact, and holds the same way.
 
 ## Before you hand it off
 
