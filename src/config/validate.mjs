@@ -50,6 +50,9 @@ export const SHAPES = {
     telemetry: { keys: 'telemetry' },
   },
   board: {
+    // Optional: where it is absent the board's owner is the repository's owner, which only the
+    // forge adapter supplies (`ARCHITECTURE.md`, below the extension-point table).
+    owner: {},
     project: { required: true, placeholder: PLACEHOLDER.project },
     columns: { required: true, keys: 'columns' },
     // Optional: a board that declares no priority ranks every card alike, oldest first, which is
@@ -293,6 +296,17 @@ function readEpicLabel(config, refusals) {
 }
 
 /**
+ * What a declared board owner may be: the login of one GitHub user or organisation, which is a
+ * name. A config that declares none works the repository's owner's board, so only a declared one
+ * has anything to read.
+ */
+function readBoardOwner(board, refusals) {
+  // A board that is no set of declarations earned its refusal where the shape was read.
+  if (!declares(board) || !Object.hasOwn(board, 'owner')) return;
+  if (!names(board.owner)) refusals.push('`board.owner` must be one login: a string holding something other than whitespace');
+}
+
+/**
  * What each provisioning step's selector may be. A step that selects nothing is selected by the
  * kinds that name it, so only a step that declares `select` has labels to read.
  */
@@ -338,6 +352,7 @@ export function validate(config) {
   readKinds(config, refusals);
   readEpicLabel(config, refusals);
   readProvisioning(config.provisioning, refusals);
+  readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);
   for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
     if (!CATEGORIES.includes(category)) {

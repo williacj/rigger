@@ -572,3 +572,49 @@ test('a priority declaration listing only non-empty option names is accepted', (
     assert.deepEqual(validate(ranking(options)), [], JSON.stringify(options));
   }
 });
+
+/** This repository's config declaring `owner` as its board's owner. */
+const ownedBy = (owner) => holding(rigger, ['board', 'owner'], owner);
+
+test('a declared board owner that is one string holding something other than whitespace is accepted', () => {
+  // A login other than the repository's owner, the repository's owner itself, and one padded.
+  for (const owner of ['octo-org', 'williacj', ' someone ']) {
+    assert.deepEqual(validate(ownedBy(owner)), [], JSON.stringify(owner));
+  }
+});
+
+test('a declared board owner that is not a string is refused, and the refusal names the key', () => {
+  for (const owner of [42, null, true, ['octo-org'], { login: 'octo-org' }]) {
+    assert.match(refusal(ownedBy(owner)), /`board\.owner`/, JSON.stringify(owner));
+  }
+});
+
+test('a declared board owner that is empty is refused, and the refusal names the key', () => {
+  assert.match(refusal(ownedBy('')), /`board\.owner`/);
+});
+
+test('a declared board owner holding only whitespace is refused, and the refusal names the key', () => {
+  for (const owner of [' ', '   ', '\t', '\n']) {
+    assert.match(refusal(ownedBy(owner)), /`board\.owner`/, JSON.stringify(owner));
+  }
+});
+
+// A board owner is optional (`R-OPTION-1`): its absence is the repository's owner's board, which
+// the forge adapter reads, and not a fault the validator reports.
+test('a config declaring no board owner is accepted, and no refusal names its absence', () => {
+  assert.ok(!Object.hasOwn(rigger.board, 'owner'), 'this repository declares a board owner, so its absence went untested');
+  const refusals = validate(rigger);
+  assert.deepEqual(refusals, []);
+  assert.ok(!refusals.some((refused) => refused.includes('board.owner')), refusals.join('; '));
+});
+
+test('a config declaring no board owner still carries none once Rigger has loaded and validated it', async () => {
+  // Loaded as `doctor` loads a consumer's config, by importing the module, then validated. Only
+  // the forge adapter supplies the repository's owner in the key's place, so nothing on the way
+  // in may write one.
+  const loaded = (await import('../rigger.config.mjs?board-owner')).default;
+  const before = structuredClone(loaded);
+  assert.deepEqual(validate(loaded), []);
+  assert.ok(!Object.hasOwn(loaded.board, 'owner'), `the loaded config carries a board owner: ${loaded.board.owner}`);
+  assert.deepEqual(loaded, before);
+});
