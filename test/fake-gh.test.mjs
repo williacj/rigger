@@ -168,6 +168,7 @@ test("each write the real adapter issues through the fake gh appears in the fake
   await onPath(fake, async () => {
     await itemWriteSide(BOARD).moveItem('item-1', 'Coding');
     await schemaWriteSide(BOARD).createField('Priority', ['High', 'Low']);
+    await schemaWriteSide(BOARD).createColumn('Owner');
     await schemaWriteSide(BOARD).createLabel('type:change');
   });
 
@@ -175,13 +176,55 @@ test("each write the real adapter issues through the fake gh appears in the fake
   assert.deepEqual(model.writes(), [
     { operation: 'moveItem', args: ['item-1', 'Coding'] },
     { operation: 'createField', args: ['Priority', ['High', 'Low']] },
+    { operation: 'createColumn', args: ['Owner'] },
     { operation: 'createLabel', args: ['type:change'] },
   ]);
   assert.deepEqual((await model.operations.readItems()).map((item) => item.column), ['Coding', 'Ready']);
+  assert.deepEqual(await model.operations.readColumns(), ['Ready', 'Coding', 'Owner']);
 });
 
-/** The tests of #215 (M1-02), the board reads, and of #216 (M1-03), the adapter's sides and runners. */
-const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs'];
+test('adding a column through the fake gh keeps every card in its column, and a card can then be moved to the new one', async () => {
+  const fake = installed({
+    columns: ['Ready', 'Coding', 'Review'],
+    items: [
+      { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'One', column: 'Ready' },
+      { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Two', column: 'Coding' },
+      { type: 'issue', repository: 'williacj/rigger', number: 216, title: 'Three', column: 'Review' },
+    ],
+  });
+
+  const { before, after } = await onPath(fake, async () => {
+    const read = async () => (await readSide(BOARD).readItems()).map(({ number, column }) => [number, column]);
+    const held = await read();
+    await schemaWriteSide(BOARD).createColumn('Owner');
+    await itemWriteSide(BOARD).moveItem('item-3', 'Owner');
+    return { before: held, after: await read() };
+  });
+
+  assert.deepEqual(before, [[214, 'Ready'], [215, 'Coding'], [216, 'Review']]);
+  assert.deepEqual(after, [[214, 'Ready'], [215, 'Coding'], [216, 'Owner']]);
+});
+
+test('the fake gh does not model an options write that leaves out a held option or its id, and changes nothing', () => {
+  // The schema-write runner refuses these before they are sent, so a real adapter never sends
+  // one. Way C cleared every item's column on GitHub, which the fake board has no way to hold, so
+  // the fake gh fails rather than answer as if the write were harmless.
+  const fake = installed({ columns: ['Ready', 'Coding'] });
+  const wayC = 'mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_Status", singleSelectOptions: [{name: "Ready", color: GRAY, description: ""}, {name: "Coding", color: GRAY, description: ""}, {name: "Owner", color: GRAY, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }';
+
+  const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${wayC}`], { encoding: 'utf8', env: gitEnvironment() });
+
+  assert.notEqual(said.status, 0);
+  assert.match(said.stderr, /does not model/);
+  assert.equal(said.stdout, '');
+});
+
+/**
+ * The tests of #215 (M1-02), the board reads; of #216 (M1-03), the adapter's sides and runners;
+ * of #284, the board each operation addresses; and of #217 (M1-29), adding a column, which are
+ * among the three before it.
+ */
+const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-board-owner.test.mjs'];
 
 /**
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
