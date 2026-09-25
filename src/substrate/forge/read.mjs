@@ -8,16 +8,32 @@ import { COLUMNS, firstLine, graphqlRequest, readRunner } from './runners.mjs';
 const PAGE = 100;
 
 /**
- * The data `gh` answered to a request made for `operation` on `board`. Where `gh` did not answer
- * 0, it throws an error naming the operation, the board number and the first line `gh` said.
+ * The user or organisation that holds the board: the `owner` the config declares under `board`,
+ * and where it declares none, the repository's owner, named before the slash in `board.repo`.
+ * This is the only place the repository's owner stands in for the key (`ARCHITECTURE.md`, below
+ * the extension-point table).
  */
-export function answerOf(operation, board, said) {
-  if (said.status !== 0) throw new Error(`${operation} on board ${board.project} failed: ${firstLine(said)}`);
+const ownerOf = (board) => board.owner ?? board.repo.split('/')[0];
+
+/**
+ * What a failure says of a request that found the board by its owner and number, so a board gh
+ * says is not there is named as the one asked for, and a wrong owner shows.
+ */
+const asking = (board) => `asking for ${ownerOf(board)}'s board ${board.project}, `;
+
+/**
+ * The data `gh` answered to a request made for `operation` on `board`. Where `gh` did not answer
+ * 0, it throws an error naming the operation, the board number, what the request `addressed` if
+ * it found the board, and the first line `gh` said.
+ */
+export function answerOf(operation, board, said, addressed = '') {
+  if (said.status !== 0) throw new Error(`${operation} on board ${board.project} failed: ${addressed}${firstLine(said)}`);
   return JSON.parse(said.stdout).data;
 }
 
 /** What `gh` answered to the read `query`, made for `operation` on `board`. */
-const asked = (operation, board, query, send) => answerOf(operation, board, readRunner(graphqlRequest(query), { send }));
+const asked = (operation, board, query, send, addressed) =>
+  answerOf(operation, board, readRunner(graphqlRequest(query), { send }), addressed);
 
 /** Throws the error a read gives when the board answered something it cannot use. */
 function fail(operation, board, why) {
@@ -25,18 +41,14 @@ function fail(operation, board, why) {
 }
 
 /**
- * A query selecting `selection` on the board numbered `board.project` among the boards of
- * `board.repo`'s owner.
- *
- * The config names a repository and a board number, and no board owner, so the board is read as
- * the repository owner's.
+ * A query selecting `selection` on the board numbered `board.project` among the boards of its
+ * owner.
  */
 function boardQuery(operation, board, selection) {
   if (!Number.isInteger(board.project)) {
     throw new Error(`${operation} failed: the board number is ${board.project}, which is not a board number`);
   }
-  const [owner] = board.repo.split('/');
-  return `query { repositoryOwner(login: ${literal(owner)}) { ... on ProjectV2Owner { projectV2(number: ${board.project}) { ${selection} } } } }`;
+  return `query { repositoryOwner(login: ${literal(ownerOf(board))}) { ... on ProjectV2Owner { projectV2(number: ${board.project}) { ${selection} } } } }`;
 }
 
 /** A query selecting `selection` on the repository `board.repo` names as `owner/name`. */
@@ -48,14 +60,15 @@ function repositoryQuery(board, selection) {
 /**
  * Every node of a connection, read a page at a time. `query` builds a page's document from its
  * `after` argument, and `connectionOf` finds the connection in what `gh` answered. A page that
- * fails fails the whole read, so no part of it is returned.
+ * fails fails the whole read, so no part of it is returned. `addressed` is what a failure says of
+ * a read that finds the board, and is empty for one that does not.
  */
-function everyPage(operation, board, send, query, connectionOf) {
+function everyPage(operation, board, send, query, connectionOf, addressed = '') {
   const nodes = [];
   let after = '';
   for (;;) {
-    const connection = connectionOf(asked(operation, board, query(`first: ${PAGE}${after}`), send));
-    if (!connection) fail(operation, board, 'gh answered no such board');
+    const connection = connectionOf(asked(operation, board, query(`first: ${PAGE}${after}`), send, addressed));
+    if (!connection) fail(operation, board, `${addressed}gh answered no such board`);
     nodes.push(...connection.nodes);
     if (!connection.pageInfo.hasNextPage) return nodes;
     after = `, after: ${literal(connection.pageInfo.endCursor)}`;
@@ -63,13 +76,14 @@ function everyPage(operation, board, send, query, connectionOf) {
 }
 
 /**
- * The board numbered `board.project` among the boards of `board.repo`'s owner: its ID, and the ID
- * and options of its field holding the columns, each option as `{ id, name }` in board order.
+ * The board numbered `board.project` among the boards of its owner: its ID, and the ID and
+ * options of its field holding the columns, each option as `{ id, name }` in board order.
  */
 export function boardOf(operation, board, send) {
   const query = boardQuery(operation, board, `id field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id options { id name } } }`);
-  const project = asked(operation, board, query, send)?.repositoryOwner?.projectV2;
-  if (!project?.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);
+  const project = asked(operation, board, query, send, asking(board))?.repositoryOwner?.projectV2;
+  if (!project) fail(operation, board, `${asking(board)}gh answered no such board`);
+  if (!project.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);
   return { id: project.id, columns: project.field };
 }
 
@@ -115,14 +129,15 @@ function cardOf(operation, board, node) {
  */
 function singleSelectFields(operation, board, send) {
   const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } }`);
-  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields)
+  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board))
     .filter((field) => field.options)
     .map((field) => ({ name: field.name, options: field.options.map((option) => option.name) }));
 }
 
 /**
- * The reads on `board`, which names its `repo`, its `project` number and its `columns`, the
- * display names the config declares by key. `send` stands in for the runners' spawn in tests.
+ * The reads on `board`, which names its `repo`, its `project` number, its `columns`, the display
+ * names the config declares by key, and, where the config declares one, its `owner`. `send`
+ * stands in for the runners' spawn in tests.
  */
 export function readSide(board, { send } = {}) {
   return {
@@ -155,7 +170,7 @@ export function readSide(board, { send } = {}) {
      */
     readItems: async () => {
       const query = (page) => boardQuery('readItems', board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
-      const nodes = everyPage('readItems', board, send, query, (data) => data?.repositoryOwner?.projectV2?.items);
+      const nodes = everyPage('readItems', board, send, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
       const seen = new Set();
       const once = nodes.filter((node) => !seen.has(node.id) && seen.add(node.id));
       return once.filter((node) => isCard(board, node)).map((node) => cardOf('readItems', board, node));

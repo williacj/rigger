@@ -144,7 +144,7 @@ adapters are code, added to Rigger itself. The shape, abbreviated:
 // Rigger's own config: it is its own first consumer.
 export default {
   repo: 'williacj/rigger',
-  board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
+  board: { owner: 'williacj', project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
   roles: {
     engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard' },
