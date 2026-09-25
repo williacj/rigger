@@ -34,7 +34,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule; escalation routing; whether a failure is the work's or the environment's. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -248,6 +248,28 @@ kind, with no success between, has L3 close admission. A process still alive
 when the direct child exits is terminated by L0 and recorded by name and command line; it never
 changes the result.
 
+While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
+is a pull, which claims a card, or a dispatch. L3 records each start before it acts outside
+Rigger on it, in this order:
+
+1. For a pull, L3 takes the card's claim in memory, synchronously.
+2. L3 appends the start's event to the sink. Recording a start follows the claim, and the append
+   is synchronous, so no await falls between a pull and its claim.
+3. Only after the sink accepts that event does L3 act outside Rigger. It hands a pulled card to
+   L2 for the claim move, and a dispatch to L1.
+
+A start whose event the sink refuses is not made. L3 releases any claim step 1 took, starts
+nothing, and reports the refusal to its caller. L3 also passes on to its own caller every
+refused event that L2 reports to it, and absorbs none.
+
+The halt keeps no state, so it adds nothing to `.rigger/`. Every later start tries its own event
+first, and the halt lifts at the first start whose event the sink accepts. Lifting it needs
+neither the owner nor any action outside Rigger.
+
+The halt is not the admission hold. It neither closes admission nor reopens it, and `R-SCHED-4`
+names what does. The halt stops starts alone. L3 still hands L2 the outcome of every dispatch
+already running, as running cards finish under a closed admission (`R-SCHED-3`).
+
 ## Telemetry
 
 L5 stamps every event with a timestamp, run id, layer, and the card and dispatch it arose under.
@@ -265,6 +287,11 @@ event is recorded: L2 records a tier correction, and L4's tier accuracy is the r
 - **L6** proposal acceptance
 
 The envelope and sink exist from the first dispatch. Each layer's family lands with the layer.
+
+The sink appends each event synchronously. An append the sink refuses reaches the emitting layer
+as a failure, and no layer drops it. Any layer that acted outside Rigger and then had that
+action's event refused reports the refusal to its caller. The report names the action and the
+card. The Failure model states what L3 does with a refusal.
 
 The shape, abbreviated. One card's events, across four layers:
 
