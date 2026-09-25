@@ -34,7 +34,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule; escalation routing; whether a failure is the work's or the environment's. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -120,7 +120,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the loop and the gate; L3 for provisioning | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
@@ -144,7 +144,7 @@ adapters are code, added to Rigger itself. The shape, abbreviated:
 // Rigger's own config: it is its own first consumer.
 export default {
   repo: 'williacj/rigger',
-  board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
+  board: { owner: 'williacj', project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
   roles: {
     engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard' },
@@ -171,6 +171,7 @@ export default {
     spike:     { select: { labels: ['type:spike'] },     maker: 'spikeEngineer', judges: ['reviewer'],
                  provisioning: ['npm-ci'] },
   },
+  epicLabel: 'type:epic',
   provisioning: {
     'npm-ci': { run: 'npm ci', required: true },
     // Only cards that touch the demo tape pay for this.
@@ -186,6 +187,16 @@ export default {
 The priority declaration is one key under `board`: `priority`, an object whose `field` is the
 board field's display name and whose `options` lists that field's option display names, highest
 rank first.
+
+The board-owner declaration is one key under `board`, beside `project`. In the published config
+shape the line reads `board: { owner: 'williacj', project: 1, … }`. Its value is a string holding
+the login of one GitHub user or organisation, and that account is the board's owner. The key is
+optional. Where it is absent, the board is the one numbered `board.project` among the boards of the
+repository's owner. The repository's owner is the user or organisation named before the slash in
+`repo`. L0's forge adapter reads the key and applies that absence rule. No other layer and no verb
+supplies the repository's owner in the key's place. The key changes which board L0 reads and
+writes, and nothing else. It changes neither which repository's issues are cards nor which
+repository's labels L0 reads and creates, and `repo` names that repository for both.
 
 The epic declaration belongs to Kinds of work. It is one top-level key beside `kinds`, and it
 reads `epicLabel: 'type:epic',` in the published config shape. Its value is a string naming one
@@ -247,6 +258,28 @@ kind, with no success between, has L3 close admission. A process still alive
 when the direct child exits is terminated by L0 and recorded by name and command line; it never
 changes the result.
 
+While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
+is a pull, which claims a card, or a dispatch. L3 records each start before it acts outside
+Rigger on it, in this order:
+
+1. For a pull, L3 takes the card's claim in memory, synchronously.
+2. L3 appends the start's event to the sink. Recording a start follows the claim, and the append
+   is synchronous, so no await falls between a pull and its claim.
+3. Only after the sink accepts that event does L3 act outside Rigger. It hands a pulled card to
+   L2 for the claim move, and a dispatch to L1.
+
+A start whose event the sink refuses is not made. L3 releases any claim step 1 took, starts
+nothing, and reports the refusal to its caller. L3 also passes on to its own caller every
+refused event that L2 reports to it, and absorbs none.
+
+The halt keeps no state, so it adds nothing to `.rigger/`. Every later start tries its own event
+first, and the halt lifts at the first start whose event the sink accepts. Lifting it needs
+neither the owner nor any action outside Rigger.
+
+The halt is not the admission hold. It neither closes admission nor reopens it, and `R-SCHED-4`
+names what does. The halt stops starts alone. L3 still hands L2 the outcome of every dispatch
+already running, as running cards finish under a closed admission (`R-SCHED-3`).
+
 ## Telemetry
 
 L5 stamps every event with a timestamp, run id, layer, and the card and dispatch it arose under.
@@ -264,6 +297,11 @@ event is recorded: L2 records a tier correction, and L4's tier accuracy is the r
 - **L6** proposal acceptance
 
 The envelope and sink exist from the first dispatch. Each layer's family lands with the layer.
+
+The sink appends each event synchronously. An append the sink refuses reaches the emitting layer
+as a failure, and no layer drops it. Any layer that acted outside Rigger and then had that
+action's event refused reports the refusal to its caller. The report names the action and the
+card. The Failure model states what L3 does with a refusal.
 
 The shape, abbreviated. One card's events, across four layers:
 

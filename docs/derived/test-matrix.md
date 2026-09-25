@@ -26,19 +26,31 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-10 | **gap** |
 | R-CARD-11 | **gap** |
 | R-CARD-12 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
-| R-CARD-13 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused<br>`test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet |
+| R-CARD-13 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused<br>`test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet<br>`test/form-check.test.mjs` a lone CR does not split a line, so a heading and bullet joined by one are no section |
+| R-CARD-34 | `test/form-check.test.mjs` a no-break space is no space, so it neither indents, nor ends a heading run of #, nor follows a list marker |
 | R-CARD-14 | `test/form-check.test.mjs` a section whose only bullet is indented by a tab is missing acceptance |
-| R-CARD-15 | `test/form-check.test.mjs` an acceptance heading and bullet inside a backtick fence are missing acceptance<br>`test/form-check.test.mjs` an acceptance heading and bullet inside a tilde fence are missing acceptance |
-| R-CARD-16 | `test/form-check.test.mjs` a fence closes only on a run of at least as many of the same character |
+| R-CARD-27 | `test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet<br>`test/form-check.test.mjs` a no-break space after the heading text is trimmed, so the heading still opens the section |
+| R-CARD-28 | `test/form-check.test.mjs` a stray CR or a U+2028 on a heading or bullet line does not hide a qualifying bullet<br>`test/form-check.test.mjs` a no-break space after the heading text is trimmed, so the heading still opens the section |
+| R-CARD-35 | `test/form-check.test.mjs` an acceptance heading and bullet inside a backtick fence are missing acceptance<br>`test/form-check.test.mjs` an acceptance heading and bullet inside a tilde fence are missing acceptance<br>`test/form-check.test.mjs` a tilde line inside a backtick fence opens no fence, so a section after the backtick closer counts |
+| R-CARD-26 | `test/form-check.test.mjs` a fence closes only on a run of at least as many of the same character<br>`test/form-check.test.mjs` a line closes a fence only when it opens with the run, so text, a second run, a no-break space or a tab before it leaves the fence open<br>`test/form-check.test.mjs` a fence closer followed only by spaces or a tab closes the fence, so a bullet after it counts |
 | R-CARD-17 | `test/form-check.test.mjs` a fence the section never closes hides the bullet that follows it |
 | R-CARD-18 | `test/form-check.test.mjs` a fence the section never closes hides the bullet that follows it |
 | R-CARD-19 | `test/form-check.test.mjs` acceptance headings at levels #, ## and ### each holding one item that does not restate the title are admitted<br>`test/form-check.test.mjs` a setext Acceptance heading underlined with --- is missing acceptance<br>`test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
 | R-CARD-20 | `test/form-check.test.mjs` the heading ## Acceptance ## holding one item that does not restate the title is admitted |
-| R-CARD-21 | `test/form-check.test.mjs` bullets under Acceptance criteria and under no acceptance heading are missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## acceptance, in lower case, is missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## **Acceptance** is missing acceptance |
+| R-CARD-21 | `test/form-check.test.mjs` bullets under Acceptance criteria and under no acceptance heading are missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## acceptance, in lower case, is missing acceptance<br>`test/form-check.test.mjs` a card whose only heading is ## **Acceptance** is missing acceptance<br>`test/form-check.test.mjs` of two acceptance headings, the second section alone may hold the item that admits the card |
 | R-CARD-22 | `test/form-check.test.mjs` an acceptance section holding no plain bullet is missing acceptance<br>`test/form-check.test.mjs` a deeper ### heading does not end the section, so its bullet that does not restate the title admits the card |
+| R-CARD-36 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
 | R-CARD-23 | `test/form-check.test.mjs` a section whose only bullet is indented four spaces is missing acceptance<br>`test/form-check.test.mjs` a nested bullet indented two spaces that does not restate the title admits the card |
-| R-CARD-24 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance |
-| R-CARD-25 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance<br>`test/form-check.test.mjs` a section whose only bullet is - followed only by spaces is missing acceptance |
+| R-CARD-24 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance<br>`test/form-check.test.mjs` an item keeps the spaces after the one space that follows its marker, so -  [ ] is no task-list item |
+| R-CARD-37 | `test/form-check.test.mjs` a section whose only bullets are task-list items is missing acceptance |
+| R-CARD-38 | `test/form-check.test.mjs` a section whose only bullet is - followed only by spaces is missing acceptance |
+| R-CARD-39 | `test/form-check.test.mjs` a section whose only bullet is - <!-- fill in --> is missing acceptance<br>`test/form-check.test.mjs` a bullet holding only HTML comments beside a qualifying bullet leaves the card admitted<br>`test/form-check.test.mjs` a bullet holding text between two comments is an item, so it alone admits the card<br>`test/form-check.test.mjs` a section whose only bullet is - <!-- a --> <!-- b --> is missing acceptance<br>`test/form-check.test.mjs` a section whose only bullet is - <!-- a --> followed by spaces is missing acceptance |
+| R-CARD-29 | `test/form-check.test.mjs` a section whose only bullet is - <!-- fill in --> is missing acceptance<br>`test/form-check.test.mjs` a bullet holding only HTML comments beside a qualifying bullet leaves the card admitted<br>`test/form-check.test.mjs` a bullet holding text between two comments is an item, so it alone admits the card<br>`test/form-check.test.mjs` a section whose only bullet is - <!-- a --> <!-- b --> is missing acceptance<br>`test/form-check.test.mjs` a section whose only bullet is - <!-- a --> followed by spaces is missing acceptance |
+| R-CARD-30 | `test/form-check.test.mjs` an item opening a comment that a later line closes is still an item |
+| R-CARD-31 | `test/form-check.test.mjs` a section whose only bullet-like line is a thematic break is missing acceptance |
+| R-CARD-40 | `test/form-check.test.mjs` any card whose section holds a plain bullet that does not restate its title is not refused |
+| R-CARD-32 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` Support C restates the title Support C++, because symbols are deleted<br>`test/form-check.test.mjs` Add - a verb restates the title Add a verb, because punctuation is deleted before whitespace is collapsed<br>`test/form-check.test.mjs` ας restates the title ΑΣ, because lower case follows the full mapping, final sigma included |
+| R-CARD-33 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` Support C restates the title Support C++, because symbols are deleted<br>`test/form-check.test.mjs` Add - a verb restates the title Add a verb, because punctuation is deleted before whitespace is collapsed |
 | R-SCHED-1 | **gap** |
 | R-SCHED-2 | **gap** |
 | R-SCHED-3 | **gap** |
@@ -49,14 +61,17 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-8 | **gap** |
 | R-SCHED-9 | **gap** |
 | R-SCHED-10 | `test/config.test.mjs` a declaration Rigger does not offer is refused wherever it sits, and the refusal names it<br>`test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions<br>`test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
-| R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config |
+| R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config<br>`test/next-action.test.mjs` a ready card carrying the declared epic label and type:change is ignored under this repository config, not pulled and not refused |
 | R-SCHED-12 | `test/next-action.test.mjs` a ready card two kinds select and the form check admits is refused with a reason naming both kinds<br>`test/next-action.test.mjs` a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds |
+| R-SCHED-13 | `test/next-action.test.mjs` a two-label kind selects a card carrying either one of its labels without the other<br>`test/next-action.test.mjs` a ready card no kind selects is ignored, not refused |
+| R-SCHED-14 | `test/config.test.mjs` a kind whose select.labels is empty is refused, and the refusal names that kind<br>`test/config.test.mjs` a kind selecting one label or two is accepted |
 | R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |
 | R-WORK-3 | **gap** |
 | R-WORK-4 | nothing yet |
 | R-WORK-5 | **gap** |
 | R-WORK-6 | **gap** |
+| R-WORK-7 | `test/forge-board-owner.test.mjs` every request a full read sends that addresses the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request moveItem sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createField sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` with no board owner declared, every request that addresses the board names the owner of the repository repo names |
 | R-LOOP-1 | **gap** |
 | R-LOOP-2 | **gap** |
 | R-LOOP-3 | `test/config.test.mjs` a kind naming one role as both its maker and a judge is refused, and the refusal names it |

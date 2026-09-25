@@ -25,7 +25,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "sh test/suite.sh",
     "budget:package": "node scripts/package-budget.mjs",
     "budget:instructions": "node scripts/instruction-budget.mjs",
     "lint:spec-style": "node scripts/spec-style-lint.mjs",
@@ -37,5 +37,8 @@
     "matrix": "node scripts/build-test-matrix.mjs --write",
     "matrix:check": "node scripts/build-test-matrix.mjs",
     "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
+  },
+  "devDependencies": {
+    "acorn": "8.18.0"
   }
 }
