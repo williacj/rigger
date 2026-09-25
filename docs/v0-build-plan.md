@@ -36,14 +36,15 @@ files, the review skill, and the hooks are at once what builds Rigger and what R
 consumer's configuration. Self-hosting therefore costs no production lines, because L4 carries no
 budget.
 
-**What gets used when.** Each verb is used against this repository as soon as it exists. The
-dispatch loop is last, because it needs the execution core and the roles beneath it:
+**What gets used when.** Each verb is used against this repository as soon as it exists, except
+`once` and `run`, which never run against this repository's real board during M1. The dispatch
+loop is last, because it needs the execution core and the roles beneath it:
 
 | From | Rigger builds Rigger by |
 |---|---|
 | M0 | `rigger init` writes this repository's own config and forks the role templates into it |
 | M0 | `rigger doctor` runs against this repository |
-| M1 | `rigger setup-board` creates this repository's real board, fields, and labels |
+| M1 | `rigger setup-board` adopts this repository's real board and adds the columns, fields, and labels the config declares and it lacks |
 | M1 | `rigger plan` prints this repository's real pull order; read-only, so it is safe long before the loop exists |
 | M1 | `rigger report` over whatever events exist by then |
 | M3 | worktrees and provisioning steps run against this repository's own cards |
