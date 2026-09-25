@@ -26,7 +26,7 @@ function world({ columns = config.board.columns, cards = [12], held = Object.val
   const directory = mkdtempSync(join(tmpdir(), 'rigger-transitions-'));
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
   const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations });
-  return { fake, l2, directory, events: () => readEvents(directory) };
+  return { fake, l2, sink, directory, events: () => readEvents(directory) };
 }
 
 /** The board items the fake holds, as its reads answer them. */
@@ -160,25 +160,29 @@ test('a move the board takes and the sink will not record is reported, naming th
   assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, 'Coding'] }], 'the board did not take the move');
 });
 
-test('while the sink still refuses, a card whose move went unrecorded is not moved on a later outcome', async () => {
-  const { fake, l2, directory } = world();
-  const [card] = await itemsOf(fake);
-  rmSync(directory, { recursive: true });
-  await assert.rejects(l2.claimed(card), /ENOENT/);
+// Starting no further work is L3's halt, placed on starts alone (ruling on #277; #281). A dispatch
+// already running still settles, so its card still moves, and the move's own refused event is
+// reported loudly as the one before it was.
+for (const [name, settler] of [
+  ['the same L2 instance', ({ l2 }) => l2],
+  ['a second L2 instance over the same board and sink', ({ fake, sink }) => columnChanges({ config, sink, items: fake.operations })],
+]) {
+  test(`while the sink still refuses, a card whose claim went unrecorded moves to review on a zero exit, settled by ${name}`, async () => {
+    const w = world();
+    const [card] = await itemsOf(w.fake);
+    rmSync(w.directory, { recursive: true });
+    await assert.rejects(w.l2.claimed(card), /ENOENT/);
 
-  await assert.rejects(l2.settled(card, RETURNED), (error) => {
-    assert.match(error.message, /card #12/);
-    assert.match(error.message, /ENOENT/);
-    return true;
+    await assert.rejects(settler(w).settled(card, RETURNED), /card #12 moved from coding to review.*ENOENT/);
+
+    const [moved] = await itemsOf(w.fake);
+    assert.equal(moved.column, 'Review');
+    assert.deepEqual(w.fake.writes().map(({ args: [, column] }) => column), ['Coding', 'Review']);
   });
+}
 
-  const [held] = await itemsOf(fake);
-  assert.equal(held.column, 'Coding');
-  assert.equal(fake.writes().length, 1, 'L2 moved the card again');
-});
-
-test('once the sink accepts again, the unrecorded move is recorded before the card moves on', async () => {
-  // "Until it can record" in the owner's ruling: the record is made whole first, then work goes on.
+test('once the sink accepts again, no transition event for the refused move is ever appended', async () => {
+  // A late event carries the time it was written, not the time of the move (R-RECORD-7).
   const { fake, l2, directory, events } = world();
   const [card] = await itemsOf(fake);
   rmSync(directory, { recursive: true });
@@ -188,13 +192,10 @@ test('once the sink accepts again, the unrecorded move is recorded before the ca
   await l2.settled(card, RETURNED);
 
   const [moved] = await itemsOf(fake);
-  assert.equal(moved.column, 'Review');
+  assert.equal(moved.column, 'Review', 'the run never reached a later append');
   assert.deepEqual(
     events().map(({ card: number, from, to, cause }) => ({ number, from, to, cause })),
-    [
-      { number: 12, from: 'ready', to: 'coding', cause: 'claimed' },
-      { number: 12, from: 'coding', to: 'review', cause: 'returned' },
-    ],
+    [{ number: 12, from: 'coding', to: 'review', cause: 'returned' }],
   );
 });
 
