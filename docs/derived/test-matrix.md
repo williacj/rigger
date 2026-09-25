@@ -21,7 +21,7 @@ reports no gap of its own; the register carries the reason.
 | R-CARD-5 | **gap** |
 | R-CARD-6 | **gap** |
 | R-CARD-7 | `test/form-check.test.mjs` a card with no heading named exactly Acceptance is refused<br>`test/form-check.test.mjs` the refusal of a card with no acceptance names the card and missing acceptance |
-| R-CARD-8 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused |
+| R-CARD-8 | `test/form-check.test.mjs` a card whose every item matches its title after normalising is refused<br>`test/form-check.test.mjs` the refusal of a card whose acceptance only restates its title names the card and restated title<br>`test/form-check.test.mjs` any card whose Acceptance heading holds a plain bullet that does not restate its title is not refused |
 | R-CARD-9 | **gap** |
 | R-CARD-10 | **gap** |
 | R-CARD-11 | **gap** |
