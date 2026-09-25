@@ -270,10 +270,26 @@ function readKinds(config, refusals) {
 /**
  * What the epic label may be: one label name, which a card carries to mark it an epic. A config
  * that declares none marks no card, so only a declared one has anything to read.
+ *
+ * No kind may select it. Every card that kind selected would be an epic, which Rigger never pulls
+ * (`R-SCHED-11`), so the kind's work would never run and nobody would be told why.
  */
 function readEpicLabel(config, refusals) {
   if (!Object.hasOwn(config, 'epicLabel')) return;
-  if (!names(config.epicLabel)) refusals.push('`epicLabel` must be one label name');
+  const { epicLabel } = config;
+  if (!names(epicLabel)) {
+    refusals.push('`epicLabel` must be one label name');
+    return;
+  }
+  // Kinds that are no set of declarations, and labels that are no list, earned their refusal
+  // where they were read.
+  if (!declares(config.kinds)) return;
+  for (const [name, kind] of Object.entries(config.kinds)) {
+    const labels = kind?.select?.labels;
+    if (Array.isArray(labels) && labels.includes(epicLabel)) {
+      refusals.push(`\`epicLabel\` names \`${epicLabel}\`, which \`kinds.${name}\` selects, so no card that kind selects would ever be pulled`);
+    }
+  }
 }
 
 /**

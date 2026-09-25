@@ -396,6 +396,23 @@ test('a declared epic label that is not one label name is refused, and the refus
   }
 });
 
+// A kind selecting the epic label would have every card it selects count as an epic, and so
+// never be pulled (`R-SCHED-11`), without anyone being told.
+test('an epic label that a kind selects is refused, and the refusal names the key, the kind and the label', () => {
+  const earned = refusal({ ...rigger, epicLabel: 'type:spec' });
+  assert.match(earned, /`epicLabel`/);
+  assert.match(earned, /`kinds\.spec`/);
+  assert.match(earned, /`type:spec`/);
+
+  const second = refusal({
+    ...withKind({ select: { labels: ['type:change', 'type:epic'] } }),
+    epicLabel: 'type:epic',
+  });
+  assert.match(second, /`epicLabel`/);
+  assert.match(second, /`kinds\.change`/);
+  assert.match(second, /`type:epic`/);
+});
+
 test('a kind selecting one label or two is accepted', () => {
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change', 'type:fix'] } })), []);
