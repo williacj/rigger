@@ -80,6 +80,22 @@ test("through the fake gh, with no priority declared, L0's hand-off has L3 pull 
   assert.deepEqual(pulled(handed), [41, 42, 43]);
 });
 
+test('through the fake gh, a declared priority field past the first page of fields is read, across every page gh answers', async () => {
+  // A hundred fields ahead of Priority fill the first page the read asks for, so Priority is
+  // answered only on the second, to the request that carries the first page's cursor.
+  const fillers = Array.from({ length: 100 }, (_, i) => ({ name: `Field ${i + 1}`, options: ['Yes'] }));
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), {
+    ...WHERE,
+    board: { columns: Object.values(COLUMNS), fields: [...fillers, { name: 'Priority', options: ['Low', 'High', 'Normal'] }], items: [card(61, 'Normal')] },
+  });
+  const send = (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+
+  const handed = await readSide({ ...WHERE, columns: COLUMNS, priority: PRIORITY }, { send }).readPriority();
+
+  assert.deepEqual(handed.options, ['Low', 'High', 'Normal']);
+  assert.deepEqual(handed.items.map((held) => [held.number, held.priority]), [[61, { value: 'Normal', declared: true }]]);
+});
+
 test('through the fake gh, a declared priority field the board does not hold fails the read, naming the field', async () => {
   const { send } = fakeForge([card(51, 'High')]);
   const board = { ...WHERE, columns: COLUMNS, priority: { field: 'Urgency', options: ['High'] } };
