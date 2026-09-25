@@ -35,7 +35,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-8 | **gap** |
 | R-SCHED-9 | **gap** |
 | R-SCHED-10 | `test/config.test.mjs` a declaration Rigger does not offer is refused wherever it sits, and the refusal names it<br>`test/config.test.mjs` what the validator offers is exactly what ARCHITECTURE.md publishes, in both directions<br>`test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
-| R-SCHED-11 | **gap** |
+| R-SCHED-11 | `test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a ready card no kind selects and that has no acceptance is ignored, not refused<br>`test/next-action.test.mjs` a ready card labelled type:epic is ignored under this repository config |
 | R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |
 | R-WORK-3 | **gap** |
