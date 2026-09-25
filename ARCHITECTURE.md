@@ -116,7 +116,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field, the board field holding a card's priority and that field's options in rank order, the concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes. The declared order ranks cards, whatever order or options the board's own field holds. Ties break by issue number, oldest first. A card with no value, or with a value the consumer did not declare, ranks after every declared option | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, and whether telemetry pushes. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository and board; L1 for the worktree root and topic rule; L3 for N; L5 for the push | Yes, N defaults to 3 |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind | L2 for which kind selects a card, the loop and the gate; L3 for provisioning | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
@@ -178,6 +178,12 @@ export default {
   telemetry: { push: false },
 };
 ```
+
+The priority declaration is one key under `board`: `priority`, an object whose `field` is the
+board field's display name and whose `options` lists that field's option display names, highest
+rank first. The shape above does not carry it, and with it the shape's `board` line reads:
+
+`board: { project: 1, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },`
 
 ## Triggers
 
