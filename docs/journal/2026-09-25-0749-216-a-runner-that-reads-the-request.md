@@ -29,6 +29,13 @@ The test asks `gh` the same question every run. The first attempt called the inj
 `spawn`, and `test/git-environment.test.mjs` read that as a spawner deciding its command at run
 time. Renaming it `send` was the fix, and that sweep is why the one real spawn sits in one place.
 
+**A flag in the path slot.** The reviewer's second round found that the runner took the word after
+`api` as the path without checking it was one. A flag there takes the next word as its value, so
+`gh api --input -X GET` reads a file named `-X` and sends `POST /GET`, and the runner admitted it
+because the words after the "path" were `-X GET`. The path slot now has to hold something other
+than a flag, and the per-run test asks `gh` about that form as well. Checking where a list of
+words ends was not enough; what each word is depends on the word before it.
+
 **No write checks itself by reading back.** #212's spike saw a read straight after a write miss it
 twice. A move that read the board back to confirm would sometimes report a landed move as lost,
 so the write's own exit status is the answer.
