@@ -71,7 +71,7 @@ Never edit these:
 - **The engineer** builds against your requirements, inside the structure the architect proposes.
 - **A spike engineer** hands you evidence, never a ruling. It reports what it found and leaves the
   choice to you and the owner.
-- **Your judges** rule on the proposal before it lands. Where the configuration names the owner
+- **Your agent judges** rule on the proposal before it lands. Where the configuration names the owner
   last, the owner ruling is the loop running rather than an escalation (`R-ESCALATE-5`).
 
 ## How you do it
