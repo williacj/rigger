@@ -56,14 +56,17 @@ test('an acceptance section holding no plain bullet is missing acceptance', () =
   refusedAsMissing(card(3, '## Acceptance', '', 'Prose that states what done means.', '', '## Notes', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('a section whose only bullets are task-list items is missing acceptance', () => {
   refusedAsMissing(card(4, '## Acceptance', '', `- [ ] ${ITEM}`, `- [x] ${ITEM}`, `- [X] ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('bullets under Acceptance criteria and under no acceptance heading are missing acceptance', () => {
   refusedAsMissing(card(5, '## Acceptance criteria', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('a card whose only heading is ## acceptance, in lower case, is missing acceptance', () => {
   refusedAsMissing(card(6, '## acceptance', '', `- ${ITEM}`));
 });
@@ -72,6 +75,7 @@ test('a card whose only heading is ## **Acceptance** is missing acceptance', () 
   refusedAsMissing(card(7, '## **Acceptance**', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('acceptance headings at levels #, ## and ### each holding one item that does not restate the title are admitted', () => {
   for (const marks of ['#', '##', '###']) admitted(card(8, 'Context.', '', `${marks} Acceptance`, '', `- ${ITEM}`));
 });
@@ -80,10 +84,12 @@ test('the heading ## Acceptance ## holding one item that does not restate the ti
   admitted(card(9, '## Acceptance ##', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('an item that does not restate the title admits a card whose later ## heading holds bullets that do', () => {
   admitted(card(10, '## Acceptance', '', `- ${ITEM}`, '', '## Notes', '', `- ${TITLE}`, `- ${TITLE}.`));
 });
 
+// proves R-CARD-12
 test('a deeper ### heading does not end the section, so its bullet that does not restate the title admits the card', () => {
   admitted(card(11, '## Acceptance', '', `- ${TITLE}`, `- ${TITLE}.`, '', '### Notes', '', `- ${ITEM}`));
 });
@@ -92,10 +98,12 @@ test('a deeper acceptance heading inside a section does not shorten it', () => {
   admitted(card(34, '## Acceptance', '', '### Acceptance', '', `- ${TITLE}`, '', '### Detail', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('a section whose only bullet is indented four spaces is missing acceptance', () => {
   refusedAsMissing(card(12, '## Acceptance', '', `    - ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('a section whose only bullet is indented by a tab is missing acceptance', () => {
   refusedAsMissing(card(13, '## Acceptance', '', `\t- ${ITEM}`));
 });
@@ -104,10 +112,12 @@ test('a nested bullet indented two spaces that does not restate the title admits
   admitted(card(14, '## Acceptance', '', `  - ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('an acceptance heading and bullet inside a backtick fence are missing acceptance', () => {
   refusedAsMissing(card(15, 'Context.', '', '```md', '## Acceptance', '', `- ${ITEM}`, '```'));
 });
 
+// proves R-CARD-12
 test('an acceptance heading and bullet inside a tilde fence are missing acceptance', () => {
   refusedAsMissing(card(16, 'Context.', '', '~~~', '## Acceptance', '', `- ${ITEM}`, '~~~'));
 });
@@ -139,6 +149,7 @@ test('a bullet inside <details> in the section is a plain bullet', () => {
   admitted(card(22, '## Acceptance', '', '<details>', '', `- ${ITEM}`, '', '</details>'));
 });
 
+// proves R-CARD-12
 test('a setext Acceptance heading underlined with --- is missing acceptance', () => {
   refusedAsMissing(card(23, 'Acceptance', '---', '', `- ${ITEM}`));
 });
@@ -147,6 +158,7 @@ test('a setext Notes heading underlined with === does not end the section', () =
   admitted(card(24, '## Acceptance', '', `- ${TITLE}`, '', 'Notes', '=====', '', `- ${ITEM}`));
 });
 
+// proves R-CARD-12
 test('a section whose only bullet is - followed only by spaces is missing acceptance', () => {
   refusedAsMissing(card(25, '## Acceptance', '', '-   '));
 });
@@ -211,7 +223,7 @@ function* qualifyingCards() {
             }
 }
 
-// proves R-CARD-8
+// proves R-CARD-8, R-CARD-12
 test('any card whose section holds a plain bullet that does not restate its title is not refused', () => {
   let count = 0;
   for (const given of qualifyingCards()) {

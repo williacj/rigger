@@ -86,12 +86,13 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-CARD-9 | A spike card's acceptance states what a complete answer contains, never what the answer is. | the card's author | a judge, under R-LOOP-6 | D2 |
 | R-CARD-10 | A follow-up card may only cover work outside the filing card's acceptance. An acceptance item left undone means the card is not done, and never becomes a follow-up. | the role prompt | a judge, under R-LOOP-5 | D2 |
 | R-CARD-11 | Work found during a card and outside its acceptance becomes its own card, and is not added to the acceptance of the card that found it. | the role prompt | the event record, by an acceptance that grew after admission | D2 |
+| R-CARD-12 | Rigger reads a card's acceptance from the source text of the card's body, never from a rendering of it. The acceptance is every item in every section that opens at an ATX heading line whose text is exactly `Acceptance`. A section ends at the next ATX heading line of the same level or a higher one, which carries as many `#` or fewer. An item is a line in a section, indented at most three spaces, that opens with `-`, `*` or `+` and a space. A task-list item, a bullet with no text, and a line inside a fenced code block are never items. | the engine | the test suite | D2 |
 
 ## R-SCHED — what runs, and when
 
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
-| R-SCHED-1 | Rigger pulls ready cards in priority order, so an owner changes what runs next by changing a card's priority. | the engine | nothing yet | |
+| R-SCHED-1 | Rigger pulls ready cards in priority order, so an owner changes what runs next by changing a card's priority. | the engine | the test suite | |
 | R-SCHED-2 | How many cards run at once is the consumer's to set, three unless the consumer says otherwise, and Rigger never exceeds it. | the engine | the event record, by overlapping dispatch intervals | |
 | R-SCHED-3 | Closing admission stops Rigger pulling new cards. Cards already running finish. | the engine | the event record, by a pull after the hold | |
 | R-SCHED-4 | The owner closes admission, and Rigger closes it on a repeated infrastructure failure. Only the owner reopens it, and nothing else closes it. | the engine | the event record, by what raised each change of admission | |
@@ -102,6 +103,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-SCHED-9 | Two cards never merge at the same moment. | the engine | the event record, by overlapping merge intervals | |
 | R-SCHED-10 | Rigger refuses a configuration naming anything it does not offer, and says what it refused. | the config validator | the test suite | |
 | R-SCHED-11 | Rigger never pulls a ready card no kind of work selects, never reports it as a card it refused, and leaves it on the board. Work the consumer marked as an epic is selected by no kind, so Rigger never pulls an epic and never reports one as refused. | the engine, and the consumer's configuration for what each kind selects | the test suite | |
+| R-SCHED-12 | Rigger never pulls a ready card that two or more kinds of work select. It refuses the card, and the refusal names every kind that selects it. | the engine | the test suite | |
 
 ## R-WORK — isolation and exclusivity
 

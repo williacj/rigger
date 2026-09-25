@@ -48,6 +48,7 @@ test('a ready card no kind selects and that has no acceptance is ignored, not re
   assert.deepEqual(nextAction(card(11, [], 'Context, and no acceptance.'), KINDS), { action: 'ignore' });
 });
 
+// proves R-SCHED-12
 test('a ready card two kinds select and the form check admits is refused with a reason naming both kinds', () => {
   const given = card(16, ['type:spec', 'type:change']);
   assert.deepEqual(nextAction(given, KINDS), {
@@ -57,6 +58,7 @@ test('a ready card two kinds select and the form check admits is refused with a 
   });
 });
 
+// proves R-SCHED-12
 test('a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds', () => {
   const given = card(12, ['type:spec', 'type:change'], 'Context, and no acceptance.');
   assert.deepEqual(nextAction(given, KINDS), {
