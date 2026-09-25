@@ -3,8 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
-import { createFakeBoard } from './fake-board.mjs';
+import { createFakeBoard, sampleBoard, sampleCalls } from './fake-board.mjs';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('a card reads back with its number, title, body, labels, column and priority value unchanged', async () => {
   const card = {
@@ -146,8 +152,19 @@ test('a board that has only been read has an empty write record', async () => {
   await fake.operations.readItems();
   await fake.operations.readColumns();
   await fake.operations.readFields();
+  await fake.operations.readLabels();
 
   assert.deepEqual(fake.writes(), []);
+});
+
+test('an item fact the fake board does not model is refused, naming it', () => {
+  // The board holds forge facts only. A card's linked pull request is found by the topic rule
+  // and a verdict by the gate, neither of which is the board's, so a fixture handing the fake
+  // either is told so rather than having it silently held or silently dropped.
+  for (const fact of ['linkedPullRequest', 'verdict']) {
+    const item = { type: 'issue', repository: 'williacj/rigger', number: 9, column: 'Ready', [fact]: 1 };
+    assert.throws(() => createFakeBoard({ columns: ['Ready'], items: [item] }), new RegExp(fact));
+  }
 });
 
 /** A promise's outcome, readable without awaiting it, so a test can see a read still pending. */
@@ -180,4 +197,55 @@ test('a held read stays unresolved while a second read starts, and the test rele
     first.value.map((item) => item.column),
     ['Review', 'Coding', 'Review'],
   );
+});
+
+test('no file under src/ imports the fake board', () => {
+  // Any mention of the module's name counts, whatever the path or import form around it. The
+  // pattern is checked against this file first, which does import the fake, so a pattern that
+  // matched nothing could not pass the test vacuously.
+  const importsFake = /fake-board/;
+  assert.match(readFileSync(fileURLToPath(import.meta.url), 'utf8'), importsFake);
+
+  const src = join(root, 'src');
+  const files = readdirSync(src, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath ?? entry.path, entry.name));
+  assert.ok(files.length > 0, 'found no file under src/, so it could have found no importer');
+
+  const importers = files.filter((file) => importsFake.test(readFileSync(file, 'utf8')));
+  assert.deepEqual(importers, []);
+});
+
+// The operations are whatever the fake offers, read off it rather than listed here, so an
+// operation added to the fake is checked with no edit to this file.
+const operationNames = () => Object.keys(sampleBoard().operations);
+
+test('every operation the fake board offers carries a sample call', () => {
+  const lacking = operationNames().filter((name) => !Object.hasOwn(sampleCalls, name));
+  assert.deepEqual(lacking, [], `operations with no sample call: ${lacking.join(', ')}`);
+});
+
+const callSample = (fake, name) => fake.operations[name](...structuredClone(sampleCalls[name]));
+
+test("every write's sample call changes what a read of the board returns", async () => {
+  // A write is an operation whose sample call adds to the write record; every other operation is
+  // a read, and the board as read is what all of them return.
+  const writes = [];
+  const reads = [];
+  for (const name of operationNames()) {
+    const fake = sampleBoard();
+    await callSample(fake, name);
+    (fake.writes().length > 0 ? writes : reads).push(name);
+  }
+  assert.ok(writes.length > 0 && reads.length > 0, 'found no writes or no reads to compare');
+
+  const readAll = (fake) => Promise.all(reads.map((name) => callSample(fake, name)));
+  const unchanged = [];
+  for (const name of writes) {
+    const fake = sampleBoard();
+    const before = await readAll(fake);
+    await callSample(fake, name);
+    if (isDeepStrictEqual(before, await readAll(fake))) unchanged.push(name);
+  }
+  assert.deepEqual(unchanged, [], `writes whose sample call left the board unchanged: ${unchanged.join(', ')}`);
 });

@@ -1,10 +1,70 @@
 // ABOUTME: The fake board every M1 scheduling behaviour is proven against. Test-only, never
 // imported from src/, and holding forge facts only: no card's linked pull request, no verdict.
 
-export function createFakeBoard({ columns = [], fields = [], items = [] } = {}) {
+/**
+ * One invocation of each operation, as the arguments it is called with, valid on a fresh
+ * `sampleBoard()`. A test that derives which operations write, or which change a card's column,
+ * calls every operation through these rather than keeping a list of names; the fake's own test
+ * fails, naming the operation, when one is missing here.
+ */
+export const sampleCalls = {
+  readItems: [],
+  readColumns: [],
+  readFields: [],
+  readLabels: [],
+  moveItem: ['item-1', 'Coding'],
+  createColumn: ['Blocked'],
+  createField: ['Size', ['S', 'M', 'L']],
+  createLabel: ['type:spike'],
+};
+
+/** A fresh board every sample call is valid on: one card, in the first of five columns. */
+export function sampleBoard() {
+  return createFakeBoard({
+    columns: ['Ready', 'Coding', 'Review', 'Owner', 'Done'],
+    fields: [{ name: 'Priority', options: ['P0', 'P1', 'P2'] }],
+    items: [
+      {
+        type: 'issue',
+        repository: 'williacj/rigger',
+        number: 1,
+        title: 'A sample card',
+        body: '## Acceptance\n\n- It is read back.',
+        labels: ['type:change'],
+        column: 'Ready',
+        fieldValues: { Priority: 'P1' },
+      },
+    ],
+  });
+}
+
+/**
+ * Everything the fake holds of one board item. Each is a forge fact the board itself carries; a
+ * card's linked pull request and any verdict are not, so an item naming either is refused.
+ * `type` is `issue`, `draftIssue` or `pullRequest`, and `fieldValues` maps a field's name to the
+ * option the item holds in it, as `{ Priority: 'P1' }`.
+ */
+const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', 'column', 'fieldValues'];
+
+/**
+ * A board holding `columns` (the `Status` options, in board order), single-select `fields` as
+ * `{ name, options }`, `items`, and the repository's `labels`. Each item is given the board item
+ * id `item-1`, `item-2` and so on, in the order given, which is what a move names.
+ *
+ * Its `operations` are what the forge adapter offers, and nothing else is: `writes()` and
+ * `holdNextRead()` are the test's controls, not the board's.
+ */
+export function createFakeBoard({ columns = [], fields = [], items = [], labels = [] } = {}) {
+  for (const item of items) {
+    const unmodelled = Object.keys(item).filter((fact) => !ITEM_FACTS.includes(fact));
+    if (unmodelled.length > 0) {
+      throw new Error(`the fake board does not hold an item's ${unmodelled.join(', ')}`);
+    }
+  }
   const board = structuredClone({
     columns,
     fields,
+    labels,
     items: items.map((item, index) => ({ ...item, id: `item-${index + 1}` })),
   });
   const writes = [];
@@ -23,6 +83,7 @@ export function createFakeBoard({ columns = [], fields = [], items = [] } = {}) 
       readItems: () => read(() => board.items),
       readColumns: () => read(() => board.columns),
       readFields: () => read(() => board.fields),
+      readLabels: () => read(() => board.labels),
       moveItem: async (itemId, column) => {
         if (!board.columns.includes(column)) {
           throw new Error(`the fake board has no column named ${column}`);
@@ -39,6 +100,7 @@ export function createFakeBoard({ columns = [], fields = [], items = [] } = {}) 
         record('createField', [name, options]);
       },
       createLabel: async (name) => {
+        board.labels.push(name);
         record('createLabel', [name]);
       },
     },
