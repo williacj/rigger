@@ -65,7 +65,8 @@ function acceptanceItems(body) {
 /**
  * Text as the restated-title rule compares it (the owner's U2 ruling): letters folded to lower
  * case, every Unicode punctuation and symbol character deleted, and runs of whitespace collapsed
- * and trimmed. Deleting rather than spacing, and counting symbols, is open for the owner.
+ * and trimmed. Deleting before collapsing, and deleting symbols as well as punctuation, are the
+ * owner's (a) ruling of 2026-09-25.
  */
 const normalise = (text) => text.toLowerCase().replace(/[\p{P}\p{S}]/gu, '').replace(/\s+/g, ' ').trim();
 

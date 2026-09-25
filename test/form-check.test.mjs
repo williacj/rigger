@@ -257,6 +257,14 @@ test('a stray CR or a U+2028 on a heading or bullet line does not hide a qualify
   assert.deepEqual(verdicts, Object.fromEntries(Object.keys(bodies).map((name) => [name, true])));
 });
 
+test('a lone CR does not split a line, so a heading and bullet joined by one are no section', () => {
+  refusedAsMissing({ number: 39, title: TITLE, body: `## Acceptance\r- ${ITEM}` });
+});
+
+test('an item keeps the spaces after the one space that follows its marker, so -  [ ] is no task-list item', () => {
+  admitted(card(40, '## Acceptance', '', `-  [ ] ${ITEM}`));
+});
+
 test('the body of issue #182, as gh issue view 182 --json number,title,body returned it on 2026-09-24, passes', () => {
   const given = JSON.parse(readFileSync(new URL('./fixtures/issue-182.json', import.meta.url), 'utf8'));
   assert.equal(given.number, 182);
