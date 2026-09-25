@@ -102,14 +102,17 @@ test('a wrapper the runners module adds around a write runner is on that runner\
       'export const alias = schemaWriteRunner;',
       'const { unpacked } = { unpacked: itemWriteRunner };',
       'export { unpacked };',
+      'export const arrow = (args) => itemWriteRunner(args);',
     ].join('\n'),
     'src/cli/relay.mjs': "import { relay } from '../substrate/forge/runners.mjs';",
     'src/workflow/alias.mjs': "import { alias } from '../substrate/forge/runners.mjs';",
     'src/cli/unpacked.mjs': "import { unpacked } from '../substrate/forge/runners.mjs';",
+    'src/cli/arrow.mjs': "import { arrow } from '../substrate/forge/runners.mjs';",
   };
   assertBreaks(modules, 'src/cli/relay.mjs', 'rule 5');
   assertBreaks(modules, 'src/workflow/alias.mjs', 'rule 6');
   assertBreaks(modules, 'src/cli/unpacked.mjs', 'rule 5');
+  assertBreaks(modules, 'src/cli/arrow.mjs', 'rule 5');
 });
 
 test('the re-export route: src/workflow/ re-exporting an item-write binding fails, and so does src/cli/ importing it from there', () => {
