@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -143,9 +144,45 @@ test('a numbered list produces no sentence finding either', () => {
   assert.deepEqual(findings(`${document}\n`, under([])), []);
 });
 
-test('a markdown table row produces no sentence finding, however many words it holds', () => {
-  const document = ['| id | requirement |', '|---|---|', `| R-LOOP-1 | ${wordsOf(60)} |`, ''].join('\n');
+/** A two-column register table whose one row holds `cell` beside the id `R-LOOP-1`, on line 3. */
+const tableOf = (cell) => ['| id | requirement |', '|---|---|', `| R-LOOP-1 | ${cell} |`, ''].join('\n');
+
+test('a sentence in a table cell past the ceiling is a finding naming its line and its row', () => {
+  // The registers hold every requirement and decision in a row, so a ceiling read only off prose
+  // is never applied where the binding text lives.
+  assert.deepEqual(
+    findings(tableOf(sentenceOf(41)), under([])).map(({ rule, line, words, row }) => ({ rule, line, words, row })),
+    [{ rule: 'sentence', line: 3, words: 41, row: 'R-LOOP-1' }],
+  );
+});
+
+test('a sentence in a table cell at the ceiling is not past it', () => {
+  assert.deepEqual(findings(tableOf(sentenceOf(40)), under([])), []);
+});
+
+test('a table row inside a fenced block produces no sentence finding', () => {
+  // A fence shows what a row looks like rather than binding anything, so it stays code.
+  const document = ['```markdown', tableOf(sentenceOf(41)).trimEnd(), '```', ''].join('\n');
   assert.deepEqual(findings(document, under([])), []);
+});
+
+test('a ruled-out term in a table cell is a finding', () => {
+  assert.deepEqual(
+    findings(tableOf('A judge returns an approval.'), under(['approval'])).map(({ rule, line, term }) => ({ rule, line, term })),
+    [{ rule: 'term', line: 3, term: 'approval' }],
+  );
+});
+
+test('the splitter reads a cell with the same bias it reads a paragraph with', () => {
+  // The same pair as the paragraph test above: `e.g.` splits one sentence of forty-one words into
+  // two, which hides it, and `from` in its place leaves it whole, which does not.
+  const abbreviated = `${wordsOf(5)} e.g. Rigger ${wordsOf(34)}.`;
+  assert.deepEqual(findings(tableOf(abbreviated), under([])), []);
+  assert.deepEqual(findings(tableOf(abbreviated.replace('e.g.', 'from')), under([])).map((f) => f.words), [41]);
+  // And a lowercase word after a stop runs two cell sentences on as one, which can only add one:
+  // twenty words, then `v0` and twenty more, read as a single sentence of forty-one.
+  const merged = `${wordsOf(20)}. v0 ${wordsOf(20)}.`;
+  assert.deepEqual(findings(tableOf(merged), under([])).map((f) => f.words), [41]);
 });
 
 test('a fenced code block produces no sentence finding', () => {
@@ -226,6 +263,41 @@ test('a finding names the file it sits in, alongside the line and the word count
   );
 });
 
+/** A repository holding the fixture skill and a decisions register whose one row holds `cell`. */
+function repositoryWithRow(cell) {
+  const root = mkdtempSync(join(tmpdir(), 'rigger-row-'));
+  mkdirSync(join(root, '.claude', 'skills', 'spec-style'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
+  writeFileSync(join(root, '.claude', 'skills', 'spec-style', 'SKILL.md'), SKILL);
+  writeFileSync(join(root, 'README.md'), 'The engine runs the loop.\n');
+  writeFileSync(join(root, 'ARCHITECTURE.md'), 'Eight layers, each with one job.\n');
+  writeFileSync(join(root, 'docs', 'spec', 'decisions.md'), tableOf(cell).replace('R-LOOP-1', 'D1'));
+  return root;
+}
+
+/** Runs the lint the way `npm run lint:spec-style` does, against another repository. */
+const lintCommand = (root) =>
+  spawnSync(process.execPath, [join(repository, 'scripts', 'spec-style-lint.mjs'), root], { encoding: 'utf8' });
+
+test('the lint exits non-zero on a row whose cell holds a 41-word sentence, and names the row', () => {
+  const run = lintCommand(repositoryWithRow(sentenceOf(41)));
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /docs\/spec\/decisions\.md:3 {2}sentence of 41 words in row D1\n/);
+});
+
+test('the lint exits zero on the same row with that sentence at 40 words', () => {
+  const run = lintCommand(repositoryWithRow(sentenceOf(40)));
+  assert.equal(run.status, 0, run.stderr);
+});
+
+test('a retired register row past the ceiling is not read', () => {
+  // A retired row keeps the exact text it bound with, so a finding against it asks for a
+  // rewording the register forbids.
+  const root = repositoryWithRow(sentenceOf(40));
+  writeFileSync(join(root, 'docs', 'spec', 'decisions-retired.md'), tableOf(sentenceOf(41)));
+  assert.deepEqual(check(root).findings, []);
+});
+
 test('the skill names which of its rules the lint covers', () => {
   const skill = readFileSync(join(repository, '.claude/skills/spec-style/SKILL.md'), 'utf8');
   assert.doesNotMatch(skill, /Nothing checks these mechanically/i);
@@ -246,6 +318,27 @@ const shipped = () => readFileSync(join(repository, '.claude/skills/spec-style/S
  * every assertion about that rule could then be satisfied by text belonging to another.
  */
 const ruleOf = (skill, number) => skill.split(/^#{2,3}\s+/m).find((part) => part.startsWith(`${number}.`));
+
+test('the skill says the lint reads table cells, and says nothing of skipping rows', () => {
+  // The break is the passage going on describing the lint as it read before cells were read, so
+  // an author trusts a green run to have measured the rows it never measured.
+  const passage = shipped().split(/^- /m).find((part) => part.startsWith('**Not all of it lintable'));
+  assert.ok(passage, 'the skill has no "Not all of it lintable" passage');
+  assert.match(passage, /every table cell/);
+  assert.doesNotMatch(passage, /\bskips?\s+(?:\w+\s+)?(?:rows|tables)\b|\b(?:rows|tables)\s+(?:are|is)\s+skipped/i);
+});
+
+test('rule 4 gives a register table its own form for a rule with three or more conditions', () => {
+  // A register table cannot hold a list, so a rule 4 naming only lists leaves a register author
+  // one long cell, which is the form the sentence ceiling refuses.
+  const rule = ruleOf(shipped(), 4);
+  assert.match(rule, /lead\s+row/);
+  assert.match(rule, /continuation\s+rows\s+each\s+holding\s+one\s+condition/);
+  assert.match(rule, /`R-GATE-4`\s+to\s+`R-GATE-8`/);
+  // The owner's ruling of 2026-09-25: the split is by condition, never inside one definition, so a
+  // judge reading rule 4 does not demand that a term's parts each take a row.
+  assert.match(rule, /defines\s+one\s+term\s+may\s+hold\s+that\s+term's\s+several\s+parts/);
+});
 
 test('the skill states the ownership rule a passage is read against', () => {
   // The break this names is the ordinary one for a shipped instruction file: the rule dropped in

@@ -124,6 +124,19 @@ const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof
 const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
+ * Whether a value is a name: a string holding something other than whitespace. A label and a
+ * priority option are each read by name, and a string of only whitespace names nothing either
+ * could match.
+ */
+const names = (value) => typeof value === 'string' && value.trim() !== '';
+
+/**
+ * Whether a list holds anything that is no name. Read through `Array.from`, which visits every
+ * index, because `some` skips an empty slot.
+ */
+const holdsUnnamed = (list) => Array.from(list).some((entry) => !names(entry));
+
+/**
  * The refusal a value earns where Rigger reads declarations and finds something else.
  *
  * Refused where it sits rather than read as an empty set, which would report every key under it
@@ -180,13 +193,13 @@ function readShape(value, shape, path, refusals) {
 }
 
 /**
- * What a kind's `select.labels` may be: the labels a card carries to be selected by it, as a list
- * the engine reads when it selects cards.
+ * What a `select.labels` may be, for a kind or a provisioning step alike: the labels a card
+ * carries to be selected by it, as a list the engine reads when it selects cards.
  *
  * A select that is no set of declarations, or that does not name `labels`, earned its refusal
  * where the shape was read.
  */
-function readLabels(select, where, name, refusals) {
+function readLabels(select, where, refusals) {
   if (!declares(select) || !Object.hasOwn(select, 'labels')) return;
   const { labels } = select;
   // The engine reads the value as a list, so anything else reaches it as a throw.
@@ -194,14 +207,13 @@ function readLabels(select, where, name, refusals) {
     refusals.push(`\`${where}\` must be a list of label names`);
     return;
   }
-  // A kind selects a card carrying any one of its labels, so a kind naming none selects nothing
-  // and its work would never run.
+  // A selector takes a card carrying any one of its labels, so one naming none selects nothing:
+  // a kind's work would never run, and a step would never provision a card.
   if (labels.length === 0) {
-    refusals.push(`\`${where}\` names no label, so the kind \`${name}\` selects no card`);
+    refusals.push(`\`${where}\` names no label, so it selects no card`);
   }
-  // A card carries labels by name, so an entry that is no name selects nothing. Read through
-  // `Array.from`, which visits every index, because `some` skips an empty slot.
-  if (Array.from(labels).some((label) => typeof label !== 'string' || label === '')) {
+  // A card carries labels by name, so an entry that is no name selects nothing.
+  if (holdsUnnamed(labels)) {
     refusals.push(`\`${where}\` must list label names, and holds something else`);
   }
 }
@@ -226,7 +238,7 @@ function readKinds(config, refusals) {
     if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
       refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
     }
-    readLabels(kind?.select, `${where}.select.labels`, name, refusals);
+    readLabels(kind?.select, `${where}.select.labels`, refusals);
     if (kind?.judges === undefined) continue;
     if (!Array.isArray(kind.judges) || kind.judges.length === 0) {
       // One maker and at least one judge, in the order they judge in (`README.md`, "The
@@ -253,6 +265,18 @@ function readKinds(config, refusals) {
 }
 
 /**
+ * What each provisioning step's selector may be. A step that selects nothing is selected by the
+ * kinds that name it, so only a step that declares `select` has labels to read.
+ */
+function readProvisioning(provisioning, refusals) {
+  // Provisioning that is no set of declarations earned its refusal where the shape was read.
+  if (!declares(provisioning)) return;
+  for (const [name, step] of Object.entries(provisioning)) {
+    readLabels(step?.select, `provisioning.${name}.select.labels`, refusals);
+  }
+}
+
+/**
  * What a priority declaration's options may be: the ranking itself, highest first, so it names at
  * least one option.
  */
@@ -263,9 +287,8 @@ function readPriority(priority, refusals) {
   if (!Array.isArray(options)) return;
   const where = 'board.priority.options';
   if (options.length === 0) refusals.push(`\`${where}\` must list at least one option, highest rank first`);
-  // An option is named by its display name on the board, so anything else names no option. Read
-  // through `Array.from`, which visits every index, because `some` skips an empty slot.
-  if (Array.from(options).some((option) => typeof option !== 'string' || option === '')) {
+  // An option is named by its display name on the board, so anything else names no option.
+  if (holdsUnnamed(options)) {
     refusals.push(`\`${where}\` must list option display names, and holds something else`);
   }
   // An option listed twice holds two ranks, and a card holding it has no one rank to take.
@@ -285,6 +308,7 @@ export function validate(config) {
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
+  readProvisioning(config.provisioning, refusals);
   readPriority(config.board?.priority, refusals);
   for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
     if (!CATEGORIES.includes(category)) {

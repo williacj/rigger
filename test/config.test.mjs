@@ -448,6 +448,53 @@ test('a provisioning step whose declaration is not a boolean is refused, so noth
   assert.match(refusal(config), /`provisioning\.vhs\.required`/);
 });
 
+/** This repository's config with its `vhs` provisioning step declaring this instead. */
+const withStep = (vhs) => ({ ...rigger, provisioning: { ...rigger.provisioning, vhs } });
+
+// A step's selector has a kind's shape, so the engine will read its `select.labels` as a list
+// too, and a value that is no list would reach it as a throw rather than a refusal at load.
+test('a provisioning step whose select.labels is not a list is refused, and the refusal names that key', () => {
+  for (const labels of ['area:demo', 3, { demo: 'area:demo' }, null]) {
+    const step = { run: 'brew install vhs', select: { labels } };
+    assert.match(refusal(withStep(step)), /`provisioning\.vhs\.select\.labels`/, JSON.stringify(labels));
+  }
+});
+
+// A step that selects nothing is selected by the kinds that name it, so no `select` is a state
+// the validator reads rather than a gap it refuses. The template is filled as `init` fills it and
+// as its consumer answers `board.project`, so what is checked is the config a consumer runs.
+test('a provisioning step with no select, or selecting one label or two, is accepted, and so are this config and its template', async () => {
+  assert.deepEqual(validate(withStep({ run: 'brew install vhs' })), []);
+  assert.deepEqual(validate(withStep({ run: 'brew install vhs', select: { labels: ['area:demo'] } })), []);
+  assert.deepEqual(validate(withStep({ run: 'brew install vhs', select: { labels: ['area:demo', 'area:docs'] } })), []);
+  assert.deepEqual(validate(rigger), []);
+  const template = (await import('../templates/rigger.config.mjs')).default;
+  assert.deepEqual(validate({ ...template, repo: 'acme/widgets', board: { ...template.board, project: 12 } }), []);
+});
+
+// A step selecting no label would provision no card, which its author did not write.
+test('a provisioning step whose select.labels is empty is refused, and the refusal names that key', () => {
+  const step = { run: 'brew install vhs', select: { labels: [] } };
+  assert.match(refusal(withStep(step)), /`provisioning\.vhs\.select\.labels`/);
+});
+
+test('a provisioning step whose select.labels holds an entry that is no label name is refused, and the refusal names that key', () => {
+  for (const labels of [[''], ['area:demo', 3], [null]]) {
+    const step = { run: 'brew install vhs', select: { labels } };
+    assert.match(refusal(withStep(step)), /`provisioning\.vhs\.select\.labels`/, JSON.stringify(labels));
+  }
+});
+
+// A label holding only whitespace names no label a card could carry, so a kind declaring one
+// would select no card while the config was accepted as though it selected some.
+test('a select.labels entry holding only whitespace is refused for a kind and a provisioning step, naming the key', () => {
+  for (const labels of [['  '], ['\t']]) {
+    assert.match(refusal(withKind({ select: { labels } })), /`kinds\.change\.select\.labels`/, JSON.stringify(labels));
+    const step = { run: 'brew install vhs', select: { labels } };
+    assert.match(refusal(withStep(step)), /`provisioning\.vhs\.select\.labels`/, JSON.stringify(labels));
+  }
+});
+
 // proves R-LOOP-11
 test('a role called owner is refused, because the owner is the one judge that is not a role', () => {
   const declared = { ...rigger, roles: { ...rigger.roles, owner: { agent: 'a.md', provider: 'claude', tier: 'high' } } };
@@ -479,4 +526,18 @@ test('a priority declaration listing anything but option names is refused, and t
   }
   // An empty slot names no option either, and a list read by skipping holes never sees it.
   assert.match(refusal(ranking(['High', , 'Low'])), /`board\.priority\.options`/, 'an empty slot was read as a name');
+});
+
+// An option holding only whitespace names no board option a card could hold, so every card
+// holding that value would rank as undeclared while the config was accepted.
+test('a priority declaration listing an option holding only whitespace is refused, and the refusal names the key', () => {
+  for (const blank of ['  ', '\t', ' ']) {
+    assert.match(refusal(ranking(['High', blank])), /`board\.priority\.options`/, `${JSON.stringify(blank)} was read as a name`);
+  }
+});
+
+test('a priority declaration listing only non-empty option names is accepted', () => {
+  for (const options of [['High', 'Normal', 'Low'], ['P0'], ['Very high', ' Low ']]) {
+    assert.deepEqual(validate(ranking(options)), [], JSON.stringify(options));
+  }
 });

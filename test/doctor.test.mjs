@@ -317,6 +317,20 @@ test('the gh check answers what `gh auth status` answers, and asks it without th
   }
 });
 
+test('the gh check sends `gh auth status` through the forge read runner, and doctor names no gh command itself', () => {
+  // `gh auth status` is a forge read, and the forge is L0's, so it goes through the read side's
+  // runner (the architect's ruling on #214, R214-B4). The defect this catches is `doctor` keeping a
+  // spawn of its own for `gh`: M1-12's board checks land in this file, and a `gh` spawn here is the
+  // route by which they would bypass the runner. What would be spawned is named in the source, so
+  // the source is what is read: no quoted `gh` in its code, and the read runner imported. Its
+  // comments are left out, because they name the tool whose answer the check reports.
+  const source = readFileSync(join(root, 'src', 'cli', 'doctor.mjs'), 'utf8');
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  assert.doesNotMatch(code, /(['"`])gh\1/, 'doctor.mjs names `gh` as a command of its own');
+  assert.match(source, /import \{[^}]*\breadRunner\b[^}]*\} from '\.\.\/substrate\/forge\/runners\.mjs'/);
+});
+
 test('an authority this host cannot run at all is reported as unasked, never as a pass', () => {
   // A check that reports a green it did not measure is worse than one that says it could not
   // look. The defect this catches is the status read without the run: `spawnSync` answers a
