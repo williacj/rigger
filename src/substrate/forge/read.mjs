@@ -104,6 +104,9 @@ const ITEM = `id fieldValues(first: ${PAGE}) { pageInfo { hasNextPage } nodes { 
 const isCard = (board, { content }) =>
   content?.__typename === 'Issue' && content.repository.nameWithOwner.toLowerCase() === board.repo.toLowerCase();
 
+/** The option an item read's `node` holds in the single-select field named `field`, or null. */
+const valueIn = (node, field) => node.fieldValues.nodes.find((value) => value.field?.name === field)?.name ?? null;
+
 /**
  * The card an item read answered as `node`: its board item ID, which a move names, the issue's
  * number, title, body and labels, and the column, which is the option it holds in the field
@@ -120,8 +123,34 @@ function cardOf(operation, board, node) {
     title: content.title,
     body: content.body,
     labels: content.labels.nodes.map((label) => label.name),
-    column: fieldValues.nodes.find((value) => value.field?.name === COLUMNS)?.name ?? null,
+    column: valueIn(node, COLUMNS),
   };
+}
+
+/**
+ * The board's item nodes that are cards, in board order, each once. The board can change between
+ * one page and the next, so an item moved meanwhile can be answered on both: it is kept where it
+ * first appeared.
+ */
+function cardNodes(operation, board, send) {
+  const query = (page) => boardQuery(operation, board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
+  const nodes = everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
+  const seen = new Set();
+  return nodes.filter((node) => !seen.has(node.id) && seen.add(node.id)).filter((node) => isCard(board, node));
+}
+
+/**
+ * The options of the board's single-select field named `name`, in board order. Every field is
+ * read with its name and type, so a field that is not on the board and a field of another type
+ * each fail the read, naming the field, and the type where it has one.
+ */
+function priorityField(operation, board, send, name) {
+  const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } }`);
+  const field = everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board))
+    .find((held) => held.name === name);
+  if (!field) fail(operation, board, `the board has no field named ${name}`);
+  if (!field.options) fail(operation, board, `the board's field ${name} is a ${field.dataType} field, not a single-select field`);
+  return field.options.map((option) => option.name);
 }
 
 /**
@@ -164,17 +193,27 @@ export function readSide(board, { send } = {}) {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
       return everyPage('readLabels', board, send, query, (data) => data?.repository?.labels).map((label) => label.name);
     },
+    /** Every card on the board, in board order, each once. */
+    readItems: async () => cardNodes('readItems', board, send).map((node) => cardOf('readItems', board, node)),
     /**
-     * Every card on the board, in board order, each once. The board can change between one page
-     * and the next, so an item moved meanwhile can be answered on both: it is kept where it
-     * first appeared.
+     * What L0 hands L3 to rank the board's cards by, from the config's priority declaration, a
+     * field and its options highest rank first. It returns `items`, every card as `readItems`
+     * reads it with its `priority` as `{ value, declared }`: the option it holds in the declared
+     * field, or null, and whether the declaration names that option. Beside them, `declared` is
+     * the declared order and `options` the field's own options in board order. Where the config
+     * declares no priority, no field is read, and every card's `priority`, `declared` and
+     * `options` are null.
      */
-    readItems: async () => {
-      const query = (page) => boardQuery('readItems', board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
-      const nodes = everyPage('readItems', board, send, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
-      const seen = new Set();
-      const once = nodes.filter((node) => !seen.has(node.id) && seen.add(node.id));
-      return once.filter((node) => isCard(board, node)).map((node) => cardOf('readItems', board, node));
+    readPriority: async () => {
+      const declaration = board.priority;
+      const options = declaration ? priorityField('readPriority', board, send, declaration.field) : null;
+      const priorityOf = (node) => {
+        if (!declaration) return null;
+        const value = valueIn(node, declaration.field);
+        return { value, declared: declaration.options.includes(value) };
+      };
+      const items = cardNodes('readPriority', board, send).map((node) => ({ ...cardOf('readPriority', board, node), priority: priorityOf(node) }));
+      return { items, declared: declaration ? [...declaration.options] : null, options };
     },
   };
 }
