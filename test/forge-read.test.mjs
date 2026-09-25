@@ -7,8 +7,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { validate } from '../src/config/validate.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
+import rigger from '../rigger.config.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -462,4 +464,73 @@ test('every request a full read issues is one the read runner receives and admit
     assert.throws(() => itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
     assert.throws(() => schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
   }
+});
+
+/**
+ * The board the forge adapter is handed for `config`: the board a config declares, with the
+ * repository it names beside it. Only a config Rigger accepts is worked.
+ */
+function boardFor(config) {
+  assert.deepEqual(validate(config), [], 'the config handed to the adapter is one Rigger refuses');
+  return { repo: config.repo, ...config.board };
+}
+
+/** This repository's config declaring `octo-org`, which is not the repository's owner, as its board's owner. */
+const OCTO = { ...rigger, board: { ...rigger.board, owner: 'octo-org' } };
+
+test("for this repository's config the item query is byte for byte the one board 6's capture answered", async () => {
+  const sent = [];
+  const send = (command, args) => {
+    sent.push(documentOf(args));
+    return { status: 0, stdout: readFileSync(join(FIXTURES, 'board-6-items-2026-09-25.json'), 'utf8'), stderr: '' };
+  };
+
+  await readSide(boardFor(rigger), { send }).readItems();
+
+  assert.deepEqual(sent, [BOARD_6_ITEM_QUERY]);
+});
+
+test("with a board owner declared, the item read returns only the issues of the repository repo names", async () => {
+  // The declared owner's board holds its own repository's issue beside this repository's, a
+  // draft and a pull request: only this repository's issue is a card.
+  const send = forge({
+    pages: {
+      null: itemPage([
+        itemNode({ id: 'PVTI_theirs', content: issue({ number: 7, repo: 'octo-org/rigger' }), values: { Status: 'Ready' } }),
+        itemNode({ id: 'PVTI_ours', content: issue({ number: 214 }), values: { Status: 'Ready' } }),
+        itemNode({ id: 'PVTI_draft', content: { __typename: 'DraftIssue' } }),
+        itemNode({ id: 'PVTI_pr', content: { __typename: 'PullRequest' } }),
+      ]),
+    },
+  });
+
+  const cards = await readSide(boardFor(OCTO), { send }).readItems();
+
+  assert.deepEqual(cards.map((card) => [card.id, card.number]), [['PVTI_ours', 214]]);
+});
+
+test("where the repository's owner and the declared board owner each hold a board numbered 6, the item read returns the declared owner's board's cards and none of the other's", async () => {
+  // Constructed, each shaped as gh printed the item page for this query on 2026-09-25. Both
+  // boards hold this repository's issues, so only which board was read tells them apart.
+  const boards = {
+    williacj: itemPage([
+      itemNode({ id: 'PVTI_williacj_1', content: issue({ number: 101 }), values: { Status: 'Ready' } }),
+      itemNode({ id: 'PVTI_williacj_2', content: issue({ number: 102 }), values: { Status: 'Done' } }),
+    ]),
+    'octo-org': itemPage([
+      itemNode({ id: 'PVTI_octo_1', content: issue({ number: 201 }), values: { Status: 'Coding' } }),
+    ]),
+  };
+  for (const [owner, data] of Object.entries(boards)) {
+    assert.deepEqual(unprinted('item', { data }), [], `${owner}'s board is not shaped as gh prints it`);
+  }
+  const send = (command, args) => {
+    const login = documentOf(args).match(/repositoryOwner\(login: "([^"]*)"\)/)[1];
+    assert.ok(Object.hasOwn(boards, login), `the read asked ${login}, who holds no board here`);
+    return ok(boards[login]);
+  };
+
+  const cards = await readSide(boardFor(OCTO), { send }).readItems();
+
+  assert.deepEqual(cards.map((card) => card.id), ['PVTI_octo_1']);
 });

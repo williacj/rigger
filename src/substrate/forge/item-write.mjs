@@ -6,8 +6,8 @@ import { answerOf, boardOf } from './read.mjs';
 import { COLUMNS, graphqlRequest, itemWriteRunner } from './runners.mjs';
 
 /**
- * The item writes on `board`, which names its `repo` and its `project` number. `send` stands in
- * for the runners' spawn in tests.
+ * The item writes on `board`, which names its `repo`, its `project` number and, where the config
+ * declares one, its `owner`. `send` stands in for the runners' spawn in tests.
  */
 export function itemWriteSide(board, { send } = {}) {
   return {
