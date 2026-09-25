@@ -250,38 +250,48 @@ const HAND_ONS = {
   'an object holding the import': "import { NAME } from 'SIDE';\nexport const writes = { NAME };",
   'an object keyed to the import': "import { NAME } from 'SIDE';\nexport const writes = { go: NAME };",
   'a conditional choosing the import': "import { NAME } from 'SIDE';\nexport const writes = true ? NAME : null;",
+  // Round 2's counterexamples: a line the parser ends where a line reader joined it to the next.
+  'an alias after a line ending in Array.from': "import { NAME } from 'SIDE'\nconst toList = Array.from\nexport const writes = NAME",
+  'a default export after a line ending in fs.default': "import * as fs from 'node:fs'\nimport { NAME } from 'SIDE'\nconst mod = fs.default\nexport default NAME",
+  'an alias after a line ending in Array.of': "import { NAME } from 'SIDE'\nconst make = Array.of\nexport const writes = NAME",
+  'an alias after a line ending in a getter named get': "import { NAME } from 'SIDE'\nconst read = Reflect.get\nexport const writes = NAME",
+  'an alias after a line ending in a property named set': "import { NAME } from 'SIDE'\nconst held = new Map().set\nexport const writes = NAME",
+  'an alias after a postfix increment': "import { NAME } from 'SIDE'\nlet n = 0\nn++\nexport const writes = NAME",
+  'an alias after a postfix decrement': "import { NAME } from 'SIDE'\nlet n = 0\nn--\nexport const writes = NAME",
+  'a value an immediately invoked arrow returns': "import { NAME } from 'SIDE';\nexport const writes = (() => NAME)();",
+  'a value an immediately invoked function returns': "import { NAME } from 'SIDE';\nexport const writes = (function () { return NAME; })();",
+  'a binding assigned inside a top-level if': "import { NAME } from 'SIDE';\nlet writes;\nif (true) writes = NAME;\nexport { writes };",
+  'a binding filled by Object.assign': "import { NAME } from 'SIDE';\nexport const writes = {};\nObject.assign(writes, { NAME });",
+  'a destructured export of the import': "import { NAME } from 'SIDE';\nexport const { writes } = { writes: NAME };",
+  'a second declarator of one declaration': "import { NAME } from 'SIDE';\nexport const count = 1, writes = NAME;",
 };
 
-test('a hand-on of an item-write binding is the item-write side\'s, in every shape, so importing it from a barred directory fails', () => {
+/**
+ * The findings each hand-on in `HAND_ONS` misses: `relay` hands on `name` from `side`, and each of
+ * `importers` is a module barred from that side, importing `relay` whole, with the rule barring it.
+ */
+function missedHandOns(side, name, relay, importers) {
+  const missed = [];
   for (const [shape, template] of Object.entries(HAND_ONS)) {
-    const source = template.replaceAll('SIDE', '../substrate/forge/item-write.mjs').replaceAll('NAME', 'write');
-    const modules = {
-      'src/workflow/relay.mjs': source,
-      'src/cli/promote.mjs': "import writes from '../workflow/relay.mjs';\nimport * as all from '../workflow/relay.mjs';",
-      'src/scheduling/pull.mjs': "import * as all from '../workflow/relay.mjs';",
-    };
+    const modules = { [relay]: template.replaceAll('SIDE', `../substrate/forge/${side}.mjs`).replaceAll('NAME', name) };
+    for (const [file] of importers) modules[file] = `import * as all from '../${relay.slice('src/'.length)}';`;
     const found = messages(modules);
     const says = (file, rule) => found.some((message) => message.startsWith(`${file} `) && message.includes(`breaks ${rule}:`));
-    assert.ok(says('src/workflow/relay.mjs', 'the re-export rule'), `${shape}: no re-export finding; the report says:\n${found.join('\n') || '(nothing)'}`);
-    assert.ok(says('src/cli/promote.mjs', 'rule 5'), `${shape}: no rule 5 finding; the report says:\n${found.join('\n') || '(nothing)'}`);
-    assert.ok(says('src/scheduling/pull.mjs', 'rule 1'), `${shape}: no rule 1 finding; the report says:\n${found.join('\n') || '(nothing)'}`);
+    for (const [file, rule] of [[relay, 'the re-export rule'], ...importers]) {
+      if (!says(file, rule)) missed.push(`${shape}: ${file} did not break ${rule}`);
+    }
   }
+  return missed;
+}
+
+test('a hand-on of an item-write binding is the item-write side\'s, in every shape, so importing it from a barred directory fails', () => {
+  const importers = [['src/cli/promote.mjs', 'rule 5'], ['src/scheduling/pull.mjs', 'rule 1']];
+  assert.deepEqual(missedHandOns('item-write', 'write', 'src/workflow/relay.mjs', importers), []);
 });
 
 test('a hand-on of a schema-write binding is the schema-write side\'s, in every shape, so importing it from a barred directory fails', () => {
-  for (const [shape, template] of Object.entries(HAND_ONS)) {
-    const source = template.replaceAll('SIDE', '../substrate/forge/schema-write.mjs').replaceAll('NAME', 'shape');
-    const modules = {
-      'src/cli/relay.mjs': source,
-      'src/workflow/shape.mjs': "import * as all from '../cli/relay.mjs';",
-      'src/scheduling/pull.mjs': "import * as all from '../cli/relay.mjs';",
-    };
-    const found = messages(modules);
-    const says = (file, rule) => found.some((message) => message.startsWith(`${file} `) && message.includes(`breaks ${rule}:`));
-    assert.ok(says('src/cli/relay.mjs', 'the re-export rule'), `${shape}: no re-export finding; the report says:\n${found.join('\n') || '(nothing)'}`);
-    assert.ok(says('src/workflow/shape.mjs', 'rule 6'), `${shape}: no rule 6 finding; the report says:\n${found.join('\n') || '(nothing)'}`);
-    assert.ok(says('src/scheduling/pull.mjs', 'rule 1'), `${shape}: no rule 1 finding; the report says:\n${found.join('\n') || '(nothing)'}`);
-  }
+  const importers = [['src/workflow/shape.mjs', 'rule 6'], ['src/scheduling/pull.mjs', 'rule 1']];
+  assert.deepEqual(missedHandOns('schema-write', 'shape', 'src/cli/relay.mjs', importers), []);
 });
 
 test('a function that calls a side is not a hand-on of it, with or without semicolons', () => {
@@ -313,14 +323,41 @@ test('an assignment to a property of a runners-module binding puts that binding 
   assert.ok(!found.some((message) => message.includes('`request2`')), found.join('\n'));
 });
 
-test('rule 3: a module under src/scheduling/ reading the board key off the config fails, under any alias', () => {
-  const shapes = [
+test('rule 3 bars no other use of the name board: L3\'s board handle passes as a parameter, a destructured key or a member', () => {
+  const handles = [
+    'export async function pull({ board, dispatch }) { const items = await board.items(); return dispatch(items); }',
+    'export const pull = (deps) => deps.board.items();',
+    'export const pull = ({ board, run }) => run(board);',
+    'export const pull = (board, ranked) => board.items().filter(ranked);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3 leaves a read through an alias or a computed key to review, as the card\'s revised item says', () => {
+  // The card's Rule 3 item, as revised by its author on 2026-09-25: a read through an alias is a
+  // review finding. The computed key is the same case, a board.priority the source never spells.
+  const reviewed = [
     'export const rank = (config) => { const b = config.board; return b.priority; };',
-    'export const rank = (config) => { const { board: b } = config; return b.priority; };',
-    'export const rank = (config) => { const { board } = config; return board.priority; };',
-    "export const rank = (config) => { const key = 'priority'; return config.board[key]; };",
+    "export const rank = (config) => { const key = 'board'; return config[key].priority; };",
+  ];
+  for (const source of reviewed) assert.deepEqual(messages({ 'src/scheduling/rank.mjs': source }), [], source);
+});
+
+test('rule 3: the spelled path fails whatever the object before board, and a string subscript at either step', () => {
+  const shapes = [
+    'export const rank = (deps) => deps.config.board.priority;',
+    "export const rank = (config) => config.board['priority'];",
+    'export const rank = (board) => board.priority;',
+    'export const rank = (config) => { const { board: { priority: p } } = config; return p; };',
+    'export const rank = (config) => { let priority; ({ priority } = config.board); return priority; };',
   ];
   for (const source of shapes) assertBreaks({ 'src/scheduling/rank.mjs': source }, 'src/scheduling/rank.mjs', 'rule 3');
+});
+
+test('rule 7: a gh assembled from constant strings fails as the literal does', () => {
+  for (const expression of ["'g' + 'h'", '`g${\'h\'}`', "`${'g'}h`"]) {
+    assertBreaks({ 'src/cli/doctor.mjs': `export const forge = ${expression};` }, 'src/cli/doctor.mjs', 'rule 7');
+  }
 });
 
 test('a module loading another through createRequire or getBuiltinModule fails, because what it binds is unknown', () => {
@@ -328,9 +365,19 @@ test('a module loading another through createRequire or getBuiltinModule fails, 
   assertBreaks({ 'src/workflow/load.mjs': "export const load = () => process.getBuiltinModule('node:child_process');" }, 'src/workflow/load.mjs', 'the dynamic-import rule');
 });
 
-test('a module shaped in a way the test cannot read is refused, naming the file, rather than read as clean', () => {
-  assertBreaks({ 'src/cli/odd.mjs': 'export const { a, b } = { a: 1, b: 2 };' }, 'src/cli/odd.mjs', 'the unreadable-module rule');
-  assertBreaks({ 'src/substrate/forge/runners.mjs': `${ADAPTER['src/substrate/forge/runners.mjs']}\nexport const a = 1, relay = itemWriteRunner;` }, 'src/substrate/forge/runners.mjs', 'the unreadable-module rule');
+test('a module that does not parse is refused, naming the file and its line, rather than read as clean', () => {
+  const found = messages({ 'src/cli/odd.mjs': 'export const a = 1;\nexport const = 2;' });
+  assert.ok(found.some((message) => message.startsWith('src/cli/odd.mjs line 2 breaks the unreadable-module rule:')), found.join('\n') || '(nothing)');
+});
+
+test('a second declarator in the runners module that holds a write runner is on its side', () => {
+  const modules = {
+    'src/substrate/forge/runners.mjs': `${ADAPTER['src/substrate/forge/runners.mjs']}\nexport const a = 1, relay = itemWriteRunner;`,
+    'src/cli/relay.mjs': "import { a, relay } from '../substrate/forge/runners.mjs';",
+  };
+  const found = messages(modules);
+  assert.ok(found.some((message) => message.includes('`relay`') && message.includes('breaks rule 5:')), found.join('\n') || '(nothing)');
+  assert.ok(!found.some((message) => message.includes('`a`')), found.join('\n'));
 });
 
 test('a side with no module, or no runner, is refused rather than read as clean', () => {
