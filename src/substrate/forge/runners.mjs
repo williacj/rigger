@@ -131,15 +131,13 @@ const ITEM_ARGUMENTS = new Set(['itemId', 'afterId']);
 /** Every argument and input-object field name in `args`, at any depth. */
 function argumentNames(args) {
   const names = [];
-  const visit = (value) => {
-    if (value.kind === 'object') value.fields.forEach((field) => names.push(field.name) && visit(field.value));
-    if (value.kind === 'list') value.values.forEach(visit);
+  const visit = ({ name, value }) => {
+    names.push(name);
+    if (value.kind === 'object') value.fields.forEach(visit);
+    if (value.kind === 'list') value.values.forEach((held) => visit({ name: null, value: held }));
   };
-  for (const arg of args) {
-    names.push(arg.name);
-    visit(arg.value);
-  }
-  return names;
+  args.forEach(visit);
+  return names.filter(Boolean);
 }
 
 /** Every variable `args` reads, at any depth. */
@@ -211,9 +209,9 @@ export const COLUMNS = 'Status';
  * the whole response as one line on stdout and its message on stderr.
  */
 export function firstLine(said) {
-  if (said.status === null) return `gh could not be run: ${said.error?.code ?? said.error?.message}`;
+  if (said.status === null) return `${FORGE} could not be run: ${said.error?.code ?? said.error?.message}`;
   const lines = `${said.stderr ?? ''}\n${said.stdout ?? ''}`.split('\n').map((line) => line.trim());
-  return lines.find(Boolean) ?? `gh exited ${said.status} and said nothing`;
+  return lines.find(Boolean) ?? `${FORGE} exited ${said.status} and said nothing`;
 }
 
 /**
