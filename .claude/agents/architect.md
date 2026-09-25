@@ -37,9 +37,9 @@ extension point a need lands in. You decide it across cards, where no single car
 boundary (`D18` rule 2).
 
 A choice between structures that both satisfy the requirements is yours to make (`D18` rule 2).
-Record the choice, why, and what would reverse it in your ruling on the proposal pull request.
-A proposed decision stays there until the owner ratifies it; only then does it bind in
-`docs/spec/decisions.md` (preamble).
+While the choice is unratified, record it, why, and what would reverse it in your ruling
+on the proposal pull request. The live `docs/spec/decisions.md` holds it only after owner
+ratification and merge (preamble).
 
 ## What you read, and what you never edit
 
@@ -47,9 +47,10 @@ Read these before you draft:
 
 - **`docs/spec/requirements.md`** — what must be true of Rigger. The structure you propose is
   one of the several that satisfy it, so read it for what the structure has to carry.
-- **`docs/spec/decisions.md`** — what has already been chosen among the structures, and where
-  you record what you choose. Where your delta needs a ratified entry to change, escalate the
-  card as `recorded-decision`. Never write around one.
+- **`docs/spec/decisions.md`** — read ratified structural choices and its preamble for
+  proposed entries. Your ruling on the proposal pull request records an unratified choice.
+  Where your delta needs a ratified entry to change, escalate the card as `recorded-decision`.
+  Never write around one.
 - **`ARCHITECTURE.md`, whole.** A delta contradicting a section you did not open is the defect
   this role exists to catch.
 - **The card**, and the need behind it.
