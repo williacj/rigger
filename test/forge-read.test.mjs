@@ -3,9 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 /** The columns this repository's config declares, by key. */
 const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
@@ -129,6 +134,33 @@ test('the cards read back with their number, title, body, labels and column as g
     { id: 'PVTI_one', number: 214, title: 'A fake board', body: '## Acceptance\n\n- A test.', labels: ['type:change', 'size:s'], column: 'Ready' },
     { id: 'PVTI_two', number: 215, title: 'Reads', body: 'Why.', labels: [], column: 'Coding' },
   ]);
+});
+
+test("board 6's cards read back from the item page gh returned for it on 2026-09-25", async () => {
+  // Captured on 2026-09-25 at 13:35 UTC with gh 2.99.0: the one item page gh answered to this read
+  // side's item query on board 6, kept byte for byte. The values below were read off it by hand.
+  const recorded = readFileSync(join(FIXTURES, 'board-6-items-2026-09-25.json'), 'utf8');
+  const send = (command, args) => {
+    assert.match(documentOf(args), /projectV2\(number: 6\) \{ items\(first: 100\)/);
+    return { status: 0, stdout: recorded, stderr: '' };
+  };
+
+  const cards = await readSide(BOARD, { send }).readItems();
+
+  assert.equal(cards.length, 67);
+  const card = cards.find((held) => held.number === 215);
+  assert.equal(card.id, 'PVTI_lAHOBzomGc4BfS2xzg8rn2U');
+  assert.equal(card.title, 'M1-02 — Rigger reads a real Projects v2 board');
+  assert.deepEqual(card.labels, ['type:change']);
+  assert.equal(card.column, 'Backlog');
+  assert.equal(card.body.length, 3483);
+  assert.ok(card.body.startsWith('Part of **M1**, `docs/v0-build-plan.md` §4 M1.'), card.body.slice(0, 80));
+  // #20 holds a value in each of board 6's five single-select fields, Status among them.
+  const twenty = cards.find((held) => held.number === 20);
+  assert.equal(twenty.column, 'Done');
+  assert.deepEqual(twenty.labels, []);
+  const count = (column) => cards.filter((held) => held.column === column).length;
+  assert.deepEqual([count('Backlog'), count('Done')], [52, 15]);
 });
 
 test('a board holding more cards than one page reads every card once, across the pages gh answers', async () => {
