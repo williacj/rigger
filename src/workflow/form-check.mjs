@@ -1,52 +1,63 @@
-// ABOUTME: L2's acceptance form check: whether a card's acceptance has the form a card needs
-// before it is admitted, and the reason when it does not.
+// ABOUTME: L2's acceptance form check: whether a card's acceptance, read from the body's source
+// text, has the form a card needs before it is admitted, and the reason when it does not.
 
-const HEADING = /^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
-const BULLET = /^[ \t]*[-*+](?:[ \t]+(.*))?$/;
-const ORDERED = /^[ \t]*\d{1,9}[.)](?:[ \t]|$)/;
-const BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-const TASK = /^\[[ xX]\](?:[ \t]|$)/;
+/**
+ * The source-level form #218 states (the owner's ruling D on the maker's escalation). The check
+ * reads lines and nothing else: it renders nothing, and HTML, blockquotes, setext headings and
+ * lines below a bullet are not modelled.
+ */
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const COMMENT = /<!--[\s\S]*?-->/g;
+const HEADING = /^ {0,3}(#{1,6})(?: (.*))?$/;
+const BULLET = /^ {0,3}[-*+] (.*)$/;
+const TASK = /^\[[ xX]\]/;
 
 /** The two reasons a card is refused, which `R-CARD-8` makes the whole of the check. */
 const MISSING = 'missing acceptance';
 const RESTATED = 'restated title';
 
+/** Whether a line closes the fence its opening `marks` began: only a run at least as long. */
+function closes(line, marks) {
+  const run = /^ {0,3}(`+|~+)$/.exec(line)?.[1];
+  return run !== undefined && run[0] === marks[0] && run.length >= marks.length;
+}
+
+/** A heading's text, with surrounding whitespace and any closing run of `#` removed. */
+const headingText = (text = '') => text.trim().replace(/#+$/, '').trim();
+
 /**
- * The plain bullets under every heading named exactly `Acceptance`, up to the next heading, each
- * with the lines it wraps onto (the owner's U1 ruling). A task-list item and a numbered item are
- * not plain bullets, so each ends the item above it and starts none. An HTML comment and a fenced
- * code block are not Markdown the card shows, so neither holds a heading or an item.
+ * The text of every plain bullet in every acceptance section. A section runs from a heading whose
+ * text is exactly `Acceptance` to the next heading with as many `#` or fewer. Lines inside a
+ * fence are skipped, and an unclosed fence runs to the end of the body. Task-list items and
+ * bullets with no text are no items.
  */
 function acceptanceItems(body) {
   const items = [];
-  let inside = false;
-  let item = null;
+  let section = null;
   let fence = null;
-  for (const line of body.replace(COMMENT, '').split(/\r?\n/)) {
-    const marks = FENCE.exec(line)?.[1];
-    if (fence || marks) {
-      if (!fence) fence = marks;
-      else if (marks && marks[0] === fence[0] && marks.length >= fence.length && !line.trim().slice(marks.length)) fence = null;
-      item = null;
+  for (const line of body.split(/\r?\n/)) {
+    if (fence) {
+      if (closes(line, fence)) fence = null;
       continue;
     }
+    fence = FENCE.exec(line)?.[1] ?? null;
+    if (fence) continue;
     const heading = HEADING.exec(line);
-    const bullet = !BREAK.test(line) && BULLET.exec(line);
-    if (heading) inside = heading[1] === 'Acceptance';
-    if (heading || bullet || ORDERED.test(line) || !line.trim()) item = null;
-    if (inside && bullet && !TASK.test(bullet[1] ?? '')) items.push((item = [bullet[1] ?? '']));
-    else if (item) item.push(line);
+    if (heading) {
+      const level = heading[1].length;
+      if (section !== null && level <= section) section = null;
+      if (section === null && headingText(heading[2]) === 'Acceptance') section = level;
+      continue;
+    }
+    const text = section !== null ? BULLET.exec(line)?.[1] : undefined;
+    if (text !== undefined && text.trim() && !TASK.test(text)) items.push(text);
   }
-  return items.map((lines) => lines.join(' '));
+  return items;
 }
 
 /**
- * Text as the restated-title rule compares it (the owner's U2 ruling): case, punctuation and runs
- * of whitespace are taken out. Punctuation here is every Unicode punctuation and symbol character,
- * so Markdown's backticks and emphasis marks are taken out with it. The list marker never reaches
- * this, because an item is read without it.
+ * Text as the restated-title rule compares it (the owner's U2 ruling): letters folded to lower
+ * case, every Unicode punctuation and symbol character deleted, and runs of whitespace collapsed
+ * and trimmed. Deleting rather than spacing, and counting symbols, is open for the owner.
  */
 const normalise = (text) => text.toLowerCase().replace(/[\p{P}\p{S}]/gu, '').replace(/\s+/g, ' ').trim();
 
