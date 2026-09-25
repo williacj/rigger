@@ -220,23 +220,28 @@ const OPTION_KINDS = { id: 'string', name: 'string', color: 'scalar', descriptio
 const OPTION_COLOURS = new Set(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']);
 
 /**
- * Refuses the schema write `field` unless every option it sends in `options`, the value of its
- * `singleSelectOptions`, is an object whose `color` is written as an unquoted value of
- * `OPTION_COLOURS`. A quoted colour, `null`, a number, a boolean, another name or none at all is
- * refused, naming the option.
+ * Refuses the schema write `field` unless its options are written one way: its arguments each
+ * given once, an `input` object giving each of its fields once, and, where that input gives
+ * `singleSelectOptions`, a list of objects each giving each of its fields once and a `color`
+ * written as an unquoted value of `OPTION_COLOURS`. So a quoted colour, `null`, a number, a
+ * boolean, another name, no colour, a lone option given where the list belongs, and any field or
+ * argument given twice are each refused, naming the write. A write carrying no options, as
+ * creating a label does, has nothing here to refuse.
  */
-function checkColours(field, options) {
-  for (const option of options?.kind === 'list' ? options.values : []) {
-    const color = option.kind === 'object' ? option.fields.find(({ name }) => name === 'color')?.value : undefined;
+function checkColours(field) {
+  const args = fieldsOf('schema-write', field, field.arguments);
+  const input = args.input?.kind === 'object' ? fieldsOf('schema-write', field, args.input.fields) : {};
+  const options = input.singleSelectOptions;
+  if (options === undefined) return;
+  if (options.kind !== 'list') refuse('schema-write', `${field.name}, whose singleSelectOptions is not a list`);
+  for (const option of options.values) {
+    if (option.kind !== 'object') refuse('schema-write', `${field.name}, which sends an option that is not an object`);
+    const { name, color } = fieldsOf('schema-write', field, option.fields);
     if (color?.kind !== 'scalar' || !OPTION_COLOURS.has(color.value)) {
-      const name = option.fields?.find((held) => held.name === 'name')?.value.value ?? 'an unnamed option';
-      refuse('schema-write', `${field.name}, which sends the option ${name} with a color that is no value of ProjectV2SingleSelectFieldOptionColor`);
+      refuse('schema-write', `${field.name}, which sends the option ${name?.value ?? 'with no name'} with a color that is no value of ProjectV2SingleSelectFieldOptionColor`);
     }
   }
 }
-
-/** The `singleSelectOptions` value of the one `input` a schema write carries, or undefined. */
-const optionsSent = (field) => field.arguments.find(({ name }) => name === 'input')?.value.fields?.find(({ name }) => name === 'singleSelectOptions')?.value;
 
 /**
  * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
@@ -302,7 +307,7 @@ function optionsInput(field) {
  */
 function checkOptionsWrite(field, send) {
   const { fieldId, sent } = optionsInput(field);
-  checkColours(field, optionsSent(field));
+  checkColours(field);
   const held = heldOptions(fieldId, send);
   if (held.name !== COLUMNS) {
     refuse('schema-write', `${field.name} on ${held.name ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
@@ -338,7 +343,7 @@ export function schemaWriteRunner(args, { send = plainly } = {}) {
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
   if (field.name === OPTIONS_WRITE) checkOptionsWrite(field, send);
-  else checkColours(field, optionsSent(field));
+  else checkColours(field);
   return send(FORGE, args);
 }
 

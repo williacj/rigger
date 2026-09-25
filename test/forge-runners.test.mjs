@@ -489,6 +489,21 @@ test('the schema-write runner refuses a field created with an option whose colou
   refuses(schemaWriteRunner, graphql(CREATE_FIELD.replace('color: GRAY, ', '')), ['createProjectV2Field', 'High', 'color']);
 });
 
+test('the schema-write runner refuses a field created with its options written any way but one list of options each giving each field once, and sends nothing', () => {
+  // Each carries NOT_A_COLOUR somewhere a check reading only the first list, or the first field,
+  // would miss. GraphQL coerces a lone object given for a list to a list of one, so the first
+  // shape does carry an option.
+  const refused = [
+    CREATE_FIELD.replace('singleSelectOptions: [{name: "High", color: GRAY, description: ""}]', 'singleSelectOptions: {name: "High", color: NOT_A_COLOUR, description: ""}'),
+    CREATE_FIELD.replace('singleSelectOptions: [{name: "High", color: GRAY, description: ""}]', 'singleSelectOptions: [{name: "High", color: GRAY, description: ""}], singleSelectOptions: [{name: "High", color: NOT_A_COLOUR, description: ""}]'),
+    CREATE_FIELD.replace('color: GRAY', 'color: GRAY, color: NOT_A_COLOUR'),
+  ];
+  for (const document of refused) {
+    assert.notEqual(document, CREATE_FIELD, 'the replacement did not apply');
+    refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field']);
+  }
+});
+
 test('the schema-write runner refuses a column added with a colour that is no value of the enum, naming it, and sends nothing', () => {
   for (const colour of NOT_COLOURS) {
     const document = optionsUpdate([...HELD, { ...OWNER, color: colour }]);
