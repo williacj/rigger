@@ -49,9 +49,13 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output. L2 gives L3 next
    actions. L3 gives L1 dispatches. L0's forge adapter gives L3 the board's items and L2 a card's
    facts. It carries L2's column changes back to the board, and no other layer changes a card's
-   column. L4 gives the layers below it names, procedures and settings. If a layer needs to
-   know something from two layers down, the design is wrong; fix the boundary, do not reach
-   through it.
+   column. The forge adapter has three sides, and each sends only through its own runner, which
+   refuses any request outside its side. The read side changes nothing on the forge, and any
+   layer or verb may use it. The item-write side changes a board item, and only L2 reaches it.
+   The schema-write side changes the board's fields and their options and the repository's
+   labels, and only the CLI's verbs reach it, never a layer. L4 gives the layers below it names,
+   procedures and settings. If a layer needs to know something from two layers down, the design
+   is wrong; fix the boundary, do not reach through it.
 3. **The meta loop may target the core, on conditions.** A proposal against L0 through L3 must
    cite the signal from that layer's own telemetry it would improve, must pass the budget check,
    and goes to the owner. A proposal against L4 goes to the owner. L6 changes no code itself, in
