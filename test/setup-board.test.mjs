@@ -29,7 +29,7 @@ const PRIORITY = { field: 'Priority', options: ['High', 'Normal', 'Low'] };
 
 /**
  * A config Rigger accepts. Two kinds share `type:change`, a step selects `area:demo`, a step
- * selects nothing, and the epic label is one no kind or step selects.
+ * selects nothing, and it declares an epic label, which no kind or step selects.
  */
 const CONFIG = {
   repo: WHERE.repo,
@@ -52,6 +52,12 @@ const CONFIG = {
 /** The labels CONFIG's kinds and steps select, written out by hand from it. */
 const SELECTED = ['type:change', 'type:spec', 'area:demo'];
 
+/** The labels CONFIG declares: those its kinds and steps select, and its epic label. */
+const DECLARED_LABELS = [...SELECTED, 'type:epic'];
+
+/** CONFIG with no `epicLabel` key at all. */
+const { epicLabel: _epic, ...NO_EPIC } = CONFIG;
+
 /**
  * The values of GitHub's `ProjectV2SingleSelectFieldOptionColor`, as gh 2.99.0 answered
  * `__type(name: "ProjectV2SingleSelectFieldOptionColor") { enumValues { name } }` on 2026-09-25.
@@ -59,7 +65,7 @@ const SELECTED = ['type:change', 'type:spec', 'area:demo'];
 const ENUM_COLOURS = ['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE'];
 
 /** A board already holding everything CONFIG declares. */
-const COMPLETE = { columns: Object.values(COLUMNS), fields: [{ name: 'Priority', options: PRIORITY.options }], labels: [...SELECTED] };
+const COMPLETE = { columns: Object.values(COLUMNS), fields: [{ name: 'Priority', options: PRIORITY.options }], labels: [...DECLARED_LABELS] };
 
 /**
  * Runs `rigger setup-board` as the command, in a repository of its own holding `config`, with a
@@ -106,6 +112,7 @@ test('against a board missing every declared column, every label and the priorit
     { operation: 'createLabel', args: ['type:change'] },
     { operation: 'createLabel', args: ['type:spec'] },
     { operation: 'createLabel', args: ['area:demo'] },
+    { operation: 'createLabel', args: ['type:epic'] },
   ]);
 });
 
@@ -126,13 +133,43 @@ test('against a board whose priority field holds other options, setup-board make
   assert.ok(writes.length > 0, 'setup-board wrote nothing at all');
 });
 
-test('the labels setup-board creates are exactly those the config\'s kinds and provisioning steps select', async () => {
+/** The names of the labels a run's write record created, in the order created. */
+const labelsCreated = (writes) => writes.filter(({ operation }) => operation === 'createLabel').map(({ args: [name] }) => name);
+
+/** The names of the labels a fake `gh` was sent a `createLabel` for, read from its record of every command. */
+const labelsSent = (sent) => sent
+  .map((args) => args[3]?.match(/^query=mutation \{ createLabel\(input: \{repositoryId: "[^"]*", name: ("(?:[^"\\]|\\.)*")/)?.[1])
+  .filter(Boolean)
+  .map((name) => JSON.parse(name));
+
+test('against a board whose repository holds no label, the labels setup-board creates are those the kinds and steps select, and the epic label', async () => {
   const { ran, writes } = await setUp({ ...COMPLETE, labels: [] });
 
   assert.equal(ran.status, 0, ran.stderr);
-  const created = writes.filter(({ operation }) => operation === 'createLabel').map(({ args: [name] }) => name);
-  assert.deepEqual([...created].sort(), [...SELECTED].sort());
-  assert.ok(!created.includes(CONFIG.epicLabel), 'setup-board created the epic label, which no kind or step selects');
+  assert.deepEqual([...labelsCreated(writes)].sort(), [...DECLARED_LABELS].sort());
+});
+
+test('given a config declaring an epic label the repository lacks, setup-board sends a createLabel of exactly that name', async () => {
+  const { ran, sent } = await setUp({ ...COMPLETE, labels: [...SELECTED] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(labelsSent(sent), ['type:epic']);
+});
+
+test('given a config declaring an epic label the repository already holds, setup-board sends no write to that label', async () => {
+  // The repository lacks a selected label, so the run does write, and only the epic label is held.
+  const { ran, sent } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic'] });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(labelsSent(sent), ['area:demo']);
+});
+
+test('given a config with no epicLabel key, against a repository holding no label, the labels setup-board creates are exactly those the kinds and steps select', async () => {
+  assert.ok(!Object.hasOwn(NO_EPIC, 'epicLabel'));
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [] }, NO_EPIC);
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED].sort());
 });
 
 test('against a board already holding everything declared, setup-board makes no write', async () => {
@@ -152,7 +189,7 @@ test('against a board holding columns, fields and labels the config does not dec
 
   assert.equal(ran.status, 0, ran.stderr);
   // Every write is a creation of something the config declares, so none removes or renames.
-  const declared = { createColumn: Object.values(COLUMNS), createField: [PRIORITY.field], createLabel: SELECTED };
+  const declared = { createColumn: Object.values(COLUMNS), createField: [PRIORITY.field], createLabel: DECLARED_LABELS };
   for (const { operation, args: [name] } of writes) {
     assert.ok(declared[operation]?.includes(name), `setup-board sent ${operation} ${name}`);
   }
@@ -201,14 +238,15 @@ test('setup-board prints one line for each write it made, naming what it wrote',
 
   assert.equal(ran.status, 0, ran.stderr);
   const [heading, ...lines] = ran.stdout.trimEnd().split('\n');
-  assert.match(heading, /4 writes/);
+  assert.match(heading, /5 writes/);
   assert.deepEqual(lines.map((line) => line.trim()), [
     'added the column Owner',
     'created the field Priority with the options High, Normal, Low',
     'created the label type:spec',
     'created the label area:demo',
+    'created the label type:epic',
   ]);
-  assert.equal(writes.length, 4);
+  assert.equal(writes.length, 5);
 });
 
 test('a write of a name holding a line break or other control character still prints as one line, and the name written is the name declared', async () => {
@@ -216,14 +254,14 @@ test('a write of a name holding a line break or other control character still pr
   // name a consumer can declare. Every way a terminal can be made to start a line is split on.
   const names = ['area:\ndemo', 'area:\rcli', 'area:\u2028docs', 'area:\u0085ops', 'area:\u001b[2Kbell'];
   const config = { ...CONFIG, provisioning: { ...CONFIG.provisioning, vhs: { run: 'brew install vhs', select: { labels: names } } } };
-  const { ran, model, writes } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec'] }, config);
+  const { ran, model, writes } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic'] }, config);
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.equal(writes.length, names.length);
   const lines = ran.stdout.replace(/\n$/, '').split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/);
   assert.equal(lines.length, 1 + names.length, JSON.stringify(ran.stdout));
   assert.ok(!/\u001b/.test(ran.stdout), 'an escape sequence reached the terminal');
-  assert.deepEqual((await model.operations.readLabels()).slice(2), names);
+  assert.deepEqual((await model.operations.readLabels()).slice(3), names);
 });
 
 test('against a board already holding everything, setup-board prints no line for a write', async () => {

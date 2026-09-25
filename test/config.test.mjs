@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CATEGORIES, SHAPES, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
+import { CATEGORIES, SHAPES, declaredLabels, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -638,6 +638,14 @@ test('the labels a config selects are every label its kinds and provisioning ste
   assert.deepEqual(validate(config), []);
 
   assert.deepEqual(selectedLabels(config), ['type:change', 'area:cli', 'type:spec', 'area:demo']);
+});
+
+test('the labels a config declares are those its kinds and steps select, then its epic label, each once', () => {
+  // Written out by hand from this repository's config, which declares `type:epic`.
+  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic']);
+  const { epicLabel, ...unmarked } = rigger;
+  assert.deepEqual(validate(unmarked), []);
+  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo']);
 });
 
 test('a config with no provisioning selects the labels its kinds select', () => {
