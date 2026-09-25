@@ -38,3 +38,15 @@ either. #229 writes the pull event, and #280 puts it between the claim and the c
 **Rule 8 reads bindings, not calls.** No call to `loop` reaches it without a binding, so barring
 the binding outside `src/scheduling/` bars every call. This is how #213 already reads the write
 sides. The rule throws on a tree with no `loop` export, so a rename cannot pass it vacuously.
+
+**Bindings alone missed a factory.** The round-1 judge found the gap. A `src/scheduling/`
+function could return `loop`, and `src/cli/` could call what that function returned. The CLI's
+binding then resolved only to the factory. Rule 8 now also follows what a binding hands back as
+a value, through returns, local aliases, nested functions and object members. A call hands back
+its result, never its callee. So a scheduling function that calls `loop` and returns the result
+stays a legal call path. That is the claim-only call's shape.
+
+**`JSON.stringify` cannot name every value a module can hold.** It turned `NaN` and `Infinity`
+into `null`, and it threw on `3n`, which crashed `doctor`. The concurrency refusal now names the
+value with `inspect`. Other refusals in the validator still use `JSON.stringify`, `holdsNothing`
+among them, so a BigInt in those places could still throw.
