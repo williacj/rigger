@@ -188,18 +188,21 @@ const COMMANDS = {
     if (!field) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${valueOf(node, 'id')}'`);
     return { field: { name: field.name, options: optionsOf(field) } };
   },
-  // Way B, the one options write the fake models: every held option sent with its id, and each
-  // new one without, which it adds as a column in the order sent. Anything else it does not model.
+  // Way B, the one options write the fake models: every held option sent with its id, name, colour
+  // and description as the fake answers them, and at least one new option without an id, which it
+  // adds as a column in the order sent. Anything else it does not model.
   [graphql('mutation { updateProjectV2Field(input: {fieldId: _, singleSelectOptions: []}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }')]: async (board, state, operation) => {
     const input = argument(operation.selections[0], 'input');
     const id = valueOf(input, 'fieldId');
     if (id !== fieldId(COLUMNS)) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${id}'`);
     const sent = argument(input, 'singleSelectOptions').values;
     const held = optionsOf((await fieldsOf(board))[0]);
-    if (!held.every((option) => sent.some((entry) => valueOf(entry, 'id') === option.id))) {
-      throw new GhFailure('the fake gh does not model an updateProjectV2Field that leaves out a held option or its id');
+    const echoed = (option) => sent.some((entry) => ['id', 'name', 'color', 'description'].every((name) => valueOf(entry, name) === option[name]));
+    const added = sent.filter((option) => valueOf(option, 'id') === undefined);
+    if (!held.every(echoed) || added.length === 0) {
+      throw new GhFailure('the fake gh does not model an updateProjectV2Field that leaves out or changes a held option, or adds none');
     }
-    for (const entry of sent.filter((option) => valueOf(option, 'id') === undefined)) await board.operations.createColumn(valueOf(entry, 'name'));
+    for (const entry of added) await board.operations.createColumn(valueOf(entry, 'name'));
     return { updateProjectV2Field: { projectV2Field: { id } } };
   },
   // The item-write runner's own read: which field of the board holds the columns, and what the

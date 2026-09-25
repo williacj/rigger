@@ -219,6 +219,35 @@ test('the fake gh does not model an options write that leaves out a held option 
   assert.equal(said.stdout, '');
 });
 
+test('the fake gh does not model an options write that changes a held option\'s name, colour or description, or adds none', async () => {
+  // Way B echoes every held option as the field holds it, which the fake answers as the neutral
+  // grey with no description, and adds one. Anything else would change the board in a way the
+  // fake board cannot hold, so the fake gh fails rather than answer it as a harmless add.
+  const fake = installed({ columns: ['Ready', 'Coding'] });
+  const update = (ready) => `mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_Status", singleSelectOptions: [${ready}, {id: "option-1", name: "Coding", color: GRAY, description: ""}, {name: "Owner", color: GRAY, description: ""}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
+  const changed = [
+    update('{id: "option-0", name: "Queued", color: GRAY, description: ""}'),
+    update('{id: "option-0", name: "Ready", color: RED, description: ""}'),
+    update('{id: "option-0", name: "Ready", color: GRAY, description: "Waiting"}'),
+    update('{id: "option-0", name: "Ready", color: GRAY, description: ""}').replace(', {name: "Owner", color: GRAY, description: ""}', ''),
+  ];
+  // The way B request itself, which differs from each above only in what they change, is answered.
+  const wayB = update('{id: "option-0", name: "Ready", color: GRAY, description: ""}');
+
+  for (const document of changed) {
+    assert.notEqual(document, wayB);
+    const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${document}`], { encoding: 'utf8', env: gitEnvironment() });
+    assert.notEqual(said.status, 0, document);
+    assert.match(said.stderr, /does not model/);
+    assert.equal(said.stdout, '');
+  }
+  assert.deepEqual(await (await fake.model()).operations.readColumns(), ['Ready', 'Coding']);
+
+  const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${wayB}`], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(said.status, 0, said.stderr);
+  assert.deepEqual(await (await fake.model()).operations.readColumns(), ['Ready', 'Coding', 'Owner']);
+});
+
 /**
  * The tests of #215 (M1-02), the board reads; of #216 (M1-03), the adapter's sides and runners;
  * of #284, the board each operation addresses; and of #217 (M1-29), adding a column, which are
