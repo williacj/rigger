@@ -136,9 +136,12 @@ test('the tarball holds every file under src/, templates/ and scripts/, and of t
 let installed;
 function installFromTarball() {
   if (installed) return installed;
+  // Both npm runs are handed the environment a git child gets, because each command is built at
+  // run time, so the suite's sweep of every spawn cannot rule out that it reaches git
+  // (`test/git-environment.test.mjs`).
   const packs = mkdtempSync(join(tmpdir(), 'rigger-pack-'));
   const packed = spawnSync(`npm pack --json --loglevel=error --pack-destination "${packs}"`, {
-    cwd: root, shell: true, encoding: 'utf8',
+    cwd: root, shell: true, encoding: 'utf8', env: gitEnvironment(),
   });
   assert.equal(packed.status, 0, packed.stderr);
   const [{ filename }] = JSON.parse(packed.stdout);
@@ -147,7 +150,7 @@ function installFromTarball() {
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true }));
   const install = spawnSync(
     `npm install --offline --no-audit --no-fund --loglevel=error "${join(packs, filename)}"`,
-    { cwd: consumer, shell: true, encoding: 'utf8' },
+    { cwd: consumer, shell: true, encoding: 'utf8', env: gitEnvironment() },
   );
   assert.equal(install.status, 0, install.stdout + install.stderr);
 
