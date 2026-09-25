@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { createFakeBoard } from './fake-board.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
@@ -158,6 +159,47 @@ test('a read gh fails before a write fails naming the operation, the board numbe
   };
   await assert.rejects(itemWriteSide(BOARD, { send }).moveItem('PVTI_1', 'Review'), /moveItem.*board 6.*Could not resolve to a ProjectV2/);
   assert.equal(sent.length, 1);
+});
+
+/**
+ * A call of each fake board operation, on a board holding one item and one column, so the test
+ * can see which of them add an entry to the fake's write record. An operation missing here fails
+ * the parity test by name rather than being passed over.
+ */
+const FAKE_CALLS = {
+  readItems: [],
+  readColumns: [],
+  readFields: [],
+  readLabels: [],
+  moveItem: ['item-1', 'Ready'],
+  createColumn: ['Owner'],
+  createField: ['Priority', ['High']],
+  createLabel: ['type:change'],
+};
+
+/** The fake board's writes: the operations whose call adds an entry to its write record. */
+async function fakeWrites() {
+  const writes = [];
+  for (const name of Object.keys(createFakeBoard().operations)) {
+    assert.ok(Object.hasOwn(FAKE_CALLS, name), `the fake board offers ${name}, which this test does not know how to call`);
+    const board = createFakeBoard({ columns: ['Ready'], items: [{ type: 'issue', number: 1, column: 'Ready' }] });
+    await board.operations[name](...FAKE_CALLS[name]);
+    if (board.writes().length > 0) writes.push(name);
+  }
+  return writes;
+}
+
+test('the adapter\'s writes are exactly the fake board\'s writes, but createColumn, compared both ways', async () => {
+  // #216's parity item, for the writes. The fake's reads are #215's, and so is their parity.
+  // `createColumn`, the write adding a `Status` option, waits on #217. The defects this catches
+  // are an adapter write the fake cannot stand in for, and a fake write the adapter lacks.
+  const excepted = ['createColumn'];
+  const fake = (await fakeWrites()).filter((name) => !excepted.includes(name));
+  const adapter = [...Object.keys(itemWriteSide(BOARD)), ...Object.keys(schemaWriteSide(BOARD))];
+
+  assert.ok(fake.includes('moveItem') && (await fakeWrites()).includes('createColumn'), `the fake's writes were read as ${fake}`);
+  assert.deepEqual(adapter.filter((name) => !fake.includes(name)), [], 'the adapter offers a write the fake board lacks');
+  assert.deepEqual(fake.filter((name) => !adapter.includes(name)), [], 'the fake board offers a write the adapter lacks');
 });
 
 test('every command the forge adapter runs is gh', async () => {
