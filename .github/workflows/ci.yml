@@ -1,11 +1,16 @@
 # ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
-# ruled-out-word check and its test-matrix check, on every push and every pull request.
+# ruled-out-word check and its test-matrix check, on every push, every pull request and every
+# merge a queue is testing.
 
 name: CI
 
 on:
   push:
   pull_request:
+  # A queue entry is a temporary branch nobody pushed and no pull request points at, so the two
+  # triggers above leave it unanswered. A queue requiring `CI / check (20)` and `CI / check (24)`
+  # then waits for checks that never start, until the entry times out.
+  merge_group:
 
 jobs:
   check:
