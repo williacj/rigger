@@ -149,16 +149,23 @@ async function items(board, state, operation) {
   return { repositoryOwner: { projectV2: { items: page(nodes, fieldIn(operation.selections, 'items')) } } };
 }
 
-/** What the priority read's field query selects of a page of fields: every field's name and type. */
+/** The type GitHub names a single-select field by. */
+const SINGLE_SELECT = 'SINGLE_SELECT';
+
+/** What the typed field query selects of a page of fields: every field's name and type. */
 const TYPED_FIELD = 'pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } }';
 
 /**
- * Answers a page of the priority read's field query. The fake board holds single-select fields
- * only, so each answers as one, with its options.
+ * Answers a page of the typed field query: every field with its name and type, and a
+ * single-select field with its options too, as GitHub answers it.
  */
 async function typedFields(board, state, operation) {
   onTheBoard(state, operation);
-  const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, dataType: 'SINGLE_SELECT', options: options.map((option) => ({ name: option })) }));
+  const selects = await fieldsOf(board);
+  const nodes = (await board.operations.readFieldTypes()).map(({ name, type }) => {
+    if (type !== SINGLE_SELECT) return { name, dataType: type };
+    return { name, dataType: type, options: selects.find((field) => field.name === name).options.map((option) => ({ name: option })) };
+  });
   return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
 }
 
@@ -177,9 +184,14 @@ async function labels(board, state, operation) {
 const COMMANDS = {
   [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
   [graphql(boardShape(`items(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
+  // A field of any other type answers the single-select fragment as an empty object, as GitHub does.
   [graphql(boardShape('fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } }'))]: async (board, state, operation) => {
     onTheBoard(state, operation);
-    const nodes = (await fieldsOf(board)).map(({ name, options }) => ({ name, options: options.map((option) => ({ name: option })) }));
+    const selects = await fieldsOf(board);
+    const nodes = (await board.operations.readFieldTypes()).map(({ name, type }) => {
+      if (type !== SINGLE_SELECT) return {};
+      return { name, options: selects.find((field) => field.name === name).options.map((option) => ({ name: option })) };
+    });
     return { repositoryOwner: { projectV2: { fields: page(nodes, fieldIn(operation.selections, 'fields')) } } };
   },
   [graphql(boardShape(`fields(first: _) { ${TYPED_FIELD} }`))]: typedFields,
@@ -278,13 +290,15 @@ async function boardOf(state) {
  */
 export async function main(statePath) {
   const args = process.argv.slice(2);
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  state.sent.push(args);
+  writeFileSync(statePath, JSON.stringify(state));
   const answer = COMMANDS[commandOf(args)];
   if (!answer) {
     process.stderr.write(`the fake gh does not model \`${spelled(args)}\`\n`);
     process.exitCode = 1;
     return;
   }
-  const state = JSON.parse(readFileSync(statePath, 'utf8'));
   const board = await boardOf(state);
   let data;
   try {
@@ -303,16 +317,18 @@ export async function main(statePath) {
  * Installs a fake `gh` in `dir`, answering as `gh` would for the board numbered `project` among
  * the boards of `repo`'s owner, which holds `board`: the fake board's own arguments.
  *
- * It returns the executable's path, `gh`, and `model()`, the fake board as the fake `gh` now holds
- * it, whose write record holds every write the fake `gh` was sent.
+ * It returns the executable's path, `gh`; `model()`, the fake board as the fake `gh` now holds
+ * it, whose write record holds every write the fake `gh` was sent; and `sent()`, the arguments of
+ * every command the fake `gh` was run with, oldest first, whether or not it answered it.
  */
 export function installFakeGh(dir, { repo, project, board = {} }) {
   const statePath = join(dir, 'board.json');
-  writeFileSync(statePath, JSON.stringify({ repo, project, model: board, writes: [] }));
+  writeFileSync(statePath, JSON.stringify({ repo, project, model: board, writes: [], sent: [] }));
   const gh = join(dir, 'gh');
   // CommonJS, because nothing beside it says otherwise, and so it loads this module dynamically.
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
   writeFileSync(gh, `#!${process.execPath}\n${entry}`);
   chmodSync(gh, 0o755);
-  return { gh, model: () => boardOf(JSON.parse(readFileSync(statePath, 'utf8'))) };
+  const state = () => JSON.parse(readFileSync(statePath, 'utf8'));
+  return { gh, model: () => boardOf(state()), sent: () => state().sent };
 }

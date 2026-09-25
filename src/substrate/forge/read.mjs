@@ -140,14 +140,23 @@ function cardNodes(operation, board, send) {
 }
 
 /**
+ * Every field on the board, whatever its type, as GitHub answers it: its `name` and `dataType`,
+ * and a single-select field's `options` too. Listed rather than asked for by name, because `gh`
+ * answers a field name the board does not hold by exiting 1 (measured with gh 2.99.0 on board 6,
+ * 2026-09-25).
+ */
+function typedFields(operation, board, send) {
+  const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } }`);
+  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board));
+}
+
+/**
  * The options of the board's single-select field named `name`, in board order. Every field is
  * read with its name and type, so a field that is not on the board and a field of another type
  * each fail the read, naming the field, and the type where it has one.
  */
 function priorityField(operation, board, send, name) {
-  const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } }`);
-  const field = everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board))
-    .find((held) => held.name === name);
+  const field = typedFields(operation, board, send).find((held) => held.name === name);
   if (!field) fail(operation, board, `the board has no field named ${name}`);
   if (!field.options) fail(operation, board, `the board's field ${name} is a ${field.dataType} field, not a single-select field`);
   return field.options.map((option) => option.name);
@@ -188,6 +197,8 @@ export function readSide(board, { send } = {}) {
     },
     /** The board's single-select fields but the one holding the columns, as `{ name, options }`. */
     readFields: async () => singleSelectFields('readFields', board, send).filter((field) => field.name !== COLUMNS),
+    /** Every field on the board, whatever its type, as `{ name, type }`, the type as GitHub's `dataType` names it. */
+    readFieldTypes: async () => typedFields('readFieldTypes', board, send).map((field) => ({ name: field.name, type: field.dataType })),
     /** The names of the labels the board's repository holds. */
     readLabels: async () => {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
