@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
+import { stubGh } from './stub-gh.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -368,4 +369,28 @@ test('a write runner refuses a request whose operation it cannot name from the d
     refuses(schemaWriteRunner, args, names);
     refuses(itemWriteRunner, args, names);
   }
+});
+
+test('a runner handed no stand-in under the test runner refuses to spawn gh, and sends nothing', () => {
+  // #276: every runner falls back to spawning the real `gh` when its caller hands it no `send`,
+  // and a side hands its caller's `send` straight through. So a test that fails to pass its
+  // stand-in on reaches the live forge with the owner's credentials: on #273 a stub `gh` first on
+  // the path received a read of board 6 and then a field-value mutation that way. The defect this
+  // catches is that fallback firing under `node --test`. A stub `gh` stands first on the path, so
+  // a runner that still spawns is caught here rather than at github.com.
+  const gh = stubGh({ stdout: '{"data":{}}' });
+  const path = process.env.PATH;
+  process.env.PATH = gh.first(path);
+  try {
+    for (const [runner, args] of [
+      [readRunner, ['auth', 'status']],
+      [schemaWriteRunner, graphql(CREATE_FIELD)],
+      [itemWriteRunner, graphql(MOVE)],
+    ]) {
+      assert.throws(() => runner(args), /under the test runner/, `${runner.name} spawned gh with no stand-in`);
+    }
+  } finally {
+    process.env.PATH = path;
+  }
+  assert.deepEqual(gh.calls(), []);
 });

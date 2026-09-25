@@ -22,6 +22,23 @@ const plainly = (command, args) => spawnSync(command, args, { encoding: 'utf8', 
 /** Every command a runner sends is this one (`R-SAFE-2`). */
 const FORGE = 'gh';
 
+/**
+ * The spawn a runner makes when its caller hands it no stand-in: `gh`, except under the test
+ * runner, where it throws and nothing is sent.
+ *
+ * `node --test` runs each test file in a process whose environment carries `NODE_TEST_CONTEXT`,
+ * and every child that process spawns inherits it; measured with Node 26.5.0 on 2026-09-25, a
+ * file run directly by `node` has none. A test that failed to pass its stand-in through would
+ * otherwise reach the live forge with the owner's credentials (#276), so there a missing
+ * stand-in fails the test rather than calling `gh`.
+ */
+function spawned(command, args) {
+  if (process.env.NODE_TEST_CONTEXT !== undefined) {
+    throw new Error(`the forge runners spawn no \`${command}\` under the test runner, and ${spelled(args)} was handed no stand-in to send it`);
+  }
+  return plainly(command, args);
+}
+
 /** Throws the refusal every runner gives: which runner, what it refused, and that nothing went. */
 function refuse(runner, what) {
   throw new Error(`the ${runner} runner refuses ${what}, and did not send it`);
@@ -103,7 +120,7 @@ function queryOf(runner, args, rest) {
  *
  * `send` stands in for the spawn in tests, and is handed what the runner admitted.
  */
-export function readRunner(args, { send = plainly } = {}) {
+export function readRunner(args, { send = spawned } = {}) {
   const [subcommand, endpoint, ...rest] = args;
   if (subcommand === 'api' && endpoint === 'graphql') {
     const operation = operationsOf('read', queryOf('read', args, rest));
@@ -192,7 +209,7 @@ const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel']);
  * Sends one write to the board's fields or the repository's labels, and refuses any other
  * request, including one on its allowlist whose arguments name a board item.
  */
-export function schemaWriteRunner(args, { send = plainly } = {}) {
+export function schemaWriteRunner(args, { send = spawned } = {}) {
   const field = mutationOf('schema-write', args);
   const items = argumentNames(field.arguments).filter((name) => ITEM_ARGUMENTS.has(name));
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
@@ -256,7 +273,7 @@ function columnsField(projectId, fieldId, send) {
  * move: a field-value write setting an option of the field holding the columns, which the runner
  * reads off the board rather than taking from whoever sent the request.
  */
-export function itemWriteRunner(args, { send = plainly } = {}) {
+export function itemWriteRunner(args, { send = spawned } = {}) {
   const field = mutationOf('item-write', args);
   if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
   const { projectId, fieldId } = moveInput(field);

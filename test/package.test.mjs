@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
+import { untested } from './stub-gh.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -165,10 +166,13 @@ function installFromTarball() {
   return installed;
 }
 
-/** The installed `rigger` run with `args` in `cwd`, under the narrow path above. */
+/**
+ * The installed `rigger` run with `args` in `cwd`, under the narrow path above, and as it runs
+ * outside the suite: the path holds no `gh` for its forge runners to reach.
+ */
 function runInstalled(args, cwd) {
   const { rigger, path } = installFromTarball();
-  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
+  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: untested({ ...gitEnvironment(), PATH: path }) });
 }
 
 test('a tarball packed from the head, installed outside the checkout, runs rigger --help', () => {
