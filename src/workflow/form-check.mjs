@@ -11,6 +11,8 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}(#{1,6})(?: (.*))?$/s;
 const BULLET = /^ {0,3}[-*+] (.*)$/s;
 const TASK = /^\[[ xX]\]/;
+// Text holding nothing but HTML comments and whitespace, such as `<!-- fill in -->`.
+const COMMENTS = /^(?:\s*<!--.*?-->)+\s*$/s;
 
 /** The two reasons a card is refused, which `R-CARD-8` makes the whole of the check. */
 const MISSING = 'missing acceptance';
@@ -28,8 +30,8 @@ const headingText = (text = '') => text.trim().replace(/#+$/, '').trim();
 /**
  * The text of every plain bullet in every acceptance section. A section runs from a heading whose
  * text is exactly `Acceptance` to the next heading with as many `#` or fewer. Lines inside a
- * fence are skipped, and an unclosed fence runs to the end of the body. Task-list items and
- * bullets with no text are no items.
+ * fence are skipped, and an unclosed fence runs to the end of the body. Task-list items, bullets
+ * with no text and bullets whose text is only HTML comments are no items.
  */
 function acceptanceItems(body) {
   const items = [];
@@ -50,7 +52,7 @@ function acceptanceItems(body) {
       continue;
     }
     const text = section !== null ? BULLET.exec(line)?.[1] : undefined;
-    if (text !== undefined && text.trim() && !TASK.test(text)) items.push(text);
+    if (text !== undefined && text.trim() && !TASK.test(text) && !COMMENTS.test(text)) items.push(text);
   }
   return items;
 }

@@ -151,8 +151,13 @@ test('a section whose only bullet is - followed only by spaces is missing accept
   refusedAsMissing(card(25, '## Acceptance', '', '-   '));
 });
 
-test('a section whose only bullet is - <!-- fill in --> is admitted', () => {
-  admitted(card(26, '## Acceptance', '', '- <!-- fill in -->'));
+test('a section whose only bullet is - <!-- fill in --> is missing acceptance', () => {
+  refusedAsMissing(card(26, '## Acceptance', '', '- <!-- fill in -->'));
+});
+
+test('a bullet holding only HTML comments beside a qualifying bullet leaves the card admitted', () => {
+  admitted(card(36, '## Acceptance', '', '- <!-- note -->', `- ${ITEM}`));
+  admitted(card(36, '## Acceptance', '', `- ${ITEM}`, '- <!-- note --> <!-- another -->'));
 });
 
 test('an item linking the title is compared on its source text, URL included', () => {
