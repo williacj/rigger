@@ -27,7 +27,7 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
     `printf '%s\\n' "$*" >> "\${0%/*}/${basename(record)}"`,
     `/bin/cat "\${0%/*}/${basename(out)}"`,
     `/bin/cat "\${0%/*}/${basename(err)}" >&2`,
-    `exit ${Number(status)}`,
+    `exit ${Number.isInteger(status) ? status : 1}`,
     '',
   ].join('\n');
   writeFileSync(join(dir, 'gh'), script);

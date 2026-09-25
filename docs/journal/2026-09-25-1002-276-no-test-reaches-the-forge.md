@@ -58,3 +58,9 @@ inside single quotes. A `TMPDIR` holding an apostrophe broke that quoting. The r
 exited 2 without recording, and a run whose tests called it passed. The stand-in `gh` in
 `test/stub-gh.mjs` had the same fault. Now each script finds its files beside itself, through its
 own path, `$0`, and no path is written into any script's source.
+
+The Claude reviewer then found that the harness put its directory on `PATH` as `TMPDIR` spelled
+it. A `TMPDIR` holding `:` split that entry in two, so no entry held the refusing `gh`. A relative
+`TMPDIR` gave an entry that a child working in another directory resolved to nothing. Either way
+the calls reached whatever `gh` came next. The harness now names its directory absolutely, and it
+stops before any test runs when that name holds a `:`.

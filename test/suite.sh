@@ -16,6 +16,17 @@ set -u
 
 dir=$(mktemp -d "${TMPDIR:-/tmp}/rigger-refusing-gh.XXXXXX") || exit 1
 trap 'rm -rf "$dir"' EXIT
+
+# PATH holds this directory as one entry, so it is named absolutely: a relative entry finds
+# nothing from a child working elsewhere. PATH splits its entries at `:`, so a name holding one
+# would be no entry at all, and the run stops before any test does.
+dir=$(cd "$dir" && pwd -P) || exit 1
+case $dir in
+  *:*)
+    printf '%s\n' "npm test: the temporary directory $dir holds a ':', so PATH cannot name it and no test would meet the refusing gh (#276). Set TMPDIR to a directory without one." >&2
+    exit 1
+    ;;
+esac
 record="$dir/calls"
 : > "$record"
 
