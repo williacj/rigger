@@ -204,10 +204,39 @@ const SCHEMA_WRITES = new Set(['createProjectV2Field', 'createLabel', OPTIONS_WR
 const OPTION_FIELDS = ['id', 'name', 'color', 'description'];
 
 /**
- * How way B writes each field of an option, as the parser reads it: the colour as an enum value,
- * the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ * How way B writes each field of an option, as the parser reads it: the colour as an unquoted
+ * scalar, the rest as strings. A held option carries all four; a new one carries all but its `id`.
+ * An unquoted scalar is any bare name, number or `null`, so which colour it names is checked
+ * against `OPTION_COLOURS` separately.
  */
 const OPTION_KINDS = { id: 'string', name: 'string', color: 'scalar', description: 'string' };
+
+/**
+ * The values of GitHub's `ProjectV2SingleSelectFieldOptionColor`, the type GitHub gives `color`
+ * on `ProjectV2SingleSelectFieldOptionInput`. GitHub owns them (`D16`); this copy is what gh
+ * 2.99.0 answered to `__type(name: "ProjectV2SingleSelectFieldOptionColor") { enumValues { name } }`
+ * on 2026-09-25.
+ */
+const OPTION_COLOURS = new Set(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']);
+
+/**
+ * Refuses the schema write `field` unless every option it sends in `options`, the value of its
+ * `singleSelectOptions`, is an object whose `color` is written as an unquoted value of
+ * `OPTION_COLOURS`. A quoted colour, `null`, a number, a boolean, another name or none at all is
+ * refused, naming the option.
+ */
+function checkColours(field, options) {
+  for (const option of options?.kind === 'list' ? options.values : []) {
+    const color = option.kind === 'object' ? option.fields.find(({ name }) => name === 'color')?.value : undefined;
+    if (color?.kind !== 'scalar' || !OPTION_COLOURS.has(color.value)) {
+      const name = option.fields?.find((held) => held.name === 'name')?.value.value ?? 'an unnamed option';
+      refuse('schema-write', `${field.name}, which sends the option ${name} with a color that is no value of ProjectV2SingleSelectFieldOptionColor`);
+    }
+  }
+}
+
+/** The `singleSelectOptions` value of the one `input` a schema write carries, or undefined. */
+const optionsSent = (field) => field.arguments.find(({ name }) => name === 'input')?.value.fields?.find(({ name }) => name === 'singleSelectOptions')?.value;
 
 /**
  * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
@@ -273,6 +302,7 @@ function optionsInput(field) {
  */
 function checkOptionsWrite(field, send) {
   const { fieldId, sent } = optionsInput(field);
+  checkColours(field, optionsSent(field));
   const held = heldOptions(fieldId, send);
   if (held.name !== COLUMNS) {
     refuse('schema-write', `${field.name} on ${held.name ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
@@ -308,6 +338,7 @@ export function schemaWriteRunner(args, { send = plainly } = {}) {
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
   if (field.name === OPTIONS_WRITE) checkOptionsWrite(field, send);
+  else checkColours(field, optionsSent(field));
   return send(FORGE, args);
 }
 

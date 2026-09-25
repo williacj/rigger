@@ -452,6 +452,50 @@ test('the schema-write runner refuses a held option whose id, colour or descript
   }
 });
 
+/**
+ * The values of GitHub's `ProjectV2SingleSelectFieldOptionColor`, the type of `color` on an option
+ * a schema write sends, as gh 2.99.0 answered `__type(name: "ProjectV2SingleSelectFieldOptionColor")
+ * { enumValues { name } }` on 2026-09-25 (recorded on #234).
+ */
+const ENUM_COLOURS = ['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE'];
+
+/**
+ * Colours outside that enum, each written as the document would carry it: the four the card
+ * names, the enum's names as strings and in another case, and a name that is no colour.
+ */
+const NOT_COLOURS = ['null', '5', 'true', 'NOT_A_COLOUR', '"GRAY"', 'gray', 'Gray', 'GREY', 'BLACK'];
+
+test('the schema-write runner sends a field created with, or a column added in, each colour of the enum', () => {
+  for (const colour of ENUM_COLOURS) {
+    const create = CREATE_FIELD.replace('color: GRAY', `color: ${colour}`);
+    const sentCreate = recording();
+    schemaWriteRunner(graphql(create), { send: sentCreate });
+    assert.deepEqual(sentCreate.sent, [['gh', ...graphql(create)]], colour);
+
+    const add = optionsUpdate([...HELD, { ...OWNER, color: colour }]);
+    const sentAdd = recording(holdingOptions());
+    schemaWriteRunner(graphql(add), { send: sentAdd });
+    assert.deepEqual(sentAdd.sent.at(-1), ['gh', ...graphql(add)], colour);
+  }
+});
+
+test('the schema-write runner refuses a field created with an option whose colour is no value of the enum, naming it, and sends nothing', () => {
+  for (const colour of NOT_COLOURS) {
+    const document = CREATE_FIELD.replace('color: GRAY', `color: ${colour}`);
+    assert.notEqual(document, CREATE_FIELD, 'the replacement did not apply');
+    refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field', 'High', 'color']);
+  }
+  // An option carrying no colour at all has none of the enum's either.
+  refuses(schemaWriteRunner, graphql(CREATE_FIELD.replace('color: GRAY, ', '')), ['createProjectV2Field', 'High', 'color']);
+});
+
+test('the schema-write runner refuses a column added with a colour that is no value of the enum, naming it, and sends nothing', () => {
+  for (const colour of NOT_COLOURS) {
+    const document = optionsUpdate([...HELD, { ...OWNER, color: colour }]);
+    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'color']);
+  }
+});
+
 test('the schema-write runner refuses an options write that adds no option, and sends it nothing', () => {
   // Way B adds an option. One sending back only what the field holds adds none, so it is not way B.
   const send = refuses(schemaWriteRunner, graphql(optionsUpdate(HELD)), ['updateProjectV2Field', 'adds no option'], { answer: holdingOptions() });
