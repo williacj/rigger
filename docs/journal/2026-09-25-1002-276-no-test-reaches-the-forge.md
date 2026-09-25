@@ -17,11 +17,14 @@ test file's process. Measured with Node 26.5.0: `node --test` sets it to `child-
 directly by `node` has none, and `--test-isolation=none` sets none but passes `--test` in
 `execArgv`. The suite runs `node --test` with the default isolation, so only the variable is read.
 
-The variable is inherited, so a bin a test spawns refuses too. Two tests spawn one that asks the
-forge: the wiring test in `test/doctor.test.mjs` and the installed-tarball test in
-`test/package.test.mjs`. Each now takes the variable out of the child's environment, and each
-names the `gh` the child finds: a recording stand-in first on the path in the first, and no `gh`
-at all in the second.
+The first round took the variable out of the environment of a child that runs a verb asking the
+forge, and relied on the path the test built to keep the installed `gh` from it. The Codex judge
+found that gap on #282: a child handed the test process's own path instead ran whatever `gh` that
+path found. The card was revised to cover the class. Under the test runner, a runner now spawns
+only the stand-in its test declared in `RIGGER_GH_STAND_IN`, and only where the path finds it.
+The variable stays in the child's environment. A child that lost the path its test built finds
+some other `gh`, and fails without running it. The wiring test in `test/doctor.test.mjs` and the
+installed-tarball runs in `test/package.test.mjs` declare their stand-ins that way.
 
 The check that `doctor`'s answer agrees with `gh auth status` keeps its relation against a
 stand-in `gh` that answers each recorded result in turn, as the owner confirmed on #276.

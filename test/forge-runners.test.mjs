@@ -394,3 +394,35 @@ test('a runner handed no stand-in under the test runner refuses to spawn gh, and
   }
   assert.deepEqual(gh.calls(), []);
 });
+
+/** Runs `body` with `vars` in `process.env`, and puts back every name it set. */
+function withEnvironment(vars, body) {
+  const before = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, vars);
+  try {
+    return body();
+  } finally {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('under the test runner a runner spawns only the stand-in its test declared, found where the path finds gh', () => {
+  // A test that runs Rigger in a child process cannot hand it a `send`, so it declares its stand-in
+  // `gh` and puts it first on the child's path. The defect this catches is a child that lost the
+  // path its test built, and was handed one whose `gh` is some other one — the installed `gh`, on
+  // the path the test process itself runs under — and runs that instead of failing (#276).
+  const declared = stubGh({ status: 1, stderr: 'You are not logged into any GitHub hosts.\n' });
+  const other = stubGh();
+
+  const said = withEnvironment(declared.declared(), () => readRunner(['auth', 'status']));
+  assert.equal(said.status, 1, said.stderr);
+  assert.deepEqual(declared.calls(), ['auth status']);
+
+  const elsewhere = { ...declared.declared(), PATH: other.first() };
+  assert.throws(() => withEnvironment(elsewhere, () => readRunner(['auth', 'status'])), /under the test runner/);
+  assert.deepEqual(declared.calls(), ['auth status']);
+  assert.deepEqual(other.calls(), []);
+});

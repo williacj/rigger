@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
-import { untested } from './stub-gh.mjs';
+import { stubGh } from './stub-gh.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -155,9 +155,10 @@ function installFromTarball() {
   );
   assert.equal(install.status, 0, install.stdout + install.stderr);
 
-  // A path holding only node and git, so that `doctor` finds neither `gh` nor an agent CLI to
-  // ask. Asking them reaches the network, and this test must pass without it; a check that finds
-  // no tool to ask reports so, which is still the report.
+  // A path holding only node and git, so that `doctor` finds no agent CLI to ask and no `gh` but
+  // the stand-in each run puts in front of it. Asking the real ones reaches the network, and this
+  // test must pass without it; a check that finds no tool to ask reports so, which is still the
+  // report.
   const bin = mkdtempSync(join(tmpdir(), 'rigger-path-'));
   symlinkSync(process.execPath, join(bin, 'node'));
   symlinkSync(spawnSync('command -v git', { shell: true, encoding: 'utf8' }).stdout.trim(), join(bin, 'git'));
@@ -167,12 +168,13 @@ function installFromTarball() {
 }
 
 /**
- * The installed `rigger` run with `args` in `cwd`, under the narrow path above, and as it runs
- * outside the suite: the path holds no `gh` for its forge runners to reach.
+ * The installed `rigger` run with `args` in `cwd`, under the narrow path above with the stand-in
+ * `gh` declared and first on it. Under the test runner that stand-in is the only `gh` its forge
+ * runners spawn, so a run that lost this path fails rather than reaching the installed one (#276).
  */
-function runInstalled(args, cwd) {
+function runInstalled(args, cwd, gh = stubGh()) {
   const { rigger, path } = installFromTarball();
-  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: untested({ ...gitEnvironment(), PATH: path }) });
+  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: gh.declared({ ...gitEnvironment(), PATH: path }) });
 }
 
 test('a tarball packed from the head, installed outside the checkout, runs rigger --help', () => {
@@ -190,10 +192,13 @@ test('the installed tarball runs init and then doctor in a scratch repository ou
   assert.equal(init.status, 0, init.stderr);
   assert.ok(existsSync(join(scratch, 'rigger.config.mjs')), `init wrote no config:\n${init.stdout}`);
 
-  // Doctor exits non-zero here, since the narrow path leaves it no `gh` to ask, so what is held
-  // is that it reached the report: its heading, naming this repository, then a line per check.
-  const doctor = runInstalled(['doctor'], scratch);
+  // Doctor exits non-zero here, since the stand-in answers that no host is signed in and the
+  // narrow path leaves it no agent CLI to ask, so what is held is that it reached the report: its
+  // heading, naming this repository, then a line per check, having asked the stand-in `gh`.
+  const gh = stubGh({ status: 1, stderr: 'You are not logged into any GitHub hosts. To log in, run: gh auth login\n' });
+  const doctor = runInstalled(['doctor'], scratch, gh);
   const said = doctor.stdout + doctor.stderr;
+  assert.deepEqual(gh.calls(), ['auth status'], said);
   const heading = said.match(/^rigger doctor: \d+ of (\d+) checks passed in (.+)$/m);
   assert.ok(heading, `doctor printed no report:\n${said}`);
   assert.equal(realpathSync(heading[2]), realpathSync(scratch));

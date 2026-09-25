@@ -2,6 +2,8 @@
 // operation of its own side and refuses everything else by name before anything is sent.
 
 import { spawnSync } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 import { gitEnvironment } from '../git-environment.mjs';
 import { literal, parseDocument } from './graphql.mjs';
@@ -22,19 +24,45 @@ const plainly = (command, args) => spawnSync(command, args, { encoding: 'utf8', 
 /** Every command a runner sends is this one (`R-SAFE-2`). */
 const FORGE = 'gh';
 
+/** The variable naming the stand-in `gh` a test declared, by its path. */
+export const STAND_IN = 'RIGGER_GH_STAND_IN';
+
+/** The executable `command` names on `path`, as a spawn would find it, or null where none is. */
+function found(command, path = '') {
+  for (const dir of path.split(delimiter).filter(Boolean)) {
+    try {
+      accessSync(join(dir, command), constants.X_OK);
+      return join(dir, command);
+    } catch {
+      // Not here, so the next directory is where a spawn would look.
+    }
+  }
+  return null;
+}
+
 /**
  * The spawn a runner makes when its caller hands it no stand-in: `gh`, except under the test
- * runner, where it throws and nothing is sent.
+ * runner, where it is only the stand-in the test declared, and only where the path finds it.
+ * Anything else throws, and nothing is sent.
  *
- * `node --test` runs each test file in a process whose environment carries `NODE_TEST_CONTEXT`,
- * and every child that process spawns inherits it; measured with Node 26.5.0 on 2026-09-25, a
- * file run directly by `node` has none. A test that failed to pass its stand-in through would
- * otherwise reach the live forge with the owner's credentials (#276), so there a missing
- * stand-in fails the test rather than calling `gh`.
+ * A test that failed to pass its stand-in through would otherwise reach the live forge with the
+ * owner's credentials (#276). A test running Rigger in a child process cannot hand it a stand-in,
+ * so it declares one in `STAND_IN` and puts it first on the child's path. A child that lost that
+ * path finds some other `gh`, and fails rather than running it.
+ *
+ * `node --test` owns whether a process is under it, and marks each test file's process with
+ * `NODE_TEST_CONTEXT`, which every child inherits (`D16` rule 1). Where that mark can disagree
+ * with the runner (`D16` rule 3), measured with Node 26.5.0 on 2026-09-25: `node --test` sets
+ * `child-v8`; `node --test --test-isolation=none` sets none and passes `--test` in `execArgv`;
+ * a test file run directly by `node` has none. Under the last two this spawns `gh` as outside a
+ * test, and #276 leaves both outside the suite `npm test` runs.
  */
 function spawned(command, args) {
   if (process.env.NODE_TEST_CONTEXT !== undefined) {
-    throw new Error(`the forge runners spawn no \`${command}\` under the test runner, and ${spelled(args)} was handed no stand-in to send it`);
+    const declared = process.env[STAND_IN];
+    if (!declared || found(command, process.env.PATH) !== declared) {
+      throw new Error(`the forge runners spawn no \`${command}\` under the test runner but the stand-in a test declared, and ${spelled(args)} was handed no stand-in to send it`);
+    }
   }
   return plainly(command, args);
 }

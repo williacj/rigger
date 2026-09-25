@@ -14,7 +14,7 @@ import { validate } from '../src/config/validate.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 import { cloneInto, repositoryIn } from './git-repository.mjs';
-import { stubGh, untested } from './stub-gh.mjs';
+import { stubGh } from './stub-gh.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -309,7 +309,7 @@ test('the gh check answers what `gh auth status` answers, and asks it without th
 
     const here = ghAuth({ ask: (command, args) => spawnSync(command, args, { encoding: 'utf8', env }) });
 
-    assert.equal(here.ok, tool.status === null ? null : tool.status === 0, here.detail);
+    assert.equal(here.ok, tool.status === 0, here.detail);
     assert.deepEqual(gh.calls(), ['auth status', 'auth status'], 'the check did not ask the gh the environment names');
   }
 
@@ -645,7 +645,8 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
   // Two of the four checks ask a tool that answers for the host rather than for the repository,
   // and a host with no gh signed in is not a fault in this clone. Those two are handed the
   // answers a signed-in host gives, recorded from the tools themselves; what ties them to the
-  // tools is the pair of tests above that ask the real ones and assert the relation. The Node
+  // tools is the pair of tests above that assert the relation: the gh one against a stand-in that
+  // answers each recorded result (#276), and the agent CLI one against the real CLI. The Node
   // check and the config check run for real against this package and this clone.
   const clone = freshClone();
 
@@ -663,10 +664,11 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
 
 test('the command runs the checks in the repository it was called in, from outside that repository', () => {
   // The wiring test: the real bin, the real arguments, a real repository, and every authority
-  // asked for real but the forge. `gh` is a recording stand-in first on the path, because the
-  // installed one asks github.com (#276), and the bin runs as it would outside the suite, where
-  // the forge runners spawn `gh` for a caller that handed them no stand-in. That the stand-in was
-  // asked is what shows the forge check reached `gh` through the bin at all.
+  // asked for real but the forge. `gh` is a recording stand-in, declared as the test's stand-in
+  // and first on the child's path, because the installed one asks github.com (#276). Under the
+  // test runner the forge runners spawn no other `gh`, so a child that lost this path fails
+  // rather than reaching the installed one. That the stand-in was asked is what shows the forge
+  // check reached `gh` through the bin at all.
   //
   // The defects it catch are `doctor` still answering `not yet implemented`, a
   // verb wired to something that reports nothing, and the surface never awaiting an answer that
@@ -680,7 +682,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
 
   const gh = stubGh(RECORDED.ghIn);
-  const env = untested({ ...process.env, PATH: gh.first() });
+  const env = gh.declared({ ...process.env });
 
   const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], { cwd: clone, encoding: 'utf8', env });
 
