@@ -81,7 +81,9 @@ function everyPage(operation, board, send, query, connectionOf, addressed = '') 
  */
 export function boardOf(operation, board, send) {
   const query = boardQuery(operation, board, `id field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id options { id name } } }`);
-  const project = asked(operation, board, query, send, asking(board))?.repositoryOwner?.projectV2;  if (!project?.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);
+  const project = asked(operation, board, query, send, asking(board))?.repositoryOwner?.projectV2;
+  if (!project) fail(operation, board, `${asking(board)}gh answered no such board`);
+  if (!project.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);
   return { id: project.id, columns: project.field };
 }
 

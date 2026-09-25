@@ -17,6 +17,12 @@ and the card holds their bodies unedited. The owner goes after the prefix, as `a
 octo-org's board 6,`. A repository request carries no board owner, so a label read still fails
 without one.
 
+Round 1's Codex judge ruled item 14 unmet on a case I had called outside the card. When gh exits 0
+with a null board, the write path's lookup said the board had no `Status` field and named no
+owner. Item 14 reaches both response forms, a non-zero exit and an exit-zero null board. The
+lookup now reports no such board with the owner beside the number, and the exit-zero test covers
+`moveItem` beside `readItems`.
+
 The mutation the card asks for makes the owner function return `repo`'s owner whatever the config
 declares. It reds the same-numbered-boards test, reading `williacj`'s two cards in place of
 `octo-org`'s one. It also reds the three tests that record which owner each request asks for.

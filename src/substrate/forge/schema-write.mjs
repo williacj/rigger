@@ -16,8 +16,9 @@ const LABEL_COLOUR = 'ededed';
 
 /**
  * The schema writes on `board`, which names its `repo`, its `project` number and, where the config
- * declares one, its `owner`. `send` stands in for the runners' spawn in tests. Neither write is read back to confirm it, for the reason the
- * column move gives (`item-write.mjs`): `gh` exiting 0 is the write.
+ * declares one, its `owner`. `send` stands in for the runners' spawn in tests. Neither write is
+ * read back to confirm it, for the reason the column move gives (`item-write.mjs`): `gh` exiting
+ * 0 is the write.
  */
 export function schemaWriteSide(board, { send } = {}) {
   return {

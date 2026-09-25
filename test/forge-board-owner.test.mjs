@@ -198,15 +198,29 @@ test('when gh answers no such board, the failure names the board owner the reque
   }
 });
 
-test('when gh answers a paged read with no board at all, the failure names the board owner the request addressed beside the board number', async () => {
-  // Constructed: an answer holding no board where the read looks for one, which the read reports
-  // as no such board however gh came to print it.
+test('when gh exits 0 answering no board at all, the failure names the board owner the request addressed beside the board number', async () => {
+  // Constructed: an answer holding no board where the request looks for one, which is reported
+  // as no such board however gh came to print it, for a read and for a write alike.
   const empty = { status: 0, stdout: JSON.stringify({ data: { repositoryOwner: { projectV2: null } } }), stderr: '' };
-  for (const [config, owner] of [[ownedBy(DECLARED), DECLARED], [rigger, REPOSITORY_OWNER]]) {
-    await assert.rejects(readSide(boardFor(config), { send: () => empty }).readItems(), (error) => {
-      assert.ok(error.message.includes(`${owner}'s board 6`), `with ${owner}: ${error.message}`);
-      assert.ok(error.message.includes('no such board'), error.message);
-      return true;
-    });
+  const calls = {
+    readItems: (board, send) => readSide(board, { send }).readItems(),
+    moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
+  };
+  const cases = [[ownedBy(DECLARED), DECLARED, REPOSITORY_OWNER], [rigger, REPOSITORY_OWNER, DECLARED]];
+  for (const [operation, call] of Object.entries(calls)) {
+    for (const [config, owner, other] of cases) {
+      const sent = [];
+      const send = (command, args) => {
+        sent.push(documentOf(args));
+        return empty;
+      };
+      await assert.rejects(call(boardFor(config), send), (error) => {
+        assert.ok(error.message.includes(`${owner}'s board 6`), `${operation} with ${owner}: ${error.message}`);
+        assert.ok(!error.message.includes(other), `${operation} with ${owner} names ${other}: ${error.message}`);
+        assert.ok(error.message.includes('no such board'), `${operation} with ${owner}: ${error.message}`);
+        return true;
+      });
+      assert.deepEqual(sent.map(ownerAsked), [owner], `${operation} sent more than the one request finding the board`);
+    }
   }
 });
