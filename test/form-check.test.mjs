@@ -122,6 +122,17 @@ test('a fence closes only on a run of at least as many of the same character', (
   }
 });
 
+test('a fence closer followed only by spaces or a tab closes the fence, so a bullet after it counts', () => {
+  const closers = { spaces: '```  ', tab: '```\t' };
+  const verdicts = Object.fromEntries(
+    Object.entries(closers).map(([name, closer]) => [
+      name,
+      check(card(38, '## Acceptance', '', '```', 'rigger plan', closer, '', `- ${ITEM}`)).admitted,
+    ]),
+  );
+  assert.deepEqual(verdicts, { spaces: true, tab: true });
+});
+
 test('a bullet in a blockquote under ## Acceptance is missing acceptance', () => {
   refusedAsMissing(card(19, '## Acceptance', '', `> - ${ITEM}`));
 });

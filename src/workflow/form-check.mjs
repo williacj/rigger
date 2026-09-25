@@ -20,9 +20,12 @@ const COMMENTS = /^(?:\s*<!--.*?-->)+\s*$/s;
 const MISSING = 'missing acceptance';
 const RESTATED = 'restated title';
 
-/** Whether a line closes the fence its opening `marks` began: only a run at least as long. */
+/**
+ * Whether a line closes the fence its opening `marks` began: only a run at least as long, followed
+ * by nothing but spaces or tabs.
+ */
 function closes(line, marks) {
-  const run = /^ {0,3}(`+|~+)$/.exec(line)?.[1];
+  const run = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
   return run !== undefined && run[0] === marks[0] && run.length >= marks.length;
 }
 
