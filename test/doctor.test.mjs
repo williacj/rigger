@@ -6,13 +6,15 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
 import { validate } from '../src/config/validate.mjs';
+import { readSide } from '../src/substrate/forge/read.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
+import { installFakeGh } from './fake-gh.mjs';
 import { cloneInto, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
 
@@ -261,18 +263,32 @@ function answering(result) {
 }
 
 /**
+ * What `gh` answers a read of the board's items where the board holds nothing, which is a board
+ * shared with no other repository: an empty page, shaped as the board-sharing read selects it.
+ */
+const UNSHARED_BOARD = {
+  status: 0,
+  stdout: `${JSON.stringify({ data: { repositoryOwner: { projectV2: { items: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } })}\n`,
+  stderr: '',
+};
+
+/**
  * A runner answering a recorded result per command, and letting git through to the real thing.
  *
  * Git is not an authority a check asks: it is how `doctor` names the repository it is looking at,
  * so a fixture repository has to answer for itself — which is why it runs under
  * `gitEnvironment()`, exactly as production's runner does. Under an inherited `GIT_WORK_TREE` the
  * fixture stops answering for itself and `doctor` reports on the repository that variable names.
+ *
+ * A board read, `gh api`, is answered as a board holding nothing, so the board-sharing check
+ * passes wherever a test fixes the other verdicts; the tests of that check hand it a fake board.
  */
 function answeringEach(answers) {
   const asked = [];
   const ask = (command, args) => {
     asked.push([command, ...args].join(' '));
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
+    if (command === 'gh' && args[0] === 'api') return UNSHARED_BOARD;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
     return answers[command];
   };
@@ -488,7 +504,8 @@ test('a config that throws anything at all is one failed line, and the other thr
   for (const thrown of THROWS) {
     const ran = await doctor(against(checked(thrown), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
 
-    assert.equal(checkLines(ran.text).length, CHECKED.length, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
+    // A config Rigger refuses names no board to read, so the board-sharing line is not printed.
+    assert.equal(checkLines(ran.text).length, CHECKED.length - 1, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
     assert.notEqual(ran.code, 0, ran.text);
     assert.doesNotMatch(ran.text, /\n\s+at /, `\`${thrown}\` put a stack trace in the report:\n${ran.text}`);
     const line = checkLines(ran.text).find((said) => said.includes('config validity'));
@@ -498,12 +515,12 @@ test('a config that throws anything at all is one failed line, and the other thr
 });
 
 /**
- * The four checks the card asks `doctor` to report, written out by hand.
+ * The checks `doctor` reports, written out by hand.
  *
  * Written out rather than read back from the report, because an expectation taken from the report
  * agrees with whatever the report says, a report of nothing included.
  */
-const CHECKED = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity'];
+const CHECKED = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board sharing'];
 
 /** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
 const against = (target, answers) => ({
@@ -592,7 +609,7 @@ test('a check that could not be asked does not count as passed, and the status s
 
   // Two could not be asked and the other two passed, so nothing here failed: whatever makes the
   // status non-zero can only be the two that were never asked.
-  assert.match(ran.text, /2 of 4 checks passed/, ran.text);
+  assert.match(ran.text, /3 of 5 checks passed/, ran.text);
   assert.equal(
     checkLines(ran.text).filter((line) => line.includes('could not be run')).length,
     2,
@@ -615,7 +632,8 @@ test('the whole report is lines, and carries no stack trace', async () => {
   const ran = await doctor(against(checked('export default {\n'), { gh: RECORDED.ghOut, claude: RECORDED.agentOut }));
 
   assert.notEqual(ran.code, 0);
-  assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
+  // A config that will not load names no board to read, so the board-sharing line is not printed.
+  assert.equal(checkLines(ran.text).length, CHECKED.length - 1, ran.text);
   assert.doesNotMatch(ran.text, /\n\s+at /, ran.text);
 });
 
@@ -686,7 +704,13 @@ test('the command runs the checks in the repository it was called in, from outsi
   const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], { cwd: clone, encoding: 'utf8', env });
 
   const printed = ran.stdout + ran.stderr;
-  assert.deepEqual(gh.calls(), ['auth status'], printed);
+  // The stand-in is asked whether gh is signed in, and then for the board's items, which it
+  // answers with gh's sign-in text: the board-sharing line fails on that, and the run exits
+  // non-zero, which the last assertion reads off the report.
+  const [auth, ...reads] = gh.calls();
+  assert.equal(auth, 'auth status', printed);
+  assert.ok(reads.length > 0, `the board was never read:\n${printed}`);
+  for (const read of reads) assert.ok(read.startsWith('api graphql -f query=query '), read);
   assert.equal(ran.error, undefined);
   assert.doesNotMatch(printed, /not yet implemented/, printed);
   assert.doesNotMatch(printed, /object Promise/, printed);
@@ -694,4 +718,136 @@ test('the command runs the checks in the repository it was called in, from outsi
     assert.ok(printed.includes(name), `the command never reported \`${name}\`:\n${printed}`);
   }
   assert.equal(ran.status === 0, /^rigger doctor: (\d+) of \1 checks passed/.test(printed), printed);
+});
+
+/** The repository and board the starter config names, which the fake `gh` answers for. */
+const STARTER_BOARD = { repo: 'acme/widgets', project: 12 };
+
+/** An issue of the repository the starter config names. */
+const ours = (number) => ({ type: 'issue', repository: STARTER_BOARD.repo, number, title: `Card ${number}`, column: 'Ready' });
+
+/** An issue of the repository `repository`, which is not the one the starter config names. */
+const theirs = (repository, number) => ({ type: 'issue', repository, number, title: `Theirs ${number}`, column: 'Ready' });
+
+/**
+ * Runs `doctor` against a repository holding `source`, with a fake `gh` holding `items` on the
+ * board numbered `project` first on the `PATH` every `gh` request is spawned under. `gh auth
+ * status` and the agent CLI are answered as a signed-in host answers them, so the board-sharing
+ * check alone decides the status; with `auth` false, `gh auth status` goes to the fake `gh` too,
+ * which records it and does not model it. It returns the run, every command the fake `gh` was
+ * sent, the fake board's write record, and the fake's directory.
+ */
+async function sharing(items, { source = starter(), project = STARTER_BOARD.project, auth = true } = {}) {
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-doctor-gh-')), { ...STARTER_BOARD, project, board: { columns: ['Ready'], items } });
+  const path = `${dirname(fake.gh)}${delimiter}${process.env.PATH}`;
+  const ask = (command, args) => {
+    if (command === 'claude') return RECORDED.agentIn;
+    if (command === 'gh' && auth && args[0] === 'auth') return RECORDED.ghIn;
+    return spawnSync(command, args, { encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
+  };
+  const ran = await doctor({ target: checked(source), packageRoot: packageDeclaring('>=0'), ask });
+  return { ran, sent: fake.sent(), writes: (await fake.model()).writes(), path };
+}
+
+/** The report's board-sharing lines. */
+const sharingLines = (text) => checkLines(text).filter((line) => line.includes('board sharing'));
+
+/** Every `owner/name` a line names. */
+const repositoriesIn = (line) => line.match(/[\w.-]+\/[\w.-]+/g) ?? [];
+
+test('given a board holding items from two other repositories, doctor prints one board-sharing line, which fails and names exactly those two', async () => {
+  const { ran } = await sharing([ours(1), theirs('other/one', 7), ours(2), theirs('Other/Two', 8), theirs('other/one', 9)]);
+
+  const lines = sharingLines(ran.text);
+  assert.equal(lines.length, 1, ran.text);
+  assert.match(lines[0], /^\s*failed\s/, lines[0]);
+  // Both directions: every repository the line names is one of the two, and each of the two is named.
+  const named = repositoriesIn(lines[0]);
+  assert.deepEqual(named.filter((repository) => !['other/one', 'Other/Two'].includes(repository)), [], lines[0]);
+  assert.deepEqual(['other/one', 'Other/Two'].filter((repository) => !named.includes(repository)), [], lines[0]);
+});
+
+test("given a board holding only the repository's issues and pull requests and draft issues, doctor's board-sharing line passes", async () => {
+  const { ran } = await sharing([
+    ours(1),
+    { type: 'pullRequest', repository: STARTER_BOARD.repo, number: 2, title: 'Our PR', column: 'Ready' },
+    { type: 'draftIssue', title: 'A thought', column: 'Ready' },
+  ]);
+
+  const lines = sharingLines(ran.text);
+  assert.equal(lines.length, 1, ran.text);
+  assert.match(lines[0], /^\s*ok\s/, lines[0]);
+});
+
+test("given a board holding a redacted item, doctor's board-sharing line fails and says an item it cannot read is on the board", async () => {
+  // The fake gh's answer for the redacted item is constructed from the schema, not captured.
+  const { ran } = await sharing([ours(1), { type: 'redacted' }]);
+
+  const [line] = sharingLines(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  assert.match(line, /1 item it cannot read/, line);
+});
+
+test('given a board holding an item from another repository, doctor exits non-zero, where the same board without it exits zero', async () => {
+  const shared = await sharing([ours(1), theirs('other/one', 7)]);
+  const alone = await sharing([ours(1)]);
+
+  assert.notEqual(shared.ran.code, 0, shared.ran.text);
+  assert.equal(alone.ran.code, 0, alone.ran.text);
+});
+
+test("when the board cannot be read, the board-sharing line fails and carries the forge adapter's failure message", async () => {
+  // The fake gh holds board 13, and the config names board 12, which gh answers is not there.
+  const { ran, path } = await sharing([ours(1)], { project: 13 });
+
+  const held = process.env.PATH;
+  process.env.PATH = path;
+  let message;
+  try {
+    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }).readOtherRepositories();
+  } catch (error) {
+    message = error.message;
+  } finally {
+    process.env.PATH = held;
+  }
+  assert.ok(message, 'the read side read a board the fake gh does not hold, so this proves nothing');
+
+  const [line] = sharingLines(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  assert.ok(line.includes(message), `${line}\ndoes not carry\n${message}`);
+});
+
+test("doctor's board-sharing check sends no mutation, as the fake gh records every command it is sent", async () => {
+  // Every gh command doctor sends goes to the fake, `gh auth status` included.
+  const { sent, writes } = await sharing([ours(1), theirs('other/one', 7), { type: 'redacted' }], { auth: false });
+
+  const reads = sent.filter((args) => args[0] === 'api');
+  assert.ok(reads.length > 0, 'doctor sent the fake gh no board read, so this proves nothing');
+  for (const args of sent.filter((sentArgs) => sentArgs[0] !== 'api')) assert.deepEqual(args, ['auth', 'status']);
+  for (const args of reads) {
+    assert.deepEqual(args.slice(0, 3), ['api', 'graphql', '-f'], args.join(' '));
+    assert.match(args[3], /^query=query \{/, args[3]);
+    assert.doesNotMatch(args[3], /mutation/, args[3]);
+  }
+  assert.deepEqual(writes, []);
+});
+
+test('given a config the validator refuses, doctor prints no board-sharing line and sends no request addressing the board', async () => {
+  const source = starter().replace(/^\s*repo:.*$/m, '');
+  assert.notDeepEqual(validate((await import(pathToFileURL(join(checked(source), CONFIG)))).default), []);
+
+  const { ran, sent } = await sharing([ours(1), theirs('other/one', 7)], { source });
+
+  assert.deepEqual(sharingLines(ran.text), [], ran.text);
+  assert.deepEqual(sent, []);
+});
+
+test('the checks doctor names are those it named before #289, and the board-sharing check, compared both ways', async () => {
+  // Written out by hand: the four names `doctor` printed at #289's base, and the one #289 adds.
+  const expected = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board sharing'];
+  const { ran } = await sharing([ours(1)]);
+
+  const names = checkLines(ran.text).map((line) => line.trim().match(/^(?:ok|failed|not asked)\s+([^:]+):/)?.[1]);
+  assert.deepEqual(names.filter((name) => !expected.includes(name)), [], ran.text);
+  assert.deepEqual(expected.filter((name) => !names.includes(name)), [], ran.text);
 });
