@@ -199,6 +199,11 @@ function readKinds(config, refusals) {
     if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
       refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
     }
+    // A kind selects a card carrying any one of its labels, so a kind naming none selects nothing
+    // and its work would never run.
+    if (Array.isArray(kind?.select?.labels) && kind.select.labels.length === 0) {
+      refusals.push(`\`${where}.select.labels\` names no label, so the kind \`${name}\` selects no card`);
+    }
     if (kind?.judges === undefined) continue;
     if (!Array.isArray(kind.judges) || kind.judges.length === 0) {
       // One maker and at least one judge, in the order they judge in (`README.md`, "The
