@@ -1,13 +1,20 @@
-// ABOUTME: Tests the package contract: the Node floor and what an install below it does, that
-// every script the repository defines is reachable from `npm run`, and that CI runs them.
+// ABOUTME: Tests the package contract: the Node floor and what an install below it does, what the
+// tarball holds and that it runs once installed, that every script the repository defines is
+// reachable from `npm run`, and that CI runs them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, copyFileSync } from 'node:fs';
+import {
+  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { help } from '../src/cli/verbs.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -77,6 +84,117 @@ test('the refusal is printed however quiet the npm that launched the suite was t
 
   assert.notEqual(status, 0);
   assert.match(said, /EBADENGINE|Unsupported engine/);
+});
+
+test('the package declares that it ships src/, templates/ and scripts/, and nothing else', () => {
+  // The owner's ruling U30, card #238: what npm always includes rides along, and nothing else of
+  // ours does. The listing test below asks npm what that declaration produces.
+  assert.deepEqual(manifest.files, ['src/', 'templates/', 'scripts/']);
+});
+
+/**
+ * What `npm pack` puts in the tarball of this checkout as it stands, as package-relative paths,
+ * with the tarball's size in bytes. Asked of npm rather than worked out from `files`, because npm
+ * owns what a pack holds (`D16`): it adds files of its own choosing, and drops some of ours.
+ */
+function packListing() {
+  const packed = spawnSync('npm pack --dry-run --json --loglevel=error', {
+    cwd: root, shell: true, encoding: 'utf8',
+  });
+  assert.equal(packed.status, 0, packed.stderr);
+  const [{ files, size }] = JSON.parse(packed.stdout);
+  return { paths: files.map((file) => file.path), size };
+}
+
+/** Every file git holds under `directory`, as repository-relative paths. */
+const heldUnder = (directory) =>
+  gitIn(root, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
+
+test('the tarball holds every file under src/, templates/ and scripts/, and of the rest only what npm always adds', () => {
+  const { paths } = packListing();
+
+  for (const directory of ['src/', 'templates/', 'scripts/']) {
+    const held = heldUnder(directory);
+    assert.ok(held.length > 0, `git holds nothing under ${directory}`);
+    const missing = held.filter((path) => !paths.includes(path));
+    assert.deepEqual(missing, [], `the tarball leaves out what git holds under ${directory}`);
+  }
+
+  // npm adds the manifest, the README and the licence to every tarball whatever `files` says, so
+  // those three are the only paths outside the declared directories a pack may carry.
+  const outside = paths.filter((path) => !/^(src|templates|scripts)\//.test(path));
+  assert.deepEqual(outside.sort(), ['LICENSE', 'README.md', 'package.json']);
+  assert.deepEqual(paths.filter((path) => path.endsWith('.gif')), []);
+});
+
+/**
+ * This checkout packed into a tarball and installed from it, both in directories outside the
+ * checkout (`R-SAFE-5`: Rigger never runs from its own source tree). Offline, because the package
+ * has no dependencies and so an install that needs the network has gone wrong. Built once and
+ * shared, because packing and installing is the slow part and the tests below only read it.
+ */
+let installed;
+function installFromTarball() {
+  if (installed) return installed;
+  // Both npm runs are handed the environment a git child gets, because each command is built at
+  // run time, so the suite's sweep of every spawn cannot rule out that it reaches git
+  // (`test/git-environment.test.mjs`).
+  const packs = mkdtempSync(join(tmpdir(), 'rigger-pack-'));
+  const packed = spawnSync(`npm pack --json --loglevel=error --pack-destination "${packs}"`, {
+    cwd: root, shell: true, encoding: 'utf8', env: gitEnvironment(),
+  });
+  assert.equal(packed.status, 0, packed.stderr);
+  const [{ filename }] = JSON.parse(packed.stdout);
+
+  const consumer = mkdtempSync(join(tmpdir(), 'rigger-installed-'));
+  writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true }));
+  const install = spawnSync(
+    `npm install --offline --no-audit --no-fund --loglevel=error "${join(packs, filename)}"`,
+    { cwd: consumer, shell: true, encoding: 'utf8', env: gitEnvironment() },
+  );
+  assert.equal(install.status, 0, install.stdout + install.stderr);
+
+  // A path holding only node and git, so that `doctor` finds neither `gh` nor an agent CLI to
+  // ask. Asking them reaches the network, and this test must pass without it; a check that finds
+  // no tool to ask reports so, which is still the report.
+  const bin = mkdtempSync(join(tmpdir(), 'rigger-path-'));
+  symlinkSync(process.execPath, join(bin, 'node'));
+  symlinkSync(spawnSync('command -v git', { shell: true, encoding: 'utf8' }).stdout.trim(), join(bin, 'git'));
+
+  installed = { rigger: join(consumer, 'node_modules', '.bin', 'rigger'), path: bin };
+  return installed;
+}
+
+/** The installed `rigger` run with `args` in `cwd`, under the narrow path above. */
+function runInstalled(args, cwd) {
+  const { rigger, path } = installFromTarball();
+  return spawnSync(rigger, args, { cwd, encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
+}
+
+test('a tarball packed from the head, installed outside the checkout, runs rigger --help', () => {
+  const ran = runInstalled(['--help'], tmpdir());
+  assert.equal(ran.status, 0, ran.stderr);
+  // The installed copy prints what this checkout's surface prints, which is what shows the
+  // tarball carries this code rather than merely something that answers.
+  assert.equal(ran.stdout, `${help()}\n`);
+});
+
+test('the installed tarball runs init and then doctor in a scratch repository outside the checkout', () => {
+  const scratch = repositoryIn('rigger-packed-consumer-');
+
+  const init = runInstalled(['init'], scratch);
+  assert.equal(init.status, 0, init.stderr);
+  assert.ok(existsSync(join(scratch, 'rigger.config.mjs')), `init wrote no config:\n${init.stdout}`);
+
+  // Doctor exits non-zero here, since the narrow path leaves it no `gh` to ask, so what is held
+  // is that it reached the report: its heading, naming this repository, then a line per check.
+  const doctor = runInstalled(['doctor'], scratch);
+  const said = doctor.stdout + doctor.stderr;
+  const heading = said.match(/^rigger doctor: \d+ of (\d+) checks passed in (.+)$/m);
+  assert.ok(heading, `doctor printed no report:\n${said}`);
+  assert.equal(realpathSync(heading[2]), realpathSync(scratch));
+  const lines = said.split('\n').filter((line) => /^ {2}(ok|failed|not asked) {2}/.test(line));
+  assert.equal(lines.length, Number(heading[1]), said);
 });
 
 test('every script the repository defines is reachable from npm run', () => {
