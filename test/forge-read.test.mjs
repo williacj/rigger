@@ -200,6 +200,19 @@ test("only the configured repository's issues read back as cards, beside a draft
   assert.deepEqual(cards.map((card) => card.id), ['PVTI_ours', 'PVTI_ours_too']);
 });
 
+test('a card holding more labels or field values than one page fails the read, naming the issue, rather than reading short', async () => {
+  // Each nested connection is read one page deep, so a card with more on the forge would come
+  // back missing labels, or missing its column, and look like a whole card.
+  const node = itemNode({ id: 'PVTI_one', content: issue({ number: 214, labels: ['type:change'] }), values: { Status: 'Ready' } });
+  for (const truncated of ['labels', 'fieldValues']) {
+    const held = structuredClone(node);
+    (truncated === 'labels' ? held.content.labels : held.fieldValues).pageInfo.hasNextPage = true;
+    const send = forge({ pages: { null: itemPage([held]) } });
+
+    await assert.rejects(readSide(BOARD, { send }).readItems(), /readItems on board 6 failed: issue #214/, truncated);
+  }
+});
+
 test("a card's column is the option it holds in the field named Status, beside a second single-select field with the same option names", async () => {
   // `Stage` holds the same five option names as `Status`, and comes first among the item's field
   // values, so a read taking the first single-select value, or any field's, reads Done here.
