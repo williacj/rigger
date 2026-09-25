@@ -1,5 +1,5 @@
-ABOUTME: Records card #276, which stops the forge runners spawning the real `gh` under the test
-runner, and what running the suite behind a proxy that forwards nothing showed.
+ABOUTME: Records card #276, which has `npm test` put a refusing `gh` first on every test's PATH,
+the production guard it replaced, and what running the suite behind a proxy that forwards nothing showed.
 
 # 2026-09-25 — No test reaches the forge
 
@@ -52,3 +52,9 @@ owner confirmed as a review matter. Nothing under `src/` differs from `main`. Ev
 helper built on the production guard went with it. #286's tests are `main`'s again, because the
 fake `gh` they put first on `PATH` already sits ahead of the refusing one. The `D16` probe finds
 the installed `gh` by taking the harness's directory off `PATH`.
+
+The Codex judge then found that the harness wrote its record path into the refusing `gh`'s source
+inside single quotes. A `TMPDIR` holding an apostrophe broke that quoting. The refusing `gh` then
+exited 2 without recording, and a run whose tests called it passed. The stand-in `gh` in
+`test/stub-gh.mjs` had the same fault. Now each script finds its files beside itself, through its
+own path, `$0`, and no path is written into any script's source.

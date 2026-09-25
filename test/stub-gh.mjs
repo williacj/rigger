@@ -2,7 +2,7 @@
 
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 
 /**
  * A directory holding an executable named `gh` that records every call it receives and answers
@@ -20,12 +20,14 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   const [out, err] = [join(dir, 'stdout'), join(dir, 'stderr')];
   writeFileSync(out, stdout);
   writeFileSync(err, stderr);
+  // Each file is named beside the stub through its own path, `$0`, rather than written into its
+  // source, so no character a temporary directory's name can hold breaks its quoting.
   const script = [
     '#!/bin/sh',
-    `printf '%s\\n' "$*" >> '${record}'`,
-    `/bin/cat '${out}'`,
-    `/bin/cat '${err}' >&2`,
-    `exit ${status}`,
+    `printf '%s\\n' "$*" >> "\${0%/*}/${basename(record)}"`,
+    `/bin/cat "\${0%/*}/${basename(out)}"`,
+    `/bin/cat "\${0%/*}/${basename(err)}" >&2`,
+    `exit ${Number(status)}`,
     '',
   ].join('\n');
   writeFileSync(join(dir, 'gh'), script);
