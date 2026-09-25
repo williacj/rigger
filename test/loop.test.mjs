@@ -13,6 +13,7 @@ import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { openSink } from '../src/observation/sink.mjs';
+import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
@@ -72,17 +73,18 @@ const boardOf = (cards) => createFakeBoard({ columns: Object.values(COLUMNS), it
 
 /**
  * L0's handle on `fake`, as L3 reads it: the column read answers as the read side's does, and the
- * item read answers as L0 hands the board to L3, with no priority declared. `beforeRead` runs as
- * each item read begins, and `onRead` sees the items each read answers.
+ * priority read answers as the read side's `readPriority` does for a config declaring no
+ * priority, where every card's `priority`, `declared` and `options` are null. `beforeRead` runs
+ * as each priority read begins, and `onRead` sees the items each one answers.
  */
 function handleOn(fake, { beforeRead = () => {}, onRead = () => {} } = {}) {
   return {
     readColumns: async () => ({ ...COLUMNS }),
-    readItems: async () => {
+    readPriority: async () => {
       beforeRead();
       const items = await fake.operations.readItems();
       onRead(items);
-      return { items: items.map((item) => ({ ...item, priority: { value: null, declared: false } })), declared: null };
+      return { items: items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
     },
   };
 }
@@ -236,7 +238,7 @@ test('when the board read fails, L3 hands no card to the dispatch and passes the
       thrown = error;
       throw error;
     }),
-    readItems: async () => assert.fail('the loop read the items after the column read failed'),
+    readPriority: async () => assert.fail('the loop read the items after the column read failed'),
   };
   const built = world({ cards: [9], board });
 
@@ -268,4 +270,30 @@ test('L3 hands L2 every dispatch outcome, one returned and one failed', async ()
   await tick;
 
   assert.deepEqual(received.sort(), [[10, 'fulfilled'], [11, 'rejected']]);
+});
+
+test("the forge adapter's read side, passed whole, is L3's board handle: the declared priority orders the pulls, and the claim move reaches the board", async () => {
+  // Card 21 holds Low and card 22 holds High, and the board lists its options Low, High, Normal,
+  // so at concurrency 1 the first card dispatched shows which order L3 was handed.
+  const gh = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-loop-gh-')), {
+    repo: config.repo,
+    project: config.board.project,
+    board: {
+      columns: Object.values(COLUMNS),
+      fields: [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }],
+      items: [{ ...readyCard(21), fieldValues: { Priority: 'Low' } }, { ...readyCard(22), fieldValues: { Priority: 'High' } }],
+    },
+  });
+  const send = (command, args) => spawnSync(process.execPath, [gh.gh, ...args], { encoding: 'utf8' });
+  const where = { repo: config.repo, ...config.board };
+  const built = world({ cards: [], concurrency: 1, board: readSide(where, { send }), items: itemWriteSide(where, { send }) });
+
+  const tick = built.loop.pull();
+  await quiesce();
+  assert.deepEqual(built.dispatches.started, [22]);
+  built.dispatches.releaseAll();
+  await tick;
+
+  const columns = Object.fromEntries((await (await gh.model()).operations.readItems()).map((item) => [item.number, item.column]));
+  assert.deepEqual(columns, { 21: 'Ready', 22: 'Review' });
 });

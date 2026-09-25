@@ -9,11 +9,11 @@ const DEFAULT_CONCURRENCY = 3;
 /**
  * L3's dispatching entry point, over the board `config` names.
  *
- * `board` is L0's handle on it: `readColumns()` answers the declared columns by key, as the
- * forge adapter's read side does, and `readItems()` answers what L0 hands L3 for the pull order,
- * `{ items, declared }`. `decide` is L2's next action for a card, and `l2` is L2's column changes.
- * `dispatch({ card, kind })` is L1's, injected (the architect's ruling 1, B5), and answers the
- * dispatch's result or throws.
+ * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
+ * declared columns by key, and `readPriority()` answers the cards with their priority and the
+ * declared order, which is what L0 hands L3 for the pull order. `decide` is L2's next action for a
+ * card, and `l2` is L2's column changes. `dispatch({ card, kind })` is L1's, injected (the
+ * architect's ruling 1, B5), and answers the dispatch's result or throws.
  *
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
@@ -48,7 +48,7 @@ export function loop({ config, board, decide, l2, dispatch }) {
      */
     pull: async () => {
       const columns = await board.readColumns();
-      const { items, declared } = await board.readItems();
+      const { items, declared } = await board.readPriority();
       const unclaimed = items.filter((item) => !claims.has(item.number));
       const { pulls } = pullOrder({ items: unclaimed, columns, declared }, decide);
       const claimed = pulls.slice(0, Math.max(0, concurrency - claims.size)).map((pull) => {

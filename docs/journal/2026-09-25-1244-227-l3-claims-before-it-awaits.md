@@ -19,10 +19,11 @@ L2's `claimed` move goes from ready to coding, so L3 asks for it only for a card
 The redo still takes a slot and a claim. The "pulled again" item needs this. A card whose slot was
 released while it was not fresh sits in Review, so its next pull is a redo.
 
-**The board handle is L0's, and part of it is a stand-in until #224.** `readColumns()` is the read
-side's own method, which is how #215's missing-column error reaches L3 unchanged. `readItems()`
-answers the `{ items, declared }` hand-off `pullOrder` reads. Nothing in L0 answers that shape
-yet, so the tests build it from the fake board, as #221's did.
+**The board handle is L0's read side, whole.** `readColumns()` is how #215's missing-column error
+reaches L3 unchanged, and #224's `readPriority()` answers the `{ items, declared }` hand-off
+`pullOrder` reads. The first version called `readItems()` and expected that shape from it, so
+passing the read side itself made `pull()` throw. One test now passes `readSide(...)` whole over
+the fake `gh`, and the declared priority decides which card goes first.
 
 **A test that could hang now fails instead.** The refused-claim test first awaited `pull()`
 before it released any dispatch. So the mutant that swallowed the refusal dispatched the card, held
