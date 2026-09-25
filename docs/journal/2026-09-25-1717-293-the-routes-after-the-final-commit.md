@@ -130,7 +130,9 @@ reader can see. So a receiver the module does not define, such as `deps.queue`, 
 class declaration. So a module with an anonymous `export default class` or `export default
 function` was refused as unreadable. The test did fail closed, but under the wrong rule, and a
 Rule 3 item needs the failure to name Rule 3. It now skips the name a default export does not
-have. The export's value was always held under the default binding.
+have. The export's value was always held under the default binding. Codex met the same crash
+from rule 8's side on #298, with a `src/scheduling/tick.mjs` whose anonymous default function
+calls `loop`. That module is now a fixture here, and its boundary report is clean.
 
 **What the card left where it was.** Two shapes outside its items' words stay missed, and both
 are in #213's review-finding class. One is a default in a `for…of` head's assignment pattern,

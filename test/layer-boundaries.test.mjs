@@ -963,6 +963,16 @@ test('rule 3 by receiver bars nothing more: a method the module replaced before 
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
 
+test('an anonymous default function in src/scheduling/ that calls the entry point is read, and hands it to nobody', () => {
+  // Codex's case on #298: the reader once read a name this declaration does not have, and
+  // refused the module as unreadable.
+  const modules = {
+    'src/scheduling/tick.mjs': "import { loop } from './loop.mjs';\nexport default function (deps) { return loop(deps).pull(); }",
+    'src/cli/start.mjs': "import tick from '../scheduling/tick.mjs';\nexport const start = (deps) => tick(deps);",
+  };
+  assert.deepEqual(messages(modules), []);
+});
+
 test('a computed key that reads a loader fails, as a read anywhere else does', () => {
   assertBreaks({ 'src/workflow/rules.mjs': 'export const rules = { [require]: 1 };' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
   assertBreaks({ 'src/workflow/rules.mjs': 'export class Rules { [mainModule] = 1; }' }, 'src/workflow/rules.mjs', 'the dynamic-import rule');
