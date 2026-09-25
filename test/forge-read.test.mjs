@@ -56,6 +56,22 @@ function itemPage(nodes, next = null) {
   };
 }
 
+/**
+ * The field read's answer: the board's fields as GitHub answers them, where only a single-select
+ * field carries its name and options. `fields` are `{ name, options }`, and `others` counts the
+ * fields of other types, which answer as empty objects.
+ */
+function fieldPage(fields, others = 2) {
+  const nodes = [...Array.from({ length: others }, () => ({})), ...fields.map(({ name, options }) => ({ name, options: options.map((option) => ({ name: option })) }))];
+  return { repositoryOwner: { projectV2: { fields: { pageInfo: { hasNextPage: false, endCursor: 'MTA' }, nodes } } } };
+}
+
+/** A page of the label read, holding `names`, pointing on to the page `next` when there is one. */
+function labelPage(names, next = null) {
+  const nodes = names.map((name) => ({ name }));
+  return { repository: { labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MTAw' }, nodes } } };
+}
+
 /** Whether `page` is what `gh` said rather than the data it answered. */
 const said = (page) => Object.hasOwn(page, 'status');
 
@@ -64,13 +80,22 @@ const said = (page) => Object.hasOwn(page, 'status');
  * for the first), and recording every command it is handed. A page is the data `gh` answered, or
  * what `gh` said where it did not answer 0.
  */
-function forge({ pages = { null: itemPage([]) } } = {}) {
+function forge({
+  pages = { null: itemPage([]) },
+  fields = fieldPage([{ name: 'Status', options: Object.values(COLUMNS) }]),
+  labels = { null: labelPage([]) },
+} = {}) {
   const sent = [];
   const send = (command, args) => {
     sent.push([command, ...args]);
     const document = documentOf(args);
     if (document.includes('items(')) {
       const page = pages[cursorOf(document)];
+      return said(page) ? page : ok(page);
+    }
+    if (document.includes('fields(')) return ok(fields);
+    if (document.includes('repository(')) {
+      const page = labels[cursorOf(document)];
       return said(page) ? page : ok(page);
     }
     throw new Error(`the test forge does not answer ${document}`);
@@ -179,4 +204,86 @@ test("the configured repository's issues read back as cards whatever case the co
   const cards = await readSide({ ...BOARD, repo: 'WilliaCJ/Rigger' }, { send }).readItems();
 
   assert.deepEqual(cards.map((card) => card.id), ['PVTI_ours']);
+});
+
+test("the columns read back under the config's five keys, each the Status option the config names, beside columns it does not declare", async () => {
+  const send = forge({
+    fields: fieldPage([{ name: 'Status', options: ['Backlog', 'Ready', 'Coding', 'Blocked', 'Review', 'Owner', 'Done'] }]),
+  });
+
+  const columns = await readSide(BOARD, { send }).readColumns();
+
+  assert.deepEqual(columns, { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' });
+});
+
+test("a column the config declares that is not a Status option fails the read, naming each missing column's key and display name", async () => {
+  // `Stage` holds both missing names, so a read that looked for them in any single-select field
+  // but `Status` would find them there and pass.
+  const board = { ...BOARD, columns: { ...COLUMNS, owner: 'Needs Owner', done: 'Shipped' } };
+  const send = forge({
+    fields: fieldPage([
+      { name: 'Stage', options: ['Ready', 'Coding', 'Review', 'Needs Owner', 'Shipped'] },
+      { name: 'Status', options: ['Ready', 'Coding', 'Review', 'Owner', 'Done'] },
+    ]),
+  });
+
+  await assert.rejects(readSide(board, { send }).readColumns(), (error) => {
+    for (const named of ['board 6', 'owner', 'Needs Owner', 'done', 'Shipped']) {
+      assert.ok(error.message.includes(named), `${named} is not in: ${error.message}`);
+    }
+    assert.ok(!/\bready\b|\bcoding\b|\breview\b/.test(error.message), `a column the board holds is named: ${error.message}`);
+    return true;
+  });
+});
+
+test('a board with no single-select field named Status fails the column read, naming the field', async () => {
+  const send = forge({ fields: fieldPage([{ name: 'Stage', options: Object.values(COLUMNS) }]) });
+
+  await assert.rejects(readSide(BOARD, { send }).readColumns(), /board 6.*Status/);
+});
+
+test("two configs naming different display names for the same five keys each read their own board's columns into those keys", async () => {
+  // Five names none of which is the other config's, so a read that answered with one config's
+  // names, or with fixed ones, could not pass both.
+  const renamed = { ready: 'Up Next', coding: 'Building', review: 'In Review', owner: 'Needs A Human', done: 'Shipped' };
+  const reads = [];
+  for (const columns of [COLUMNS, renamed]) {
+    const send = forge({ fields: fieldPage([{ name: 'Status', options: Object.values(columns) }]) });
+    reads.push(await readSide({ ...BOARD, columns }, { send }).readColumns());
+  }
+
+  assert.deepEqual(reads, [
+    { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' },
+    { ready: 'Up Next', coding: 'Building', review: 'In Review', owner: 'Needs A Human', done: 'Shipped' },
+  ]);
+});
+
+test('the single-select fields but Status read back with their options in board order, and no field of another type', async () => {
+  // As the fake board holds them: the columns apart, and every other single-select field with its
+  // options in the order the board gives them, which is neither alphabetical nor reversed.
+  const send = forge({
+    fields: fieldPage([
+      { name: 'Status', options: Object.values(COLUMNS) },
+      { name: 'Priority', options: ['Urgent', 'Low', 'High', 'Medium'] },
+      { name: 'Model Tier', options: ['standard', 'high'] },
+    ]),
+  });
+
+  const fields = await readSide(BOARD, { send }).readFields();
+
+  assert.deepEqual(fields, [
+    { name: 'Priority', options: ['Urgent', 'Low', 'High', 'Medium'] },
+    { name: 'Model Tier', options: ['standard', 'high'] },
+  ]);
+});
+
+test("the repository's labels read back by name, across every page gh answers", async () => {
+  const send = forge({
+    labels: {
+      null: labelPage(['type:change', 'type:spec'], 'Y3Vyc29yOnYyOpHOABc'),
+      Y3Vyc29yOnYyOpHOABc: labelPage(['area:demo']),
+    },
+  });
+
+  assert.deepEqual(await readSide(BOARD, { send }).readLabels(), ['type:change', 'type:spec', 'area:demo']);
 });

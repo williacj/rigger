@@ -39,6 +39,12 @@ function boardQuery(operation, board, selection) {
   return `query { repositoryOwner(login: ${literal(owner)}) { ... on ProjectV2Owner { projectV2(number: ${board.project}) { ${selection} } } } }`;
 }
 
+/** A query selecting `selection` on the repository `board.repo` names as `owner/name`. */
+function repositoryQuery(board, selection) {
+  const [owner, name] = board.repo.split('/');
+  return `query { repository(owner: ${literal(owner)}, name: ${literal(name)}) { ${selection} } }`;
+}
+
 /**
  * Every node of a connection, read a page at a time. `query` builds a page's document from its
  * `after` argument, and `connectionOf` finds the connection in what `gh` answered. A page that
@@ -69,9 +75,7 @@ export function boardOf(operation, board, send) {
 
 /** The ID of the repository `board.repo` names as `owner/name`. */
 export function repositoryOf(operation, board, send) {
-  const [owner, name] = board.repo.split('/');
-  const query = `query { repository(owner: ${literal(owner)}, name: ${literal(name)}) { id } }`;
-  return asked(operation, board, query, send).repository.id;
+  return asked(operation, board, repositoryQuery(board, 'id'), send).repository.id;
 }
 
 /** The fields of an item the read asks for: its field values, and an issue's facts. */
@@ -106,11 +110,44 @@ function cardOf(operation, board, node) {
 }
 
 /**
+ * The board's single-select fields, each as `{ name, options }` with its option names in board
+ * order. A field of any other type answers as an empty object, and is left out.
+ */
+function singleSelectFields(operation, board, send) {
+  const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } }`);
+  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields)
+    .filter((field) => field.options)
+    .map((field) => ({ name: field.name, options: field.options.map((option) => option.name) }));
+}
+
+/**
  * The reads on `board`, which names its `repo`, its `project` number and its `columns`, the
  * display names the config declares by key. `send` stands in for the runners' spawn in tests.
  */
 export function readSide(board, { send } = {}) {
   return {
+    /**
+     * The columns the config declares, by its keys, each the option of the field holding the
+     * columns that the config names. This is where a declared column the board lacks is caught:
+     * the read fails naming every one, by key and display name.
+     */
+    readColumns: async () => {
+      const status = singleSelectFields('readColumns', board, send).find((field) => field.name === COLUMNS);
+      if (!status) fail('readColumns', board, `the board has no single-select field named ${COLUMNS}`);
+      const missing = Object.entries(board.columns).filter(([, name]) => !status.options.includes(name));
+      if (missing.length > 0) {
+        const named = missing.map(([key, name]) => `${key} (${name})`).join(', ');
+        fail('readColumns', board, `its ${COLUMNS} field has no option for the declared column${missing.length > 1 ? 's' : ''} ${named}`);
+      }
+      return { ...board.columns };
+    },
+    /** The board's single-select fields but the one holding the columns, as `{ name, options }`. */
+    readFields: async () => singleSelectFields('readFields', board, send).filter((field) => field.name !== COLUMNS),
+    /** The names of the labels the board's repository holds. */
+    readLabels: async () => {
+      const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
+      return everyPage('readLabels', board, send, query, (data) => data?.repository?.labels).map((label) => label.name);
+    },
     /** Every card on the board, in board order. */
     readItems: async () => {
       const query = (page) => boardQuery('readItems', board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
