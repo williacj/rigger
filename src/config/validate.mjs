@@ -2,6 +2,8 @@
 // the values only the consumer can answer, and the refusal of anything else, each
 // refusal naming what it refused.
 
+import { inspect } from 'node:util';
+
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits
  * under. A placeholder is a name where a value belongs, so a config still holding one is refused.
@@ -307,6 +309,20 @@ function readBoardOwner(board, refusals) {
 }
 
 /**
+ * What a declared concurrency may be: N, the number of cards L3 works at once, which is a
+ * positive whole number. A config that declares none runs at the default, so only a declared one
+ * has anything to read.
+ */
+function readConcurrency(config, refusals) {
+  if (!Object.hasOwn(config, 'concurrency')) return;
+  const { concurrency } = config;
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    // Named as a module would write it: JSON spells NaN and Infinity as null, and throws on a BigInt.
+    refusals.push(`\`concurrency\` must be a positive whole number, and the config gives ${inspect(concurrency)}`);
+  }
+}
+
+/**
  * What each provisioning step's selector may be. A step that selects nothing is selected by the
  * kinds that name it, so only a step that declares `select` has labels to read.
  */
@@ -351,6 +367,7 @@ export function validate(config) {
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
   readEpicLabel(config, refusals);
+  readConcurrency(config, refusals);
   readProvisioning(config.provisioning, refusals);
   readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);
