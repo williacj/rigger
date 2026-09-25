@@ -24,7 +24,7 @@ const FORGE = 'gh';
 
 /** Throws the refusal every runner gives: which runner, what it refused, and that nothing went. */
 function refuse(runner, what) {
-  throw new Error(`the ${runner} runner refuses ${what}, and sent nothing`);
+  throw new Error(`the ${runner} runner refuses ${what}, and did not send it`);
 }
 
 /** How a request is named in a refusal: as the command it would have run. */
@@ -47,8 +47,8 @@ const oneOf = (args, lists) => lists.some((list) => list.length === args.length 
  * the request (`D16` rule 3), measured with gh 2.99.0 on macOS on 2026-09-25 through a local
  * proxy: with no flag it sends GET; with `-f`, `-F` or `--input` it sends POST; with `-X GET` or
  * `--method GET` it sends GET, and `-X GET -f` puts the field in the query string. So only a
- * named GET is admitted, and with no field at all. `test/forge-runners.test.mjs` asks `gh` the
- * same question each run.
+ * named GET is admitted, and with no field at all, after a path that is not itself a flag.
+ * `test/forge-runners.test.mjs` asks `gh` the same question each run.
  */
 const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET']];
 
@@ -109,7 +109,9 @@ export function readRunner(args, { send = plainly } = {}) {
     const operation = operationsOf('read', queryOf('read', args, rest));
     if (operation.type !== 'query') refuse('read', `${named(operation)}, which is not a query`);
   } else if (subcommand === 'api' && endpoint !== undefined) {
-    if (!oneOf(rest, EXPLICIT_GET)) {
+    // A path slot holding a flag makes that flag take the next word, so the `-X GET` after it
+    // would name no method: `gh api --input -X GET` sends `POST /GET` with a file as its body.
+    if (endpoint.startsWith('-') || !oneOf(rest, EXPLICIT_GET)) {
       refuse('read', `${spelled(args)}, which is not \`gh api <path>\` with an explicit GET and nothing else`);
     }
   } else if (!oneOf(args, READ_SUBCOMMANDS)) {

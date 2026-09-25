@@ -64,6 +64,17 @@ const REFUSED_PATH_FORMS = [
 ];
 
 /**
+ * Forms whose path slot holds a flag, so the flag takes the next word as its value and the
+ * `-X GET` after it is not what it looks like. With `--input`, gh reads a file named `-X` and
+ * sends `POST /GET` with its content as the body.
+ */
+const FLAG_IN_PATH_SLOT = [
+  ['api', '--input', '-X', 'GET'],
+  ['api', '--method', '-X', 'GET'],
+  ['api', '--hostname', '-X', 'GET'],
+];
+
+/**
  * The method and body `gh` really sends for `gh api` given `args`, caught by a proxy on this
  * machine so that nothing leaves it.
  *
@@ -71,7 +82,7 @@ const REFUSED_PATH_FORMS = [
  * read the request line; the token is a dummy the proxy never checks. Asked with `execFile`
  * rather than a synchronous spawn, because this process is also the proxy answering it.
  */
-async function methodGhSends(args) {
+async function methodGhSends(args, cwd = process.cwd()) {
   const seen = [];
   const proxy = createServer((request, response) => {
     let body = '';
@@ -95,7 +106,7 @@ async function methodGhSends(args) {
   };
   try {
     await new Promise((done, failed) => {
-      execFile('gh', args, { env }, (error) => (error ? failed(error) : done()));
+      execFile('gh', args, { env, cwd }, (error) => (error ? failed(error) : done()));
     });
   } finally {
     proxy.close();
@@ -110,15 +121,19 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
   // `gh` sends as a GET carrying nothing, and a form `gh` sends any other way is one it refuses.
   // The defect this catches is the day `gh` changes its default, which a pinned table would go on
   // agreeing with.
-  const body = join(mkdtempSync(join(tmpdir(), 'rigger-gh-input-')), 'body.json');
+  // The directory gh runs in holds a file named `-X`, for the form whose path slot is `--input`.
+  const inputs = mkdtempSync(join(tmpdir(), 'rigger-gh-input-'));
+  const body = join(inputs, 'body.json');
   writeFileSync(body, '{"a":1}');
+  writeFileSync(join(inputs, '-X'), '{"a":1}');
   const forms = [
     ['api', 'rate_limit', '-X', 'GET'],
     ['api', 'rate_limit', '--method', 'GET'],
     ...REFUSED_PATH_FORMS.map((form) => form.map((word) => (word === 'body.json' ? body : word))),
+    FLAG_IN_PATH_SLOT[0],
   ];
   for (const args of forms) {
-    const sent = await methodGhSends(args);
+    const sent = await methodGhSends(args, inputs);
     let admitted = true;
     try {
       readRunner(args, { send: recording() });
@@ -134,8 +149,9 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
 test('the read runner refuses `gh api <path>` in any other form, naming it, and sends nothing', () => {
   // The defect this catches is a runner that reads `gh api <path>` as a read because no method
   // was named: `gh` then chooses the method itself, and with a field or an input it chooses POST.
-  // `-X GET -f` sends a GET, and is refused anyway, because the card admits no field at all.
-  for (const args of REFUSED_PATH_FORMS) {
+  // `-X GET -f` sends a GET, and is refused anyway, because the card admits no field at all. A
+  // flag in the path slot takes the next word as its value, so `-X GET` there sets no method.
+  for (const args of [...REFUSED_PATH_FORMS, ...FLAG_IN_PATH_SLOT]) {
     const send = recording();
     assert.throws(() => readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
     assert.deepEqual(send.sent, [], args.join(' '));
