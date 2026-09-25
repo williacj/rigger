@@ -192,8 +192,9 @@ Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this
 (`R-SAFE-5`). The engine runs from a tarball installed outside the source tree, because an
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
 this, and the worktree root belongs outside both the checkout and the package. **The engine
-never merges a change to its own live gate, config, or CLI entry point** — those cards are done
-by hand. Those three, by path:
+never merges a change to its own live gate, config, or CLI entry point**, and never dispatches a
+card that makes one. `D19`'s permission, under "Review and merge", reaches a card changing any
+path listed below, on the same evidence as any other card. Those three, by path:
 
 - The live gate: `.githooks/`.
 - The live config: `rigger.config.mjs`, and `templates/rigger.config.mjs` with it.
