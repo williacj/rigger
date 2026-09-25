@@ -13,6 +13,9 @@ import { STAND_IN } from '../src/substrate/forge/runners.mjs';
  *
  * Each call is recorded as its arguments joined by spaces, one line per call, so an argument
  * holding a line break would read as two calls. None this repository sends holds one.
+ *
+ * It answers through `/bin/cat` by its path, because a test can put it on a path too narrow to
+ * hold `cat`, as `test/package.test.mjs` does.
  */
 export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'rigger-stub-gh-'));
@@ -23,8 +26,8 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   const script = [
     '#!/bin/sh',
     `printf '%s\\n' "$*" >> '${record}'`,
-    `cat '${out}'`,
-    `cat '${err}' >&2`,
+    `/bin/cat '${out}'`,
+    `/bin/cat '${err}' >&2`,
     `exit ${status}`,
     '',
   ].join('\n');
