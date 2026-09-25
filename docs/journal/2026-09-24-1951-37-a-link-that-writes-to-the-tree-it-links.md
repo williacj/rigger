@@ -88,8 +88,11 @@ This is the sharpest form of the reason. `npm link` does not merely point the ru
 tree; setting the link up **writes to the source tree**, and it writes to the one file the package
 declares as its entry point. An engine installed that way is running out of files that the install
 itself has already edited, and an agent it dispatches works on those same files. The tarball
-install wrote nothing to the clone: `git status --porcelain` was empty after `npm pack` and empty
-again after the install.
+install changed no tracked file in the clone: `git status --porcelain -uno` was empty after
+`npm pack` and empty again after the install. `npm pack` does leave its tarball in the working
+directory, and `*.tgz` is in no `.gitignore` rule here — `git check-ignore` exits 1 on it — so a
+plain pack leaves `?? williacj-rigger-0.0.0.tgz` behind. The tarball was moved to a directory
+outside the clone before anything else ran, which is why the untracked listing is empty too.
 
 The global link was removed afterwards (`npm rm -g @williacj/rigger`), and `src/cli/rigger.mjs` was
 restored from the index.
@@ -133,6 +136,10 @@ with each other perfectly and still stop short of the same line.
 Removing the refusal branch from `doctor()` in a disposable clone — guarded on the file normalising
 to `cbb8e81336cdc1ad0ef3dcd56b3a1a3783d52feb`, the blob at the PR head, and reported as applied with
 the 302 characters it removed — took `node --test test/doctor.test.mjs` from 22 of 22 to 20 of 22.
+The 302 is the span from the `if` keyword through its closing brace, in the CRLF form the file has
+on disk, with neither the line's leading indent nor a trailing newline. The same block measures 295
+in its LF form, and 306 CRLF or 298 LF once the indent and the newline are counted in; a character
+count of a source span means nothing without saying which of those it is.
 The two that red do so on an assertion about the refusal text. The three that stay green prove the
 other halves of the same requirement: that the check does not over-refuse a sibling directory or a
 second spelling, and that a tree git cannot name is refused by the branch this mutation left alone.
@@ -141,12 +148,12 @@ The file was restored and re-hashed to `cbb8e81` before the suite was re-run gre
 ## What the M0 assets got wrong on first use
 
 The card asks what the assets M0-1 and M0-2 committed got wrong. Something did, repeatedly. What
-follows is what the journal and this repository support, and then where the list I was handed does
-not hold.
+follows is what the journal and this repository support, and then the two claims that did not
+survive being checked — one from the list I was handed, and one this entry made itself.
 
 ### An acceptance item whose falsifier is narrower than the sentence above it
 
-This is real, and it is the acceptance skill's own failure rather than a maker's. Two shapes are
+This is real, and it is the acceptance skill's own failure rather than a maker's. Four shapes are
 evidenced.
 
 **A bar no work could pass.** Card #57 carried an item requiring every behaviour above it to have a
@@ -168,11 +175,26 @@ than the one leaving the report unread: "had we only deleted the stale entry, th
 would have survived the fix intact, with the acceptance arguably met"
 (`docs/journal/2026-09-24-1038-157-the-exemption-was-never-what-stopped-it.md`).
 
-The finding underneath all three is not that the acceptance skill lacks a rule. It has one: it has
-required a named falsifier since well before any of these cards. Every one of these defects
-happened under that rule, and none of them produced a change to the skill. The asset that went
-wrong on first use is the acceptance skill, and what went wrong is that stating the rule did not
-make it run.
+**A bar no work in this repository could trip.** Card #166's fifth item reads "No dependency version
+resolved in the lock file changes. A package whose resolved version differs fails this item." This
+repository declares no dependencies, so the item's stated failure condition has no referent and no
+work here could fail it. Its own entry says so plainly — "The claim 'no resolved version changed' is
+therefore true over an empty dependency set, which is a weaker statement than it sounds"
+(`docs/journal/2026-09-24-1104-166-the-lock-predated-the-bin-key.md`) — and PR #170's verdict names
+it as a defect in round 1: "item 5 is unfalsifiable in this repository… An item no work could fail
+is not a bar."
+
+**A bar with no floor at all.** The card this entry belongs to carries one. Card #37's third item
+asks for a reviewer session that "produces findings" and says nothing about what a finding must be,
+so an idle session returning three trivial ones meets it as written. Its author recorded that
+rather than amending it mid-card, which is what `R-CARD-5` requires of them.
+
+The finding underneath these four shapes is not that the acceptance skill lacks a rule. It has one,
+and it has had it throughout: `git log -- .claude/skills/acceptance/` at `306d5e9` ends at
+`b22652f`, dated 2026-09-22, and every defect above was written on 09-23 or 09-24. So each of them
+happened under the rule, and not one of them has moved the skill since. The asset that went wrong
+on first use is the acceptance skill, and what went wrong is that stating the rule did not make it
+run.
 
 ### False greens
 
@@ -251,35 +273,48 @@ made: on the files the budget governs, the two tools disagree everywhere, and th
 **Figures pinned to the wrong ref.** The most frequent measurement fault in the milestone, and the
 one that did reach an asset: card #115 proposed the rule and card #139 records the owner ratifying
 it into `AGENTS.md`, which at `01636ab` requires a measured figure to name its source, scope and
-ref. The
-rule landed and the fault continued — card #177's round one read a failure pointer against a parent
-tree that never ran the sweep. A rule about naming a ref does not by itself make anyone check that
-the ref is still the one being ruled on.
+ref. The rule landed and the fault continued — card #177's round one read a failure pointer against
+a parent tree that never ran the sweep. A rule about naming a ref does not by itself make anyone
+check that the ref is still the one being ruled on.
 
 ### The pattern the list did not name
 
 Two branches, each green, whose merge is red. Card #120 is the first: "One branch had the offence
 and no detector; the other had the detector and nothing to detect"
-(`docs/journal/2026-09-23-1558-120-two-green-branches-one-red-merge.md`). Cards #152, #167 and #168
-hit it again, and card #177 names the class and the worse case: "A merge can falsify an invariant
-that no check yet expresses, and the red then arrives with whoever writes the check, attached to a
-tree they did not break"
+(`docs/journal/2026-09-23-1558-120-two-green-branches-one-red-merge.md`). Five more cards record it.
+Card #151 watched `origin/main` move from `f4c2ba1` to `926e954` mid-review and arrive carrying "an
+eleventh fixture of exactly the shape this card exists to fix", so that "merging main in red the
+enumeration on that one site and nothing else, before anybody read the new file". Card #152 records
+two branches that "shared no files" and "collided on a rule", and names card #120 as the same shape
+earlier the same day. Card #167 found its branch "red only at the merge `c433d57`", and card #168
+opens on "each green merged into a red `main` that no card owned". Card #177 names the class and
+the worse case: "A merge can falsify an invariant that no check yet expresses, and the red then
+arrives with whoever writes the check, attached to a tree they did not break"
 (`docs/journal/2026-09-24-1756-177-an-invariant-a-sibling-branch-can-falsify.md`).
 
-Six cards is more instances than any single item in the list I was given. It is worth naming here
-because it is the one M0 failure that no reviewer, no acceptance and no maker could have caught:
-every party was reading a tree that was green.
+Six cards — #120, #151, #152, #167, #168 and #177 — is more than any single item in the list I was
+given accounts for. It is worth naming here because it is the one M0 failure that no reviewer, no
+acceptance and no maker could have caught: every party was reading a tree that was green.
 
-### Where the list I was given does not hold
+### What did not survive being checked
 
-Two claims did not survive being checked, and saying so is the point of the retrospective.
-
-**"A bar no work in this repository could trip" has no instance as an acceptance item.** Nothing in
-the journal describes an acceptance bar that could not be tripped. Three artefacts fit the shape and
-none of them is an acceptance bar: card #33's four checks that could not have failed, card #176's
-guard list that had gone quiet, and card #161's negative fixture. All three are tests or fixtures.
-The distinction matters, because a test that cannot fail is caught by a mutation and an acceptance
-item that cannot be tripped is not.
+One claim in the list I was given, and one of my own. Saying so is the point of the retrospective.
 
 **The `origin` claim is right and the journal is not where it is written.** It is recorded above as
 a measurement taken by this card, not as a citation, because there was nothing to cite.
+
+**This card's round one denied that "a bar no work could trip" had any instance, and it had one.**
+Card #166's fifth item is recorded above. The denial was wrong on the journal's own contents — the
+#166 entry states the vacuity in its own words — and wrong on a second source it never opened, PR
+#170's verdict, which had already called the item a defect in round 1. A sweep of the 61 entries
+this directory held at `01636ab` answered that nothing was there, and what it had actually
+established was that nothing matched the words the sweep was built from. That is this entry's own
+instance of the false green named above: a clean answer about something it never read.
+
+The correction costs an inference, which is the part worth keeping. The denial carried a
+distinction — that a test which cannot fail is caught by a mutation while an acceptance item that
+cannot be tripped is not. The one real instance refutes it: card #166's item 5 was caught, on round
+one, by a judge reading the acceptance against the repository. So the two are not asymmetric in the
+way that sentence claimed. What separates them is cheaper than that: a mutation catches an
+unfailable test without anyone forming a hypothesis, and an unfalsifiable acceptance item needs a
+reader who goes and looks for the referent. Both are caught; only one is caught by machinery.
