@@ -26,3 +26,6 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 
 | id | requirement | from | withdrawn | replaced by |
 |---|---|---|---|---|
+| R-CARD-15 | — a fenced code block opens at a line indented at most three spaces that opens with three or more backticks or three or more tildes; | D2 | 2026-09-25 | R-CARD-35 |
+| R-CARD-16 | — a fenced code block closes at the next line indented at most three spaces that holds only a run of at least as many of the same character; | D2 | 2026-09-25 | R-CARD-26 |
+| R-CARD-25 | — a task-list item, whose text opens with `[ ]`, `[x]` or `[X]`, and a bullet whose text is empty or only whitespace, are never items. | D2 | 2026-09-25 | R-CARD-37, R-CARD-38 |

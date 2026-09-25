@@ -362,6 +362,7 @@ test('a kind whose judges are not an ordered list is refused, because their orde
   assert.match(refusal(withKind({ judges: 'reviewer' })), /`kinds\.change\.judges`/);
 });
 
+// proves R-SCHED-14
 test('a kind whose select.labels is empty is refused, and the refusal names that kind', () => {
   assert.match(refusal(withKind({ select: { labels: [] } })), /`kinds\.change\.select\.labels`/);
 });
@@ -382,6 +383,38 @@ test('a kind whose select.labels holds an entry that is no label name is refused
   }
 });
 
+test('a declared epic label that is one label name is accepted', () => {
+  for (const epicLabel of ['type:epic', 'kind:epic']) {
+    assert.deepEqual(validate({ ...rigger, epicLabel }), [], epicLabel);
+  }
+});
+
+// A card carries labels by name, so an epic label that is no name marks no card, and a list
+// declares more than the one label that marks an epic.
+test('a declared epic label that is not one label name is refused, and the refusal names the key', () => {
+  for (const epicLabel of ['', '   ', 3, null, undefined, true, ['type:epic'], { label: 'type:epic' }]) {
+    assert.match(refusal({ ...rigger, epicLabel }), /`epicLabel`/, JSON.stringify(epicLabel) ?? 'undefined');
+  }
+});
+
+// A kind selecting the epic label would have every card it selects count as an epic, and so
+// never be pulled (`R-SCHED-11`), without anyone being told.
+test('an epic label that a kind selects is refused, and the refusal names the key, the kind and the label', () => {
+  const earned = refusal({ ...rigger, epicLabel: 'type:spec' });
+  assert.match(earned, /`epicLabel`/);
+  assert.match(earned, /`kinds\.spec`/);
+  assert.match(earned, /`type:spec`/);
+
+  const second = refusal({
+    ...withKind({ select: { labels: ['type:change', 'type:epic'] } }),
+    epicLabel: 'type:epic',
+  });
+  assert.match(second, /`epicLabel`/);
+  assert.match(second, /`kinds\.change`/);
+  assert.match(second, /`type:epic`/);
+});
+
+// proves R-SCHED-14
 test('a kind selecting one label or two is accepted', () => {
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change', 'type:fix'] } })), []);
