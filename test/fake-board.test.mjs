@@ -113,3 +113,71 @@ test("moving one card changes that card's column and no other card's", async () 
 
   assert.deepEqual(await columnsByNumber(fake), { 1: 'Ready', 2: 'Review', 3: 'Review' });
 });
+
+test('a move to a column the board lacks is refused, naming the column, and no card moves', async () => {
+  const fake = threeCards();
+  const [, two] = await fake.operations.readItems();
+
+  await assert.rejects(fake.operations.moveItem(two.id, 'Shipped'), /Shipped/);
+
+  assert.deepEqual(await columnsByNumber(fake), { 1: 'Ready', 2: 'Coding', 3: 'Review' });
+  assert.deepEqual(fake.writes(), [], 'a refused move wrote nothing, so it is not recorded');
+});
+
+test('the board records each write in the order it was made', async () => {
+  const fake = threeCards();
+
+  await fake.operations.moveItem('item-1', 'Coding');
+  await fake.operations.createColumn('Owner');
+  await fake.operations.createField('Priority', ['P0', 'P1', 'P2']);
+  await fake.operations.createLabel('type:change');
+
+  assert.deepEqual(fake.writes(), [
+    { operation: 'moveItem', args: ['item-1', 'Coding'] },
+    { operation: 'createColumn', args: ['Owner'] },
+    { operation: 'createField', args: ['Priority', ['P0', 'P1', 'P2']] },
+    { operation: 'createLabel', args: ['type:change'] },
+  ]);
+});
+
+test('a board that has only been read has an empty write record', async () => {
+  const fake = threeCards();
+
+  await fake.operations.readItems();
+  await fake.operations.readColumns();
+  await fake.operations.readFields();
+
+  assert.deepEqual(fake.writes(), []);
+});
+
+/** A promise's outcome, readable without awaiting it, so a test can see a read still pending. */
+function watched(promise) {
+  const outcome = { settled: false, value: undefined };
+  outcome.done = promise.then((value) => Object.assign(outcome, { settled: true, value }));
+  return outcome;
+}
+
+test('a held read stays unresolved while a second read starts, and the test releases them in its own order', async () => {
+  const fake = threeCards();
+
+  const releaseFirst = fake.holdNextRead();
+  const first = watched(fake.operations.readItems());
+  const releaseSecond = fake.holdNextRead();
+  const second = watched(fake.operations.readColumns());
+
+  // The second read is released first. The first is still held after the second has answered,
+  // and it answers with the board as it stands when released, so a move made while it was held
+  // shows in what it returns.
+  releaseSecond();
+  await second.done;
+  assert.deepEqual(second.value, ['Ready', 'Coding', 'Review']);
+  assert.equal(first.settled, false, 'the first read answered before the test released it');
+
+  await fake.operations.moveItem('item-1', 'Review');
+  releaseFirst();
+  await first.done;
+  assert.deepEqual(
+    first.value.map((item) => item.column),
+    ['Review', 'Coding', 'Review'],
+  );
+});
