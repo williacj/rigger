@@ -292,10 +292,10 @@ test('the schema-write runner sends creating a field and creating a label, which
 });
 
 test('the schema-write runner refuses an operation its allowlist does not hold, naming it, and sends nothing', () => {
-  // Before #217 the allowlist is the two creations. Deleting a field, editing a field's options
-  // and deleting the board are schema writes too, and none of them is admitted.
+  // The allowlist is the two creations and way B's options write. Deleting a field, creating a
+  // view and deleting the board are schema writes too, and none of them is admitted.
   refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2Field(input: {fieldId: "PVTSSF_1"}) { clientMutationId } }'), ['deleteProjectV2Field']);
-  refuses(schemaWriteRunner, graphql('mutation { updateProjectV2Field(input: {fieldId: "PVTSSF_1", singleSelectOptions: []}) { clientMutationId } }'), ['updateProjectV2Field']);
+  refuses(schemaWriteRunner, graphql('mutation { createProjectV2View(input: {projectId: "PVT_1", name: "Board", layout: BOARD_LAYOUT}) { clientMutationId } }'), ['createProjectV2View']);
   refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2(input: {projectId: "PVT_1"}) { clientMutationId } }'), ['deleteProjectV2']);
 });
 
@@ -313,6 +313,146 @@ test('the schema-write runner refuses an allowlisted operation whose arguments n
   const looking = CREATE_LABEL.replace('"type:change"', '"PVTI_lADOBzomGc4Bkn7fzgd"');
   const send = recording();
   schemaWriteRunner(graphql(looking), { send });
+  assert.equal(send.sent.length, 1);
+});
+
+/** Board 6's field holding the columns, by the ID gh 2.99.0 answered for it on 2026-09-25. */
+const STATUS_ID = 'PVTSSF_lAHOBzomGc4BfS2xzhZmv7s';
+
+/**
+ * What gh 2.99.0 answered on 2026-09-25 to the schema-write runner's read of that field's options,
+ * `node(id:)` on board 6's `Status` field: every option it held, with its ID, colour and description.
+ */
+const STATUS_READ = {
+  data: {
+    field: {
+      name: 'Status',
+      options: [
+        { id: '8170fe10', name: 'Backlog', color: 'GRAY', description: '' },
+        { id: '4a17efad', name: 'Ready', color: 'BLUE', description: '' },
+        { id: 'a8e1b032', name: 'Coding', color: 'YELLOW', description: '' },
+        { id: '93d77a26', name: 'Review', color: 'ORANGE', description: '' },
+        { id: '107c9c68', name: 'Engine Review', color: 'PINK', description: '' },
+        { id: 'c20fd684', name: 'Needs Owner', color: 'RED', description: '' },
+        { id: 'd8f7c21d', name: 'Blocked', color: 'PURPLE', description: '' },
+        { id: '3ff59cbc', name: 'Done', color: 'GREEN', description: '' },
+      ],
+    },
+  },
+};
+
+/** The options STATUS_READ holds, each as the request writes a held option back. */
+const HELD = STATUS_READ.data.field.options;
+
+/** The option a request adds: `Owner`, which carries no ID because the field does not hold it. */
+const OWNER = { name: 'Owner', color: 'GRAY', description: '' };
+
+/** One option as a `singleSelectOptions` entry writes it, with an `id` only where it has one. */
+const optionEntry = ({ id, name, color, description }) =>
+  `{${id === undefined ? '' : `id: "${id}", `}name: "${name}", color: ${color}, description: "${description}"}`;
+
+/**
+ * An `updateProjectV2Field` on `fieldId` sending `options`, in the shape #212's report gives way B
+ * (`docs/spikes/status-option-through-gh.md`, "The ways tried"). `extra` is written into the input
+ * after the field ID.
+ */
+const optionsUpdate = (options, { fieldId = STATUS_ID, extra = '' } = {}) =>
+  `mutation { updateProjectV2Field(input: {fieldId: "${fieldId}"${extra}, singleSelectOptions: [${options.map(optionEntry).join(', ')}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
+
+/** Way B: every held option with its ID, name, colour and description, and `Owner` with no ID. */
+const WAY_B = optionsUpdate([...HELD, OWNER]);
+
+/** Way C: every held option by name, colour and description, but with no ID, and `Owner`. */
+const WAY_C = optionsUpdate([...HELD.map(({ id, ...rest }) => rest), OWNER]);
+
+/** The forge answering the schema-write runner's read of a field's options with `read`, and a write with success. */
+const holdingOptions = (read = STATUS_READ) => (command, args) => (args.at(-1).startsWith('query=query')
+  ? { status: 0, stdout: JSON.stringify(read), stderr: '' }
+  : { status: 0, stdout: `{"data":{"updateProjectV2Field":{"projectV2Field":{"id":"${STATUS_ID}"}}}}`, stderr: '' });
+
+test('the schema-write runner sends way B, every held Status option with its id and a new one without, after reading the options', () => {
+  const send = recording(holdingOptions());
+
+  schemaWriteRunner(graphql(WAY_B), { send });
+
+  // First its read of the options the field holds, through the read runner's own form, then the write.
+  assert.equal(send.sent.length, 2, JSON.stringify(send.sent));
+  assert.match(send.sent[0].at(-1), /^query=query /);
+  assert.ok(send.sent[0].at(-1).includes(`"${STATUS_ID}"`), send.sent[0].at(-1));
+  assert.deepEqual(send.sent[1], ['gh', ...graphql(WAY_B)]);
+});
+
+test('the schema-write runner refuses way C, every held Status option sent without its id, naming the request and each option, and sends nothing', () => {
+  // Way C cleared every item's column on #212's throwaway board. The defect this catches is an
+  // options write admitted by its operation's name alone.
+  const send = refuses(schemaWriteRunner, graphql(WAY_C), ['updateProjectV2Field', STATUS_ID, ...HELD.map(({ name, id }) => `${name} (${id})`)], { answer: holdingOptions() });
+  assert.equal(send.sent.length, 1, 'more was sent than the read of the options the field holds');
+});
+
+test('the schema-write runner refuses an options write that leaves out one held Status option, naming it, and sends nothing', () => {
+  // `singleSelectOptions` overwrites the options the field holds, so one left out is one removed,
+  // with the column of every item in it. Only `Blocked` is left out, so only it may be named.
+  const document = optionsUpdate([...HELD.filter(({ name }) => name !== 'Blocked'), OWNER]);
+  const send = refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', STATUS_ID, 'Blocked (d8f7c21d)'], { answer: holdingOptions() });
+  assert.equal(send.sent.length, 1);
+  assert.throws(() => schemaWriteRunner(graphql(document), { send: holdingOptions() }), (error) => !error.message.includes('Done'));
+});
+
+test('the schema-write runner refuses a held Status option sent with its id but not its own name, colour and description', () => {
+  // Way B echoes each held option as the field holds it: GitHub requires a colour and a
+  // description on every option sent, so one sent otherwise changes the option.
+  const changed = [
+    ['name', { ...HELD[1], name: 'Queued' }],
+    ['color', { ...HELD[1], color: 'GRAY' }],
+    ['description', { ...HELD[1], description: 'Waiting' }],
+  ];
+  for (const [what, option] of changed) {
+    const document = optionsUpdate(HELD.map((held) => (held.id === option.id ? option : held)));
+    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Ready (4a17efad)', what], { answer: holdingOptions() });
+  }
+  // With no colour or description at all.
+  const bare = optionsUpdate(HELD).replace(', color: BLUE, description: ""', '');
+  refuses(schemaWriteRunner, graphql(bare), ['updateProjectV2Field', 'Ready (4a17efad)'], { answer: holdingOptions() });
+});
+
+test('the schema-write runner refuses a new option carrying an id the field does not hold, naming it', () => {
+  // A new option carries no id in way B. An id the field does not hold names no option of it.
+  const document = optionsUpdate([...HELD, { ...OWNER, id: '0badf00d' }]);
+  refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Owner', '0badf00d'], { answer: holdingOptions() });
+});
+
+test('the schema-write runner refuses an options write whose input carries more than way B\'s field ID and options, naming what', () => {
+  // Way B's input is the field and its options. A `name` renames the field holding the columns,
+  // and an option carrying a field way B does not send is not way B, so each is refused before
+  // anything is read.
+  const refused = [
+    [optionsUpdate([...HELD, OWNER], { extra: ', name: "Stage"' }), 'name'],
+    [optionsUpdate([...HELD, OWNER], { extra: ', multiSelectOptions: []' }), 'multiSelectOptions'],
+    [optionsUpdate([...HELD, OWNER], { extra: ', fieldId: "PVTSSF_other"' }), 'fieldId'],
+    [WAY_B.replace('description: ""}]', 'description: "", nameHTML: "x"}]'), 'nameHTML'],
+    [optionsUpdate([...HELD, HELD[0], OWNER]), 'Backlog (8170fe10)'],
+    [WAY_B.replace('{fieldId:', '{clientMutationId: "x", fieldId:'), 'clientMutationId'],
+  ];
+  for (const [document, what] of refused) {
+    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+  }
+});
+
+test('the schema-write runner refuses an options write on any field but the one holding the columns, naming it', () => {
+  // Which field holds the columns is read from the board, because an ID says nothing about it.
+  const priority = { data: { field: { name: 'Priority', options: [{ id: 'p1', name: 'High', color: 'RED', description: '' }] } } };
+  const document = optionsUpdate([...priority.data.field.options, OWNER], { fieldId: 'PVTSSF_priority' });
+  const send = refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Priority', 'PVTSSF_priority'], { answer: holdingOptions(priority) });
+  assert.equal(send.sent.length, 1);
+  // A field that is not single-select answers as an empty object, as gh answered for a text field.
+  refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'PVTSSF_priority'], { answer: holdingOptions({ data: { field: {} } }) });
+});
+
+test('the schema-write runner sends no options write when it cannot read the options the field holds', () => {
+  // Recorded from gh 2.99.0 on 2026-09-25, answering the options read over an ID that resolves to nothing.
+  const failing = () => ({ status: 1, stdout: '{"data":{"field":null},"errors":[]}', stderr: "gh: Could not resolve to a node with the global id of 'PVTSSF_doesnotexist'\n" });
+  const send = recording(failing);
+  assert.throws(() => schemaWriteRunner(graphql(WAY_B), { send }), /Could not resolve to a node/);
   assert.equal(send.sent.length, 1);
 });
 
