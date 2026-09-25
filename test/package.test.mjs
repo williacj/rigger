@@ -130,8 +130,8 @@ test('the tarball holds every file under src/, templates/ and scripts/, and of t
 /**
  * This checkout packed into a tarball and installed from it, both in directories outside the
  * checkout (`R-SAFE-5`: Rigger never runs from its own source tree). Offline, because the package
- * has no dependencies and so an install that needs the network has gone wrong. Built once and
- * shared, because packing and installing is the slow part and the tests below only read it.
+ * has no runtime dependencies and so an install that needs the network has gone wrong. Built once
+ * and shared, because packing and installing is the slow part and the tests below only read it.
  */
 let installed;
 function installFromTarball() {
