@@ -39,12 +39,17 @@ either. #229 writes the pull event, and #280 puts it between the claim and the c
 the binding outside `src/scheduling/` bars every call. This is how #213 already reads the write
 sides. The rule throws on a tree with no `loop` export, so a rename cannot pass it vacuously.
 
-**Bindings alone missed a factory.** The round-1 judge found the gap. A `src/scheduling/`
-function could return `loop`, and `src/cli/` could call what that function returned. The CLI's
-binding then resolved only to the factory. Rule 8 now also follows what a binding hands back as
-a value, through returns, local aliases, nested functions and object members. A call hands back
-its result, never its callee. So a scheduling function that calls `loop` and returns the result
-stays a legal call path. That is the claim-only call's shape.
+**A factory showed "calls" had no edge, and the author drew one.** In round 1 a judge found that
+a `src/scheduling/` function returning `loop` got past the rule. I added a separate walk of what
+functions return. Round 2 found more routes past that walk, and the walk also flagged a function
+whose parameter was named `loop`. The card's author then revised item 10. A binding holds the
+entry point through #213's eight hand-on steps and no others. A factory called by its name sits
+on the review side, as it does for the write sides.
+
+That made the separate walk redundant. The reader that already resolves what each binding holds
+is that definition, so rule 8 now asks it whether a binding resolves to `loop`. The proof reuses
+the write sides' step fixtures with `loop` in the side's place. Under a mutation that reads only
+a binding's first definition, every step shape but the direct named import goes red.
 
 **`JSON.stringify` cannot name every value a module can hold.** It turned `NaN` and `Infinity`
 into `null`, and it threw on `3n`, which crashed `doctor`. The concurrency refusal now names the

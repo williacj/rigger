@@ -1,6 +1,6 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
 // may import, to the config keys, card facts and processes its layer may touch, and to whether it
-// may call L3's dispatching entry point.
+// may hold L3's dispatching entry point.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -529,12 +529,20 @@ test('a side with no module, or no runner, is refused rather than read as clean'
   assert.throws(() => boundaryReport(renamed), /itemWriteRunner/);
 });
 
-test('rule 8: a module outside src/scheduling/ calling L3\'s dispatching entry point fails, whether imported, re-exported or loaded', () => {
-  const calls = 'export const start = (deps) => loop(deps).pull();';
-  for (const directory of ['cli', 'workflow', 'observation', 'substrate']) {
-    const file = `src/${directory}/start.mjs`;
-    assertBreaks({ [file]: `import { loop } from '../scheduling/loop.mjs';\n${calls}` }, file, 'rule 8');
+/** Every directory under src/ at this head but src/scheduling/, each named as `src/<name>/`. */
+const outsideScheduling = () => [...new Set([...sourceTree().keys()].map((path) => `src/${path.split('/')[1]}/`))]
+  .filter((directory) => directory !== 'src/scheduling/');
+
+test('rule 8: a named import of L3\'s dispatching entry point from each directory under src/ but src/scheduling/ fails', () => {
+  const directories = outsideScheduling();
+  assert.ok(directories.includes('src/config/') && directories.includes('src/cli/'), `the tree read no directories: ${directories.join(', ')}`);
+  for (const directory of directories) {
+    const file = `${directory}start.mjs`;
+    assertBreaks({ [file]: "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();" }, file, 'rule 8');
   }
+});
+
+test('rule 8: a namespace import, a dynamic import and a re-export relayed through src/scheduling/ each fail from src/cli/', () => {
   assertBreaks({ 'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
   assertBreaks({ 'src/cli/start.mjs': "export const start = async (deps) => (await import('../scheduling/loop.mjs')).loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
   const relayed = {
@@ -558,34 +566,21 @@ test('rule 8: a tree with no dispatching entry point is refused rather than read
   assert.throws(() => boundaryReport(renamed), /`loop`/);
 });
 
-test('rule 8: a module outside src/scheduling/ binding the entry point a src/scheduling/ function returns fails, in each shape', () => {
-  const shapes = {
-    'an arrow returning it': 'export const getLoop = () => loop;',
-    'a declared function returning it': 'export function getLoop() { return loop; }',
-    'a function returning a local alias of it': 'export function getLoop() { const found = loop; return found; }',
-    'a function returning a function that returns it': 'export const getLoop = () => () => loop;',
-    'a function returning an object holding it': 'export const getLoop = () => ({ loop });',
-    'an object whose method returns it': 'export const getLoop = { get: () => loop };',
-  };
-  for (const [shape, factory] of Object.entries(shapes)) {
+test('the proof, rule 8: a hand-on of the entry point through each of the eight steps holds it, and importing it from src/cli/ fails', () => {
+  // The write sides' proof shapes, with the entry point for the side. The runners module plays no
+  // part in rule 8, so the shape importing a runner is not one of them.
+  const missed = [];
+  for (const [shape, template] of Object.entries(STEPS).filter(([, template]) => !template.includes('RUNNER'))) {
     const modules = {
-      'src/scheduling/factory.mjs': `import { loop } from './loop.mjs';\n${factory}`,
-      'src/cli/start.mjs': "import { getLoop } from '../scheduling/factory.mjs';\nexport const start = (deps) => getLoop(deps);",
+      'src/scheduling/index-default.mjs': "import { loop } from './loop.mjs';\nexport default loop;",
+      'src/scheduling/relay.mjs': template.replaceAll('../substrate/forge/index-default.mjs', './index-default.mjs').replaceAll('SIDE', './loop.mjs').replaceAll('NAME', 'loop'),
+      'src/cli/start.mjs': "import * as all from '../scheduling/relay.mjs';",
     };
     const found = messages(modules);
-    assert.ok(
-      found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:')),
-      `${shape}: expected src/cli/start.mjs to break rule 8; the report says:\n${found.join('\n') || '(nothing)'}`,
-    );
+    if (!found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:'))) missed.push(`${shape}: src/cli/start.mjs did not break rule 8`);
+    if (found.some((message) => message.startsWith('src/scheduling/'))) missed.push(`${shape}: a module under src/scheduling/ was reported: ${found.join('; ')}`);
   }
-});
-
-test('rule 8: src/cli/ calling getLoop()(deps).pull(), where a src/scheduling/ getLoop returns the entry point, fails', () => {
-  const modules = {
-    'src/scheduling/factory.mjs': "import { loop } from './loop.mjs';\nexport const getLoop = () => loop;",
-    'src/cli/start.mjs': "import { getLoop } from '../scheduling/factory.mjs';\nexport const start = (deps) => getLoop()(deps).pull();",
-  };
-  assertBreaks(modules, 'src/cli/start.mjs', 'rule 8');
+  assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);
 });
 
 test('rule 8: a src/scheduling/ function that calls the entry point and returns what the call gives hands the entry point to nobody', () => {
@@ -594,4 +589,17 @@ test('rule 8: a src/scheduling/ function that calls the entry point and returns 
     'src/cli/start.mjs': "import { tick } from '../scheduling/tick.mjs';\nexport const start = (deps) => tick(deps);",
   };
   assert.deepEqual(messages(modules), []);
+});
+
+test('rule 8: a src/scheduling/ function that only names the entry point, by a parameter of its name or by reading its name, holds nothing', () => {
+  for (const tick of [
+    "import { loop } from './loop.mjs';\nexport const tick = (loop) => loop;",
+    "import { loop } from './loop.mjs';\nexport const tick = () => loop.name;",
+  ]) {
+    const modules = {
+      'src/scheduling/tick.mjs': tick,
+      'src/cli/start.mjs': "import { tick } from '../scheduling/tick.mjs';\nexport const start = (deps) => tick(deps);",
+    };
+    assert.deepEqual(messages(modules), [], tick);
+  }
 });
