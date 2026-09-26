@@ -110,9 +110,11 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
 /**
  * L2's column changes over `fake`, and L3's loop over both under `concurrency` (none declared
  * where it is undefined), for a config whose board declares `columns` by key and whose L0 handle
- * reads priority under `priority`. L2's next action is the real one with freshness injected: once
- * a card's dispatch has returned, `fresh` says whether L2 has nothing more to do for it. `board`
- * is L0's handle, and `items` stands in for the board's writes.
+ * reads priority under `priority`. L2's next action is the real one with freshness injected
+ * through its own input: once a card's dispatch has returned in this world, `fresh` says whether
+ * L2 has nothing more to do for it, standing in for the verdict marker M5 reads. `board` is L0's
+ * handle, and `items` stands in for the board's writes. The sink writes to the state directory
+ * `directory`, a new temporary one where none is given.
  *
  * `sequence` records, in the one order they happened, each board move once the board has made
  * it, as `{ move, column }` with the item's id and the column's display name, and each dispatch
@@ -123,7 +125,7 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer,
-  items = fake.operations, board = handleOn(fake, { columns, priority }),
+  items = fake.operations, board = handleOn(fake, { columns, priority }), directory = mkdtempSync(join(tmpdir(), 'rigger-loop-')),
 } = {}) {
   const settings = { ...config, board: { ...config.board, columns } };
   delete settings.concurrency;
@@ -136,7 +138,6 @@ export function world({
       sequence.push({ move: id, column });
     },
   };
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-loop-'));
   let tick = 0;
   const sink = openSink({ directory, run: 'r-test', now: () => (tick += 1) });
   const layers = [];
@@ -148,7 +149,7 @@ export function world({
   };
   const l2 = columnChanges({ config: settings, sink, items: recorded });
   const returned = new Set();
-  const decide = (card) => (fresh && returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS));
+  const decide = (card) => nextAction(card, KINDS, undefined, { columns, fresh: (held) => fresh && returned.has(held.number) });
   const dispatches = heldDispatch(answer);
   const dispatch = async (start) => {
     sequence.push({ start: start.card.id });
