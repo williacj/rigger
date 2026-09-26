@@ -77,7 +77,8 @@ it established.
 
 Where a requirement and the architecture disagree, the requirement is right. This file states
 only what a session must do about any of them. Changing an authored document in the table above
-needs the owner's agreement. The generated one is not edited at all — it regenerates, and a
+needs the owner's ratification under "Review and merge". The generated one is not edited at all —
+it regenerates, and a
 hand edit there is a lint failure rather than an argument (D8). A change to a recorded decision
 is written in the register; a change to the others is written where it lives. Two documents in
 conflict, or a gap neither resolves, goes to the owner — never to whoever noticed it.
@@ -180,12 +181,15 @@ those markers against the card's judge list, and admits nothing until the consum
 have passed too.
 
 Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and never
-otherwise. The permission reaches the merge alone: every verdict in that evidence is another
-role's. `D19` records it and what ends it.
+otherwise. This permission does not reach a card changing any authored document in "What binds".
+Such a card must have a kind that names `owner` among its judges. A card whose kind does not name
+`owner` cannot merge with that edit. The permission reaches the merge alone: every verdict in
+that evidence is another role's. `D22` records this rule and what ends it.
 
 Until M5, where a card's kind names `owner` among its judges, the owner's merge is the owner's
-verdict. So until M5 only the owner merges that card, and its maker never does. `D21` records
-both, and what M5 must settle in their place.
+verdict. So until M5 only the owner merges that card, and its maker never does. This includes
+every card changing an authored document in "What binds". `D21` records the owner's verdict
+and what M5 must settle in its place.
 
 ## Self-hosting
 
@@ -194,8 +198,8 @@ Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
 this, and the worktree root belongs outside both the checkout and the package. **The engine
 never merges a change to its own live gate, config, or CLI entry point**, and never dispatches a
-card that makes one. `D19`'s permission, under "Review and merge", reaches a card changing any
-path listed below, on the same evidence as any other card. Those three, by path:
+card that makes one. `D22`'s permission, under "Review and merge", reaches a card changing any
+path listed below, subject to the authored-document rule there. Those three, by path:
 
 - The live gate: `.githooks/`.
 - The live config: `rigger.config.mjs`, and `templates/rigger.config.mjs` with it.
