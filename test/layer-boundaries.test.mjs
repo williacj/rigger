@@ -963,6 +963,33 @@ test('rule 3 by receiver bars nothing more: a method the module replaced before 
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
 
+test('rule 3 by receiver: an instance a function\'s new built on an earlier call, kept outside that function, keeps its method when the same new\'s later instance is written', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const shapes = [
+    // Codex's first module (PR #296, comment 5842313355, item 6).
+    `${ITEMS}\nlet first;\nexport const rank = (c) => {\n  const x = new Items();\n  if (!first) { first = x; return 0; }\n  x.take = b => b.items();\n  return first.take(c.board ?? {});\n};`,
+    // Claude's prev module (PR #296, comment 5840759097, follow-up 1).
+    `${ITEMS}\nlet prev = null;\nexport const rank = (config) => { const x = new Items(); if (!prev) { prev = x; return 0; } const old = prev; x.take = (board) => board.items(); return old.take(config.board); };`,
+    // The binding outside the function is another function's local, which a closure keeps.
+    `${ITEMS}\nexport const make = () => { let first; return (c) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first.take(c.board); }; };`,
+    // The kept instance is held by a property of an object outside the function.
+    `${ITEMS}\nconst kept = {};\nexport const rank = (c) => { const x = new Items(); kept.first ??= x; x.take = (board) => board.items(); return kept.first.take(c.board); };`,
+    // A method of a class, whose new runs once per call of the method.
+    `${ITEMS}\nexport class Ranks { rank(c) { const x = new Items(); this.first ??= x; x.take = (board) => board.items(); return this.first.take(c.board); } }`,
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 by receiver bars nothing more across calls: a call on the instance this call built, after its write, passes', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const handles = [
+    `${ITEMS}\nlet first;\nexport const pull = (deps) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return x.take(deps.board); };`,
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const y = x; x.take = (board) => board.items(); return y.take(deps.board); };`,
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
 test('an anonymous default function in src/scheduling/ that calls the entry point is read, and hands it to nobody', () => {
   // Codex's case on #298: the reader once read a name this declaration does not have, and
   // refused the module as unreadable.

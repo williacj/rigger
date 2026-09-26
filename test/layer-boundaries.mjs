@@ -614,17 +614,19 @@ const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'Whil
 function callables(program) {
   const scopeOf = new Map();
   const parentOf = new Map();
-  const newScope = (parent, fn) => ({ parent, fn, names: new Map() });
-  const moduleScope = newScope(null, true);
+  // A scope's `node` is the syntax that opens it, so where a binding lives can be placed in the source.
+  const newScope = (parent, fn, node) => ({ parent, fn, node, names: new Map() });
+  const moduleScope = newScope(null, true, program);
   const declare = (scope, name) => {
     if (!scope.names.has(name)) scope.names.set(name, []);
     return scope.names.get(name);
   };
   const functionScope = (scope) => (scope.fn ? scope : functionScope(scope.parent));
-  const lookup = (name, scope) => {
+  const declaring = (name, scope) => {
     if (!scope) return null;
-    return scope.names.has(name) ? scope.names.get(name) : lookup(name, scope.parent);
+    return scope.names.has(name) ? scope : declaring(name, scope.parent);
   };
+  const lookup = (name, scope) => declaring(name, scope)?.names.get(name) ?? null;
   const classes = [];
   const memberWrites = [];
   const nameWrites = [];
@@ -641,18 +643,18 @@ function callables(program) {
     if (node.type === 'FunctionDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
     if (node.type === 'ClassDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
     if (isFunction(node) || node.type === 'FunctionDeclaration') {
-      inner = newScope(scope, true);
+      inner = newScope(scope, true, node);
       if (node.type === 'FunctionExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
       for (const param of node.params) for (const bound of boundBy(param)) declare(inner, bound);
     } else if (node.type === 'ClassExpression' || node.type === 'ClassDeclaration') {
       classes.push(node);
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
       if (node.type === 'ClassExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
     } else if (node.type === 'CatchClause') {
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
       for (const bound of boundBy(node.param)) declare(inner, bound);
     } else if (BLOCKS.has(node.type)) {
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
     } else if (node.type === 'ImportDeclaration') {
       for (const specifier of node.specifiers) declare(scope, specifier.local.name);
     } else if (node.type === 'VariableDeclaration') {
@@ -761,11 +763,25 @@ function callables(program) {
    * An instance is `{ kind: 'instance', node: its class, site }`. `site` is the `new` that built it,
    * so a write to one instance reaches that instance alone. It is null for `this`, which may be any
    * instance, and 'prototype' for `super`, which reads the class's methods and never an instance's.
+   *
+   * A `new` inside a function builds an instance on every call of it. Read from a binding or an
+   * object that outlives the call, the instance may be one an earlier call built, so it is marked
+   * `earlier`: a write through this call's instance reaches it, but replaces nothing on it.
    */
   const side = (klasses, statics, site = null) => klasses.map((node) => (statics ? { kind: 'class', node } : { kind: 'instance', node, site }));
   const same = (a, b) => a.kind === b.kind && a.node === b.node
     && (a.kind !== 'instance' || a.site === null || b.site === null || a.site === b.site);
-  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site) === i);
+  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site && other.earlier === value.earlier) === i);
+  /** Whether `holder`, the syntax a binding or an object lives in, can outlive a call of the function `site` is in. */
+  const outlives = (holder, site) => {
+    const fn = enclosingFunction(site);
+    return typeof holder?.start !== 'number' || holder.start < fn.start || holder.end > fn.end;
+  };
+  /** `values` as read out of `holder`: an instance a function's `new` built, where `holder` outlives the call, is marked `earlier`. */
+  const kept = (values, holder) => values.map((value) => {
+    const perCall = value.kind === 'instance' && value.site?.type === 'NewExpression' && enclosingFunction(value.site) !== null;
+    return perCall && !value.earlier && outlives(holder, value.site) ? { ...value, earlier: true } : value;
+  });
 
   /** Whether `node` sits in a loop of its own function, so it may run many times in one call. */
   const inLoop = (node) => {
@@ -778,12 +794,13 @@ function callables(program) {
    */
   const single = (value) => {
     if (value.kind === 'object' || value.kind === 'class') return !inLoop(value.node);
-    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !inLoop(value.site);
+    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !value.earlier && !inLoop(value.site);
   };
   /**
    * The writes to `key` on `value`. Each replaces what came before it only where its receiver can be
    * one object and nothing else; a receiver that may be one of several, any instance, or one of
-   * the objects a loop builds adds a definition and replaces none.
+   * the objects a loop builds adds a definition and replaces none. Nor does a write replace anything
+   * on an instance an earlier call built, which that write may never have reached.
    */
   const writesTo = (value, key) => memberWrites
     .filter((write) => keyOf(write.left.property, write.left.computed) === key)
@@ -791,7 +808,7 @@ function callables(program) {
       const receivers = distinct(valuesOf(write.left.object));
       if (!receivers.some((held) => same(held, value))) return [];
       const definite = receivers.length === 1 && single(receivers[0]);
-      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' }];
+      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' && !value.earlier }];
     });
   /** The members `klass` itself writes under `key`, on its static side or its prototype. */
   const classMembers = (klass, key, statics) => klass.body.body
@@ -844,8 +861,9 @@ function callables(program) {
         case 'AssignmentExpression': return valuesOf(node.right);
         case 'NewExpression': return side(valuesOf(node.callee).filter((value) => value.kind === 'class').map((value) => value.node), false, node);
         case 'Identifier': {
-          const definitions = lookup(node.name, scopeOf.get(node));
-          return definitions ? reaching(definitions, node).flatMap((definition) => valuesOf(definition.value)) : [];
+          const scope = declaring(node.name, scopeOf.get(node));
+          if (!scope) return [];
+          return kept(reaching(scope.names.get(node.name), node).flatMap((definition) => valuesOf(definition.value)), scope.node);
         }
         case 'ThisExpression': {
           const self = thisAt(node);
@@ -863,7 +881,7 @@ function callables(program) {
           } else {
             receivers = valuesOf(node.object);
           }
-          return receivers.flatMap((value) => memberValues(value, key, node));
+          return receivers.flatMap((value) => kept(memberValues(value, key, node), value.kind === 'instance' ? value.site : value.node));
         }
         default: return [];
       }
