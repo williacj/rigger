@@ -514,6 +514,30 @@ test('a config that throws anything at all is one failed line, and the other thr
   }
 });
 
+test('doctor prints its report when validation throws from a BigInt or a getter', () => {
+  const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
+  const cases = [
+    ['export default 10n;', 'Do not know how to serialize a BigInt'],
+    ["export default { get repo() { throw new Error('repo getter failed'); } };", 'repo getter failed'],
+  ];
+
+  for (const [source, reason] of cases) {
+    const gh = stubGh(RECORDED.ghIn);
+    const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], {
+      cwd: checked(source), encoding: 'utf8', env: { ...process.env, PATH: gh.first() },
+    });
+    const printed = ran.stdout + ran.stderr;
+
+    assert.equal(ran.error, undefined);
+    assert.equal(checkLines(printed).length, CHECKED.length - 1, printed);
+    assert.doesNotMatch(printed, /(?:^|\n)\s+at /, printed);
+    const config = checkLines(printed).find((line) => line.includes('config validity'));
+    assert.match(config, new RegExp(`failed.*${reason}`));
+    assert.notEqual(ran.status, 0, printed);
+    assert.deepEqual(gh.calls(), ['auth status']);
+  }
+});
+
 /**
  * The checks `doctor` reports, written out by hand.
  *
