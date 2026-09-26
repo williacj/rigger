@@ -57,17 +57,32 @@ const CHILD_PROCESS = ['node:child_process', 'child_process'];
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };
 
-/** The loaders besides `import()` that bind a module at run time, out of the import graph's sight. */
-const LOADERS = ['createRequire', 'getBuiltinModule'];
+/**
+ * The loaders besides `import()` that bind a module at run time, out of the import graph's sight,
+ * refused wherever a module names one, as a name or as a string. `require` is among them however a
+ * module reaches it, by that name, through a binding or as `module.require`, so this test never
+ * has to follow what it loads; `process.mainModule` is a CommonJS module, holding its `require`.
+ */
+const LOADERS = ['createRequire', 'getBuiltinModule', 'require', 'mainModule'];
+
+/** The built-in whose exports reach `require` by routes no name or string shows. */
+const LOADER_MODULES = ['node:module', 'module'];
+
+/**
+ * A module this test cannot read as an ES module: a `.cjs` module, whose wrapper hands it
+ * `require`, `module` and `arguments`, and a `package.json`, which can make the `.js` modules beside
+ * it CommonJS.
+ */
+const isCommonJs = (file) => file.endsWith('.cjs') || posix.basename(file) === 'package.json';
 
 /** The local name a default export that declares no name of its own is held under. */
 const DEFAULT = '*default*';
 
-/** Every module under `src/`, as a map of its repository path to its source. */
+/** Every module and every `package.json` under `src/`, as a map of its repository path to its source. */
 export function sourceTree(root = ROOT) {
   const tree = new Map();
   for (const entry of readdirSync(join(root, 'src'), { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile() || !/\.(?:m|c)?js$/.test(entry.name)) continue;
+    if (!entry.isFile() || !(/\.(?:m|c)?js$/.test(entry.name) || entry.name === 'package.json')) continue;
     const path = posix.join('src', posix.relative(join(root, 'src'), join(entry.parentPath, entry.name)).split('\\').join('/'));
     tree.set(path, readFileSync(join(root, path), 'utf8'));
   }
@@ -144,6 +159,12 @@ const IMPORTED = 'import:';
  * its arguments. Null where the callee is anything else.
  */
 function calledFunction(callee) {
+  const { node, mode } = unwrapCall(callee);
+  return isFunction(node) ? { fn: node, mode } : null;
+}
+
+/** The callee a call runs once its comma and its `.call` or `.apply` are taken off, and `mode`. */
+function unwrapCall(callee) {
   let node = callee;
   let mode = 'direct';
   for (;;) {
@@ -153,7 +174,7 @@ function calledFunction(callee) {
       mode = keyOf(node.property, node.computed);
       node = node.object;
     } else {
-      return isFunction(node) ? { fn: node, mode } : null;
+      return { node, mode };
     }
   }
 }
@@ -359,7 +380,8 @@ function holdings(program, topLevel, carries) {
       case 'ImportDeclaration':
         return;
       case 'FunctionDeclaration':
-        declare(scope, [node.id.name], []);
+        // A default export may declare no name; `ExportDefaultDeclaration` holds its value instead.
+        if (node.id) declare(scope, [node.id.name], []);
         readFunction(node, scope);
         return;
       case 'FunctionExpression':
@@ -367,7 +389,7 @@ function holdings(program, topLevel, carries) {
         readFunction(node, scope);
         return;
       case 'ClassDeclaration':
-        declare(scope, [node.id.name], valuesOf(node, scope));
+        if (node.id) declare(scope, [node.id.name], valuesOf(node, scope));
         break;
       case 'VariableDeclaration':
         for (const each of node.declarations) {
@@ -379,6 +401,13 @@ function holdings(program, topLevel, carries) {
       case 'ExportDefaultDeclaration':
         if (!node.declaration.id) declare(moduleScope, [DEFAULT], valuesOf(node.declaration, scope));
         break;
+      case 'CatchClause': {
+        // What is thrown is a review finding, so the parameter holds only its pattern's defaults.
+        const inner = scopeFor(node, scope, null);
+        declarePattern(inner, node.param, []);
+        for (const child of childrenOf(node)) read(child, inner);
+        return;
+      }
       case 'ReturnStatement': {
         const fn = functionScope(scope).fn;
         if (fn && node.argument) addAll(returns.get(fn), valuesOf(node.argument, scope));
@@ -530,27 +559,372 @@ function parsed(file, source) {
 
   const names = [];
   const strings = [];
+  // The keys an object literal or a class defines, which name a member and read no value: a plain
+  // name, or a string in brackets. A computed key of any other kind is an expression, read as one.
+  // A walk meets the literal or the class member before its key, so each key is known when met.
+  const keys = new Set();
+  const defines = (held) => (!held.computed || held.key.type === 'Literal') && keys.add(held.key);
   walk(program, (node) => {
+    if (node.type === 'ObjectExpression') node.properties.forEach((held) => held.type === 'Property' && defines(held));
+    if (node.type === 'MethodDefinition' || node.type === 'PropertyDefinition') defines(node);
     if (node.type === 'ImportExpression') {
       const specifier = fixed(node.source);
       dynamic.push({ line: lineOf(node), specifier: specifier ?? null, argument: source.slice(node.source.start, node.source.end) });
     }
-    if (node.type === 'Identifier') names.push({ value: node.name, line: lineOf(node) });
+    const key = keys.has(node);
+    if (node.type === 'Identifier') names.push({ value: node.name, line: lineOf(node), key });
     const value = fixed(node);
-    if (value !== undefined) strings.push({ value, line: lineOf(node) });
+    if (value !== undefined) strings.push({ value, line: lineOf(node), key });
   });
   return { file, program, imports, exported, stars, dynamic, reaches, carries, topLevel, names, strings };
+}
+
+/** The statements that run their body again, so a definition in one may run after anything. */
+const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'WhileStatement', 'DoWhileStatement']);
+
+/**
+ * What each call in a module can run, read by lexical scope and by the values that reach the call.
+ *
+ * A name resolves to the binding its scope reaches, shadowing and hoisting included. A binding
+ * holds what each of its definitions gives it: a declaration, or an assignment anywhere. A value is
+ * a function, a class, an object literal, or an instance a `new` builds, which the `new` names so a
+ * write to one instance reaches no other. A member read takes the member from each value its
+ * receiver can hold:
+ * - an object's property, or a function assigned to it;
+ * - an instance's own property assigned through it, and its class's method or field;
+ * - a class's static member, with what is assigned to it;
+ * - failing a class's own, the same member of the class it extends.
+ *
+ * `this` holds its own object, or its class and every subclass that can have an instance: one the
+ * module builds or hands on, since that subclass's instance may run a base class's method. `super`
+ * holds the class extended, and reads its methods only.
+ *
+ * Every definition that can reach the call is kept, so where the reader cannot tell which runs, it
+ * reads them all. The one it drops is a definition an unconditional replacement overwrote first:
+ * - the replacement is an assignment statement written after it, whose receiver, if any, is one
+ *   object that runs once, not one of several or one of many a loop builds;
+ * - the definition has run for good before the replacement can: both in one function, or the
+ *   definition in module code outside a loop and the replacement in a function expression after it;
+ * - the call is written after the replacement in its block, with no hoisted function declaration
+ *   between the block and the call.
+ *
+ * A parameter, an import, a global, a call's result and any receiver the module does not define
+ * hold nothing this reader can see. Returns the lookup: the functions the callee `node` can run.
+ */
+function callables(program) {
+  const scopeOf = new Map();
+  const parentOf = new Map();
+  const newScope = (parent, fn) => ({ parent, fn, names: new Map() });
+  const moduleScope = newScope(null, true);
+  const declare = (scope, name) => {
+    if (!scope.names.has(name)) scope.names.set(name, []);
+    return scope.names.get(name);
+  };
+  const functionScope = (scope) => (scope.fn ? scope : functionScope(scope.parent));
+  const lookup = (name, scope) => {
+    if (!scope) return null;
+    return scope.names.has(name) ? scope.names.get(name) : lookup(name, scope.parent);
+  };
+  const classes = [];
+  const memberWrites = [];
+  const nameWrites = [];
+  const identifiers = [];
+
+  // Every node is given the scope it is read in, and every declaration its binding, before any
+  // callee is resolved, so a declaration later in its scope is already there: hoisting.
+  const visit = (node, scope, parent) => {
+    if (!node || typeof node.type !== 'string') return;
+    scopeOf.set(node, scope);
+    parentOf.set(node, parent);
+    if (node.type === 'Identifier') identifiers.push(node);
+    let inner = scope;
+    if (node.type === 'FunctionDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
+    if (node.type === 'ClassDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
+    if (isFunction(node) || node.type === 'FunctionDeclaration') {
+      inner = newScope(scope, true);
+      if (node.type === 'FunctionExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
+      for (const param of node.params) for (const bound of boundBy(param)) declare(inner, bound);
+    } else if (node.type === 'ClassExpression' || node.type === 'ClassDeclaration') {
+      classes.push(node);
+      inner = newScope(scope, false);
+      if (node.type === 'ClassExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
+    } else if (node.type === 'CatchClause') {
+      inner = newScope(scope, false);
+      for (const bound of boundBy(node.param)) declare(inner, bound);
+    } else if (BLOCKS.has(node.type)) {
+      inner = newScope(scope, false);
+    } else if (node.type === 'ImportDeclaration') {
+      for (const specifier of node.specifiers) declare(scope, specifier.local.name);
+    } else if (node.type === 'VariableDeclaration') {
+      const target = node.kind === 'var' ? functionScope(scope) : scope;
+      for (const each of node.declarations) {
+        for (const bound of boundBy(each.id)) {
+          const definitions = declare(target, bound);
+          if (each.id.type === 'Identifier' && each.init) definitions.push({ node: each, value: each.init });
+        }
+      }
+    } else if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') {
+      nameWrites.push({ node, scope });
+    } else if (node.type === 'AssignmentExpression' && node.left.type === 'MemberExpression') {
+      memberWrites.push(node);
+    }
+    for (const child of childrenOf(node)) visit(child, inner, node);
+  };
+  visit(program, moduleScope, null);
+  for (const { node, scope } of nameWrites) lookup(node.left.name, scope)?.push({ node, value: node.right, replaces: node.operator === '=' });
+
+  const enclosingFunction = (node) => {
+    for (let at = parentOf.get(node); at; at = parentOf.get(at)) if (isFunction(at) || at.type === 'FunctionDeclaration') return at;
+    return null;
+  };
+  // The block a replacing assignment is a statement of, where every later statement runs after it.
+  const statementBlock = (definition) => {
+    if (!definition.replaces) return null;
+    const statement = parentOf.get(definition.node);
+    const block = statement?.type === 'ExpressionStatement' ? parentOf.get(statement) : null;
+    return ['Program', 'BlockStatement', 'StaticBlock'].includes(block?.type) ? block : null;
+  };
+  // Whether `at` can run only once `replacement` has: it is written after it in its block, and no
+  // hoisted function declaration, which could be called before the replacement, holds it.
+  const runsAfter = (at, replacement, block) => {
+    if (at.start < replacement.node.end || at.start < block.start || at.end > block.end) return false;
+    for (let node = parentOf.get(at); node && node !== block; node = parentOf.get(node)) if (node.type === 'FunctionDeclaration') return false;
+    return true;
+  };
+  /**
+   * Whether `definition` has run, for good, before `replacement` can: both in one function, or the
+   * definition in module code outside any loop, which runs once, and the replacement inside a
+   * function expression written after it, which cannot run before it exists.
+   */
+  const settledBefore = (definition, replacement) => {
+    const own = enclosingFunction(definition.node);
+    if (own === enclosingFunction(replacement.node)) return true;
+    if (own !== null) return false;
+    for (let at = parentOf.get(definition.node); at; at = parentOf.get(at)) if (LOOPS.has(at.type)) return false;
+    const around = [];
+    for (let at = parentOf.get(replacement.node); at; at = parentOf.get(at)) if (isFunction(at) || at.type === 'FunctionDeclaration') around.push(at);
+    return around.every((fn) => fn.type !== 'FunctionDeclaration') && around.at(-1).start >= definition.node.end;
+  };
+  /** The definitions that can reach `at`: all but those an unconditional replacement overwrote. */
+  const reaching = (definitions, at) => definitions.filter((definition) => !definitions.some((replacement) => {
+    const block = replacement === definition ? null : statementBlock(replacement);
+    return block !== null && definition.node.end <= replacement.node.start
+      && settledBefore(definition, replacement) && runsAfter(at, replacement, block);
+  }));
+
+  /** The object literal or class `this` is in at `node`, and whether it is the class's static side. */
+  const thisAt = (node) => {
+    for (let at = node, from = null; at; from = at, at = parentOf.get(at)) {
+      if (at.type === 'PropertyDefinition' && from === at.value) return { object: parentOf.get(parentOf.get(at)), statics: Boolean(at.static) };
+      if (at.type === 'StaticBlock') return { object: parentOf.get(parentOf.get(at)), statics: true };
+      if (at.type === 'FunctionExpression' || at.type === 'FunctionDeclaration') {
+        const holder = parentOf.get(at);
+        if (holder?.type === 'MethodDefinition') return { object: parentOf.get(parentOf.get(holder)), statics: Boolean(holder.static) };
+        if (holder?.type === 'Property' && parentOf.get(holder)?.type === 'ObjectExpression') return { object: parentOf.get(holder), statics: false };
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const pending = new Set();
+  const superclasses = (klass) => (klass.superClass ? valuesOf(klass.superClass).filter((value) => value.kind === 'class').map((value) => value.node) : []);
+  const subclasses = (klass, seen = new Set([klass])) => classes
+    .filter((other) => !seen.has(other) && superclasses(other).includes(klass))
+    .flatMap((other) => {
+      seen.add(other);
+      return [other, ...subclasses(other, seen)];
+    });
+  /**
+   * Whether an instance of `klass` can exist for a base class's method to run on: the module builds
+   * one or hands the class on. A class the module names only in its declaration and in another
+   * class's `extends` has no instance; any other mention, an export included, may make one.
+   */
+  const instantiable = (klass) => {
+    const holder = parentOf.get(klass);
+    let name;
+    if (klass.type === 'ClassDeclaration' && klass.id && !holder?.type.startsWith('Export')) name = klass.id.name;
+    else if (holder?.type === 'VariableDeclarator' && holder.init === klass && holder.id.type === 'Identifier') name = holder.id.name;
+    else return true;
+    const binding = lookup(name, scopeOf.get(klass));
+    return identifiers.some((node) => {
+      if (node.name !== name || lookup(name, scopeOf.get(node)) !== binding) return false;
+      const parent = parentOf.get(node);
+      if (parent?.type === 'MemberExpression' && parent.property === node && !parent.computed) return false;
+      if (['Property', 'MethodDefinition', 'PropertyDefinition'].includes(parent?.type) && parent.key === node && !parent.computed) return false;
+      if ((parent?.type === 'ClassDeclaration' || parent?.type === 'ClassExpression') && (parent.id === node || parent.superClass === node)) return false;
+      return !(parent?.type === 'VariableDeclarator' && parent.id === node);
+    });
+  };
+
+  /**
+   * An instance is `{ kind: 'instance', node: its class, site }`. `site` is the `new` that built it,
+   * so a write to one instance reaches that instance alone. It is null for `this`, which may be any
+   * instance, and 'prototype' for `super`, which reads the class's methods and never an instance's.
+   */
+  const side = (klasses, statics, site = null) => klasses.map((node) => (statics ? { kind: 'class', node } : { kind: 'instance', node, site }));
+  const same = (a, b) => a.kind === b.kind && a.node === b.node
+    && (a.kind !== 'instance' || a.site === null || b.site === null || a.site === b.site);
+  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site) === i);
+
+  /** Whether `node` sits in a loop of its own function, so it may run many times in one call. */
+  const inLoop = (node) => {
+    for (let at = parentOf.get(node); at && !isFunction(at) && at.type !== 'FunctionDeclaration'; at = parentOf.get(at)) if (LOOPS.has(at.type)) return true;
+    return false;
+  };
+  /**
+   * Whether `value` is one object: an object literal or a `new` that runs once in its function,
+   * rather than any instance or one of many built by the same expression.
+   */
+  const single = (value) => {
+    if (value.kind === 'object' || value.kind === 'class') return !inLoop(value.node);
+    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !inLoop(value.site);
+  };
+  /**
+   * The writes to `key` on `value`. Each replaces what came before it only where its receiver can be
+   * one object and nothing else; a receiver that may be one of several, any instance, or one of
+   * the objects a loop builds adds a definition and replaces none.
+   */
+  const writesTo = (value, key) => memberWrites
+    .filter((write) => keyOf(write.left.property, write.left.computed) === key)
+    .flatMap((write) => {
+      const receivers = distinct(valuesOf(write.left.object));
+      if (!receivers.some((held) => same(held, value))) return [];
+      const definite = receivers.length === 1 && single(receivers[0]);
+      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' }];
+    });
+  /** The members `klass` itself writes under `key`, on its static side or its prototype. */
+  const classMembers = (klass, key, statics) => klass.body.body
+    .filter((member) => member.kind !== 'constructor' && member.kind !== 'get' && member.kind !== 'set' && member.value)
+    .filter((member) => Boolean(member.static) === statics && keyOf(member.key, member.computed) === key)
+    .map((member) => ({ node: member, value: member.value }));
+  /**
+   * The definitions a member read of `key` from `value` can meet: an object's property and what is
+   * assigned to it; an instance's own properties, then its class's prototype; a class's static
+   * members and what is assigned to them. A class that defines nothing under `key` passes the read
+   * to the class it extends.
+   */
+  const memberDefinitions = (value, key) => {
+    if (value.kind === 'object') {
+      const written = value.node.properties.filter((held) => held.type === 'Property' && keyOf(held.key, held.computed) === key);
+      return [...written.map((held) => ({ node: held, value: held.value })), ...writesTo(value, key)];
+    }
+    if (value.kind !== 'class' && value.kind !== 'instance') return [];
+    const statics = value.kind === 'class';
+    const own = statics || value.site === 'prototype' ? [] : writesTo(value, key);
+    // A chain of classes that extends itself never runs, and reads as holding nothing more.
+    const seen = new Set();
+    for (let level = [value.node]; level.length > 0; level = level.flatMap(superclasses).filter((klass) => !seen.has(klass))) {
+      level.forEach((klass) => seen.add(klass));
+      const here = level.flatMap((klass) => [...classMembers(klass, key, statics), ...(statics ? writesTo({ kind: 'class', node: klass }, key) : [])]);
+      if (here.length > 0) return [...own, ...here];
+    }
+    return own;
+  };
+  /** What a member read of `key` from `value` can give at `at`. */
+  const memberValues = (value, key, at) => reaching(memberDefinitions(value, key), at).flatMap((definition) => valuesOf(definition.value));
+
+  // What an expression can evaluate to, through the operators Hand-ons step 7 names.
+  function valuesOf(node) {
+    if (!node || pending.has(node)) return [];
+    pending.add(node);
+    try {
+      switch (node.type) {
+        case 'FunctionDeclaration':
+        case 'FunctionExpression':
+        case 'ArrowFunctionExpression': return [{ kind: 'fn', node }];
+        case 'ClassDeclaration':
+        case 'ClassExpression': return [{ kind: 'class', node }];
+        case 'ObjectExpression': return [{ kind: 'object', node }];
+        case 'ChainExpression': return valuesOf(node.expression);
+        case 'ConditionalExpression': return [...valuesOf(node.consequent), ...valuesOf(node.alternate)];
+        case 'LogicalExpression': return [...valuesOf(node.left), ...valuesOf(node.right)];
+        case 'AwaitExpression': return valuesOf(node.argument);
+        case 'SequenceExpression': return valuesOf(node.expressions.at(-1));
+        case 'AssignmentExpression': return valuesOf(node.right);
+        case 'NewExpression': return side(valuesOf(node.callee).filter((value) => value.kind === 'class').map((value) => value.node), false, node);
+        case 'Identifier': {
+          const definitions = lookup(node.name, scopeOf.get(node));
+          return definitions ? reaching(definitions, node).flatMap((definition) => valuesOf(definition.value)) : [];
+        }
+        case 'ThisExpression': {
+          const self = thisAt(node);
+          if (!self) return [];
+          if (self.object.type === 'ObjectExpression') return [{ kind: 'object', node: self.object }];
+          return side([self.object, ...subclasses(self.object).filter(instantiable)], self.statics);
+        }
+        case 'MemberExpression': {
+          const key = keyOf(node.property, node.computed);
+          if (key === undefined) return [];
+          let receivers;
+          if (node.object.type === 'Super') {
+            const self = thisAt(node);
+            receivers = self && self.object.type !== 'ObjectExpression' ? side(superclasses(self.object), self.statics, 'prototype') : [];
+          } else {
+            receivers = valuesOf(node.object);
+          }
+          return receivers.flatMap((value) => memberValues(value, key, node));
+        }
+        default: return [];
+      }
+    } finally {
+      pending.delete(node);
+    }
+  }
+
+  /** The constructor a class runs: its own, or the one it inherits. */
+  const constructorsOf = (klass, seen = new Set()) => {
+    if (seen.has(klass)) return [];
+    seen.add(klass);
+    const own = klass.body.body.filter((member) => member.kind === 'constructor').map((member) => member.value);
+    return own.length > 0 ? own : superclasses(klass).flatMap((base) => constructorsOf(base, seen));
+  };
+  return (callee) => valuesOf(callee).flatMap((value) => {
+    if (value.kind === 'fn') return [value.node];
+    return value.kind === 'class' ? constructorsOf(value.node) : [];
+  });
+}
+
+/**
+ * The argument expressions a call gives each parameter of a function it runs, as
+ * `[parameter, arguments]` pairs: one called where it is written, or one `functionsOf` (see
+ * `callables`) finds the callee can run. None where the callee runs nothing the module defines.
+ * An argument after a spread may land at any parameter from the spread's position on, and a rest
+ * parameter is left out.
+ */
+function parametersGiven(node, functionsOf) {
+  const tagged = node.type === 'TaggedTemplateExpression';
+  const { node: callee, mode } = unwrapCall(tagged ? node.tag : node.callee);
+  const fns = functionsOf(callee);
+  // A tag's first argument is its strings, which no expression in the source spells.
+  let args = tagged ? [null, ...node.quasi.expressions] : node.arguments;
+  if (mode === 'call') args = args.slice(1);
+  if (mode === 'apply') args = args[1]?.type === 'ArrayExpression' ? args[1].elements : [];
+  const first = args.findIndex((held) => held?.type === 'SpreadElement');
+  const spread = first === -1 ? args.length : first;
+  // A spread of a list written in place hands on its elements; any other spread's are unknown.
+  const after = args.slice(spread)
+    .flatMap((held) => (held?.type !== 'SpreadElement' ? [held] : held.argument.type === 'ArrayExpression' ? held.argument.elements : []))
+    .filter((held) => held && held.type !== 'SpreadElement');
+  return fns.flatMap((fn) => fn.params
+    .map((param, i) => [param, i < spread ? [args[i]] : after])
+    .filter(([param]) => param.type !== 'RestElement'));
 }
 
 /**
  * The lines on which a module spells the config path `board.priority`: a member access from
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
- * that takes `priority` from a `board` key or from what `board` names. Any other use of the name
- * `board` passes, so L3's board handle does; a read through an alias or a computed key is a review
- * finding (the card's Rule 3 item).
+ * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
+ * reached through an expression whose result can be one of its operands, and a pattern takes it as
+ * the value it is given, as its default, or as an argument to a function the call can run. That is
+ * one called where it is written, or one `callables` finds the callee reaches through scope, a
+ * binding, a member of an object, class or instance the module defines, `this` or `super`. Any
+ * other use of the name `board` passes, so L3's board handle does; a read through a computed key,
+ * and a call whose callee this reader cannot follow, is a review finding (the card's Rule 3 item).
  */
 function priorityReads(program) {
   const lines = [];
+  const functionsOf = callables(program);
   // An optional chain is the member access it wraps, so `config?.board` is read as `config.board`.
   const unchained = (node) => (node?.type === 'ChainExpression' ? node.expression : node);
   const isBoard = (wrapped) => {
@@ -558,11 +932,22 @@ function priorityReads(program) {
     return (node?.type === 'Identifier' && node.name === 'board')
       || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
   };
+  // `board`, or an expression whose result can be an operand that is: Hand-ons step 7's list.
+  const namesBoard = (wrapped) => {
+    const node = unchained(wrapped);
+    switch (node?.type) {
+      case 'ConditionalExpression': return namesBoard(node.consequent) || namesBoard(node.alternate);
+      case 'LogicalExpression': return namesBoard(node.left) || namesBoard(node.right);
+      case 'AwaitExpression': return namesBoard(node.argument);
+      case 'SequenceExpression': return namesBoard(node.expressions.at(-1));
+      default: return isBoard(node);
+    }
+  };
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
   walk(program, (node) => {
-    if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && isBoard(node.object)) {
+    if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && namesBoard(node.object)) {
       lines.push(node.loc.start.line);
     }
     if (node.type === 'ObjectPattern') {
@@ -570,8 +955,14 @@ function priorityReads(program) {
         if (held.type === 'Property' && keyOf(held.key, held.computed) === 'board' && takesPriority(unwrapped(held.value))) lines.push(held.loc.start.line);
       }
     }
-    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && isBoard(node.init)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && isBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && namesBoard(node.init)) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
+      for (const [param, given] of parametersGiven(node, functionsOf)) {
+        if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
+      }
+    }
   });
   return lines;
 }
@@ -595,6 +986,10 @@ export function boundaryReport(tree) {
   const exempt = [];
   const report = (file, line, rule, what) => violations.push({ file, line, rule, message: `${file} line ${line} breaks ${rule}: ${what}` });
   for (const [file, source] of tree) {
+    if (isCommonJs(file)) {
+      report(file, 1, 'the CommonJS rule', 'it is CommonJS or makes modules CommonJS, and this test reads ES modules only, so what it loads through `require` is unknown');
+      continue;
+    }
     try {
       modules.set(file, parsed(file, source));
     } catch (error) {
@@ -775,13 +1170,17 @@ export function boundaryReport(tree) {
     }
 
     // A loader the import graph cannot follow binds something nobody can name.
-    for (const { value, line } of module.names) {
-      if (LOADERS.includes(value)) report(file, line, 'the dynamic-import rule', `it names \`${value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
+    for (const { value, line, key } of [...module.names, ...module.strings]) {
+      if (LOADERS.includes(value) && !key) report(file, line, 'the dynamic-import rule', `it names \`${value}\`, which loads a module this test cannot follow, so what it binds is unknown`);
+    }
+    const loaded = [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars];
+    for (const entry of loaded) {
+      if (LOADER_MODULES.includes(entry.from)) report(file, entry.line, 'the dynamic-import rule', `it imports \`${entry.from}\`, whose loaders bind modules this test cannot follow`);
     }
 
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
-      for (const entry of [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars]) {
+      for (const entry of loaded) {
         if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the forge runners, doctor.mjs and init.mjs may`);
       }
     }
