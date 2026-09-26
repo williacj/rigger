@@ -1,6 +1,6 @@
 // ABOUTME: The harness L3's loop is proven through: the fake board with ready, redo and other
 // cards, L0's handle on it, L2's column changes and next action, a held injected dispatch, and
-// one sink, wired into a loop, with the helpers that drive a run to its end.
+// one sink, wired into a loop, with the helpers that drive a run to its end and stop one mid-dispatch.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -114,7 +114,11 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  * through its own input: once a card's dispatch has returned in this world, `fresh` says whether
  * L2 has nothing more to do for it, standing in for the verdict marker M5 reads. `board` is L0's
  * handle, and `items` stands in for the board's writes. The sink writes to the state directory
- * `directory`, a new temporary one where none is given.
+ * `directory`, a new temporary one where none is given, under the run id `run`. A `fresh` given
+ * as a function is L2's freshness input itself, answering for each Coding or Review card.
+ *
+ * `handed` records every start the dispatch was handed, whole, and `decisions` every next action
+ * L2 gave L3, as `{ card, action, pull }`, where `pull` counts the pull triggers fired so far.
  *
  * `sequence` records, in the one order they happened, each board move once the board has made
  * it, as `{ move, column }` with the item's id and the column's display name, and each dispatch
@@ -124,7 +128,7 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  * `layers` records the layer of every emitter L3 asks the sink for.
  */
 export function world({
-  cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer,
+  cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = mkdtempSync(join(tmpdir(), 'rigger-loop-')),
 } = {}) {
   const settings = { ...config, board: { ...config.board, columns } };
@@ -139,7 +143,7 @@ export function world({
     },
   };
   let tick = 0;
-  const sink = openSink({ directory, run: 'r-test', now: () => (tick += 1) });
+  const sink = openSink({ directory, run, now: () => (tick += 1) });
   const layers = [];
   const l3Sink = {
     emitter: (context) => {
@@ -149,9 +153,18 @@ export function world({
   };
   const l2 = columnChanges({ config: settings, sink, items: recorded });
   const returned = new Set();
-  const decide = (card) => nextAction(card, KINDS, undefined, { columns, fresh: (held) => fresh && returned.has(held.number) });
+  const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
+  const decisions = [];
+  const pulls = () => readEvents(directory).filter((event) => event.run === run && event.trigger === 'pull').length;
+  const decide = (card) => {
+    const action = nextAction(card, KINDS, undefined, { columns, fresh: freshness });
+    decisions.push({ card: card.number, action, pull: pulls() });
+    return action;
+  };
   const dispatches = heldDispatch(answer);
+  const handed = [];
   const dispatch = async (start) => {
+    handed.push(structuredClone(start));
     sequence.push({ start: start.card.id });
     try {
       return await dispatches.dispatch(start);
@@ -160,7 +173,7 @@ export function world({
     }
   };
   return {
-    fake, l2, dispatches, sequence, layers,
+    fake, l2, dispatches, sequence, layers, handed, decisions, directory,
     /** Every event the run has recorded so far, in the order recorded. */
     events: () => readEvents(directory),
     /** The events L3 recorded so far, in order. */
@@ -188,4 +201,20 @@ export async function drive(built) {
     built.dispatches.releaseAll();
   }
   return run;
+}
+
+/**
+ * A first engine's run over a new fake board holding ready cards 1, 2 and 3, at concurrency 2,
+ * stopped while the dispatches of cards 1 and 2 are unfinished: they are held and never released,
+ * so nothing more of that engine reaches the board, which is left with 1 and 2 in the coding
+ * column and 3 in the ready column. Its sink writes to the state directory `directory`. Answers
+ * the board, the only thing a second engine is to share with the first.
+ */
+export async function stoppedRun({ directory } = {}) {
+  const fake = boardOf([1, 2, 3]);
+  const first = world({ fake, concurrency: 2, directory, run: 'r-first' });
+  first.loop.run().catch(() => {});
+  await quiesce();
+  if (first.dispatches.holding().join() !== '1,2') throw new Error(`the first run was not stopped mid-dispatch of cards 1 and 2: ${first.dispatches.holding()}`);
+  return fake;
 }
