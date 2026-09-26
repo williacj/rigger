@@ -317,16 +317,21 @@ export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
  * here word for word: a second reading of the config living in this file would be a second answer
  * to a question already answered, drifting from the first the day the validator gains a rule.
  *
- * The config is a module the consumer wrote, so importing it runs their code and can throw. What
- * the report carries is the first line of what went wrong, never the error: a stack of Node's
- * own frames tells a consumer nothing about the file they have to fix, and the card asks for a
- * line per check without one.
+ * The config is a module the consumer wrote, so importing and validating it can run their code
+ * and throw. What the report carries is the first line of what went wrong, never the error: a
+ * stack of Node's own frames tells a consumer nothing about the file they have to fix, and the
+ * card asks for a line per check without one.
  */
 export async function configValidity({ target = process.cwd() } = {}) {
   const name = 'config validity';
   const { config, problem } = await consumerConfig(target);
   if (problem) return { name, ok: false, detail: problem };
-  const refusals = validate(config);
+  let refusals;
+  try {
+    refusals = validate(config);
+  } catch (threw) {
+    return { name, ok: false, detail: `\`${CONFIG}\` could not be validated: ${wentWrong(threw)}` };
+  }
   return {
     name,
     ok: refusals.length === 0,
@@ -379,14 +384,19 @@ const readsOf = (config, send, board = config.board) => readSide({ repo: config.
  * the repository's (the architect's ruling on #285, comment 5835129833). A read that fails fails
  * the line, carrying the adapter's message.
  *
- * A config Rigger refuses, or cannot read, names no board worth reading, so the check answers
- * null, sends nothing, and `doctor` prints no line for it. `ask` stands in for the read runner's
- * spawn in tests.
+ * A config Rigger refuses, cannot read, or throws during validation names no board worth
+ * reading, so the check answers null, sends nothing, and `doctor` prints no line for it. `ask`
+ * stands in for the read runner's spawn in tests.
  */
 export async function boardSharing({ target = process.cwd(), ask } = {}) {
   const name = 'board sharing';
   const { config, problem } = await consumerConfig(target);
-  if (problem || validate(config).length > 0) return null;
+  if (problem) return null;
+  try {
+    if (validate(config).length > 0) return null;
+  } catch {
+    return null;
+  }
   let held;
   try {
     held = await readsOf(config, ask).readOtherRepositories();
@@ -463,16 +473,21 @@ async function priority(config, send) {
 
 /**
  * The lines about the board the config names: whether it can be read, whether it holds each
- * declared column, and whether it holds the declared priority field. A config Rigger refuses, or
- * cannot read, names no board worth reading, so it earns one line saying the board was not
- * checked, and nothing is sent.
+ * declared column, and whether it holds the declared priority field. A config Rigger refuses,
+ * cannot read, or throws during validation names no board worth reading, so it earns one line
+ * saying the board was not checked, and nothing is sent.
  */
 export async function boardChecks({ target = process.cwd(), ask } = {}) {
   const { config, problem } = await consumerConfig(target);
-  if (problem || validate(config).length > 0) {
-    const why = problem ? 'the config could not be read' : 'the config was refused';
-    return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
+  let why = problem ? 'the config could not be read' : null;
+  if (!why) {
+    try {
+      if (validate(config).length > 0) why = 'the config was refused';
+    } catch {
+      why = 'the config could not be validated';
+    }
   }
+  if (why) return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
   return [await reachability(config, ask), ...await columns(config, ask), await priority(config, ask)];
 }
 
