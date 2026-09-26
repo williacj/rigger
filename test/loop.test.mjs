@@ -2,7 +2,8 @@
 // flight, a claim taken before any await, a claim held only until its slot is released, every
 // read failure, refused claim move and dispatch outcome passed on, and a run that refills each
 // freed slot and leaves each card in the column its outcome settles, by the config's column names;
-// and the events L3 records, the drain trigger's among them.
+// the events L3 records, the drain trigger's among them; and L3's claim-only call, handed no
+// dispatch, which claims up to a limit capped at N, redos without a move, and fires no drain.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -921,7 +922,7 @@ test('given one pullable card, two concurrent claim-only calls each with a claim
 /** Each claim limit the event items are shown under: 1, and none. */
 const LIMITS = [1, undefined];
 
-test('each card the claim-only call claims, with a claim limit of 1 and with none, has one L2 transition event into the coding column', async () => {
+test('each card the claim-only call claims from the ready column, with a claim limit of 1 and with none, has one L2 transition event from ready into coding', async () => {
   for (const limit of LIMITS) {
     const { claimed, built } = await claimOnce({ concurrency: 3, limit });
     const transitions = built.events().filter((event) => event.layer === 'L2' && event.event === 'transition');
@@ -931,13 +932,42 @@ test('each card the claim-only call claims, with a claim limit of 1 and with non
   }
 });
 
-test('each card the claim-only call claims, with a claim limit of 1 and with none, has one L3 pull event', async () => {
+/** A board holding a redo in the coding column, card 5, ahead of three ready cards. */
+const REDO_AND_READY = [cardIn(5, COLUMNS.coding), 1, 2, 3];
+
+test('each card the claim-only call claims, from the ready column or as a redo, with a claim limit of 1 and with none, has one L3 pull event', async () => {
+  const claims = [];
   for (const limit of LIMITS) {
-    const { claimed, built } = await claimOnce({ concurrency: 3, limit });
+    const { claimed, built } = await claimOnce({ cards: REDO_AND_READY, concurrency: 3, limit });
 
     assert.deepEqual(cardsOf(built, 'pull'), claimed, String(limit));
-    assert.equal(claimed.length, limit ?? 3, String(limit));
+    claims.push(claimed);
   }
+  assert.deepEqual(claims, [[5], [5, 1, 2]]);
+});
+
+/** No card in the ready column, and one unclaimed card L2 would dispatch in each of coding and review. */
+const REDOS_ONLY = [cardIn(5, COLUMNS.coding), cardIn(6, COLUMNS.review)];
+
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the claim-only call with no claim limit returns both as claimed', async () => {
+  const { claimed } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+
+  assert.deepEqual([...claimed].sort(), [5, 6]);
+});
+
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after the claim-only call', async () => {
+  const { claimed, columns, built } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+
+  assert.equal(claimed.length, 2);
+  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(columns, { 5: COLUMNS.coding, 6: COLUMNS.review });
+});
+
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after the claim-only call', async () => {
+  const { claimed, built } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+
+  assert.equal(claimed.length, 2);
+  assert.deepEqual(built.events().filter((event) => event.layer === 'L2'), []);
 });
 
 test('after the claim-only call returns, the state directory holds nothing but the event stream', async () => {
