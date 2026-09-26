@@ -25,15 +25,21 @@ export function loop({ config, board, decide, l2, dispatch }) {
 
   /**
    * One claimed card's work: L2's claim move for a card pulled from Ready, the dispatch, and L2's
-   * handling of its outcome, handed over unread. The slot is released however it ends.
+   * handling of its outcome, handed over unread. The slot is released however it ends, and then
+   * `freed` runs, unless the board refused the claim move: a refused claim waits for the next
+   * trigger rather than starting another pull at once, by the owner's ruling on #228, so a board
+   * refusing every claim cannot keep a run pulling.
    */
-  const work = async ({ card, kind, redo }) => {
+  const work = async ({ card, kind, redo }, freed) => {
+    let claimed = redo;
     try {
       if (!redo) await l2.claimed(card);
+      claimed = true;
       const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
       await l2.settled(card, outcome);
     } finally {
       claims.delete(card.number);
+      if (claimed) await freed();
     }
   };
 
@@ -41,7 +47,8 @@ export function loop({ config, board, decide, l2, dispatch }) {
    * Fires the pull trigger once: reads the board, claims as many cards as there are free slots,
    * first pulled first, and works each. Every claim is taken in the same synchronous step as the
    * pull order it follows, so no other trigger can claim a card between the two. `freed` runs as
-   * each claimed card's slot is released, and that card's work is not over until it settles.
+   * each claimed card's slot is released, as `work` says, and that card's work is not over until
+   * it settles.
    *
    * Settles once every card it claimed has been worked. A read that fails rejects with the
    * read's own error, and no card is claimed. A card whose work fails is reported in an
@@ -56,7 +63,7 @@ export function loop({ config, board, decide, l2, dispatch }) {
       claims.add(pull.card);
       return { ...pull, card: unclaimed.find((item) => item.number === pull.card) };
     });
-    const failures = (await Promise.allSettled(claimed.map((claim) => work(claim).finally(freed))))
+    const failures = (await Promise.allSettled(claimed.map((claim) => work(claim, freed))))
       .filter((result) => result.status === 'rejected')
       .map((result) => result.reason);
     if (failures.length > 0) {
@@ -70,7 +77,8 @@ export function loop({ config, board, decide, l2, dispatch }) {
 
     /**
      * Fires the pull trigger, and fires it again each time a slot this run filled is released, so
-     * a card freeing its slot lets the next pullable card start while the others still run. Ends
+     * a card freeing its slot lets the next pullable card start while the others still run. A slot
+     * freed by a claim move the board refused fires nothing, as `work` says. Ends
      * once every pull it fired has settled, which is once a pull fired on a freed slot claims
      * nothing and no card it claimed is still being worked.
      *

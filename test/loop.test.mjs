@@ -92,15 +92,19 @@ const boardOf = (cards, columns = COLUMNS) => createFakeBoard({
 });
 
 /**
- * L0's handle on `fake`, as L3 reads it: the column read answers `columns` by key, as the read
- * side's does for a config declaring them, and the priority read answers as the read side's
+ * L0's handle on `fake`, as L3 reads it: the column read reads the board's columns and answers
+ * `columns` by key, as the read side's does for a config declaring them on a board holding them
+ * all, and the priority read answers as the read side's
  * `readPriority` does for a config declaring `priority`, where none declared leaves every card's
  * `priority`, `declared` and `options` null. `beforeRead` runs as each priority read begins, and
  * `onRead` sees the items each one answers.
  */
 function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () => {}, onRead = () => {} } = {}) {
   return {
-    readColumns: async () => ({ ...columns }),
+    readColumns: async () => {
+      await fake.operations.readColumns();
+      return { ...columns };
+    },
     readPriority: async () => {
       beforeRead();
       const answer = await fake.operations.readPriority(priority);
@@ -313,6 +317,70 @@ test('the same run on a board whose five columns carry other display names, with
     ['moveItem', 'item-4', 'coding'], ['moveItem', 'item-4', 'review'],
   ]);
   assert.deepEqual(other, named);
+});
+
+/**
+ * The most turns of the event loop a run over a refusing board may take before the test gives up
+ * on it. A run that settles needs two: one for its pull's read, one for the refusals. A run that
+ * re-pulls on each refusal can double its pulls on every turn, so the bound stays small.
+ */
+const TURNS = 5;
+
+/**
+ * One call to `run()` over a fake board that refuses every claim move, with cards 1, 2 and 3 in
+ * the ready column and concurrency 2. Every pull the run fires lets the event loop turn once
+ * before it reads the board, so a run that pulls without end cannot starve the test. The test
+ * waits at most `TURNS` turns for the run to settle, then stops any pull still to read, which
+ * bounds a run that would never settle. Answers whether it settled in time, with the board's
+ * record of the requests it received.
+ */
+async function refusingRun() {
+  const refusing = createFakeBoard({ columns: Object.values(COLUMNS), items: [1, 2, 3].map((number) => readyCard(number)), refuseMoves: true });
+  const handle = handleOn(refusing);
+  let stopped = false;
+  const board = {
+    readColumns: async () => {
+      await quiesce();
+      if (stopped) throw new Error('the test stopped a run that had not settled');
+      return handle.readColumns();
+    },
+    readPriority: handle.readPriority,
+  };
+  const built = world({ fake: refusing, board, concurrency: 2 });
+  let settled = false;
+  const run = built.loop.run().catch(() => {}).finally(() => {
+    settled = true;
+  });
+  for (let turn = 0; turn < TURNS && !settled; turn += 1) await quiesce();
+  const inTime = settled;
+  stopped = true;
+  await run;
+  return { settled: inTime, requests: refusing.requests(), started: built.dispatches.started };
+}
+
+test('given a board that refuses every claim move, cards 1, 2 and 3 in ready and concurrency 2, one call to run() settles', async () => {
+  const { settled, started } = await refusingRun();
+
+  assert.ok(settled, `the run had not settled after ${TURNS} turns of the event loop`);
+  assert.deepEqual(started, []);
+});
+
+test('given a board that refuses every claim move, cards 1, 2 and 3 in ready and concurrency 2, the board receives at most one request to move each card to coding during one run', async () => {
+  const { requests } = await refusingRun();
+
+  const claims = requests.filter(({ operation, args: [, column] }) => operation === 'moveItem' && column === COLUMNS.coding);
+  assert.ok(claims.length > 0, 'the run asked the board for a claim move');
+  for (const id of ['item-1', 'item-2', 'item-3']) {
+    assert.ok(claims.filter(({ args: [item] }) => item === id).length <= 1, `${id}: ${JSON.stringify(claims)}`);
+  }
+});
+
+test('given a board that refuses every claim move, cards 1, 2 and 3 in ready and concurrency 2, the board receives no read after the first refused claim move during one run', async () => {
+  const { requests } = await refusingRun();
+
+  const first = requests.findIndex(({ operation }) => operation === 'moveItem');
+  assert.notEqual(first, -1, 'the run asked the board for a claim move');
+  assert.deepEqual(requests.slice(first).filter(({ operation }) => operation.startsWith('read')), []);
 });
 
 test('given concurrency 1 and four cards L2 would dispatch, the most cards in flight at any moment is exactly 1', async () => {
