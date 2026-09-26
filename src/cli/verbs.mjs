@@ -5,6 +5,7 @@ import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
 import { plan } from './plan.mjs';
 import { report } from './report.mjs';
+import { run as runVerb } from './run.mjs';
 import { setupBoard } from './setup-board.mjs';
 
 /**
@@ -34,7 +35,7 @@ export const VERBS = [
  * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
  * the test would drift from this one the day a verb lands.
  */
-export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, report };
+export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, run: runVerb, report };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {

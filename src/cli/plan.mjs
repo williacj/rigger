@@ -10,7 +10,8 @@ import { PACKAGE, consumerConfig, sourceTreeGuard } from './doctor.mjs';
 
 /** One line per card: what the run does with it, its number, and the kind or the reason. */
 const pullLine = ({ card, kind, redo }) => `  pull    #${card}  ${kind}${redo ? '  (redo)' : ''}`;
-const refusalLine = ({ card, reason }) => `  refuse  #${card}  ${reason}`;
+/** Exported because `run` names the cards it refuses in this verb's words. */
+export const refusalLine = ({ card, reason }) => `  refuse  #${card}  ${reason}`;
 
 /** What the command prints for a `plan` run, and the status it exits with. */
 export async function plan({ target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
