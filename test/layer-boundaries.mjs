@@ -798,9 +798,10 @@ function callables(program) {
    * so a write to one instance reaches that instance alone. It is null for `this`, which may be any
    * instance, and 'prototype' for `super`, which reads the class's methods and never an instance's.
    *
-   * A `new` inside a function builds an instance on every call of it. Read from a binding or an
-   * object that outlives the call, the instance may be one an earlier call built, so it is marked
-   * `earlier`: a write through this call's instance reaches it, but replaces nothing on it.
+   * A `new` or an object or list literal inside a function builds a value on every call of it.
+   * Read from a binding or an object that outlives the call, the value may be one an earlier call
+   * built, so it is marked `earlier`: a write through this call's value reaches it, but replaces
+   * nothing on it. What is read out of an `earlier` container is as old as the container.
    */
   const side = (klasses, statics, site = null) => klasses.map((node) => (statics ? { kind: 'class', node } : { kind: 'instance', node, site }));
   const same = (a, b) => a.kind === b.kind && a.node === b.node && Boolean(a.copy) === Boolean(b.copy)
@@ -812,10 +813,19 @@ function callables(program) {
     const fn = enclosingFunction(site);
     return typeof holder?.start !== 'number' || holder.start < fn.start || holder.end > fn.end;
   };
-  /** `values` as read out of `holder`: an instance a function's `new` built, where `holder` outlives the call, is marked `earlier`. */
-  const kept = (values, holder) => values.map((value) => {
-    const perCall = value.kind === 'instance' && value.site?.type === 'NewExpression' && enclosingFunction(value.site) !== null;
-    return perCall && !value.earlier && outlives(holder, value.site) ? { ...value, earlier: true } : value;
+  /** The syntax that builds `value` on every call of the function it is in, or null. */
+  const builtBy = (value) => {
+    if (value.kind === 'instance') return value.site?.type === 'NewExpression' ? value.site : null;
+    return value.kind === 'object' || value.kind === 'list' ? value.node : null;
+  };
+  /**
+   * `values` as read out of `holder`: a value built on each call of a function is marked `earlier`
+   * where `holder` outlives that call, or where it was read out of a container already `earlier`.
+   */
+  const kept = (values, holder, fromEarlier = false) => values.map((value) => {
+    const site = builtBy(value);
+    if (!site || value.earlier || enclosingFunction(site) === null) return value;
+    return fromEarlier || outlives(holder, site) ? { ...value, earlier: true } : value;
   });
 
   /** Whether `node` sits in a loop of its own function, so it may run many times in one call. */
@@ -829,7 +839,7 @@ function callables(program) {
    * element's copy, which is made afresh each time its pattern runs.
    */
   const single = (value) => {
-    if (value.kind === 'object' || value.kind === 'class' || value.kind === 'list') return !value.copy && !inLoop(value.node);
+    if (value.kind === 'object' || value.kind === 'class' || value.kind === 'list') return !value.copy && !value.earlier && !inLoop(value.node);
     return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !value.earlier && !inLoop(value.site);
   };
   /**
@@ -875,7 +885,7 @@ function callables(program) {
   /** What a member read of `key` from `value` can give at `at`. */
   const memberValues = (value, key, at) => reaching(memberDefinitions(value, key), at).flatMap((definition) => valuesOf(definition.value));
   /** The same, as read out of `value`, which may hold an instance an earlier call built. */
-  const readMember = (value, key, at) => kept(memberValues(value, key, at), value.kind === 'instance' ? value.site : value.node);
+  const readMember = (value, key, at) => kept(memberValues(value, key, at), value.kind === 'instance' ? value.site : value.node, Boolean(value.earlier));
 
   // The literals whose spreads are being read, so a literal that spreads itself is read once.
   const spreading = new Set();
@@ -1019,7 +1029,8 @@ function parametersGiven(node, functionsOf) {
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
  * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
  * reached through an expression whose result can be one of its operands, and through a list or an
- * object literal, a spread, or a property read from one, at any depth. A pattern takes it as the
+ * object literal, a spread, or a property read from one, at any depth; an object literal spreading
+ * `board` holds its `priority`. A pattern takes it as the
  * value it is given, as its default, or as an argument to a function the call can run. That is
  * one called where it is written, or one `callables` finds the callee reaches through scope, a
  * binding, a destructuring pattern, a member of an object, list, class or instance the module
@@ -1092,7 +1103,10 @@ function priorityReads(program) {
     const spread = node.elements.findIndex((held) => held?.type === 'SpreadElement');
     return [{ type: 'ArrayExpression', elements: node.elements.slice(spread === -1 ? from : Math.min(from, spread)) }];
   };
-  const namesBoard = (node) => alternatives(node).some(isBoard);
+  /** `board`, or an object literal spreading it, at any depth, which then holds its `priority`. */
+  const holdsBoard = (node) => isBoard(node) || (node.type === 'ObjectExpression'
+    && node.properties.some((held) => held.type === 'SpreadElement' && alternatives(held.argument).some(holdsBoard)));
+  const namesBoard = (node) => alternatives(node).some(holdsBoard);
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
@@ -1105,7 +1119,7 @@ function priorityReads(program) {
     switch (pattern?.type) {
       case 'AssignmentPattern': return gives(pattern.left, values);
       case 'ObjectPattern':
-        if (takesPriority(pattern) && values.some(isBoard)) return true;
+        if (takesPriority(pattern) && values.some(holdsBoard)) return true;
         return pattern.properties.some((held) => held.type === 'Property'
           && gives(held.value, values.flatMap((value) => memberOf(value, keyOf(held.key, held.computed)))));
       case 'ArrayPattern':

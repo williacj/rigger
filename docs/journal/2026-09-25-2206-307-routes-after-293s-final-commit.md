@@ -29,3 +29,11 @@ whatever it resolves to. That also covers a re-export from another module.
 **Fail-closed left in place.** A per-call instance assigned to an outer binding and then written
 and called through that same binding within one call now keeps the class's method, a false
 positive. Telling the two apart needs flow order within a call, which this reader does not have.
+
+**Round 1: age travels with the container.** Marking an instance `earlier` only where it was read
+out of an outer binding missed an instance held in `{ first: x }` or `[x]`, a container built on
+the same call and then kept outside. What a container outlives, its contents outlive too. So a
+container read as `earlier` now passes that on to every value read out of it. Object and list
+literals built inside a function are per-call values on the same terms as a `new`, which also
+closes the object-literal sibling. A spread of `board` into an object literal gives that object
+`board`'s `priority`, so such a literal now counts as `board` wherever Rule 3 looks for it.

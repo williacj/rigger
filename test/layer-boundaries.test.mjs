@@ -986,6 +986,33 @@ test('rule 3 by receiver: an instance a function\'s new built on an earlier call
   assert.deepEqual(missed, []);
 });
 
+test('rule 3 by receiver: an earlier call\'s instance kept inside a container that call built, or an earlier call\'s object literal, keeps its method', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const shapes = [
+    // Codex's round-1 modules on PR #309: the instance kept in an object, and in a list.
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); if (!saved) { saved = { first: x }; return 0; } x.take = (board) => board.items(); return saved.first.take(c.board); };`,
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); if (!saved) { saved = [x]; return 0; } x.take = (board) => board.items(); return saved[0].take(c.board); };`,
+    // Containers nested, and a container kept by a property of an outer object.
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); saved ??= { a: [{ first: x }] }; x.take = (board) => board.items(); return saved.a[0].first.take(c.board ?? {}); };`,
+    `${ITEMS}\nconst kept = {};\nexport const rank = (c) => { const x = new Items(); kept.box ??= [x]; x.take = (board) => board.items(); return kept.box[0].take(c.board); };`,
+    // An object literal a function builds on every call, kept outside it (Codex, non-blocking 1).
+    'let first;\nexport const rank = (c) => { const x = { take: ({ priority }) => priority }; if (!first) { first = x; return 0; } x.take = (board) => board.items(); return first.take(c.board); };',
+    'let saved;\nexport const rank = (c) => { const x = { take: ({ priority }) => priority }; saved ??= [x]; x.take = (board) => board.items(); return saved[0].take(c.board); };',
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 by receiver bars nothing more across calls: a container or object literal this call built, written and then called, passes', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const handles = [
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const box = { first: x }; x.take = (board) => board.items(); return box.first.take(deps.board); };`,
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const box = [x]; x.take = (board) => board.items(); return box[0].take(deps.board); };`,
+    'export const pull = (deps) => { const x = { take: ({ priority }) => priority }; x.take = (board) => board.items(); return x.take(deps.board); };',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
 test('rule 3 by receiver bars nothing more across calls: a call on the instance this call built, after its write, passes', () => {
   const ITEMS = 'class Items { take({ priority }) { return priority; } }';
   const handles = [
@@ -1020,6 +1047,13 @@ test('rule 3: a pattern taking priority that board reaches through a list, an ob
     'export const rank = async (config) => { const [{ priority }] = await [config?.board]; return priority; };',
     'export const rank = (config) => { const [{ priority }] = (0, [config.board || {}]); return priority; };',
     'export const rank = (config, flag) => { const { priority } = (flag && [config.board])[0]; return priority; };',
+    // board spread into an object literal, which then holds board's priority (Codex, PR #309).
+    'export const rank = (config) => { const { priority } = { ...config.board }; return priority; };',
+    'export const rank = (config) => { const { x: { priority } } = { x: { ...config.board } }; return priority; };',
+    'export const rank = (config) => { const { priority } = { ...{ ...config.board } }; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = [{ a: 1, ...(config.board ?? {}) }]; return priority; };',
+    'export const rank = (config) => (({ priority }) => priority)({ ...config.board });',
+    'export const rank = (config) => ({ ...config.board }).priority;',
     // As a default, an assignment, and an argument of a function called where it is written.
     'export const rank = (config, [{ priority }] = [config.board]) => priority;',
     'export const rank = (config) => { const { x: [{ priority }] = [config.board] } = {}; return priority; };',
@@ -1053,6 +1087,8 @@ test('rule 3 bars nothing more through a list or an object: a pattern taking pri
     'export const pull = (deps, item) => { const { priority } = [item, deps.board][0]; return priority; };',
     'export const pull = (deps, item) => (([{ priority }], board) => [priority, board])([item], deps.board);',
     'export const pull = (deps) => { const [{ board }] = [deps]; return board.items(); };',
+    'export const pull = (deps, item) => { const { priority } = { ...item, board: deps.board }; return priority; };',
+    'export const pull = (deps) => { const { items } = { ...deps.board }; return items(); };',
   ];
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
