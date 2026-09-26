@@ -272,6 +272,27 @@ const UNSHARED_BOARD = {
   stderr: '',
 };
 
+/** What `gh` answers with `data` to a query, as the forge adapter's read side reads it. */
+const answered = (data) => ({ status: 0, stdout: `${JSON.stringify({ data })}\n`, stderr: '' });
+
+/**
+ * What `gh` answers a read of the board's fields where the board holds the starter config's
+ * columns and priority field, shaped so that both field queries the read side sends read it: each
+ * field with its name, its type, and its options.
+ */
+const STARTER_FIELDS = () => answered({
+  repositoryOwner: {
+    projectV2: {
+      fields: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{ name: 'Status', options: STARTER_HELD.columns }, ...STARTER_HELD.fields].map(({ name, options }) => (
+          { name, dataType: 'SINGLE_SELECT', options: options.map((option) => ({ name: option })) }
+        )),
+      },
+    },
+  },
+});
+
 /**
  * A runner answering a recorded result per command, and letting git through to the real thing.
  *
@@ -280,15 +301,16 @@ const UNSHARED_BOARD = {
  * `gitEnvironment()`, exactly as production's runner does. Under an inherited `GIT_WORK_TREE` the
  * fixture stops answering for itself and `doctor` reports on the repository that variable names.
  *
- * A board read, `gh api`, is answered as a board holding nothing, so the board-sharing check
- * passes wherever a test fixes the other verdicts; the tests of that check hand it a fake board.
+ * A board read, `gh api`, is answered as a board holding the starter config's columns and priority
+ * field and no items, so every board check passes wherever a test fixes the other verdicts; the
+ * tests of those checks hand them a fake board.
  */
 function answeringEach(answers) {
   const asked = [];
   const ask = (command, args) => {
     asked.push([command, ...args].join(' '));
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
-    if (command === 'gh' && args[0] === 'api') return UNSHARED_BOARD;
+    if (command === 'gh' && args[0] === 'api') return args[3].includes('fields(') ? STARTER_FIELDS() : UNSHARED_BOARD;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
     return answers[command];
   };
@@ -504,8 +526,8 @@ test('a config that throws anything at all is one failed line, and the other thr
   for (const thrown of THROWS) {
     const ran = await doctor(against(checked(thrown), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
 
-    // A config Rigger refuses names no board to read, so the board-sharing line is not printed.
-    assert.equal(checkLines(ran.text).length, CHECKED.length - 1, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
+    // A config Rigger cannot read names no board to read, so one board line says so.
+    assert.equal(checkLines(ran.text).length, UNREAD.length, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
     assert.notEqual(ran.code, 0, ran.text);
     assert.doesNotMatch(ran.text, /\n\s+at /, `\`${thrown}\` put a stack trace in the report:\n${ran.text}`);
     const line = checkLines(ran.text).find((said) => said.includes('config validity'));
@@ -520,7 +542,16 @@ test('a config that throws anything at all is one failed line, and the other thr
  * Written out rather than read back from the report, because an expectation taken from the report
  * agrees with whatever the report says, a report of nothing included.
  */
-const CHECKED = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board sharing'];
+const CHECKED = [
+  'Node version', 'gh authentication', 'agent CLI authentication', 'config validity',
+  'board reachability',
+  'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
+  'board priority',
+  'board sharing',
+];
+
+/** The checks `doctor` reports where the config cannot be read or is refused, written out by hand. */
+const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks'];
 
 /** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
 const against = (target, answers) => ({
@@ -609,7 +640,7 @@ test('a check that could not be asked does not count as passed, and the status s
 
   // Two could not be asked and the other two passed, so nothing here failed: whatever makes the
   // status non-zero can only be the two that were never asked.
-  assert.match(ran.text, /3 of 5 checks passed/, ran.text);
+  assert.ok(ran.text.includes(`${CHECKED.length - 2} of ${CHECKED.length} checks passed`), ran.text);
   assert.equal(
     checkLines(ran.text).filter((line) => line.includes('could not be run')).length,
     2,
@@ -632,8 +663,8 @@ test('the whole report is lines, and carries no stack trace', async () => {
   const ran = await doctor(against(checked('export default {\n'), { gh: RECORDED.ghOut, claude: RECORDED.agentOut }));
 
   assert.notEqual(ran.code, 0);
-  // A config that will not load names no board to read, so the board-sharing line is not printed.
-  assert.equal(checkLines(ran.text).length, CHECKED.length - 1, ran.text);
+  // A config that will not load names no board to read, so one board line says so.
+  assert.equal(checkLines(ran.text).length, UNREAD.length, ran.text);
   assert.doesNotMatch(ran.text, /\n\s+at /, ran.text);
 });
 
@@ -737,8 +768,26 @@ const theirs = (repository, number) => ({ type: 'issue', repository, number, tit
  * which records it and does not model it. It returns the run, every command the fake `gh` was
  * sent, the fake board's write record, and the fake's directory.
  */
-async function sharing(items, { source = starter(), project = STARTER_BOARD.project, auth = true } = {}) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-doctor-gh-')), { ...STARTER_BOARD, project, board: { columns: ['Ready'], items } });
+async function sharing(items, options = {}) {
+  return onFakeBoard({ ...STARTER_HELD, items }, options);
+}
+
+/**
+ * The board the starter config describes, as the fake board holds one: its five columns, and its
+ * priority field with the three options it declares. Written out rather than read from the
+ * starter, so a starter that drifted from it shows as a failing board line.
+ */
+const STARTER_HELD = {
+  columns: ['Ready', 'Coding', 'Review', 'Owner', 'Done'],
+  fields: [{ name: 'Priority', options: ['High', 'Normal', 'Low'] }],
+};
+
+/**
+ * Runs `doctor` as `sharing` does, with the fake `gh` holding `board`, a fake board model, under
+ * `owner` where one is given and under the repository's owner otherwise.
+ */
+async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.project, auth = true, owner } = {}) {
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-doctor-gh-')), { ...STARTER_BOARD, owner, project, board });
   const path = `${dirname(fake.gh)}${delimiter}${process.env.PATH}`;
   const ask = (command, args) => {
     if (command === 'claude') return RECORDED.agentIn;
@@ -820,19 +869,32 @@ test("when the board cannot be read, the board-sharing line fails and carries th
   assert.ok(line.includes(message), `${line}\ndoes not carry\n${message}`);
 });
 
-test("doctor's board-sharing check sends no mutation, as the fake gh records every command it is sent", async () => {
-  // Every gh command doctor sends goes to the fake, `gh auth status` included.
-  const { sent, writes } = await sharing([ours(1), theirs('other/one', 7), { type: 'redacted' }], { auth: false });
+test("doctor's board checks, the board-sharing check among them, send no mutation, as the fake gh records every command they are sent", async () => {
+  // Every gh command doctor sends goes to the fake, `gh auth status` included. Each board is one a
+  // check fails on, or the one they all pass on, since a check that wrote would write to mend a
+  // board it found wanting.
+  const items = [ours(1), theirs('other/one', 7), { type: 'redacted' }];
+  const boards = [
+    [{ ...STARTER_HELD, items }, {}],
+    [{ ...STARTER_HELD, items, columns: ['Ready', 'Coding'] }, {}],
+    [{ ...STARTER_HELD, items, fields: [{ name: 'Priority', options: ['High', 'Urgent'] }] }, {}],
+    [{ ...STARTER_HELD, items, fields: [{ name: 'Priority', type: 'TEXT' }] }, {}],
+    [{ ...STARTER_HELD, items }, { project: 13 }],
+  ];
+  for (const [board, options] of boards) {
+    const { sent, writes } = await onFakeBoard(board, { ...options, auth: false });
 
-  const reads = sent.filter((args) => args[0] === 'api');
-  assert.ok(reads.length > 0, 'doctor sent the fake gh no board read, so this proves nothing');
-  for (const args of sent.filter((sentArgs) => sentArgs[0] !== 'api')) assert.deepEqual(args, ['auth', 'status']);
-  for (const args of reads) {
-    assert.deepEqual(args.slice(0, 3), ['api', 'graphql', '-f'], args.join(' '));
-    assert.match(args[3], /^query=query \{/, args[3]);
-    assert.doesNotMatch(args[3], /mutation/, args[3]);
+    const reads = sent.filter((args) => args[0] === 'api');
+    assert.ok(reads.some((args) => args[3].includes('fields(')), 'doctor sent the fake gh no field read, so this proves nothing');
+    assert.ok(reads.some((args) => args[3].includes('items(')), 'doctor sent the fake gh no item read, so this proves nothing');
+    for (const args of sent.filter((sentArgs) => sentArgs[0] !== 'api')) assert.deepEqual(args, ['auth', 'status']);
+    for (const args of reads) {
+      assert.deepEqual(args.slice(0, 3), ['api', 'graphql', '-f'], args.join(' '));
+      assert.match(args[3], /^query=query \{/, args[3]);
+      assert.doesNotMatch(args[3], /mutation/, args[3]);
+    }
+    assert.deepEqual(writes, []);
   }
-  assert.deepEqual(writes, []);
 });
 
 test('given a config the validator refuses, doctor prints no board-sharing line and sends no request addressing the board', async () => {
@@ -845,12 +907,192 @@ test('given a config the validator refuses, doctor prints no board-sharing line 
   assert.deepEqual(sent, []);
 });
 
-test('the checks doctor names are those it named before #289, and the board-sharing check, compared both ways', async () => {
-  // Written out by hand: the four names `doctor` printed at #289's base, and the one #289 adds.
-  const expected = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board sharing'];
+test('the checks doctor names are the four it named at 434b48b, the board-sharing check, and the board lines, compared both ways', async () => {
+  // Written out by hand: the four names `doctor` printed at 434b48b, the one #289 adds, and the
+  // board lines #236 adds for the starter config's five columns, and for a config it refuses.
+  const expected = [
+    'Node version', 'gh authentication', 'agent CLI authentication', 'config validity',
+    'board sharing',
+    'board reachability',
+    'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
+    'board priority',
+    'board checks',
+  ];
   const { ran } = await sharing([ours(1)]);
+  const refused = await sharing([ours(1)], { source: starter().replace(/^\s*repo:.*$/m, '') });
 
-  const names = checkLines(ran.text).map((line) => line.trim().match(/^(?:ok|failed|not asked)\s+([^:]+):/)?.[1]);
-  assert.deepEqual(names.filter((name) => !expected.includes(name)), [], ran.text);
-  assert.deepEqual(expected.filter((name) => !names.includes(name)), [], ran.text);
+  const names = [...namesIn(ran.text), ...namesIn(refused.ran.text)];
+  assert.deepEqual(names.filter((name) => !expected.includes(name)), [], `${ran.text}\n${refused.ran.text}`);
+  assert.deepEqual(expected.filter((name) => !names.includes(name)), [], `${ran.text}\n${refused.ran.text}`);
+});
+
+/** The report's lines naming the check `name`, as the report writes it: after the verdict, before the colon. */
+const linesOf = (text, name) => checkLines(text).filter((line) => line.trim().match(/^(?:ok|failed|not asked)\s+([^:]+):/)?.[1] === name);
+
+/** The name each line of a report gives its check, in report order. */
+const namesIn = (text) => checkLines(text).map((line) => line.trim().match(/^(?:ok|failed|not asked)\s+([^:]+):/)?.[1]);
+
+test('given a config the validator refuses, doctor prints one board line, saying the board was not checked because the config was refused', async () => {
+  const source = starter().replace(/^\s*repo:.*$/m, '');
+  assert.notDeepEqual(validate((await import(pathToFileURL(join(checked(source), CONFIG)))).default), []);
+
+  const { ran, sent } = await onFakeBoard(STARTER_HELD, { source });
+
+  const board = checkLines(ran.text).filter((line, index) => namesIn(ran.text)[index].startsWith('board'));
+  assert.equal(board.length, 1, ran.text);
+  assert.match(board[0], /not checked/, board[0]);
+  assert.match(board[0], /config was refused/, board[0]);
+  assert.deepEqual(sent, []);
+});
+
+test('doctor prints one line per declared column, and only the column whose display name is no Status option fails, naming its key and display name', async () => {
+  // The board holds `Needs Owner` where the starter declares `owner: 'Owner'`.
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, columns: ['Ready', 'Coding', 'Review', 'Needs Owner', 'Done'] });
+
+  for (const key of ['ready', 'coding', 'review', 'done']) {
+    const lines = linesOf(ran.text, `board column ${key}`);
+    assert.equal(lines.length, 1, ran.text);
+    assert.match(lines[0], /^\s*ok\s/, lines[0]);
+  }
+  const [owner, ...more] = linesOf(ran.text, 'board column owner');
+  assert.deepEqual(more, [], ran.text);
+  assert.match(owner, /^\s*failed\s/, owner);
+  assert.ok(owner.includes('owner (Owner)'), owner);
+  assert.notEqual(ran.code, 0, ran.text);
+});
+
+test("when the configured board cannot be read, the reachability line fails, carrying the read side's message naming the board, its owner and gh's first line", async () => {
+  // The fake gh holds board 13, and the config names board 12, which gh answers is not there.
+  const { ran, path } = await onFakeBoard(STARTER_HELD, { project: 13 });
+
+  const held = process.env.PATH;
+  process.env.PATH = path;
+  let message;
+  try {
+    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }).readFieldTypes();
+  } catch (error) {
+    message = error.message;
+  } finally {
+    process.env.PATH = held;
+  }
+  assert.ok(message, 'the read side read a board the fake gh does not hold, so this proves nothing');
+
+  const lines = linesOf(ran.text, 'board reachability');
+  assert.equal(lines.length, 1, ran.text);
+  assert.match(lines[0], /^\s*failed\s/, lines[0]);
+  assert.ok(lines[0].includes(message), `${lines[0]}\ndoes not carry\n${message}`);
+  // What that message names, read off the fake gh's own answer rather than the adapter's.
+  assert.ok(lines[0].includes('board 12'), lines[0]);
+  assert.ok(lines[0].includes("acme's board 12"), lines[0]);
+  assert.ok(lines[0].includes('gh: Could not resolve to a ProjectV2 with the number 12.'), lines[0]);
+});
+
+/** The login each board request the fake gh was sent finds its board under, one per request. */
+const ownersAsked = (sent) => sent.filter((args) => args[0] === 'api')
+  .map((args) => args[3].match(/repositoryOwner\(login: "([^"]*)"\)/)?.[1] ?? null);
+
+test("given a config declaring a board owner other than the repository's, every request the reachability check and the other board checks send addresses the board under the declared owner", async () => {
+  const source = starter().replace('board: { ', "board: { owner: 'octo-org', ");
+  const declared = (await import(pathToFileURL(join(checked(source), CONFIG)))).default;
+  assert.equal(declared.board.owner, 'octo-org', 'the starter names its board in a form this test does not extend');
+  assert.deepEqual(validate(declared), []);
+
+  // The fake gh holds the board under `octo-org` alone, so a request addressing `acme` fails.
+  const { ran, sent } = await onFakeBoard(STARTER_HELD, { source, owner: 'octo-org', auth: false });
+
+  const owners = ownersAsked(sent);
+  assert.ok(owners.length > 0, 'doctor sent the fake gh no board request, so this proves nothing');
+  assert.deepEqual(owners.filter((owner) => owner !== 'octo-org'), [], sent.map((args) => args.join(' ')).join('\n'));
+  assert.match(linesOf(ran.text, 'board reachability')[0], /^\s*ok\s/, ran.text);
+});
+
+test("given a config declaring no board owner, every request the reachability check and the other board checks send addresses the board under the repository's owner", async () => {
+  const declared = (await import(pathToFileURL(join(checked(starter()), CONFIG)))).default;
+  assert.equal(Object.hasOwn(declared.board, 'owner'), false, 'the starter declares a board owner, so this proves nothing');
+
+  const { ran, sent } = await onFakeBoard(STARTER_HELD, { auth: false });
+
+  const owners = ownersAsked(sent);
+  assert.ok(owners.length > 0, 'doctor sent the fake gh no board request, so this proves nothing');
+  assert.deepEqual(owners.filter((owner) => owner !== 'acme'), [], sent.map((args) => args.join(' ')).join('\n'));
+  assert.match(linesOf(ran.text, 'board reachability')[0], /^\s*ok\s/, ran.text);
+});
+
+test('doctor exits non-zero when any board line fails, and zero on the board where every line passes', async () => {
+  const passing = await onFakeBoard(STARTER_HELD);
+  assert.equal(passing.ran.code, 0, passing.ran.text);
+
+  const failing = [
+    [STARTER_HELD, { project: 13 }, 'board reachability'],
+    [{ ...STARTER_HELD, columns: ['Ready', 'Coding', 'Review', 'Done'] }, {}, 'board column owner'],
+    [{ ...STARTER_HELD, fields: [] }, {}, 'board priority'],
+    [{ ...STARTER_HELD, fields: [{ name: 'Priority', type: 'TEXT' }] }, {}, 'board priority'],
+    [{ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['High', 'Normal'] }] }, {}, 'board priority'],
+  ];
+  for (const [board, options, name] of failing) {
+    const { ran } = await onFakeBoard(board, options);
+    assert.match(linesOf(ran.text, name)[0], /^\s*failed\s/, ran.text);
+    assert.notEqual(ran.code, 0, ran.text);
+  }
+});
+
+/** The report's one priority line, asserted to be one. */
+function priorityLine(text) {
+  const lines = linesOf(text, 'board priority');
+  assert.equal(lines.length, 1, text);
+  return lines[0];
+}
+
+test('the priority line fails when the declared field is not on the board, naming it', async () => {
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Urgency', options: ['High', 'Normal', 'Low'] }] });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  assert.match(line, /no field named Priority/, line);
+  assert.notEqual(ran.code, 0, ran.text);
+});
+
+test('the priority line fails when the declared field is not a single-select field, naming its type', async () => {
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', type: 'TEXT' }] });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  assert.match(line, /\bTEXT\b/, line);
+  assert.notEqual(ran.code, 0, ran.text);
+});
+
+test('the priority line fails when an option is on the board and not in the config, or in the config and not on the board, naming each', async () => {
+  // The starter declares High, Normal and Low; the board holds High, Normal, Urgent and Someday.
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['Urgent', 'High', 'Normal', 'Someday'] }] });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  for (const option of ['Urgent', 'Someday', 'Low']) assert.match(line, new RegExp(`\\b${option}\\b`), line);
+  assert.notEqual(ran.code, 0, ran.text);
+});
+
+test('the priority line passes when the board holds exactly the declared options in a different order', async () => {
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }] });
+
+  assert.match(priorityLine(ran.text), /^\s*ok\s/, ran.text);
+  assert.equal(ran.code, 0, ran.text);
+});
+
+test('given a config declaring no priority, the priority line passes and says no priority field is declared', async () => {
+  const source = starter().replace(/, priority: \{[^}]*\}/, '');
+  assert.doesNotMatch(source, /priority:/, 'the starter declares its priority in a form this test does not remove');
+
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [] }, { source });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*ok\s/, line);
+  assert.match(line, /no priority field is declared/, line);
+});
+
+test('given a board the fake gh holds, doctor prints one board reachability line, which passes', async () => {
+  const { ran } = await onFakeBoard(STARTER_HELD);
+
+  const lines = linesOf(ran.text, 'board reachability');
+  assert.equal(lines.length, 1, ran.text);
+  assert.match(lines[0], /^\s*ok\s/, lines[0]);
 });
