@@ -11,7 +11,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
-import { loop } from '../src/scheduling/loop.mjs';
+import { claimOnly, loop } from '../src/scheduling/loop.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -179,6 +179,8 @@ export function world({
     /** The events L3 recorded so far, in order. */
     l3Events: () => readEvents(directory).filter((event) => event.layer === 'L3'),
     loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink }),
+    /** L3's claim-only call over the same board, L2 and sink, handed no dispatch. */
+    claims: claimOnly({ config: settings, board, decide, l2, sink: l3Sink }),
   };
 }
 
