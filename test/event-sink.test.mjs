@@ -185,17 +185,19 @@ test('a torn line is refused rather than passed over, and the reader says which 
   assert.throws(() => readEvents(directory), /events\.jsonl line 1 is not a recorded event/);
 });
 
-test('no layer emits an event yet, so nothing in production reaches for the sink', () => {
-  // The card that lands each layer's event family wires that layer up; until then the suite is
-  // the only caller. `productionFiles` is the package budget's own walk, so what this reads is
-  // what CI charges the budget for rather than a second idea of where production code lives.
+test('no layer reaches for the sink: a verb under src/cli/ opens it, and every layer takes it as it is handed', () => {
+  // A layer that opened the sink itself would name the state directory and the run, which are
+  // the process's to know, and it could write another layer's events. So the verb that owns the
+  // process opens it and hands it down, and a layer holds only the emitter it was given.
+  // `productionFiles` is the package budget's own walk, so what this reads is what CI charges
+  // the budget for rather than a second idea of where production code lives.
   const files = productionFiles(root);
   assert.ok(
     files.some((file) => file.endsWith(join('src', 'observation', 'sink.mjs'))),
     'the walk found no sink, so it would find no caller either',
   );
   const callers = files
-    .filter((file) => !file.includes(join('src', 'observation')))
+    .filter((file) => !file.includes(join('src', 'observation')) && !file.includes(join('src', 'cli')))
     .filter((file) => readFileSync(file, 'utf8').includes('observation/sink'));
   assert.deepEqual(callers, []);
 });
