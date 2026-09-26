@@ -4,7 +4,7 @@
 import { declaredLabels, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
-import { consumerConfig, sourceTreeGuard } from './doctor.mjs';
+import { consumerConfig, sharedWith, sourceTreeGuard } from './doctor.mjs';
 
 /** The type GitHub names a single-select field by, which is the only type a priority field may be. */
 const SINGLE_SELECT = 'SINGLE_SELECT';
@@ -18,11 +18,13 @@ const shown = (name) => name.replace(/[\p{Cc}\u2028\u2029]/gu, (char) => `\\u${c
 
 /**
  * What the board holds that setup-board compares the config against: the names of its columns,
- * every field's name and type, and the repository's labels. Read before anything is written.
+ * every field's name and type, the repository's labels, and what the forge adapter reports of
+ * the other repositories whose items are on it. Read before anything is written.
  */
 async function survey(board) {
   const read = readSide(board);
   return {
+    others: await read.readOtherRepositories(),
     columns: boardOf('setup-board', board).columns.options.map((option) => option.name),
     fields: await read.readFieldTypes(),
     labels: await read.readLabels(),
@@ -31,11 +33,14 @@ async function survey(board) {
 
 /**
  * The writes that add what `config` declares and `held` lacks, each as the schema-write
- * operation, its arguments and the line printed for it, or `{ refusal }` where the board cannot
- * take the config without changing something it already holds. Nothing held is ever removed,
- * renamed or changed: a priority field already there is left as it is, whatever its options.
+ * operation, its arguments and the line printed for it, or `{ refusal }` where the board holds
+ * another repository's items or one it cannot read, or cannot take the config without changing
+ * something it already holds. Nothing held is ever removed, renamed or changed: a priority
+ * field already there is left as it is, whatever its options.
  */
 function writesFor(config, held) {
+  const shared = sharedWith(config.board.project, held.others);
+  if (shared) return { refusal: `${shared}, and two engines never share one board, so nothing was written` };
   const writes = [];
   for (const name of new Set(Object.values(config.board.columns))) {
     if (!held.columns.includes(name)) writes.push({ operation: 'createColumn', args: [name], line: `added the column ${shown(name)}` });

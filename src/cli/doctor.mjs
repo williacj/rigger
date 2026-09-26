@@ -7,6 +7,7 @@ import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
+import { readSide } from '../substrate/forge/read.mjs';
 import { readRunner } from '../substrate/forge/runners.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
@@ -351,6 +352,46 @@ export async function consumerConfig(target) {
 }
 
 /**
+ * What the forge adapter's report of other repositories says of the board numbered `project`, or
+ * null where the board holds nothing from outside the repository. It names the other repositories
+ * and the count of items that cannot be read, and never the repository itself. `setup-board`
+ * refuses in the same words.
+ */
+export function sharedWith(project, { repositories, unreadable }) {
+  const said = [];
+  if (repositories.length > 0) {
+    said.push(`board ${project} holds issues or pull requests of ${repositories.length === 1 ? 'another repository' : 'other repositories'}: ${repositories.join(', ')}`);
+  }
+  if (unreadable > 0) said.push(`board ${project} holds ${unreadable} ${unreadable === 1 ? 'item it cannot read' : 'items it cannot read'}`);
+  return said.length > 0 ? said.join('; ') : null;
+}
+
+/**
+ * Whether the board the config names holds anything from outside the repository `repo` names,
+ * which is the forge adapter's report and not this code's. An issue or pull request of another
+ * repository means two engines share the board, and an item the engine's `gh` cannot read is not
+ * the repository's (the architect's ruling on #285, comment 5835129833). A read that fails fails
+ * the line, carrying the adapter's message.
+ *
+ * A config Rigger refuses, or cannot read, names no board worth reading, so the check answers
+ * null, sends nothing, and `doctor` prints no line for it. `ask` stands in for the read runner's
+ * spawn in tests.
+ */
+export async function boardSharing({ target = process.cwd(), ask } = {}) {
+  const name = 'board sharing';
+  const { config, problem } = await consumerConfig(target);
+  if (problem || validate(config).length > 0) return null;
+  let held;
+  try {
+    held = await readSide({ repo: config.repo, ...config.board }, { send: ask }).readOtherRepositories();
+  } catch (threw) {
+    return { name, ok: false, detail: wentWrong(threw) };
+  }
+  const shared = sharedWith(config.board.project, held);
+  return { name, ok: shared === null, detail: shared ?? `board ${config.board.project} holds nothing from outside ${config.repo}` };
+}
+
+/**
  * What a check answered, in the words the report writes it with.
  *
  * Three verdicts and not two. A check that could not reach the tool it asks has not passed, and
@@ -380,12 +421,14 @@ export function report(where, results) {
 }
 
 /**
- * The checks `doctor` runs, in the order the card lists them.
+ * The checks `doctor` runs: the four its card lists, in that order, and then the board-sharing
+ * check, which reads the board the config names only once the config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
- * decides which checks there are and what order they are reported in.
+ * decides which checks there are and what order they are reported in. A check answering null has
+ * nothing to report, and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity];
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardSharing];
 
 /**
  * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
@@ -433,5 +476,5 @@ export async function doctor({
   if (refusal) return refusal;
   const results = [];
   for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
-  return report(named, results);
+  return report(named, results.filter((result) => result !== null));
 }

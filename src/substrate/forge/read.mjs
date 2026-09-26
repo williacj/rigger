@@ -97,12 +97,17 @@ export function repositoryOf(operation, board, send) {
 const ITEM = `id fieldValues(first: ${PAGE}) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: ${PAGE}) { pageInfo { hasNextPage } nodes { name } } } }`;
 
 /**
- * Whether the item read answered `node` as a card: an issue in the board's repository. A draft
- * issue, a pull request and another repository's issue are items and not cards. GitHub reads an
- * owner and repository name alike whatever their case, so the names are compared that way too.
+ * Whether the repository an item read answered as `nameWithOwner` is the board's repository,
+ * `board.repo`. GitHub reads an owner and repository name alike whatever their case, so the names
+ * are compared that way too. Every read deciding whether an item is the repository's asks this.
  */
-const isCard = (board, { content }) =>
-  content?.__typename === 'Issue' && content.repository.nameWithOwner.toLowerCase() === board.repo.toLowerCase();
+const ofRepository = (board, nameWithOwner) => nameWithOwner.toLowerCase() === board.repo.toLowerCase();
+
+/**
+ * Whether the item read answered `node` as a card: an issue in the board's repository. A draft
+ * issue, a pull request and another repository's issue are items and not cards.
+ */
+const isCard = (board, { content }) => content?.__typename === 'Issue' && ofRepository(board, content.repository.nameWithOwner);
 
 /** The option an item read's `node` holds in the single-select field named `field`, or null. */
 const valueIn = (node, field) => node.fieldValues.nodes.find((value) => value.field?.name === field)?.name ?? null;
@@ -128,15 +133,44 @@ function cardOf(operation, board, node) {
 }
 
 /**
- * The board's item nodes that are cards, in board order, each once. The board can change between
- * one page and the next, so an item moved meanwhile can be answered on both: it is kept where it
- * first appeared.
+ * Every node of the board's items connection, each item selected as `item`, in board order, each
+ * once. The board can change between one page and the next, so an item moved meanwhile can be
+ * answered on both: it is kept where it first appeared.
  */
-function cardNodes(operation, board, send) {
-  const query = (page) => boardQuery(operation, board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`);
+function itemNodes(operation, board, send, item) {
+  const query = (page) => boardQuery(operation, board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${item} } }`);
   const nodes = everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
   const seen = new Set();
-  return nodes.filter((node) => !seen.has(node.id) && seen.add(node.id)).filter((node) => isCard(board, node));
+  return nodes.filter((node) => !seen.has(node.id) && seen.add(node.id));
+}
+
+/** The board's item nodes that are cards, in board order, each once. */
+const cardNodes = (operation, board, send) => itemNodes(operation, board, send, ITEM).filter((node) => isCard(board, node));
+
+/**
+ * What the report of other repositories selects of an item: its type, and the repository of an
+ * issue or a pull request. A draft issue answers its content as an empty object, and an item the
+ * reader cannot see answers the type `REDACTED` (`ProjectV2ItemType`).
+ */
+const OWNED_ITEM = 'id type content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } }';
+
+/** The type GitHub gives a board item whose content the reader cannot see. */
+const REDACTED = 'REDACTED';
+
+/**
+ * What the board holds that is not the repository's: `repositories`, every other repository an
+ * issue or pull request on it belongs to, as `owner/name` in the order first met, and
+ * `unreadable`, the count of items whose content GitHub withheld.
+ */
+function otherRepositories(operation, board, send) {
+  const repositories = [];
+  let unreadable = 0;
+  for (const { type, content } of itemNodes(operation, board, send, OWNED_ITEM)) {
+    if (type === REDACTED) unreadable += 1;
+    const named = content?.repository?.nameWithOwner;
+    if (named && !ofRepository(board, named) && !repositories.includes(named)) repositories.push(named);
+  }
+  return { repositories, unreadable };
 }
 
 /**
@@ -204,6 +238,12 @@ export function readSide(board, { send } = {}) {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
       return everyPage('readLabels', board, send, query, (data) => data?.repository?.labels).map((label) => label.name);
     },
+    /**
+     * What the board holds from outside the repository: every other repository whose issue or
+     * pull request is on it, and how many items it holds that cannot be read. Its own read of the
+     * items, so the item read `readItems` sends is left as it is.
+     */
+    readOtherRepositories: async () => otherRepositories('readOtherRepositories', board, send),
     /** Every card on the board, in board order, each once. */
     readItems: async () => cardNodes('readItems', board, send).map((node) => cardOf('readItems', board, node)),
     /**

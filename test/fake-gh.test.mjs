@@ -252,10 +252,10 @@ test('the fake gh does not model an options write that changes a held option\'s 
 /**
  * The tests of #215 (M1-02), the board reads; of #216 (M1-03), the adapter's sides and runners;
  * of #284, the board each operation addresses; of #217 (M1-29), adding a column, which are among
- * the three before it; and of #224 (M1-24), the priority read, whose recorded-answer tests are
- * among the board reads'.
+ * the three before it; of #224 (M1-24), the priority read, whose recorded-answer tests are among
+ * the board reads'; and of #289, the report of the other repositories a board holds.
  */
-const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-board-owner.test.mjs', 'forge-priority.test.mjs'];
+const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-board-owner.test.mjs', 'forge-priority.test.mjs', 'forge-board-sharing.test.mjs'];
 
 /**
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
