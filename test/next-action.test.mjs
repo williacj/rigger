@@ -1,5 +1,6 @@
-// ABOUTME: Tests L2's next action for a ready card: ignored when no kind selects it, refused when
-// two kinds select it or the form check refuses it, and otherwise dispatched under its one kind.
+// ABOUTME: Tests L2's next action for a card: ignored when no kind selects it or, in Coding or
+// Review, when injected freshness says a fresh verdict covers it, refused when two kinds select it
+// or the form check refuses it, and otherwise dispatched under its one kind.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -159,4 +160,45 @@ test('two cards differing only in priority and in the column they came from rece
       assert.deepEqual(nextAction(low, KINDS), nextAction(high, KINDS));
     }
   }
+});
+
+/** The columns this repository's config declares, by key. */
+const COLUMNS = config.board.columns;
+
+/** `card(number, ['type:change'])`, in the column displayed as `column`. */
+const cardInColumn = (number, column) => ({ ...card(number, ['type:change']), column });
+
+test('an unclaimed Coding card and an unclaimed Review card that freshness answers "fresh" for are ignored', () => {
+  const fresh = () => true;
+  for (const column of [COLUMNS.coding, COLUMNS.review]) {
+    assert.deepEqual(nextAction(cardInColumn(20, column), KINDS, undefined, { columns: COLUMNS, fresh }), { action: 'ignore' }, column);
+  }
+});
+
+test('an unclaimed Coding card and an unclaimed Review card that freshness answers "not fresh" for are dispatched under their kind', () => {
+  const fresh = () => false;
+  for (const column of [COLUMNS.coding, COLUMNS.review]) {
+    assert.deepEqual(nextAction(cardInColumn(21, column), KINDS, undefined, { columns: COLUMNS, fresh }), { action: 'dispatch', kind: 'change' }, column);
+  }
+});
+
+test('with no freshness injected, L2 treats every unclaimed Coding or Review card as not fresh', () => {
+  for (const column of [COLUMNS.coding, COLUMNS.review]) {
+    assert.deepEqual(nextAction(cardInColumn(22, column), KINDS, undefined, { columns: COLUMNS }), { action: 'dispatch', kind: 'change' }, column);
+    assert.deepEqual(nextAction(cardInColumn(22, column), KINDS), { action: 'dispatch', kind: 'change' }, column);
+  }
+});
+
+test('freshness is read for Coding and Review cards alone: a Ready card is dispatched whatever it answers', () => {
+  const asked = [];
+  const fresh = (given) => {
+    asked.push(given.number);
+    return true;
+  };
+  assert.deepEqual(nextAction(cardInColumn(23, COLUMNS.ready), KINDS, undefined, { columns: COLUMNS, fresh }), { action: 'dispatch', kind: 'change' });
+  assert.deepEqual(asked, []);
+});
+
+test('freshness injected with no declared columns is refused, rather than read for no card', () => {
+  assert.throws(() => nextAction(cardInColumn(24, COLUMNS.coding), KINDS, undefined, { fresh: () => true }), /freshness was injected with no declared columns/);
 });
