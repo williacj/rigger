@@ -7,8 +7,8 @@ import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
-import { readSide } from '../substrate/forge/read.mjs';
-import { readRunner } from '../substrate/forge/runners.mjs';
+import { boardOf, readSide } from '../substrate/forge/read.mjs';
+import { COLUMNS, readRunner } from '../substrate/forge/runners.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 
@@ -372,6 +372,12 @@ export function sharedWith(project, { repositories, unreadable }) {
 }
 
 /**
+ * The forge adapter's reads on the board `config` names, or on `board` where it is given, which
+ * is that board narrowed to fewer columns. `send` stands in for the read runner's spawn in tests.
+ */
+const readsOf = (config, send, board = config.board) => readSide({ repo: config.repo, ...board }, { send });
+
+/**
  * Whether the board the config names holds anything from outside the repository `repo` names,
  * which is the forge adapter's report and not this code's. An issue or pull request of another
  * repository means two engines share the board, and an item the engine's `gh` cannot read is not
@@ -393,12 +399,110 @@ export async function boardSharing({ target = process.cwd(), ask } = {}) {
   }
   let held;
   try {
-    held = await readSide({ repo: config.repo, ...config.board }, { send: ask }).readOtherRepositories();
+    held = await readsOf(config, ask).readOtherRepositories();
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
   }
   const shared = sharedWith(config.board.project, held);
   return { name, ok: shared === null, detail: shared ?? `board ${config.board.project} holds nothing from outside ${config.repo}` };
+}
+
+/**
+ * Whether the board the config names can be read, which is the forge adapter's read side's
+ * answer: it finds the board by its owner and number, and a read it cannot make fails the line,
+ * carrying the adapter's message, which names the board and the owner the request addressed.
+ */
+async function reachability(config, send) {
+  const name = 'board reachability';
+  try {
+    await readsOf(config, send).readFieldTypes();
+  } catch (threw) {
+    return { name, ok: false, detail: wentWrong(threw) };
+  }
+  return { name, ok: true, detail: `board ${config.board.project} can be read` };
+}
+
+/**
+ * A line per column the config declares, each saying whether its display name is an option of
+ * the board's field holding the columns. Each is the forge adapter's column read of that one
+ * column, so a line that fails carries the adapter's message, which names the column by key and
+ * display name.
+ */
+async function columns(config, send) {
+  const lines = [];
+  for (const [key, display] of Object.entries(config.board.columns)) {
+    const name = `board column ${key}`;
+    try {
+      await readsOf(config, send, { ...config.board, columns: { [key]: display } }).readColumns();
+      lines.push({ name, ok: true, detail: `${display} is an option of board ${config.board.project}'s columns` });
+    } catch (threw) {
+      lines.push({ name, ok: false, detail: wentWrong(threw) });
+    }
+  }
+  return lines;
+}
+
+/** The type GitHub names a single-select field by, as the read side's field types carry it. */
+const SINGLE_SELECT = 'SINGLE_SELECT';
+
+/**
+ * Whether the board holds the priority field the config declares: a single-select field of that
+ * name, the field holding the columns among them, whose option names are exactly the declared
+ * ones. Order is not compared, because the config's order is the ranking of whatever options the
+ * board holds, and the board's own order ranks nothing. A config declaring no priority passes,
+ * since no field is asked for.
+ *
+ * Only fields are read, never cards, so a card the read side refuses cannot decide this line.
+ * Every field's name and type comes from the read side's typed field listing. A single-select
+ * field's options come from its single-select field read, which leaves out the field holding the
+ * columns; that field's options come from the board read `setup-board` takes them from.
+ */
+async function priority(config, send) {
+  const name = 'board priority';
+  const declared = config.board.priority;
+  if (!declared) return { name, ok: true, detail: 'no priority field is declared, so every card ranks alike' };
+  const field = `board ${config.board.project}'s field ${declared.field}`;
+  const reads = readsOf(config, send);
+  let held;
+  try {
+    const typed = (await reads.readFieldTypes()).find((each) => each.name === declared.field);
+    if (!typed) return { name, ok: false, detail: `board ${config.board.project} has no field named ${declared.field}` };
+    if (typed.type !== SINGLE_SELECT) {
+      return { name, ok: false, detail: `${field} is a ${typed.type} field, not a single-select field` };
+    }
+    held = declared.field === COLUMNS
+      ? boardOf('doctor', { repo: config.repo, ...config.board }, send).columns.options.map((option) => option.name)
+      : (await reads.readFields()).find((select) => select.name === declared.field).options;
+  } catch (threw) {
+    return { name, ok: false, detail: wentWrong(threw) };
+  }
+  const unasked = held.filter((option) => !declared.options.includes(option));
+  const missing = declared.options.filter((option) => !held.includes(option));
+  const said = [];
+  if (unasked.length > 0) said.push(`on the board and not in the config: ${unasked.join(', ')}`);
+  if (missing.length > 0) said.push(`in the config and not on the board: ${missing.join(', ')}`);
+  if (said.length > 0) return { name, ok: false, detail: `${field} holds options ${said.join('; ')}` };
+  return { name, ok: true, detail: `${field} holds exactly the declared options` };
+}
+
+/**
+ * The lines about the board the config names: whether it can be read, whether it holds each
+ * declared column, and whether it holds the declared priority field. A config Rigger refuses,
+ * cannot read, or throws during validation names no board worth reading, so it earns one line
+ * saying the board was not checked, and nothing is sent.
+ */
+export async function boardChecks({ target = process.cwd(), ask } = {}) {
+  const { config, problem } = await consumerConfig(target);
+  let why = problem ? 'the config could not be read' : null;
+  if (!why) {
+    try {
+      if (validate(config).length > 0) why = 'the config was refused';
+    } catch {
+      why = 'the config could not be validated';
+    }
+  }
+  if (why) return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
+  return [await reachability(config, ask), ...await columns(config, ask), await priority(config, ask)];
 }
 
 /**
@@ -431,14 +535,15 @@ export function report(where, results) {
 }
 
 /**
- * The checks `doctor` runs: the four its card lists, in that order, and then the board-sharing
- * check, which reads the board the config names only once the config earns no refusals.
+ * The checks `doctor` runs: the four its card lists, in that order, then the board checks, and
+ * then the board-sharing check. Both of the last read the board the config names only once the
+ * config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
- * decides which checks there are and what order they are reported in. A check answering null has
- * nothing to report, and prints no line.
+ * decides which checks there are and what order they are reported in. A check answers one line,
+ * a list of lines, or null, which has nothing to report and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardSharing];
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing];
 
 /**
  * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
@@ -486,5 +591,5 @@ export async function doctor({
   if (refusal) return refusal;
   const results = [];
   for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
-  return report(named, results.filter((result) => result !== null));
+  return report(named, results.flat().filter((result) => result !== null));
 }

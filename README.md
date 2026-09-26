@@ -189,7 +189,7 @@ evidence that would bring it back.
 
 ```bash
 npx @williacj/rigger init          # write a starter config, fork the role templates
-npx @williacj/rigger doctor        # check gh auth, agent CLI auth, Node, config, board fields
+npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit
