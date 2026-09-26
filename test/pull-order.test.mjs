@@ -47,12 +47,13 @@ const boardOf = (items) => createFakeBoard({
 
 /**
  * L3's pull order over `fake`'s board as it reads now, handed on as L0's priority read hands it
- * for the declaration `priority`. L2's next action is the real one, with freshness injected: a
- * card `fresh` answers true for is one L2 has nothing to do for.
+ * for the declaration `priority`. L2's next action is the real one, with freshness injected
+ * through its own input: a Coding or Review card `fresh` answers true for is one L2 has nothing to
+ * do for.
  */
 async function planOf(fake, { priority = PRIORITY, fresh = () => false } = {}) {
   const { items, declared } = await fake.operations.readPriority(priority);
-  const l2 = (card) => (fresh(card) ? { action: 'ignore' } : nextAction(card, KINDS));
+  const l2 = (card) => nextAction(card, KINDS, undefined, { columns: COLUMNS, fresh });
   return pullOrder({ items, columns: COLUMNS, declared }, l2);
 }
 

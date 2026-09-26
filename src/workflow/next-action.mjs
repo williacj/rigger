@@ -1,5 +1,5 @@
-// ABOUTME: L2's next action for a ready card: ignore it, refuse it with a reason, or dispatch it
-// under the one kind of work that selects it.
+// ABOUTME: L2's next action for a ready card, or an unclaimed Coding or Review card no fresh
+// verdict covers: ignore it, refuse it with a reason, or dispatch it under the one kind that selects it.
 
 import { sameLabel } from '../config/validate.mjs';
 import { checkAcceptanceForm } from './form-check.mjs';
@@ -18,7 +18,7 @@ const selecting = (card, kinds) =>
     .map(([name]) => name);
 
 /**
- * The next action for a ready card, which is `{ number, title, body, labels }` as the forge holds
+ * The next action for a card, which is `{ number, title, body, labels }` as the forge holds
  * it, under a config's `kinds` and its `epicLabel`. A card carrying the epic label is selected by
  * no kind, whatever else it carries, and an absent `epicLabel` marks no card an epic. A card no
  * kind selects is `{ action: 'ignore' }`, and never a refusal (`R-SCHED-11`). A card more than
@@ -26,8 +26,16 @@ const selecting = (card, kinds) =>
  * ruling). A card the form check refuses is refused with the form check's reason. Otherwise it is
  * `{ action: 'dispatch', kind }`. A refusal is `{ action: 'refuse', card, reason }`, naming the
  * card's number.
+ *
+ * A card in the `coding` or `review` column of `columns`, the declared columns by key, is a redo,
+ * and one `fresh(card)` answers true for is `{ action: 'ignore' }`: a fresh verdict covers it, so
+ * L2 has nothing to do for it. Freshness is an injected input until M5 reads the markers (the
+ * architect's ruling 1, U10), and with none injected no card is fresh. Freshness injected without
+ * `columns` is refused, since no card could be told a redo.
  */
-export function nextAction(card, kinds, epicLabel) {
+export function nextAction(card, kinds, epicLabel, { columns, fresh } = {}) {
+  if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
+  if (fresh && [columns.coding, columns.review].includes(card.column) && fresh(card)) return { action: 'ignore' };
   const names = carries(card, epicLabel) ? [] : selecting(card, kinds);
   if (names.length === 0) return { action: 'ignore' };
   if (names.length > 1) {
