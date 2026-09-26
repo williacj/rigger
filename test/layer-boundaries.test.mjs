@@ -976,6 +976,11 @@ test('rule 3 by receiver: an instance a function\'s new built on an earlier call
     `${ITEMS}\nconst kept = {};\nexport const rank = (c) => { const x = new Items(); kept.first ??= x; x.take = (board) => board.items(); return kept.first.take(c.board); };`,
     // A method of a class, whose new runs once per call of the method.
     `${ITEMS}\nexport class Ranks { rank(c) { const x = new Items(); this.first ??= x; x.take = (board) => board.items(); return this.first.take(c.board); } }`,
+    // Kept by destructuring, in a list, in a block's binding, and by a hoisted function.
+    `${ITEMS}\nlet first;\nexport const rank = (c) => { const x = new Items(); if (!first) { [first] = [x]; return 0; } x.take = (board) => board.items(); return first.take(c.board); };`,
+    `${ITEMS}\nconst kept = [];\nexport const rank = (c) => { const x = new Items(); kept[0] ??= x; x.take = (board) => board.items(); return kept[0].take(c.board); };`,
+    `${ITEMS}\n{ let first; var rank = (c) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first['take'](c.board); }; }\nexport { rank };`,
+    `${ITEMS}\nlet first;\nexport function rank(c) { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first?.take(c.board ?? {}); }`,
   ];
   const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
   assert.deepEqual(missed, []);
@@ -1024,8 +1029,14 @@ test('rule 3: a pattern taking priority that board reaches through a list, an ob
     'export const rank = (config) => (function ([{ priority }]) { return priority; }).apply(null, [[config.board]]);',
     'export const rank = (config) => ((strings, [{ priority }]) => priority)`${[config.board]}`;',
     'export const rank = (config) => (([{ priority }]) => priority)(...[[config.board]]);',
-    // A function the module defines, called by name, as #293's reader follows it.
+    // A function the module defines, called by name or built by new, as #293's reader follows it.
     'const take = ([{ priority }]) => priority;\nexport const rank = (config) => take([config.board]);',
+    'const take = (a, { x: [{ priority }] }) => priority;\nexport const rank = (config) => take(0, { x: [config.board] });',
+    'class Take { constructor([{ priority }]) { this.p = priority; } }\nexport const rank = (config) => new Take([config.board]);',
+    // A fixed computed key, a hole, and board as a plain name.
+    "export const rank = (config) => { const { ['x']: { priority } } = { ['x']: config.board }; return priority; };",
+    'export const rank = (config) => { const [, { priority }] = [, config.board]; return priority; };',
+    'export const rank = (board) => { const { x: { priority } } = { x: board }; return priority; };',
     // A member access from a property read of a list or an object holding board.
     'export const rank = (config) => [config.board][0].priority;',
     'export const rank = (config) => ({ b: config.board }).b?.priority;',
@@ -1044,6 +1055,63 @@ test('rule 3 bars nothing more through a list or an object: a pattern taking pri
     'export const pull = (deps) => { const [{ board }] = [deps]; return board.items(); };',
   ];
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3: a function taking priority, reached by destructuring, a literal, a property read or an operator in any order, fails when handed board', () => {
+  const TAKE = 'const take = ({ priority }) => priority;';
+  const reached = [
+    // The card's two instances.
+    'const { t } = { t: take };\nexport const rank = (config) => t(config.board);',
+    'const [t] = [take];\nexport const rank = (config) => t(config.board);',
+    // Nested, renamed, a default, a rest element, and an assignment.
+    'const { a: [t] } = { a: [take] };\nexport const rank = (config) => t(config.board);',
+    'const { a: { b: t } } = { a: { b: take } };\nexport const rank = (config) => t(config.board);',
+    'const { t = take } = {};\nexport const rank = (config) => t(config.board);',
+    'const [, ...rest] = [0, take];\nexport const rank = (config) => rest[0](config.board);',
+    'const { a, ...rest } = { a: 0, t: take };\nexport const rank = (config) => rest.t(config.board);',
+    'let t;\n({ t } = { t: take });\nexport const rank = (config) => t(config.board);',
+    'export const rank = (config) => { let t; [t] = [take]; return t(config.board); };',
+    'export const rank = (config, { t } = { t: take }) => t(config.board);',
+    // A property read from a literal or a binding holding one, and a spread.
+    'export const rank = (config) => [take][0](config.board);',
+    'const fns = [0, take];\nexport const rank = (config) => fns[1](config.board ?? {});',
+    'const fns = { a: [{ t: take }] };\nexport const rank = (config) => fns.a[0].t(config.board);',
+    'const { t } = { ...{ t: take } };\nexport const rank = (config) => t(config.board);',
+    'const [t] = [...[take]];\nexport const rank = (config) => t(config.board);',
+    'const fns = { ...{ t: take } };\nexport const rank = (config) => fns.t(config.board);',
+    // With the operators, around the literal or inside it.
+    'export const rank = (config, flag) => { const { t } = flag ? { t: take } : {}; return t(config.board); };',
+    'const [t] = [null ?? take];\nexport const rank = (config) => t(config.board);',
+    'const { t } = (0, { t: take || null });\nexport const rank = (config) => t(config.board);',
+    'export const rank = async (config) => { const [t] = await [take]; return t(config.board); };',
+    'const fns = [take];\nexport const rank = (config, flag) => (flag ? fns[0] : null)(config.board);',
+    // Called through .call or .apply, and destructured from a binding, a class or an instance.
+    'const { t } = { t: take };\nexport const rank = (config) => t.call(null, config.board);',
+    'const [t] = [take];\nexport const rank = (config) => t.apply(null, [config.board]);',
+    'const o = { t: take };\nconst { t } = o;\nexport const rank = (config) => t(config.board);',
+    'class K { static t = take; }\nconst { t } = K;\nexport const rank = (config) => t(config.board);',
+    'class Items { take({ priority }) { return priority; } }\nconst { take: t } = new Items();\nexport const rank = (config) => t(config.board);',
+    // A catch parameter's default, a parameter's plain default, and a class built by new.
+    'export const rank = (config) => { try { throw {}; } catch ({ t = take }) { return t(config.board); } };',
+    'export const rank = (config, t = take) => t(config.board);',
+    'class Take { constructor({ priority }) { this.p = priority; } }\nconst { T } = { T: Take };\nexport const rank = (config) => new T(config.board);',
+  ];
+  const missed = reached
+    .map((source) => `${TAKE}\n${source}`)
+    .filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 bars nothing more by destructuring: a callee destructured to another function, or handed what is not board, passes', () => {
+  const TAKE = 'const take = ({ priority }) => priority;';
+  const handles = [
+    'const { t } = { t: (board) => board.items(), u: take };\nexport const pull = (deps) => t(deps.board);',
+    'const [a, t] = [take, (board) => board.items()];\nexport const pull = (deps) => [a, t(deps.board)];',
+    'const { t } = { t: take };\nexport const pull = (deps, item) => [t(item), deps.board.items()];',
+    'const fns = [take, (board) => board.items()];\nexport const pull = (deps) => fns[1](deps.board);',
+    'const [, ...rest] = [take, (board) => board.items()];\nexport const pull = (deps) => rest[0](deps.board);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': `${TAKE}\n${source}` }), [], source);
 });
 
 test('an anonymous default function in src/scheduling/ that calls the entry point is read, and hands it to nobody', () => {
