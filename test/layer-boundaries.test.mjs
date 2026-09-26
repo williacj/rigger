@@ -990,6 +990,62 @@ test('rule 3 by receiver bars nothing more across calls: a call on the instance 
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
 
+test('rule 3: a pattern taking priority that board reaches through a list, an object, a spread or a property read from one fails, at any depth and through the operators', () => {
+  const shapes = [
+    // The card's two instances.
+    'export const rank = (config) => (([{ priority }]) => priority)([config.board]);',
+    'export const rank = (config) => { const [{ priority }] = [config.board]; return priority; };',
+    // An object literal, a spread of either, and a property read from either.
+    'export const rank = (config) => { const { x: { priority } } = { x: config.board }; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = [...[config.board]]; return priority; };',
+    'export const rank = (config) => { const { x: { priority } } = { ...{ x: config.board } }; return priority; };',
+    'export const rank = (config) => { const { priority } = [config.board][0]; return priority; };',
+    'export const rank = (config) => { const { priority } = ({ b: config.board }).b; return priority; };',
+    "export const rank = (config) => { const { priority } = ({ b: config.board })['b']; return priority; };",
+    'export const rank = (config) => { const { priority } = [[config.board]][0][0]; return priority; };',
+    'export const rank = (config) => { const { 0: { priority } } = [config.board]; return priority; };',
+    // At depth, and after a spread whose length the source does not fix.
+    'export const rank = (config) => { const [[{ priority }]] = [[config.board]]; return priority; };',
+    'export const rank = (config) => { const { a: [{ b: { priority } }] } = { a: [{ b: config.board }] }; return priority; };',
+    'export const rank = (config, list) => { const [, { priority }] = [...list, config.board]; return priority; };',
+    'export const rank = (config) => { const [, ...[{ priority }]] = [0, config.board]; return priority; };',
+    // Combined with the operators, inside the literal or around it.
+    'export const rank = (config) => { const [{ priority }] = [config.board ?? {}]; return priority; };',
+    'export const rank = (config, flag) => { const [{ priority }] = flag ? [config.board] : []; return priority; };',
+    'export const rank = async (config) => { const [{ priority }] = await [config?.board]; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = (0, [config.board || {}]); return priority; };',
+    'export const rank = (config, flag) => { const { priority } = (flag && [config.board])[0]; return priority; };',
+    // As a default, an assignment, and an argument of a function called where it is written.
+    'export const rank = (config, [{ priority }] = [config.board]) => priority;',
+    'export const rank = (config) => { const { x: [{ priority }] = [config.board] } = {}; return priority; };',
+    'export const rank = (config) => { let priority; ([{ priority }] = [config.board]); return priority; };',
+    'export const rank = (config) => ((a, { x: { priority } }) => priority)(0, { x: config.board });',
+    'export const rank = (config) => (function ([{ priority }]) { return priority; }).call(null, [config.board]);',
+    'export const rank = (config) => (function ([{ priority }]) { return priority; }).apply(null, [[config.board]]);',
+    'export const rank = (config) => ((strings, [{ priority }]) => priority)`${[config.board]}`;',
+    'export const rank = (config) => (([{ priority }]) => priority)(...[[config.board]]);',
+    // A function the module defines, called by name, as #293's reader follows it.
+    'const take = ([{ priority }]) => priority;\nexport const rank = (config) => take([config.board]);',
+    // A member access from a property read of a list or an object holding board.
+    'export const rank = (config) => [config.board][0].priority;',
+    'export const rank = (config) => ({ b: config.board }).b?.priority;',
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 bars nothing more through a list or an object: a pattern taking priority given what is beside board passes', () => {
+  const handles = [
+    'export const pull = (deps, item) => { const [{ priority }, board] = [item, deps.board]; return [priority, board.items()]; };',
+    'export const pull = (deps) => { const [{ items }] = [deps.board]; return items(); };',
+    'export const pull = (deps, item) => { const { x: { priority } } = { x: item, y: deps.board }; return priority; };',
+    'export const pull = (deps, item) => { const { priority } = [item, deps.board][0]; return priority; };',
+    'export const pull = (deps, item) => (([{ priority }], board) => [priority, board])([item], deps.board);',
+    'export const pull = (deps) => { const [{ board }] = [deps]; return board.items(); };',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
 test('an anonymous default function in src/scheduling/ that calls the entry point is read, and hands it to nobody', () => {
   // Codex's case on #298: the reader once read a name this declaration does not have, and
   // refused the module as unreadable.

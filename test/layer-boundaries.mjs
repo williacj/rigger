@@ -134,8 +134,12 @@ function fixed(node) {
   return undefined;
 }
 
-/** The name a key or member property spells: a plain name, or a fixed string in brackets. */
-const keyOf = (node, computed) => (!computed && node?.type === 'Identifier' ? node.name : fixed(node));
+/** The name a key or member property spells: a plain name, or a fixed string or number in brackets. */
+const keyOf = (node, computed) => {
+  if (!computed && node?.type === 'Identifier') return node.name;
+  if (node?.type === 'Literal' && typeof node.value === 'number') return String(node.value);
+  return fixed(node);
+};
 
 /** Every name a binding pattern binds, or the binding an assignment target writes into. */
 function boundBy(pattern) {
@@ -933,8 +937,9 @@ function parametersGiven(node, functionsOf) {
  * The lines on which a module spells the config path `board.priority`: a member access from
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
  * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
- * reached through an expression whose result can be one of its operands, and a pattern takes it as
- * the value it is given, as its default, or as an argument to a function the call can run. That is
+ * reached through an expression whose result can be one of its operands, and through a list or an
+ * object literal, a spread, or a property read from one, at any depth. A pattern takes it as the
+ * value it is given, as its default, or as an argument to a function the call can run. That is
  * one called where it is written, or one `callables` finds the callee reaches through scope, a
  * binding, a member of an object, class or instance the module defines, `this` or `super`. Any
  * other use of the name `board` passes, so L3's board handle does; a read through a computed key,
@@ -950,20 +955,84 @@ function priorityReads(program) {
     return (node?.type === 'Identifier' && node.name === 'board')
       || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
   };
-  // `board`, or an expression whose result can be an operand that is: Hand-ons step 7's list.
-  const namesBoard = (wrapped) => {
+  /**
+   * The expressions a value can be: itself, an operand an expression's result can be (Hand-ons
+   * step 7's list), or what a property read takes from a list or an object literal (step 5 of
+   * step 6), at any depth.
+   */
+  const alternatives = (wrapped) => {
     const node = unchained(wrapped);
     switch (node?.type) {
-      case 'ConditionalExpression': return namesBoard(node.consequent) || namesBoard(node.alternate);
-      case 'LogicalExpression': return namesBoard(node.left) || namesBoard(node.right);
-      case 'AwaitExpression': return namesBoard(node.argument);
-      case 'SequenceExpression': return namesBoard(node.expressions.at(-1));
-      default: return isBoard(node);
+      case undefined: return [];
+      case 'ConditionalExpression': return [...alternatives(node.consequent), ...alternatives(node.alternate)];
+      case 'LogicalExpression': return [...alternatives(node.left), ...alternatives(node.right)];
+      case 'AwaitExpression': return alternatives(node.argument);
+      case 'SequenceExpression': return alternatives(node.expressions.at(-1));
+      case 'MemberExpression':
+        if (isBoard(node)) return [node];
+        return alternatives(node.object).flatMap((held) => memberOf(held, keyOf(node.property, node.computed)));
+      default: return [node];
     }
   };
+  /**
+   * What a read of `key` from a list or an object literal can give: the element at that position
+   * or the property of that name, a spread's included; any of them where the key is not fixed, or
+   * where a spread before the element leaves its position unknown. Anything else gives nothing.
+   */
+  const memberOf = (node, key) => {
+    if (node.type === 'ArrayExpression') {
+      const found = [];
+      let position = 0;
+      let known = true;
+      for (const element of node.elements) {
+        if (element?.type === 'SpreadElement') {
+          known = false;
+          found.push(...alternatives(element.argument).flatMap((held) => memberOf(held, undefined)));
+        } else {
+          if (element && (key === undefined || !known || String(position) === key)) found.push(...alternatives(element));
+          position += 1;
+        }
+      }
+      return found;
+    }
+    if (node.type === 'ObjectExpression') {
+      return node.properties.flatMap((held) => {
+        if (held.type === 'SpreadElement') return alternatives(held.argument).flatMap((inner) => memberOf(inner, key));
+        if (held.kind !== 'init' || held.method) return [];
+        return key === undefined || keyOf(held.key, held.computed) === key ? alternatives(held.value) : [];
+      });
+    }
+    return [];
+  };
+  /** What an array pattern's rest element from position `from` takes from a list literal: a list of what is left. */
+  const restOf = (node, from) => {
+    if (node.type !== 'ArrayExpression') return [];
+    const spread = node.elements.findIndex((held) => held?.type === 'SpreadElement');
+    return [{ type: 'ArrayExpression', elements: node.elements.slice(spread === -1 ? from : Math.min(from, spread)) }];
+  };
+  const namesBoard = (node) => alternatives(node).some(isBoard);
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
+  /**
+   * Whether a pattern given one of `values` hands `board`, or a member access to it, to a pattern
+   * inside it that takes `priority`, at any depth. A default inside the pattern is read where the
+   * walk meets it, as a value given to the pattern beside it.
+   */
+  const gives = (pattern, values) => {
+    switch (pattern?.type) {
+      case 'AssignmentPattern': return gives(pattern.left, values);
+      case 'ObjectPattern':
+        if (takesPriority(pattern) && values.some(isBoard)) return true;
+        return pattern.properties.some((held) => held.type === 'Property'
+          && gives(held.value, values.flatMap((value) => memberOf(value, keyOf(held.key, held.computed)))));
+      case 'ArrayPattern':
+        return pattern.elements.some((element, i) => (element?.type === 'RestElement'
+          ? gives(element.argument, values.flatMap((value) => restOf(value, i)))
+          : gives(element, values.flatMap((value) => memberOf(value, String(i))))));
+      default: return false;
+    }
+  };
   walk(program, (node) => {
     if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && namesBoard(node.object)) {
       lines.push(node.loc.start.line);
@@ -973,12 +1042,12 @@ function priorityReads(program) {
         if (held.type === 'Property' && keyOf(held.key, held.computed) === 'board' && takesPriority(unwrapped(held.value))) lines.push(held.loc.start.line);
       }
     }
-    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && namesBoard(node.init)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'VariableDeclarator' && gives(node.id, alternatives(node.init))) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentExpression' && gives(node.left, alternatives(node.right))) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentPattern' && gives(node.left, alternatives(node.right))) lines.push(node.loc.start.line);
     if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
       for (const [param, given] of parametersGiven(node, functionsOf)) {
-        if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
+        if (gives(param, given.flatMap(alternatives))) lines.push(node.loc.start.line);
       }
     }
   });
