@@ -138,6 +138,16 @@ const declares = (value) => value !== null && typeof value === 'object' && !Arra
  */
 const names = (value) => typeof value === 'string' && value.trim() !== '';
 
+/** A label name with every ASCII letter given one case: the spelling two names share when GitHub holds them as one label. */
+const folded = (name) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+
+/**
+ * Whether two label names are one label, as GitHub holds them: equal once every ASCII letter in
+ * both is given one case (#301's measurement, which covers ASCII letters only). Anything that is
+ * no string is one label with nothing.
+ */
+export const sameLabel = (one, other) => typeof one === 'string' && typeof other === 'string' && folded(one) === folded(other);
+
 /**
  * Whether a list holds anything that is no name. Read through `Array.from`, which visits every
  * index, because `some` skips an empty slot.
@@ -291,7 +301,7 @@ function readEpicLabel(config, refusals) {
   if (!declares(config.kinds)) return;
   for (const [name, kind] of Object.entries(config.kinds)) {
     const labels = kind?.select?.labels;
-    if (Array.isArray(labels) && labels.includes(epicLabel)) {
+    if (Array.isArray(labels) && labels.some((label) => sameLabel(label, epicLabel))) {
       refusals.push(`\`epicLabel\` names \`${epicLabel}\`, which \`kinds.${name}\` selects, so no card that kind selects would ever be pulled`);
     }
   }
@@ -401,8 +411,10 @@ export function selectedLabels(config) {
 
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
- * epic label where it declares one. These are the labels `setup-board` gives the repository.
+ * epic label where it declares one. These are the labels `setup-board` gives the repository. Two
+ * names GitHub holds as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
-  return [...new Set([...selectedLabels(config), ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : [])])];
+  const declared = [...selectedLabels(config), ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : [])];
+  return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));
 }

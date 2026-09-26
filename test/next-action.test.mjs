@@ -109,6 +109,39 @@ test('a config declaring no epic label marks no card an epic, so type:epic is an
   assert.deepEqual(nextAction(card(24, ['type:epic']), KINDS), { action: 'ignore' });
 });
 
+// GitHub holds label names case-insensitively (#301's measurement), so a card carrying `type:bug`
+// carries the label a kind declares as `Type:Bug`.
+
+// proves R-SCHED-13
+test('a card carrying a kind\'s label under another letter case is dispatched under that kind', () => {
+  const kinds = { ...KINDS, bug: { ...KINDS.change, select: { labels: ['Type:Bug'] } } };
+  assert.deepEqual(nextAction(card(25, ['type:bug']), kinds), { action: 'dispatch', kind: 'bug' });
+});
+
+// proves R-SCHED-11
+test('a card carrying a label that differs from a kind\'s by more than letter case is ignored', () => {
+  const kinds = { ...KINDS, bug: { ...KINDS.change, select: { labels: ['type:bug'] } } };
+  assert.deepEqual(nextAction(card(26, ['type:bugs']), kinds), { action: 'ignore' });
+});
+
+// proves R-SCHED-12
+test('a card two kinds select under different letter cases is refused naming both, in the config\'s order', () => {
+  const kinds = {
+    lower: { ...KINDS.change, select: { labels: ['bug'] } },
+    title: { ...KINDS.change, select: { labels: ['Bug'] } },
+  };
+  assert.deepEqual(nextAction(card(27, ['BUG']), kinds), {
+    action: 'refuse',
+    card: 27,
+    reason: 'selected by more than one kind: lower, title',
+  });
+});
+
+// proves R-SCHED-11
+test('a card carrying the epic label under another letter case is ignored, whatever kind it is selected by', () => {
+  assert.deepEqual(nextAction(card(28, ['type:epic', 'type:change']), KINDS, 'Type:Epic'), { action: 'ignore' });
+});
+
 test('the body of issue #182, labelled type:change, is dispatched under the change kind', () => {
   const issue = JSON.parse(readFileSync(new URL('./fixtures/issue-182.json', import.meta.url), 'utf8'));
   assert.equal(issue.number, 182);
