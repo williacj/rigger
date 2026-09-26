@@ -8,8 +8,15 @@ then state it as standalone conditions a judge can rule on without asking the au
 
 # Writing an acceptance
 
-An acceptance states what done means. It lives in the issue body as plain bullets — not in a
-board field, and never as a task list (`D2` rule 2).
+Acceptance states what done means in the issue body, not a board field (`D2` rule 2).
+`R-CARD-12` owns its form:
+
+- Use a heading whose text is exactly `Acceptance`. Bullets only under `Acceptance criteria`
+  leave no counted items, so the card is refused (`R-CARD-12`, `R-CARD-7`).
+- Write plain bullets. Task-list items do not count; a card with only those is refused
+  (`R-CARD-12`, `R-CARD-7`).
+- Keep bullets outside fenced code blocks. Fenced bullets do not count; a card with only those
+  is refused (`R-CARD-12`, `R-CARD-7`).
 
 ## The one test
 
@@ -81,12 +88,16 @@ a named document cites a named id.
 
 A **Given/When/Then** bullet where the ruling needs its context to make sense. `R-CARD-2` still
 holds, so one item carries one independently ruleable outcome, never a scenario with several
-`Then`s. Split a compound result instead:
+`Then`s. Split a compound result instead. Here is a `plan` card's acceptance (`R-CARD-12`):
+
+```markdown
+## Acceptance
 
 - Given a Ready card has no acceptance, when `rigger plan` evaluates it, then the card is not
   pulled.
 - Given a Ready card has no acceptance, when `rigger plan` evaluates it, then `plan` names the
   card and identifies missing acceptance as the reason.
+```
 
 Those are `R-CARD-7`'s two halves, one apiece; `plan` is the verb the README gives for showing
 what a run refuses. Each bullet repeats its own context rather than borrowing it from the one
@@ -135,9 +146,9 @@ that proof. Make each requirement a separate acceptance item.
 
 ## What is checked, and what is not
 
-Two forms are refused at admission and nothing else is: a card with no acceptance is refused by
-name and reason (`R-CARD-7`), and a card whose acceptance only restates the card's title is
-refused (`R-CARD-8`). Those two are the whole of the check on an acceptance's form (`R-CARD-8`).
+The form check reads acceptance as `R-CARD-12` states. It refuses a card with no items it counts,
+by name and reason (`R-CARD-7`), or one whose counted items only restate the card's title
+(`R-CARD-8`). Those are the whole of the form check's refusal reasons (`R-CARD-8`).
 
 So the bar being right is yours. `D2`'s notes say what that buys and what it does not: no check
 proves an acceptance adequate, and a green marker is never a warranty that the card asked for
