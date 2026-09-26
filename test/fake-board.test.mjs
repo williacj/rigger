@@ -132,8 +132,11 @@ test("a draft issue, a pull-request item and another repository's issue read bac
   );
 });
 
-/** Three cards of this repository, one per column, in the columns a move can reach. */
-function threeCards() {
+/**
+ * Three cards of this repository, one per column, in the columns a move can reach, on a board
+ * built with `options` besides.
+ */
+function threeCards(options = {}) {
   return createFakeBoard({
     columns: ['Ready', 'Coding', 'Review'],
     items: [
@@ -141,6 +144,7 @@ function threeCards() {
       { type: 'issue', repository: 'williacj/rigger', number: 2, title: 'two', column: 'Coding' },
       { type: 'issue', repository: 'williacj/rigger', number: 3, title: 'three', column: 'Review' },
     ],
+    ...options,
   });
 }
 
@@ -180,6 +184,32 @@ test('the board records each write in the order it was made', async () => {
     { operation: 'createField', args: ['Priority', ['P0', 'P1', 'P2']] },
     { operation: 'createLabel', args: ['type:change'] },
   ]);
+});
+
+test('the board records every request it receives, reads and refused writes included, in the order it received them', async () => {
+  const fake = threeCards();
+
+  await fake.operations.readItems();
+  await assert.rejects(fake.operations.moveItem('item-2', 'Shipped'), /Shipped/);
+  await fake.operations.moveItem('item-1', 'Coding');
+  await fake.operations.readColumns();
+
+  assert.deepEqual(fake.requests(), [
+    { operation: 'readItems', args: [] },
+    { operation: 'moveItem', args: ['item-2', 'Shipped'] },
+    { operation: 'moveItem', args: ['item-1', 'Coding'] },
+    { operation: 'readColumns', args: [] },
+  ]);
+});
+
+test('a board built to refuse every move refuses each one, moves no card, and records the request but no write', async () => {
+  const fake = threeCards({ refuseMoves: true });
+
+  await assert.rejects(fake.operations.moveItem('item-1', 'Coding'), /the fake board refuses every move/);
+
+  assert.deepEqual(fake.requests(), [{ operation: 'moveItem', args: ['item-1', 'Coding'] }]);
+  assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(await columnsByNumber(fake), { 1: 'Ready', 2: 'Coding', 3: 'Review' });
 });
 
 test('a board that has only been read has an empty write record', async () => {

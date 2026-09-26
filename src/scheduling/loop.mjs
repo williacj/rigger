@@ -1,5 +1,6 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
-// before any await, has L2 move each claimed card, dispatches it, and hands L2 its outcome.
+// before any await, has L2 move each claimed card, dispatches it, and hands L2 its outcome, and
+// the run that fires that trigger again each time a slot frees.
 
 import { pullOrder } from './pull-order.mjs';
 
@@ -24,42 +25,74 @@ export function loop({ config, board, decide, l2, dispatch }) {
 
   /**
    * One claimed card's work: L2's claim move for a card pulled from Ready, the dispatch, and L2's
-   * handling of its outcome, handed over unread. The slot is released however it ends.
+   * handling of its outcome, handed over unread. The slot is released however it ends, and then
+   * `freed` runs, unless the board refused the claim move: a refused claim waits for the next
+   * trigger rather than starting another pull at once, by the owner's ruling on #228, so a board
+   * refusing every claim cannot keep a run pulling.
    */
-  const work = async ({ card, kind, redo }) => {
+  const work = async ({ card, kind, redo }, freed) => {
+    let claimed = redo;
     try {
       if (!redo) await l2.claimed(card);
+      claimed = true;
       const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
       await l2.settled(card, outcome);
     } finally {
       claims.delete(card.number);
+      if (claimed) await freed();
+    }
+  };
+
+  /**
+   * Fires the pull trigger once: reads the board, claims as many cards as there are free slots,
+   * first pulled first, and works each. Every claim is taken in the same synchronous step as the
+   * pull order it follows, so no other trigger can claim a card between the two. `freed` runs as
+   * each claimed card's slot is released, as `work` says, and that card's work is not over until
+   * it settles.
+   *
+   * Settles once every card it claimed has been worked. A read that fails rejects with the
+   * read's own error, and no card is claimed. A card whose work fails is reported in an
+   * AggregateError naming how many failed, each failure unchanged in its `errors`.
+   */
+  const trigger = async (freed = () => {}) => {
+    const columns = await board.readColumns();
+    const { items, declared } = await board.readPriority();
+    const unclaimed = items.filter((item) => !claims.has(item.number));
+    const { pulls } = pullOrder({ items: unclaimed, columns, declared }, decide);
+    const claimed = pulls.slice(0, Math.max(0, concurrency - claims.size)).map((pull) => {
+      claims.add(pull.card);
+      return { ...pull, card: unclaimed.find((item) => item.number === pull.card) };
+    });
+    const failures = (await Promise.allSettled(claimed.map((claim) => work(claim, freed))))
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `${failures.length} of the ${claimed.length} cards this pull claimed failed`);
     }
   };
 
   return {
+    /** Fires the pull trigger once, as `trigger` says. */
+    pull: () => trigger(),
+
     /**
-     * Fires the pull trigger once: reads the board, claims as many cards as there are free slots,
-     * first pulled first, and works each. Every claim is taken in the same synchronous step as the
-     * pull order it follows, so no other trigger can claim a card between the two.
+     * Fires the pull trigger, and fires it again each time a slot this run filled is released, so
+     * a card freeing its slot lets the next pullable card start while the others still run. A slot
+     * freed by a claim move the board refused fires nothing, as `work` says. Ends
+     * once every pull it fired has settled, which is once a pull fired on a freed slot claims
+     * nothing and no card it claimed is still being worked.
      *
-     * Settles once every card it claimed has been worked. A read that fails rejects with the
-     * read's own error, and no card is claimed. A card whose work fails is reported in an
-     * AggregateError naming how many failed, each failure unchanged in its `errors`.
+     * A pull that fails stops no other. Once the run has ended, every failed pull is reported in
+     * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
      */
-    pull: async () => {
-      const columns = await board.readColumns();
-      const { items, declared } = await board.readPriority();
-      const unclaimed = items.filter((item) => !claims.has(item.number));
-      const { pulls } = pullOrder({ items: unclaimed, columns, declared }, decide);
-      const claimed = pulls.slice(0, Math.max(0, concurrency - claims.size)).map((pull) => {
-        claims.add(pull.card);
-        return { ...pull, card: unclaimed.find((item) => item.number === pull.card) };
+    run: async () => {
+      const failures = [];
+      const fire = () => trigger(fire).catch((failure) => {
+        failures.push(failure);
       });
-      const failures = (await Promise.allSettled(claimed.map(work)))
-        .filter((result) => result.status === 'rejected')
-        .map((result) => result.reason);
+      await fire();
       if (failures.length > 0) {
-        throw new AggregateError(failures, `${failures.length} of the ${claimed.length} cards this pull claimed failed`);
+        throw new AggregateError(failures, `${failures.length} of the pulls this run fired failed`);
       }
     },
   };
