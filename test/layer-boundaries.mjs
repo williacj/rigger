@@ -44,11 +44,11 @@ const NAMES = [
 
 /**
  * L3's dispatching entry point, which no module outside src/scheduling/ may bind (rule 8; the
- * architect's ruling 5, §4). A binding holds it as a binding holds a write side: through the
+ * architect's ruling 5, §4): the function its module exports as `exported`, whatever that function
+ * is called where it is defined. A binding holds it as a binding holds a write side: through the
  * hand-on steps the reader of what each binding holds follows, and no further.
  */
-const ENTRY = { file: 'src/scheduling/loop.mjs', local: 'loop' };
-const isEntry = (definition) => definition.file === ENTRY.file && definition.local === ENTRY.local;
+const ENTRY = { file: 'src/scheduling/loop.mjs', exported: 'loop' };
 
 /** The modules that may import `node:child_process`: the runners, and two local tool probes. */
 const SPAWNERS = [RUNNERS, 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
@@ -997,8 +997,8 @@ export function boundaryReport(tree) {
     }
   }
   if (!tree.has(ENTRY.file)) throw new Error(`L3's dispatching entry point has no module at ${ENTRY.file}, so rule 8 could not fail`);
-  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.local)) {
-    throw new Error(`${ENTRY.file} exports no \`${ENTRY.local}\`, L3's dispatching entry point, so rule 8 could not fail`);
+  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.exported)) {
+    throw new Error(`${ENTRY.file} exports no \`${ENTRY.exported}\`, L3's dispatching entry point, so rule 8 could not fail`);
   }
   const runners = modules.get(RUNNERS);
   for (const side of SIDES) {
@@ -1088,6 +1088,16 @@ export function boundaryReport(tree) {
   };
 
   const ownModule = (file, side) => file === sideModule(side) || file === RUNNERS;
+
+  // The definitions the entry point's export resolves to. One the reader cannot resolve is already
+  // refused under the unresolved-import rule, in the entry point's own module.
+  let entry = [];
+  try {
+    if (modules.has(ENTRY.file)) entry = resolveExport(ENTRY.file, ENTRY.exported);
+  } catch {
+    // Reported below, where the entry point's module is read.
+  }
+  const isEntry = (definition) => entry.some((held) => held.file === definition.file && held.local === definition.local);
 
   for (const module of modules.values()) {
     const { file } = module;

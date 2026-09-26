@@ -1060,6 +1060,48 @@ test('rule 8: a tree with no dispatching entry point is refused rather than read
   assert.throws(() => boundaryReport(renamed), /`loop`/);
 });
 
+test('rule 8: the entry point is the function loop.mjs exports as loop, whatever its local name, so importing it from src/cli/ fails', () => {
+  const start = "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();";
+  const entries = {
+    // #298's N3 and its sibling, the card's two instances.
+    'a function exported under another name': { 'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop };' },
+    'an alias exported as loop': { 'src/scheduling/loop.mjs': 'const run = (deps) => deps;\nexport const loop = run;' },
+    // The export relayed from another module under src/scheduling/, under another name there too.
+    'a re-export of another module\'s function as loop': {
+      'src/scheduling/loop.mjs': "export { run as loop } from './run.mjs';",
+      'src/scheduling/run.mjs': 'export function run(deps) { return deps; }',
+    },
+  };
+  for (const [shape, modules] of Object.entries(entries)) {
+    const found = messages({ ...modules, 'src/cli/start.mjs': start });
+    assert.ok(found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:')), `${shape}:\n${found.join('\n') || '(nothing)'}`);
+  }
+  // The renamed entry point reached by a namespace import, and by its own name where it is also exported.
+  assertBreaks({
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop };',
+    'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();",
+  }, 'src/cli/start.mjs', 'rule 8');
+  assertBreaks({
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop, run };',
+    'src/cli/start.mjs': "import { run } from '../scheduling/loop.mjs';\nexport const start = (deps) => run(deps).pull();",
+  }, 'src/cli/start.mjs', 'rule 8');
+});
+
+test('rule 8: loop.mjs exporting no binding named loop is refused, naming loop.mjs, whatever it names its function', () => {
+  for (const source of ['export function run(deps) { return deps; }', 'function loop(deps) { return deps; }\nexport { loop as run };']) {
+    const tree = new Map(Object.entries({ ...ADAPTER, 'src/scheduling/loop.mjs': source }));
+    assert.throws(() => boundaryReport(tree), /src\/scheduling\/loop\.mjs exports no `loop`/, source);
+  }
+});
+
+test('rule 8: an importer outside src/scheduling/ of loop.mjs\'s other exports passes', () => {
+  const modules = {
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport const loop = run;\nexport const cadence = 1;',
+    'src/cli/start.mjs': "import { cadence } from '../scheduling/loop.mjs';\nexport const every = cadence;",
+  };
+  assert.deepEqual(messages(modules), []);
+});
+
 test('the proof, rule 8: a hand-on of the entry point through each of the eight steps holds it, and importing it from src/cli/ fails', () => {
   // The write sides' proof shapes, with the entry point for the side. The runners module plays no
   // part in rule 8, so the shape importing a runner is not one of them.
