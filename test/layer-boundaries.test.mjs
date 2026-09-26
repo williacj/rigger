@@ -963,6 +963,193 @@ test('rule 3 by receiver bars nothing more: a method the module replaced before 
   for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
 });
 
+test('rule 3 by receiver: an instance a function\'s new built on an earlier call, kept outside that function, keeps its method when the same new\'s later instance is written', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const shapes = [
+    // Codex's first module (PR #296, comment 5842313355, item 6).
+    `${ITEMS}\nlet first;\nexport const rank = (c) => {\n  const x = new Items();\n  if (!first) { first = x; return 0; }\n  x.take = b => b.items();\n  return first.take(c.board ?? {});\n};`,
+    // Claude's prev module (PR #296, comment 5840759097, follow-up 1).
+    `${ITEMS}\nlet prev = null;\nexport const rank = (config) => { const x = new Items(); if (!prev) { prev = x; return 0; } const old = prev; x.take = (board) => board.items(); return old.take(config.board); };`,
+    // The binding outside the function is another function's local, which a closure keeps.
+    `${ITEMS}\nexport const make = () => { let first; return (c) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first.take(c.board); }; };`,
+    // The kept instance is held by a property of an object outside the function.
+    `${ITEMS}\nconst kept = {};\nexport const rank = (c) => { const x = new Items(); kept.first ??= x; x.take = (board) => board.items(); return kept.first.take(c.board); };`,
+    // A method of a class, whose new runs once per call of the method.
+    `${ITEMS}\nexport class Ranks { rank(c) { const x = new Items(); this.first ??= x; x.take = (board) => board.items(); return this.first.take(c.board); } }`,
+    // Kept by destructuring, in a list, in a block's binding, and by a hoisted function.
+    `${ITEMS}\nlet first;\nexport const rank = (c) => { const x = new Items(); if (!first) { [first] = [x]; return 0; } x.take = (board) => board.items(); return first.take(c.board); };`,
+    `${ITEMS}\nconst kept = [];\nexport const rank = (c) => { const x = new Items(); kept[0] ??= x; x.take = (board) => board.items(); return kept[0].take(c.board); };`,
+    `${ITEMS}\n{ let first; var rank = (c) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first['take'](c.board); }; }\nexport { rank };`,
+    `${ITEMS}\nlet first;\nexport function rank(c) { const x = new Items(); first ??= x; x.take = (board) => board.items(); return first?.take(c.board ?? {}); }`,
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 by receiver: an earlier call\'s instance kept inside a container that call built, or an earlier call\'s object literal, keeps its method', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const shapes = [
+    // Codex's round-1 modules on PR #309: the instance kept in an object, and in a list.
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); if (!saved) { saved = { first: x }; return 0; } x.take = (board) => board.items(); return saved.first.take(c.board); };`,
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); if (!saved) { saved = [x]; return 0; } x.take = (board) => board.items(); return saved[0].take(c.board); };`,
+    // Containers nested, and a container kept by a property of an outer object.
+    `${ITEMS}\nlet saved;\nexport const rank = (c) => { const x = new Items(); saved ??= { a: [{ first: x }] }; x.take = (board) => board.items(); return saved.a[0].first.take(c.board ?? {}); };`,
+    `${ITEMS}\nconst kept = {};\nexport const rank = (c) => { const x = new Items(); kept.box ??= [x]; x.take = (board) => board.items(); return kept.box[0].take(c.board); };`,
+    // An object literal a function builds on every call, kept outside it (Codex, non-blocking 1).
+    'let first;\nexport const rank = (c) => { const x = { take: ({ priority }) => priority }; if (!first) { first = x; return 0; } x.take = (board) => board.items(); return first.take(c.board); };',
+    'let saved;\nexport const rank = (c) => { const x = { take: ({ priority }) => priority }; saved ??= [x]; x.take = (board) => board.items(); return saved[0].take(c.board); };',
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 by receiver bars nothing more across calls: a container or object literal this call built, written and then called, passes', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const handles = [
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const box = { first: x }; x.take = (board) => board.items(); return box.first.take(deps.board); };`,
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const box = [x]; x.take = (board) => board.items(); return box[0].take(deps.board); };`,
+    'export const pull = (deps) => { const x = { take: ({ priority }) => priority }; x.take = (board) => board.items(); return x.take(deps.board); };',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3 by receiver bars nothing more across calls: a call on the instance this call built, after its write, passes', () => {
+  const ITEMS = 'class Items { take({ priority }) { return priority; } }';
+  const handles = [
+    `${ITEMS}\nlet first;\nexport const pull = (deps) => { const x = new Items(); first ??= x; x.take = (board) => board.items(); return x.take(deps.board); };`,
+    `${ITEMS}\nexport const pull = (deps) => { const x = new Items(); const y = x; x.take = (board) => board.items(); return y.take(deps.board); };`,
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3: a pattern taking priority that board reaches through a list, an object, a spread or a property read from one fails, at any depth and through the operators', () => {
+  const shapes = [
+    // The card's two instances.
+    'export const rank = (config) => (([{ priority }]) => priority)([config.board]);',
+    'export const rank = (config) => { const [{ priority }] = [config.board]; return priority; };',
+    // An object literal, a spread of either, and a property read from either.
+    'export const rank = (config) => { const { x: { priority } } = { x: config.board }; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = [...[config.board]]; return priority; };',
+    'export const rank = (config) => { const { x: { priority } } = { ...{ x: config.board } }; return priority; };',
+    'export const rank = (config) => { const { priority } = [config.board][0]; return priority; };',
+    'export const rank = (config) => { const { priority } = ({ b: config.board }).b; return priority; };',
+    "export const rank = (config) => { const { priority } = ({ b: config.board })['b']; return priority; };",
+    'export const rank = (config) => { const { priority } = [[config.board]][0][0]; return priority; };',
+    'export const rank = (config) => { const { 0: { priority } } = [config.board]; return priority; };',
+    // At depth, and after a spread whose length the source does not fix.
+    'export const rank = (config) => { const [[{ priority }]] = [[config.board]]; return priority; };',
+    'export const rank = (config) => { const { a: [{ b: { priority } }] } = { a: [{ b: config.board }] }; return priority; };',
+    'export const rank = (config, list) => { const [, { priority }] = [...list, config.board]; return priority; };',
+    'export const rank = (config) => { const [, ...[{ priority }]] = [0, config.board]; return priority; };',
+    // Combined with the operators, inside the literal or around it.
+    'export const rank = (config) => { const [{ priority }] = [config.board ?? {}]; return priority; };',
+    'export const rank = (config, flag) => { const [{ priority }] = flag ? [config.board] : []; return priority; };',
+    'export const rank = async (config) => { const [{ priority }] = await [config?.board]; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = (0, [config.board || {}]); return priority; };',
+    'export const rank = (config, flag) => { const { priority } = (flag && [config.board])[0]; return priority; };',
+    // board spread into an object literal, which then holds board's priority (Codex, PR #309).
+    'export const rank = (config) => { const { priority } = { ...config.board }; return priority; };',
+    'export const rank = (config) => { const { x: { priority } } = { x: { ...config.board } }; return priority; };',
+    'export const rank = (config) => { const { priority } = { ...{ ...config.board } }; return priority; };',
+    'export const rank = (config) => { const [{ priority }] = [{ a: 1, ...(config.board ?? {}) }]; return priority; };',
+    'export const rank = (config) => (({ priority }) => priority)({ ...config.board });',
+    'export const rank = (config) => ({ ...config.board }).priority;',
+    // As a default, an assignment, and an argument of a function called where it is written.
+    'export const rank = (config, [{ priority }] = [config.board]) => priority;',
+    'export const rank = (config) => { const { x: [{ priority }] = [config.board] } = {}; return priority; };',
+    'export const rank = (config) => { let priority; ([{ priority }] = [config.board]); return priority; };',
+    'export const rank = (config) => ((a, { x: { priority } }) => priority)(0, { x: config.board });',
+    'export const rank = (config) => (function ([{ priority }]) { return priority; }).call(null, [config.board]);',
+    'export const rank = (config) => (function ([{ priority }]) { return priority; }).apply(null, [[config.board]]);',
+    'export const rank = (config) => ((strings, [{ priority }]) => priority)`${[config.board]}`;',
+    'export const rank = (config) => (([{ priority }]) => priority)(...[[config.board]]);',
+    // A function the module defines, called by name or built by new, as #293's reader follows it.
+    'const take = ([{ priority }]) => priority;\nexport const rank = (config) => take([config.board]);',
+    'const take = (a, { x: [{ priority }] }) => priority;\nexport const rank = (config) => take(0, { x: [config.board] });',
+    'class Take { constructor([{ priority }]) { this.p = priority; } }\nexport const rank = (config) => new Take([config.board]);',
+    // A fixed computed key, a hole, and board as a plain name.
+    "export const rank = (config) => { const { ['x']: { priority } } = { ['x']: config.board }; return priority; };",
+    'export const rank = (config) => { const [, { priority }] = [, config.board]; return priority; };',
+    'export const rank = (board) => { const { x: { priority } } = { x: board }; return priority; };',
+    // A member access from a property read of a list or an object holding board.
+    'export const rank = (config) => [config.board][0].priority;',
+    'export const rank = (config) => ({ b: config.board }).b?.priority;',
+  ];
+  const missed = shapes.filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 bars nothing more through a list or an object: a pattern taking priority given what is beside board passes', () => {
+  const handles = [
+    'export const pull = (deps, item) => { const [{ priority }, board] = [item, deps.board]; return [priority, board.items()]; };',
+    'export const pull = (deps) => { const [{ items }] = [deps.board]; return items(); };',
+    'export const pull = (deps, item) => { const { x: { priority } } = { x: item, y: deps.board }; return priority; };',
+    'export const pull = (deps, item) => { const { priority } = [item, deps.board][0]; return priority; };',
+    'export const pull = (deps, item) => (([{ priority }], board) => [priority, board])([item], deps.board);',
+    'export const pull = (deps) => { const [{ board }] = [deps]; return board.items(); };',
+    'export const pull = (deps, item) => { const { priority } = { ...item, board: deps.board }; return priority; };',
+    'export const pull = (deps) => { const { items } = { ...deps.board }; return items(); };',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': source }), [], source);
+});
+
+test('rule 3: a function taking priority, reached by destructuring, a literal, a property read or an operator in any order, fails when handed board', () => {
+  const TAKE = 'const take = ({ priority }) => priority;';
+  const reached = [
+    // The card's two instances.
+    'const { t } = { t: take };\nexport const rank = (config) => t(config.board);',
+    'const [t] = [take];\nexport const rank = (config) => t(config.board);',
+    // Nested, renamed, a default, a rest element, and an assignment.
+    'const { a: [t] } = { a: [take] };\nexport const rank = (config) => t(config.board);',
+    'const { a: { b: t } } = { a: { b: take } };\nexport const rank = (config) => t(config.board);',
+    'const { t = take } = {};\nexport const rank = (config) => t(config.board);',
+    'const [, ...rest] = [0, take];\nexport const rank = (config) => rest[0](config.board);',
+    'const { a, ...rest } = { a: 0, t: take };\nexport const rank = (config) => rest.t(config.board);',
+    'let t;\n({ t } = { t: take });\nexport const rank = (config) => t(config.board);',
+    'export const rank = (config) => { let t; [t] = [take]; return t(config.board); };',
+    'export const rank = (config, { t } = { t: take }) => t(config.board);',
+    // A property read from a literal or a binding holding one, and a spread.
+    'export const rank = (config) => [take][0](config.board);',
+    'const fns = [0, take];\nexport const rank = (config) => fns[1](config.board ?? {});',
+    'const fns = { a: [{ t: take }] };\nexport const rank = (config) => fns.a[0].t(config.board);',
+    'const { t } = { ...{ t: take } };\nexport const rank = (config) => t(config.board);',
+    'const [t] = [...[take]];\nexport const rank = (config) => t(config.board);',
+    'const fns = { ...{ t: take } };\nexport const rank = (config) => fns.t(config.board);',
+    // With the operators, around the literal or inside it.
+    'export const rank = (config, flag) => { const { t } = flag ? { t: take } : {}; return t(config.board); };',
+    'const [t] = [null ?? take];\nexport const rank = (config) => t(config.board);',
+    'const { t } = (0, { t: take || null });\nexport const rank = (config) => t(config.board);',
+    'export const rank = async (config) => { const [t] = await [take]; return t(config.board); };',
+    'const fns = [take];\nexport const rank = (config, flag) => (flag ? fns[0] : null)(config.board);',
+    // Called through .call or .apply, and destructured from a binding, a class or an instance.
+    'const { t } = { t: take };\nexport const rank = (config) => t.call(null, config.board);',
+    'const [t] = [take];\nexport const rank = (config) => t.apply(null, [config.board]);',
+    'const o = { t: take };\nconst { t } = o;\nexport const rank = (config) => t(config.board);',
+    'class K { static t = take; }\nconst { t } = K;\nexport const rank = (config) => t(config.board);',
+    'class Items { take({ priority }) { return priority; } }\nconst { take: t } = new Items();\nexport const rank = (config) => t(config.board);',
+    // A catch parameter's default, a parameter's plain default, and a class built by new.
+    'export const rank = (config) => { try { throw {}; } catch ({ t = take }) { return t(config.board); } };',
+    'export const rank = (config, t = take) => t(config.board);',
+    'class Take { constructor({ priority }) { this.p = priority; } }\nconst { T } = { T: Take };\nexport const rank = (config) => new T(config.board);',
+  ];
+  const missed = reached
+    .map((source) => `${TAKE}\n${source}`)
+    .filter((source) => !messages({ 'src/scheduling/rank.mjs': source }).some((message) => message.startsWith('src/scheduling/rank.mjs ') && message.includes('breaks rule 3:')));
+  assert.deepEqual(missed, []);
+});
+
+test('rule 3 bars nothing more by destructuring: a callee destructured to another function, or handed what is not board, passes', () => {
+  const TAKE = 'const take = ({ priority }) => priority;';
+  const handles = [
+    'const { t } = { t: (board) => board.items(), u: take };\nexport const pull = (deps) => t(deps.board);',
+    'const [a, t] = [take, (board) => board.items()];\nexport const pull = (deps) => [a, t(deps.board)];',
+    'const { t } = { t: take };\nexport const pull = (deps, item) => [t(item), deps.board.items()];',
+    'const fns = [take, (board) => board.items()];\nexport const pull = (deps) => fns[1](deps.board);',
+    'const [, ...rest] = [take, (board) => board.items()];\nexport const pull = (deps) => rest[0](deps.board);',
+  ];
+  for (const source of handles) assert.deepEqual(messages({ 'src/scheduling/pull.mjs': `${TAKE}\n${source}` }), [], source);
+});
+
 test('an anonymous default function in src/scheduling/ that calls the entry point is read, and hands it to nobody', () => {
   // Codex's case on #298: the reader once read a name this declaration does not have, and
   // refused the module as unreadable.
@@ -1058,6 +1245,48 @@ test('rule 8: a tree with no dispatching entry point is refused rather than read
   const renamed = new Map(Object.entries(ADAPTER));
   renamed.set('src/scheduling/loop.mjs', 'export function run(deps) { return deps; }');
   assert.throws(() => boundaryReport(renamed), /`loop`/);
+});
+
+test('rule 8: the entry point is the function loop.mjs exports as loop, whatever its local name, so importing it from src/cli/ fails', () => {
+  const start = "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();";
+  const entries = {
+    // #298's N3 and its sibling, the card's two instances.
+    'a function exported under another name': { 'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop };' },
+    'an alias exported as loop': { 'src/scheduling/loop.mjs': 'const run = (deps) => deps;\nexport const loop = run;' },
+    // The export relayed from another module under src/scheduling/, under another name there too.
+    'a re-export of another module\'s function as loop': {
+      'src/scheduling/loop.mjs': "export { run as loop } from './run.mjs';",
+      'src/scheduling/run.mjs': 'export function run(deps) { return deps; }',
+    },
+  };
+  for (const [shape, modules] of Object.entries(entries)) {
+    const found = messages({ ...modules, 'src/cli/start.mjs': start });
+    assert.ok(found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:')), `${shape}:\n${found.join('\n') || '(nothing)'}`);
+  }
+  // The renamed entry point reached by a namespace import, and by its own name where it is also exported.
+  assertBreaks({
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop };',
+    'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();",
+  }, 'src/cli/start.mjs', 'rule 8');
+  assertBreaks({
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop, run };',
+    'src/cli/start.mjs': "import { run } from '../scheduling/loop.mjs';\nexport const start = (deps) => run(deps).pull();",
+  }, 'src/cli/start.mjs', 'rule 8');
+});
+
+test('rule 8: loop.mjs exporting no binding named loop is refused, naming loop.mjs, whatever it names its function', () => {
+  for (const source of ['export function run(deps) { return deps; }', 'function loop(deps) { return deps; }\nexport { loop as run };']) {
+    const tree = new Map(Object.entries({ ...ADAPTER, 'src/scheduling/loop.mjs': source }));
+    assert.throws(() => boundaryReport(tree), /src\/scheduling\/loop\.mjs exports no `loop`/, source);
+  }
+});
+
+test('rule 8: an importer outside src/scheduling/ of loop.mjs\'s other exports passes', () => {
+  const modules = {
+    'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport const loop = run;\nexport const cadence = 1;',
+    'src/cli/start.mjs': "import { cadence } from '../scheduling/loop.mjs';\nexport const every = cadence;",
+  };
+  assert.deepEqual(messages(modules), []);
 });
 
 test('the proof, rule 8: a hand-on of the entry point through each of the eight steps holds it, and importing it from src/cli/ fails', () => {
