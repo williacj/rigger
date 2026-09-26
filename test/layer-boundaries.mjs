@@ -44,11 +44,11 @@ const NAMES = [
 
 /**
  * L3's dispatching entry point, which no module outside src/scheduling/ may bind (rule 8; the
- * architect's ruling 5, §4). A binding holds it as a binding holds a write side: through the
+ * architect's ruling 5, §4): the function its module exports as `exported`, whatever that function
+ * is called where it is defined. A binding holds it as a binding holds a write side: through the
  * hand-on steps the reader of what each binding holds follows, and no further.
  */
-const ENTRY = { file: 'src/scheduling/loop.mjs', local: 'loop' };
-const isEntry = (definition) => definition.file === ENTRY.file && definition.local === ENTRY.local;
+const ENTRY = { file: 'src/scheduling/loop.mjs', exported: 'loop' };
 
 /** The modules that may import `node:child_process`: the runners, and two local tool probes. */
 const SPAWNERS = [RUNNERS, 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
@@ -134,8 +134,12 @@ function fixed(node) {
   return undefined;
 }
 
-/** The name a key or member property spells: a plain name, or a fixed string in brackets. */
-const keyOf = (node, computed) => (!computed && node?.type === 'Identifier' ? node.name : fixed(node));
+/** The name a key or member property spells: a plain name, or a fixed string or number in brackets. */
+const keyOf = (node, computed) => {
+  if (!computed && node?.type === 'Identifier') return node.name;
+  if (node?.type === 'Literal' && typeof node.value === 'number') return String(node.value);
+  return fixed(node);
+};
 
 /** Every name a binding pattern binds, or the binding an assignment target writes into. */
 function boundBy(pattern) {
@@ -586,11 +590,13 @@ const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'Whil
  * What each call in a module can run, read by lexical scope and by the values that reach the call.
  *
  * A name resolves to the binding its scope reaches, shadowing and hoisting included. A binding
- * holds what each of its definitions gives it: a declaration, or an assignment anywhere. A value is
- * a function, a class, an object literal, or an instance a `new` builds, which the `new` names so a
- * write to one instance reaches no other. A member read takes the member from each value its
- * receiver can hold:
- * - an object's property, or a function assigned to it;
+ * holds what each of its definitions gives it: a declaration, or an assignment anywhere, each
+ * through any destructuring pattern, whose names take what a member read of the value gives, or
+ * their defaults. A value is a function, a class, an object or list literal, or an instance a `new`
+ * builds, which the `new` names so a write to one instance reaches no other. A member read takes
+ * the member from each value its receiver can hold:
+ * - an object's property, a spread object's, or a function assigned to it;
+ * - a list's element at the position a fixed index names, a spread list's, or one assigned to it;
  * - an instance's own property assigned through it, and its class's method or field;
  * - a class's static member, with what is assigned to it;
  * - failing a class's own, the same member of the class it extends.
@@ -608,27 +614,52 @@ const LOOPS = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'Whil
  * - the call is written after the replacement in its block, with no hoisted function declaration
  *   between the block and the call.
  *
- * A parameter, an import, a global, a call's result and any receiver the module does not define
- * hold nothing this reader can see. Returns the lookup: the functions the callee `node` can run.
+ * A parameter beyond its defaults, an import, a global, a call's result, a read through a key the
+ * source does not fix, and any receiver the module does not define hold nothing this reader can see.
+ * Returns the lookup: the functions the callee `node` can run.
  */
 function callables(program) {
   const scopeOf = new Map();
   const parentOf = new Map();
-  const newScope = (parent, fn) => ({ parent, fn, names: new Map() });
-  const moduleScope = newScope(null, true);
+  // A scope's `node` is the syntax that opens it, so where a binding lives can be placed in the source.
+  const newScope = (parent, fn, node) => ({ parent, fn, node, names: new Map() });
+  const moduleScope = newScope(null, true, program);
   const declare = (scope, name) => {
     if (!scope.names.has(name)) scope.names.set(name, []);
     return scope.names.get(name);
   };
   const functionScope = (scope) => (scope.fn ? scope : functionScope(scope.parent));
-  const lookup = (name, scope) => {
+  const declaring = (name, scope) => {
     if (!scope) return null;
-    return scope.names.has(name) ? scope.names.get(name) : lookup(name, scope.parent);
+    return scope.names.has(name) ? scope : declaring(name, scope.parent);
   };
+  const lookup = (name, scope) => declaring(name, scope)?.names.get(name) ?? null;
   const classes = [];
   const memberWrites = [];
   const nameWrites = [];
+  const patternWrites = [];
   const identifiers = [];
+
+  /**
+   * Each name a pattern binds, as `[its identifier, a value it takes]`: what it destructures from
+   * `source`, as a property read from it, and any default written beside it. A null `source`, as a
+   * parameter's, gives the defaults alone. A rest element takes a copy of what is left.
+   */
+  const destructured = (pattern, source) => {
+    switch (pattern?.type) {
+      case 'Identifier': return source ? [[pattern, source]] : [];
+      case 'AssignmentPattern': return [...destructured(pattern.left, source), ...destructured(pattern.left, pattern.right)];
+      case 'ObjectPattern':
+        return pattern.properties.flatMap((held) => (held.type === 'RestElement'
+          ? destructured(held.argument, source && { type: 'Destructured', source, rest: 0, at: pattern })
+          : destructured(held.value, source && { type: 'Destructured', source, key: keyOf(held.key, held.computed), at: pattern })));
+      case 'ArrayPattern':
+        return pattern.elements.flatMap((element, i) => (element?.type === 'RestElement'
+          ? destructured(element.argument, source && { type: 'Destructured', source, rest: i, at: pattern })
+          : destructured(element, source && { type: 'Destructured', source, key: String(i), at: pattern })));
+      default: return [];
+    }
+  };
 
   // Every node is given the scope it is read in, and every declaration its binding, before any
   // callee is resolved, so a declaration later in its scope is already there: hoisting.
@@ -641,30 +672,34 @@ function callables(program) {
     if (node.type === 'FunctionDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
     if (node.type === 'ClassDeclaration' && node.id) declare(scope, node.id.name).push({ node, value: node });
     if (isFunction(node) || node.type === 'FunctionDeclaration') {
-      inner = newScope(scope, true);
+      inner = newScope(scope, true, node);
       if (node.type === 'FunctionExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
-      for (const param of node.params) for (const bound of boundBy(param)) declare(inner, bound);
+      for (const param of node.params) {
+        for (const bound of boundBy(param)) declare(inner, bound);
+        for (const [id, value] of destructured(param, null)) declare(inner, id.name).push({ node: param, value });
+      }
     } else if (node.type === 'ClassExpression' || node.type === 'ClassDeclaration') {
       classes.push(node);
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
       if (node.type === 'ClassExpression' && node.id) declare(inner, node.id.name).push({ node, value: node });
     } else if (node.type === 'CatchClause') {
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
       for (const bound of boundBy(node.param)) declare(inner, bound);
+      for (const [id, value] of destructured(node.param, null)) declare(inner, id.name).push({ node: node.param, value });
     } else if (BLOCKS.has(node.type)) {
-      inner = newScope(scope, false);
+      inner = newScope(scope, false, node);
     } else if (node.type === 'ImportDeclaration') {
       for (const specifier of node.specifiers) declare(scope, specifier.local.name);
     } else if (node.type === 'VariableDeclaration') {
       const target = node.kind === 'var' ? functionScope(scope) : scope;
       for (const each of node.declarations) {
-        for (const bound of boundBy(each.id)) {
-          const definitions = declare(target, bound);
-          if (each.id.type === 'Identifier' && each.init) definitions.push({ node: each, value: each.init });
-        }
+        for (const bound of boundBy(each.id)) declare(target, bound);
+        for (const [id, value] of destructured(each.id, each.init)) declare(target, id.name).push({ node: each, value });
       }
     } else if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') {
       nameWrites.push({ node, scope });
+    } else if (node.type === 'AssignmentExpression' && ['ObjectPattern', 'ArrayPattern'].includes(node.left.type)) {
+      patternWrites.push({ node, scope });
     } else if (node.type === 'AssignmentExpression' && node.left.type === 'MemberExpression') {
       memberWrites.push(node);
     }
@@ -672,6 +707,7 @@ function callables(program) {
   };
   visit(program, moduleScope, null);
   for (const { node, scope } of nameWrites) lookup(node.left.name, scope)?.push({ node, value: node.right, replaces: node.operator === '=' });
+  for (const { node, scope } of patternWrites) for (const [id, value] of destructured(node.left, node.right)) lookup(id.name, scope)?.push({ node, value });
 
   const enclosingFunction = (node) => {
     for (let at = parentOf.get(node); at; at = parentOf.get(at)) if (isFunction(at) || at.type === 'FunctionDeclaration') return at;
@@ -761,11 +797,36 @@ function callables(program) {
    * An instance is `{ kind: 'instance', node: its class, site }`. `site` is the `new` that built it,
    * so a write to one instance reaches that instance alone. It is null for `this`, which may be any
    * instance, and 'prototype' for `super`, which reads the class's methods and never an instance's.
+   *
+   * A `new` or an object or list literal inside a function builds a value on every call of it.
+   * Read from a binding or an object that outlives the call, the value may be one an earlier call
+   * built, so it is marked `earlier`: a write through this call's value reaches it, but replaces
+   * nothing on it. What is read out of an `earlier` container is as old as the container.
    */
   const side = (klasses, statics, site = null) => klasses.map((node) => (statics ? { kind: 'class', node } : { kind: 'instance', node, site }));
-  const same = (a, b) => a.kind === b.kind && a.node === b.node
+  const same = (a, b) => a.kind === b.kind && a.node === b.node && Boolean(a.copy) === Boolean(b.copy)
     && (a.kind !== 'instance' || a.site === null || b.site === null || a.site === b.site);
-  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site) === i);
+  const distinct = (values) => values.filter((value, i) => values.findIndex((other) => other.kind === value.kind && other.node === value.node && other.site === value.site
+    && other.earlier === value.earlier && other.copy === value.copy && other.from === value.from) === i);
+  /** Whether `holder`, the syntax a binding or an object lives in, can outlive a call of the function `site` is in. */
+  const outlives = (holder, site) => {
+    const fn = enclosingFunction(site);
+    return typeof holder?.start !== 'number' || holder.start < fn.start || holder.end > fn.end;
+  };
+  /** The syntax that builds `value` on every call of the function it is in, or null. */
+  const builtBy = (value) => {
+    if (value.kind === 'instance') return value.site?.type === 'NewExpression' ? value.site : null;
+    return value.kind === 'object' || value.kind === 'list' ? value.node : null;
+  };
+  /**
+   * `values` as read out of `holder`: a value built on each call of a function is marked `earlier`
+   * where `holder` outlives that call, or where it was read out of a container already `earlier`.
+   */
+  const kept = (values, holder, fromEarlier = false) => values.map((value) => {
+    const site = builtBy(value);
+    if (!site || value.earlier || enclosingFunction(site) === null) return value;
+    return fromEarlier || outlives(holder, site) ? { ...value, earlier: true } : value;
+  });
 
   /** Whether `node` sits in a loop of its own function, so it may run many times in one call. */
   const inLoop = (node) => {
@@ -773,17 +834,19 @@ function callables(program) {
     return false;
   };
   /**
-   * Whether `value` is one object: an object literal or a `new` that runs once in its function,
-   * rather than any instance or one of many built by the same expression.
+   * Whether `value` is one object: an object or list literal or a `new` that runs once in its
+   * function, rather than any instance, one of many built by the same expression, or a rest
+   * element's copy, which is made afresh each time its pattern runs.
    */
   const single = (value) => {
-    if (value.kind === 'object' || value.kind === 'class') return !inLoop(value.node);
-    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !inLoop(value.site);
+    if (value.kind === 'object' || value.kind === 'class' || value.kind === 'list') return !value.copy && !value.earlier && !inLoop(value.node);
+    return value.kind === 'instance' && typeof value.site === 'object' && value.site !== null && !value.earlier && !inLoop(value.site);
   };
   /**
    * The writes to `key` on `value`. Each replaces what came before it only where its receiver can be
    * one object and nothing else; a receiver that may be one of several, any instance, or one of
-   * the objects a loop builds adds a definition and replaces none.
+   * the objects a loop builds adds a definition and replaces none. Nor does a write replace anything
+   * on an instance an earlier call built, which that write may never have reached.
    */
   const writesTo = (value, key) => memberWrites
     .filter((write) => keyOf(write.left.property, write.left.computed) === key)
@@ -791,7 +854,7 @@ function callables(program) {
       const receivers = distinct(valuesOf(write.left.object));
       if (!receivers.some((held) => same(held, value))) return [];
       const definite = receivers.length === 1 && single(receivers[0]);
-      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' }];
+      return [{ node: write, value: write.right, replaces: definite && write.operator === '=' && !value.earlier }];
     });
   /** The members `klass` itself writes under `key`, on its static side or its prototype. */
   const classMembers = (klass, key, statics) => klass.body.body
@@ -805,10 +868,8 @@ function callables(program) {
    * to the class it extends.
    */
   const memberDefinitions = (value, key) => {
-    if (value.kind === 'object') {
-      const written = value.node.properties.filter((held) => held.type === 'Property' && keyOf(held.key, held.computed) === key);
-      return [...written.map((held) => ({ node: held, value: held.value })), ...writesTo(value, key)];
-    }
+    if (value.kind === 'object') return [...literalDefinitions(value, key), ...writesTo(value, key)];
+    if (value.kind === 'list') return [...listDefinitions(value, key), ...writesTo(value, key)];
     if (value.kind !== 'class' && value.kind !== 'instance') return [];
     const statics = value.kind === 'class';
     const own = statics || value.site === 'prototype' ? [] : writesTo(value, key);
@@ -823,6 +884,46 @@ function callables(program) {
   };
   /** What a member read of `key` from `value` can give at `at`. */
   const memberValues = (value, key, at) => reaching(memberDefinitions(value, key), at).flatMap((definition) => valuesOf(definition.value));
+  /** The same, as read out of `value`, which may hold an instance an earlier call built. */
+  const readMember = (value, key, at) => kept(memberValues(value, key, at), value.kind === 'instance' ? value.site : value.node, Boolean(value.earlier));
+
+  // The literals whose spreads are being read, so a literal that spreads itself is read once.
+  const spreading = new Set();
+  /** Reads each spread in `node`'s elements or properties once, however the literals spread each other. */
+  const spreadOnce = (node, read) => {
+    if (spreading.has(node)) return [];
+    spreading.add(node);
+    try {
+      return read();
+    } finally {
+      spreading.delete(node);
+    }
+  };
+  /** An object literal's properties under `key`, and those of every object literal it spreads. */
+  const literalDefinitions = (value, key) => spreadOnce(value.node, () => value.node.properties.flatMap((held) => {
+    if (held.type === 'SpreadElement') return valuesOf(held.argument).filter((inner) => inner.kind === 'object').flatMap((inner) => literalDefinitions(inner, key));
+    return held.type === 'Property' && keyOf(held.key, held.computed) === key ? [{ node: held, value: held.value }] : [];
+  }));
+  /**
+   * A list literal's element at the position `key` names, counted from a rest element's `from`, or
+   * every element where `key` is undefined. A spread's elements may land at any position from its
+   * own, and so may every element after a spread.
+   */
+  const listDefinitions = (value, key) => spreadOnce(value.node, () => {
+    const found = [];
+    let position = -(value.from ?? 0);
+    let known = true;
+    for (const element of value.node.elements) {
+      if (element?.type === 'SpreadElement') {
+        known = false;
+        found.push(...valuesOf(element.argument).filter((inner) => inner.kind === 'list').flatMap((inner) => listDefinitions(inner, undefined)));
+      } else {
+        if (element && (key === undefined || !known || String(position) === key)) found.push({ node: element, value: element });
+        position += 1;
+      }
+    }
+    return found;
+  });
 
   // What an expression can evaluate to, through the operators Hand-ons step 7 names.
   function valuesOf(node) {
@@ -836,6 +937,17 @@ function callables(program) {
         case 'ClassDeclaration':
         case 'ClassExpression': return [{ kind: 'class', node }];
         case 'ObjectExpression': return [{ kind: 'object', node }];
+        case 'ArrayExpression': return [{ kind: 'list', node }];
+        // A name a pattern binds: a property read from what the pattern destructures, or a copy of
+        // what a rest element leaves.
+        case 'Destructured': {
+          const sources = valuesOf(node.source);
+          if (node.rest !== undefined) {
+            return sources.filter((value) => value.kind === 'object' || value.kind === 'list')
+              .map((value) => ({ ...value, copy: true, ...(value.kind === 'list' ? { from: (value.from ?? 0) + node.rest } : {}) }));
+          }
+          return node.key === undefined ? [] : sources.flatMap((value) => readMember(value, node.key, node.at));
+        }
         case 'ChainExpression': return valuesOf(node.expression);
         case 'ConditionalExpression': return [...valuesOf(node.consequent), ...valuesOf(node.alternate)];
         case 'LogicalExpression': return [...valuesOf(node.left), ...valuesOf(node.right)];
@@ -844,8 +956,9 @@ function callables(program) {
         case 'AssignmentExpression': return valuesOf(node.right);
         case 'NewExpression': return side(valuesOf(node.callee).filter((value) => value.kind === 'class').map((value) => value.node), false, node);
         case 'Identifier': {
-          const definitions = lookup(node.name, scopeOf.get(node));
-          return definitions ? reaching(definitions, node).flatMap((definition) => valuesOf(definition.value)) : [];
+          const scope = declaring(node.name, scopeOf.get(node));
+          if (!scope) return [];
+          return kept(reaching(scope.names.get(node.name), node).flatMap((definition) => valuesOf(definition.value)), scope.node);
         }
         case 'ThisExpression': {
           const self = thisAt(node);
@@ -863,7 +976,7 @@ function callables(program) {
           } else {
             receivers = valuesOf(node.object);
           }
-          return receivers.flatMap((value) => memberValues(value, key, node));
+          return receivers.flatMap((value) => readMember(value, key, node));
         }
         default: return [];
       }
@@ -915,12 +1028,15 @@ function parametersGiven(node, functionsOf) {
  * The lines on which a module spells the config path `board.priority`: a member access from
  * `board` to `priority`, by `.`, `?.` or a fixed string in brackets, or a destructuring pattern
  * that takes `priority` from a `board` key or from what `board` names. What `board` names may be
- * reached through an expression whose result can be one of its operands, and a pattern takes it as
- * the value it is given, as its default, or as an argument to a function the call can run. That is
+ * reached through an expression whose result can be one of its operands, and through a list or an
+ * object literal, a spread, or a property read from one, at any depth; an object literal spreading
+ * `board` holds its `priority`. A pattern takes it as the
+ * value it is given, as its default, or as an argument to a function the call can run. That is
  * one called where it is written, or one `callables` finds the callee reaches through scope, a
- * binding, a member of an object, class or instance the module defines, `this` or `super`. Any
- * other use of the name `board` passes, so L3's board handle does; a read through a computed key,
- * and a call whose callee this reader cannot follow, is a review finding (the card's Rule 3 item).
+ * binding, a destructuring pattern, a member of an object, list, class or instance the module
+ * defines, `this` or `super`. Any other use of the name `board` passes, so L3's board handle does;
+ * a read through an alias or a computed key, and a call whose callee this reader cannot follow, is
+ * a review finding (the card's Rule 3 item).
  */
 function priorityReads(program) {
   const lines = [];
@@ -932,20 +1048,87 @@ function priorityReads(program) {
     return (node?.type === 'Identifier' && node.name === 'board')
       || (node?.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'board');
   };
-  // `board`, or an expression whose result can be an operand that is: Hand-ons step 7's list.
-  const namesBoard = (wrapped) => {
+  /**
+   * The expressions a value can be: itself, an operand an expression's result can be (Hand-ons
+   * step 7's list), or what a property read takes from a list or an object literal (step 5 of
+   * step 6), at any depth.
+   */
+  const alternatives = (wrapped) => {
     const node = unchained(wrapped);
     switch (node?.type) {
-      case 'ConditionalExpression': return namesBoard(node.consequent) || namesBoard(node.alternate);
-      case 'LogicalExpression': return namesBoard(node.left) || namesBoard(node.right);
-      case 'AwaitExpression': return namesBoard(node.argument);
-      case 'SequenceExpression': return namesBoard(node.expressions.at(-1));
-      default: return isBoard(node);
+      case undefined: return [];
+      case 'ConditionalExpression': return [...alternatives(node.consequent), ...alternatives(node.alternate)];
+      case 'LogicalExpression': return [...alternatives(node.left), ...alternatives(node.right)];
+      case 'AwaitExpression': return alternatives(node.argument);
+      case 'SequenceExpression': return alternatives(node.expressions.at(-1));
+      case 'MemberExpression':
+        if (isBoard(node)) return [node];
+        return alternatives(node.object).flatMap((held) => memberOf(held, keyOf(node.property, node.computed)));
+      default: return [node];
     }
   };
+  /**
+   * What a read of `key` from a list or an object literal can give: the element at that position
+   * or the property of that name, a spread's included; any of them where the key is not fixed, or
+   * where a spread before the element leaves its position unknown. Anything else gives nothing.
+   */
+  const memberOf = (node, key) => {
+    if (node.type === 'ArrayExpression') {
+      const found = [];
+      let position = 0;
+      let known = true;
+      for (const element of node.elements) {
+        if (element?.type === 'SpreadElement') {
+          known = false;
+          found.push(...alternatives(element.argument).flatMap((held) => memberOf(held, undefined)));
+        } else {
+          if (element && (key === undefined || !known || String(position) === key)) found.push(...alternatives(element));
+          position += 1;
+        }
+      }
+      return found;
+    }
+    if (node.type === 'ObjectExpression') {
+      return node.properties.flatMap((held) => {
+        if (held.type === 'SpreadElement') return alternatives(held.argument).flatMap((inner) => memberOf(inner, key));
+        if (held.kind !== 'init' || held.method) return [];
+        return key === undefined || keyOf(held.key, held.computed) === key ? alternatives(held.value) : [];
+      });
+    }
+    return [];
+  };
+  /** What an array pattern's rest element from position `from` takes from a list literal: a list of what is left. */
+  const restOf = (node, from) => {
+    if (node.type !== 'ArrayExpression') return [];
+    const spread = node.elements.findIndex((held) => held?.type === 'SpreadElement');
+    return [{ type: 'ArrayExpression', elements: node.elements.slice(spread === -1 ? from : Math.min(from, spread)) }];
+  };
+  /** `board`, or an object literal spreading it, at any depth, which then holds its `priority`. */
+  const holdsBoard = (node) => isBoard(node) || (node.type === 'ObjectExpression'
+    && node.properties.some((held) => held.type === 'SpreadElement' && alternatives(held.argument).some(holdsBoard)));
+  const namesBoard = (node) => alternatives(node).some(holdsBoard);
   const takesPriority = (pattern) => pattern?.type === 'ObjectPattern'
     && pattern.properties.some((held) => held.type === 'Property' && keyOf(held.key, held.computed) === 'priority');
   const unwrapped = (pattern) => (pattern?.type === 'AssignmentPattern' ? pattern.left : pattern);
+  /**
+   * Whether a pattern given one of `values` hands `board`, or a member access to it, to a pattern
+   * inside it that takes `priority`, at any depth. A default inside the pattern is read where the
+   * walk meets it, as a value given to the pattern beside it.
+   */
+  const gives = (pattern, values) => {
+    switch (pattern?.type) {
+      case 'AssignmentPattern': return gives(pattern.left, values);
+      case 'ObjectPattern':
+        if (takesPriority(pattern) && values.some(holdsBoard)) return true;
+        return pattern.properties.some((held) => held.type === 'Property'
+          && gives(held.value, values.flatMap((value) => memberOf(value, keyOf(held.key, held.computed)))));
+      case 'ArrayPattern':
+        return pattern.elements.some((element, i) => (element?.type === 'RestElement'
+          ? gives(element.argument, values.flatMap((value) => restOf(value, i)))
+          : gives(element, values.flatMap((value) => memberOf(value, String(i))))));
+      default: return false;
+    }
+  };
   walk(program, (node) => {
     if (node.type === 'MemberExpression' && keyOf(node.property, node.computed) === 'priority' && namesBoard(node.object)) {
       lines.push(node.loc.start.line);
@@ -955,12 +1138,12 @@ function priorityReads(program) {
         if (held.type === 'Property' && keyOf(held.key, held.computed) === 'board' && takesPriority(unwrapped(held.value))) lines.push(held.loc.start.line);
       }
     }
-    if (node.type === 'VariableDeclarator' && takesPriority(node.id) && namesBoard(node.init)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentExpression' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
-    if (node.type === 'AssignmentPattern' && takesPriority(node.left) && namesBoard(node.right)) lines.push(node.loc.start.line);
+    if (node.type === 'VariableDeclarator' && gives(node.id, alternatives(node.init))) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentExpression' && gives(node.left, alternatives(node.right))) lines.push(node.loc.start.line);
+    if (node.type === 'AssignmentPattern' && gives(node.left, alternatives(node.right))) lines.push(node.loc.start.line);
     if (['CallExpression', 'NewExpression', 'TaggedTemplateExpression'].includes(node.type)) {
       for (const [param, given] of parametersGiven(node, functionsOf)) {
-        if (takesPriority(unwrapped(param)) && given.some(namesBoard)) lines.push(node.loc.start.line);
+        if (gives(param, given.flatMap(alternatives))) lines.push(node.loc.start.line);
       }
     }
   });
@@ -997,8 +1180,8 @@ export function boundaryReport(tree) {
     }
   }
   if (!tree.has(ENTRY.file)) throw new Error(`L3's dispatching entry point has no module at ${ENTRY.file}, so rule 8 could not fail`);
-  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.local)) {
-    throw new Error(`${ENTRY.file} exports no \`${ENTRY.local}\`, L3's dispatching entry point, so rule 8 could not fail`);
+  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.exported)) {
+    throw new Error(`${ENTRY.file} exports no \`${ENTRY.exported}\`, L3's dispatching entry point, so rule 8 could not fail`);
   }
   const runners = modules.get(RUNNERS);
   for (const side of SIDES) {
@@ -1088,6 +1271,16 @@ export function boundaryReport(tree) {
   };
 
   const ownModule = (file, side) => file === sideModule(side) || file === RUNNERS;
+
+  // The definitions the entry point's export resolves to. One the reader cannot resolve is already
+  // refused under the unresolved-import rule, in the entry point's own module.
+  let entry = [];
+  try {
+    if (modules.has(ENTRY.file)) entry = resolveExport(ENTRY.file, ENTRY.exported);
+  } catch {
+    // Reported below, where the entry point's module is read.
+  }
+  const isEntry = (definition) => entry.some((held) => held.file === definition.file && held.local === definition.local);
 
   for (const module of modules.values()) {
     const { file } = module;
