@@ -432,38 +432,33 @@ async function columns(config, send) {
   return lines;
 }
 
-/** The type GitHub names a single-select field by, as the read side's field types carry it. */
-const SINGLE_SELECT = 'SINGLE_SELECT';
-
 /**
  * Whether the board holds the priority field the config declares: a single-select field of that
- * name whose option names are exactly the declared ones. Order is not compared, because the
- * config's order is the ranking of whatever options the board holds, and the board's own order
- * ranks nothing. A config declaring no priority passes, since no field is asked for.
+ * name, the field holding the columns among them, whose option names are exactly the declared
+ * ones. The field's options are the forge adapter's priority read, the one the engine ranks by,
+ * so a field not on the board, or of another type, fails the line in the adapter's words, naming
+ * the field and its type. Order is not compared, because the config's order is the ranking of
+ * whatever options the board holds, and the board's own order ranks nothing. A config declaring
+ * no priority passes, since no field is asked for.
  */
 async function priority(config, send) {
   const name = 'board priority';
   const declared = config.board.priority;
   if (!declared) return { name, ok: true, detail: 'no priority field is declared, so every card ranks alike' };
-  const reads = readsOf(config, send);
-  const board = `board ${config.board.project}`;
+  const field = `board ${config.board.project}'s field ${declared.field}`;
+  let held;
   try {
-    const field = (await reads.readFieldTypes()).find((held) => held.name === declared.field);
-    if (!field) return { name, ok: false, detail: `${board} has no field named ${declared.field}` };
-    if (field.type !== SINGLE_SELECT) {
-      return { name, ok: false, detail: `${board}'s field ${declared.field} is a ${field.type} field, not a single-select field` };
-    }
-    const held = (await reads.readFields()).find((select) => select.name === declared.field).options;
-    const unasked = held.filter((option) => !declared.options.includes(option));
-    const missing = declared.options.filter((option) => !held.includes(option));
-    const said = [];
-    if (unasked.length > 0) said.push(`on the board and not in the config: ${unasked.join(', ')}`);
-    if (missing.length > 0) said.push(`in the config and not on the board: ${missing.join(', ')}`);
-    if (said.length > 0) return { name, ok: false, detail: `${board}'s field ${declared.field} holds options ${said.join('; ')}` };
-    return { name, ok: true, detail: `${board}'s field ${declared.field} holds exactly the declared options` };
+    ({ options: held } = await readsOf(config, send).readPriority());
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
   }
+  const unasked = held.filter((option) => !declared.options.includes(option));
+  const missing = declared.options.filter((option) => !held.includes(option));
+  const said = [];
+  if (unasked.length > 0) said.push(`on the board and not in the config: ${unasked.join(', ')}`);
+  if (missing.length > 0) said.push(`in the config and not on the board: ${missing.join(', ')}`);
+  if (said.length > 0) return { name, ok: false, detail: `${field} holds options ${said.join('; ')}` };
+  return { name, ok: true, detail: `${field} holds exactly the declared options` };
 }
 
 /**

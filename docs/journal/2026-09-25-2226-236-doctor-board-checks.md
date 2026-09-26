@@ -18,11 +18,14 @@ column. So the failure is the adapter's words, naming the key and display name, 
 column fails only its own line. The cost is one field read per column. That is a judgment, not a
 measurement.
 
-The priority line reads the field types first, so a missing field and a field of another type
-each fail in words of their own. Only then does it read the options, which it compares as sets.
-It does not call `readPriority`, because that reads every card too. A card the read side refuses,
-such as one holding more than 100 labels, would fail the priority line for a reason that has
-nothing to do with the field.
+The priority line takes the field's options from `readPriority`, the read the engine ranks by, and
+compares them with the declared options as sets. A missing field and a field of another type each
+fail in the adapter's words. The first version read the options from `readFields`, to avoid
+reading every card. Both judges on round 1 found the flaw. `readFields` leaves out `Status`, and
+the validator accepts `Status` as the priority field. So a board whose `Status` options matched
+failed the line, with a `TypeError`'s words. The cost of `readPriority` is that a card the read
+side refuses, such as one holding more than 100 labels, fails the priority line too. That is a
+judgment, not a measurement.
 
 A config the validator refuses, or cannot read, earns one `board checks` line saying the board
 was not checked. No request is sent. The board-sharing check still prints nothing in that case,

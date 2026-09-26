@@ -1068,6 +1068,8 @@ test('the priority line fails when an option is on the board and not in the conf
   const line = priorityLine(ran.text);
   assert.match(line, /^\s*failed\s/, line);
   for (const option of ['Urgent', 'Someday', 'Low']) assert.match(line, new RegExp(`\\b${option}\\b`), line);
+  // The two options on both sides are named by neither half.
+  for (const option of ['High', 'Normal']) assert.doesNotMatch(line, new RegExp(`\\b${option}\\b`), line);
   assert.notEqual(ran.code, 0, ran.text);
 });
 
@@ -1075,6 +1077,19 @@ test('the priority line passes when the board holds exactly the declared options
   const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }] });
 
   assert.match(priorityLine(ran.text), /^\s*ok\s/, ran.text);
+  assert.equal(ran.code, 0, ran.text);
+});
+
+test('the priority line passes when the declared field is the one holding the columns, whose options match in a different order', async () => {
+  // `Status` is a single-select field the validator accepts as the priority field.
+  const source = starter().replace(/priority: \{[^}]*\}/, "priority: { field: 'Status', options: ['Done', 'Owner', 'Review', 'Coding', 'Ready'] }");
+  assert.deepEqual(validate((await import(pathToFileURL(join(checked(source), CONFIG)))).default), []);
+  assert.match(source, /field: 'Status'/, 'the starter declares its priority in a form this test does not replace');
+
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [] }, { source });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*ok\s/, line);
   assert.equal(ran.code, 0, ran.text);
 });
 
