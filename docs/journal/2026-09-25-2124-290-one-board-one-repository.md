@@ -12,7 +12,8 @@ hold is refused by `npm run matrix:check`. So #289 landed `doctor`'s board-shari
 declaration, and this card adds the row and the declarations together. Three of #289's tests
 claim the row: the failing board, the passing board, and the exit status across both.
 
-**One mutation was enough to show the claim discriminates.** Stopping the board reader from
-recording another repository turned two of the three red, each on its own assertion. The pass-case
-test stayed green under it, as it should: that mutation removes detection, and a board holding
-only `repo`'s items has nothing to detect. The PR carries the guarded run.
+**Two mutations, because each removes a different behaviour.** Stopping the board reader from
+recording another repository turned the failing-board and exit-status tests red. The pass-case
+test stayed green under it, because a board holding only `repo`'s items has nothing to detect.
+Removing the comparison with `repo`, the mutation the architect named on #285, turned all three
+red: `repo` itself was then reported as another repository. The PR carries both guarded runs.
