@@ -13,12 +13,13 @@ const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', '
  * A board holding `columns` (the `Status` options, in board order), `fields` as `{ name, options }`
  * or, for a field of another type, `{ name, type }` with the type as GitHub names it, `items`, and
  * the repository's `labels`. Each item is given the board item
- * id `item-1`, `item-2` and so on, in the order given, which is what a move names.
+ * id `item-1`, `item-2` and so on, in the order given, which is what a move names. A board built
+ * with `refuseMoves` refuses every move it is asked for, as a board whose writes fail would.
  *
- * Its `operations` are what the forge adapter offers, and nothing else is: `writes()` and
- * `holdNextRead()` are the test's controls, not the board's.
+ * Its `operations` are what the forge adapter offers, and nothing else is: `writes()`,
+ * `requests()` and `holdNextRead()` are the test's controls, not the board's.
  */
-export function createFakeBoard({ columns = [], fields = [], items = [], labels = [] } = {}) {
+export function createFakeBoard({ columns = [], fields = [], items = [], labels = [], refuseMoves = false } = {}) {
   for (const item of items) {
     const unmodelled = Object.keys(item).filter((fact) => !ITEM_FACTS.includes(fact));
     if (unmodelled.length > 0) {
@@ -32,6 +33,7 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     items: items.map((item, index) => ({ ...item, id: `item-${index + 1}` })),
   });
   const writes = [];
+  const requests = [];
   const record = (operation, args) => writes.push(structuredClone({ operation, args }));
 
   // A held read answers when the test releases it, with the board as it stands then.
@@ -42,51 +44,62 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     return gate.then(() => structuredClone(answer()));
   };
 
-  return {
-    operations: {
-      readItems: () => read(() => board.items),
-      readColumns: () => read(() => board.columns),
-      readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
-      readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
-      readLabels: () => read(() => board.labels),
-      /**
-       * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
-       * every item with its `priority` as `{ value, declared }`, the declared order, and the
-       * field's options in board order. With no declaration, no item has a priority and there is
-       * no order. The adapter's read takes its declaration from the config it was given.
-       */
-      readPriority: (priority) => read(() => {
-        if (!priority) return { items: board.items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
-        const field = board.fields.find(({ name }) => name === priority.field);
-        if (!field) throw new Error(`the fake board has no field named ${priority.field}`);
-        if (field.type !== undefined) throw new Error(`the fake board's field ${priority.field} is a ${field.type} field`);
-        const items = board.items.map((item) => {
-          const value = item.fieldValues?.[priority.field] ?? null;
-          return { ...item, priority: { value, declared: priority.options.includes(value) } };
-        });
-        return { items, declared: [...priority.options], options: field.options };
-      }),
-      moveItem: async (itemId, column) => {
-        if (!board.columns.includes(column)) {
-          throw new Error(`the fake board has no column named ${column}`);
-        }
-        board.items.find((item) => item.id === itemId).column = column;
-        record('moveItem', [itemId, column]);
-      },
-      createColumn: async (name) => {
-        board.columns.push(name);
-        record('createColumn', [name]);
-      },
-      createField: async (name, options) => {
-        board.fields.push(structuredClone({ name, options }));
-        record('createField', [name, options]);
-      },
-      createLabel: async (name) => {
-        board.labels.push(name);
-        record('createLabel', [name]);
-      },
+  const answering = {
+    readItems: () => read(() => board.items),
+    readColumns: () => read(() => board.columns),
+    readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
+    readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
+    readLabels: () => read(() => board.labels),
+    /**
+     * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
+     * every item with its `priority` as `{ value, declared }`, the declared order, and the
+     * field's options in board order. With no declaration, no item has a priority and there is
+     * no order. The adapter's read takes its declaration from the config it was given.
+     */
+    readPriority: (priority) => read(() => {
+      if (!priority) return { items: board.items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
+      const field = board.fields.find(({ name }) => name === priority.field);
+      if (!field) throw new Error(`the fake board has no field named ${priority.field}`);
+      if (field.type !== undefined) throw new Error(`the fake board's field ${priority.field} is a ${field.type} field`);
+      const items = board.items.map((item) => {
+        const value = item.fieldValues?.[priority.field] ?? null;
+        return { ...item, priority: { value, declared: priority.options.includes(value) } };
+      });
+      return { items, declared: [...priority.options], options: field.options };
+    }),
+    moveItem: async (itemId, column) => {
+      if (refuseMoves) throw new Error(`the fake board refuses every move, and refused ${itemId}'s to ${column}`);
+      if (!board.columns.includes(column)) {
+        throw new Error(`the fake board has no column named ${column}`);
+      }
+      board.items.find((item) => item.id === itemId).column = column;
+      record('moveItem', [itemId, column]);
     },
+    createColumn: async (name) => {
+      board.columns.push(name);
+      record('createColumn', [name]);
+    },
+    createField: async (name, options) => {
+      board.fields.push(structuredClone({ name, options }));
+      record('createField', [name, options]);
+    },
+    createLabel: async (name) => {
+      board.labels.push(name);
+      record('createLabel', [name]);
+    },
+  };
+
+  // Every request is recorded as it arrives, before it is answered or refused.
+  const operations = Object.fromEntries(Object.entries(answering).map(([operation, answer]) => [operation, (...args) => {
+    requests.push(structuredClone({ operation, args }));
+    return answer(...args);
+  }]));
+
+  return {
+    operations,
     writes: () => structuredClone(writes),
+    /** Every request the board has received, as `{ operation, args }`, refused ones included. */
+    requests: () => structuredClone(requests),
     /** Holds the next read unanswered, and returns the function that releases it. */
     holdNextRead: () => {
       let release;
