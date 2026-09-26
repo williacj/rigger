@@ -1,7 +1,8 @@
 // ABOUTME: Tests L3's loop over the fake board with an injected dispatch: at most N cards in
 // flight, a claim taken before any await, a claim held only until its slot is released, every
 // read failure, refused claim move and dispatch outcome passed on, and a run that refills each
-// freed slot and leaves each card in the column its outcome settles, by the config's column names.
+// freed slot and leaves each card in the column its outcome settles, by the config's column names;
+// and the events L3 records, the drain trigger's among them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ import { join } from 'node:path';
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { openSink } from '../src/observation/sink.mjs';
+import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
@@ -124,6 +125,9 @@ function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () => {}, on
  * `sequence` records, in the one order they happened, each board move once the board has made
  * it, as `{ move, column }` with the item's id and the column's display name, and each dispatch
  * start, as `{ start }` with the item's id.
+ *
+ * L2 and L3 share one sink, whose clock ticks once per event, so no two events share a time.
+ * `layers` records the layer of every emitter L3 asks the sink for.
  */
 function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer,
@@ -140,7 +144,16 @@ function world({
       sequence.push({ move: id, column });
     },
   };
-  const sink = openSink({ directory: mkdtempSync(join(tmpdir(), 'rigger-loop-')), run: 'r-test', now: () => 0 });
+  const directory = mkdtempSync(join(tmpdir(), 'rigger-loop-'));
+  let tick = 0;
+  const sink = openSink({ directory, run: 'r-test', now: () => (tick += 1) });
+  const layers = [];
+  const l3Sink = {
+    emitter: (context) => {
+      layers.push(context.layer);
+      return sink.emitter(context);
+    },
+  };
   const l2 = columnChanges({ config: settings, sink, items: recorded });
   const returned = new Set();
   const decide = (card) => (fresh && returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS));
@@ -153,7 +166,14 @@ function world({
       returned.add(start.card.number);
     }
   };
-  return { fake, l2, dispatches, sequence, loop: loop({ config: settings, board, decide, l2, dispatch }) };
+  return {
+    fake, l2, dispatches, sequence, layers,
+    /** Every event the run has recorded so far, in the order recorded. */
+    events: () => readEvents(directory),
+    /** The events L3 recorded so far, in order. */
+    l3Events: () => readEvents(directory).filter((event) => event.layer === 'L3'),
+    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink }),
+  };
 }
 
 /** Each card on `fake` by number, with the display name of the column it is in now. */
@@ -550,4 +570,145 @@ test("the forge adapter's read side, passed whole, is L3's board handle: the dec
 
   const columns = Object.fromEntries((await (await gh.model()).operations.readItems()).map((item) => [item.number, item.column]));
   assert.deepEqual(columns, { 21: 'Ready', 22: 'Review' });
+});
+
+test('at the start of a run, L3 writes one event recording the run\'s concurrency', async () => {
+  const built = world({ cards: [1, 2], concurrency: 2 });
+
+  await drive(built);
+
+  const starts = built.l3Events().filter((event) => event.event === 'run.start');
+  assert.equal(starts.length, 1, JSON.stringify(built.l3Events()));
+  assert.equal(starts[0].concurrency, 2);
+  assert.equal(built.l3Events()[0].event, 'run.start', 'the run records its start before anything else');
+});
+
+test('every pull writes one event naming the card, its kind, the queue depth and the number in flight', async () => {
+  const built = world({ cards: [1, 2, 3], concurrency: 2 });
+
+  const run = built.loop.run();
+  await quiesce();
+  built.dispatches.release(1);
+  await quiesce();
+  built.dispatches.releaseAll();
+  await quiesce();
+  built.dispatches.releaseAll();
+  await run;
+
+  // The first read finds 1, 2 and 3 pullable and two slots free: pulling 1 leaves 2 and 3
+  // waiting with 1 in flight, and pulling 2 leaves 3 waiting with 1 and 2 in flight. Card 1's
+  // release fires a read that finds only 3, which leaves nothing waiting, with 2 and 3 in flight.
+  const pulls = built.l3Events().filter((event) => event.event === 'pull')
+    .map(({ card, kind, queueDepth, inFlight }) => ({ card, kind, queueDepth, inFlight }));
+  assert.deepEqual(pulls, [
+    { card: 1, kind: 'change', queueDepth: 2, inFlight: 1 },
+    { card: 2, kind: 'change', queueDepth: 1, inFlight: 2 },
+    { card: 3, kind: 'change', queueDepth: 0, inFlight: 2 },
+  ]);
+});
+
+/** The cards named by `built`'s L3 events named `name`, in the order recorded. */
+const cardsOf = (built, name) => built.l3Events().filter((event) => event.event === name).map(({ card }) => card);
+
+test('every slot release writes one event naming the card, whether its dispatch returned or threw', async () => {
+  const built = world({ cards: [1, 2, 3], concurrency: 2, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
+
+  await drive(built);
+
+  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 2, 3]);
+});
+
+test('a slot freed by a claim move the board refused writes one release event naming the card', async () => {
+  const refusing = createFakeBoard({ columns: Object.values(COLUMNS), items: [1, 2].map((number) => readyCard(number)), refuseMoves: true });
+  const built = world({ fake: refusing, concurrency: 2 });
+
+  await drive(built).catch(() => {});
+
+  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 2]);
+});
+
+/** The value of the `trigger` field on each of `built`'s L3 `trigger` events, in the order recorded. */
+const triggersOf = (built) => built.l3Events().filter((event) => event.event === 'trigger').map(({ trigger }) => trigger);
+
+test('every firing of the pull trigger writes one event naming the trigger as pull', async () => {
+  // Each firing reads the board once. At concurrency 1 over two cards, a run fires at its start,
+  // on card 1's release and on card 2's release: three firings, and a single pull() is one more.
+  const fake = boardOf([1, 2]);
+  let reads = 0;
+  const board = handleOn(fake, { beforeRead: () => { reads += 1; } });
+  const built = world({ fake, board, concurrency: 1 });
+
+  await drive(built);
+  const tick = built.loop.pull();
+  await quiesce();
+  built.dispatches.releaseAll();
+  await tick;
+
+  assert.equal(reads, 4);
+  assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 4);
+});
+
+test('in a run that pulls cards and then drains, the drain trigger writes exactly one drain event, after the last release', async () => {
+  // Concurrency 3 over three cards released together: each release fires a pull that finds
+  // nothing, so three pulls race to see the board empty, and the idle period they share is one.
+  const built = world({ cards: [1, 2, 3], concurrency: 3 });
+
+  await drive(built);
+
+  assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), ['drain']);
+  const names = built.l3Events().map(({ event, trigger }) => (trigger === 'drain' ? 'drain' : event));
+  assert.ok(names.indexOf('drain') > names.lastIndexOf('slot.release'), JSON.stringify(names));
+});
+
+test('a run that starts with nothing to pull writes exactly one drain event and no pull event', async () => {
+  const built = world({ cards: [], concurrency: 2 });
+
+  await drive(built);
+
+  assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), ['drain']);
+  assert.deepEqual(cardsOf(built, 'pull'), []);
+});
+
+test('while a card is in flight, the drain trigger writes no event, and it writes one once the held dispatch returns', async () => {
+  const built = world({ cards: [1, 2], concurrency: 2 });
+
+  const run = built.loop.run();
+  await quiesce();
+  built.dispatches.release(1);
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [2], "card 2's dispatch is held open");
+  assert.ok(triggersOf(built).includes('pull'), "card 1's release fired a pull that found nothing");
+  assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), []);
+
+  built.dispatches.releaseAll();
+  await run;
+
+  assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), ['drain']);
+});
+
+test('every event L3 writes carries layer L3, and none carries another layer', async () => {
+  const built = world({ cards: [1, 2, { ...readyCard(3), labels: [] }], concurrency: 1, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
+
+  await drive(built);
+
+  assert.ok(built.layers.length > 0, 'L3 wrote events');
+  assert.deepEqual([...new Set(built.layers)], ['L3']);
+  assert.ok(built.events().some((event) => event.layer === 'L2'), "L2's transitions share the stream");
+});
+
+test('from the recorded events of a concurrency 3 run over four cards, the most pull-to-release intervals overlapping at any moment is exactly 3', async () => {
+  const built = world({ concurrency: 3 });
+
+  await drive(built);
+
+  // Each card's interval runs from its pull event's time to its release event's time, and the
+  // sink's clock ticks once per event, so no two events share a time.
+  const at = (name) => Object.fromEntries(built.l3Events().filter((event) => event.event === name).map(({ card, ts }) => [card, Date.parse(ts)]));
+  const pulled = at('pull');
+  const released = at('slot.release');
+  assert.deepEqual(Object.keys(pulled).sort(), ['1', '2', '3', '4']);
+  assert.deepEqual(Object.keys(released).sort(), ['1', '2', '3', '4']);
+  const intervals = Object.keys(pulled).map((card) => [pulled[card], released[card]]);
+  const overlapping = (moment) => intervals.filter(([from, to]) => from <= moment && moment < to).length;
+  assert.equal(Math.max(...intervals.map(([from]) => overlapping(from))), 3);
 });
