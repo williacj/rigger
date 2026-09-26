@@ -703,10 +703,10 @@ wording waits for a verdict nobody posts. On 2026-09-24 the M1 coordinator flagg
 with no verdict. It later relayed a needs revision onto #196 after the owner's merge had ratified
 it. Under rule 2, a verdict returned after the owner's merge rules on nothing.
 
-Rule 3 originally followed from `D19`; `D22` retains that permission for cards without an
-owner judge. `R-GATE-4`'s evidence holds every configured judge's verdict. Where the owner is
-one of those judges and the merge is the owner's verdict, the evidence is complete only once
-the card has merged.
+Rule 3 originally followed from `D19`; `D22` retains that permission only for cards without an
+owner judge and without an authored binding edit. `R-GATE-4`'s evidence holds every configured
+judge's verdict. Where the owner is one of those judges and the merge is the owner's verdict,
+the evidence is complete only once the card has merged.
 
 The whole arrangement ends at M5, and the owner ruled so on 2026-09-24, in the first round of the
 pull request that proposed this decision. From M5 the hook reads verdict markers and nothing else,
