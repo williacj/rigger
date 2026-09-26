@@ -755,6 +755,7 @@ const sharingLines = (text) => checkLines(text).filter((line) => line.includes('
 /** Every `owner/name` a line names. */
 const repositoriesIn = (line) => line.match(/[\w.-]+\/[\w.-]+/g) ?? [];
 
+// proves R-WORK-8
 test('given a board holding items from two other repositories, doctor prints one board-sharing line, which fails and names exactly those two', async () => {
   const { ran } = await sharing([ours(1), theirs('other/one', 7), ours(2), theirs('Other/Two', 8), theirs('other/one', 9)]);
 
@@ -767,6 +768,7 @@ test('given a board holding items from two other repositories, doctor prints one
   assert.deepEqual(['other/one', 'Other/Two'].filter((repository) => !named.includes(repository)), [], lines[0]);
 });
 
+// proves R-WORK-8
 test("given a board holding only the repository's issues and pull requests and draft issues, doctor's board-sharing line passes", async () => {
   const { ran } = await sharing([
     ours(1),
@@ -788,6 +790,7 @@ test("given a board holding a redacted item, doctor's board-sharing line fails a
   assert.match(line, /1 item it cannot read/, line);
 });
 
+// proves R-WORK-8
 test('given a board holding an item from another repository, doctor exits non-zero, where the same board without it exits zero', async () => {
   const shared = await sharing([ours(1), theirs('other/one', 7)]);
   const alone = await sharing([ours(1)]);
