@@ -113,6 +113,7 @@ const optionsOf = (field) => field.options.map((name, index) => ({ id: optionId(
 
 /** The content of an item as the item read's selection answers it, by the item's type. */
 function contentOf(item, operation) {
+  if (item.type === 'redacted') return null;
   if (item.type === 'draftIssue') return { __typename: 'DraftIssue' };
   if (item.type === 'pullRequest') return { __typename: 'PullRequest' };
   const labels = (item.labels ?? []).map((name) => ({ name }));
@@ -146,6 +147,33 @@ const ITEM = 'id fieldValues(first: _) { pageInfo { hasNextPage } nodes { ... on
 async function items(board, state, operation) {
   onTheBoard(state, operation);
   const nodes = (await board.operations.readItems()).map((item) => itemNode(item, operation));
+  return { repositoryOwner: { projectV2: { items: page(nodes, fieldIn(operation.selections, 'items')) } } };
+}
+
+/** The fields of an item the report of other repositories selects. */
+const OWNED_ITEM = 'id type content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } }';
+
+/** The `ProjectV2ItemType` GitHub answers for an item of each type the fake board holds. */
+const ITEM_TYPES = { issue: 'ISSUE', pullRequest: 'PULL_REQUEST', draftIssue: 'DRAFT_ISSUE', redacted: 'REDACTED' };
+
+/**
+ * An item as the report of other repositories selects it. An issue or pull request answers its
+ * repository, a draft answers its content as an empty object, matching neither fragment.
+ *
+ * A redacted item's answer is constructed from the schema, not captured: `ProjectV2ItemType`
+ * holds `REDACTED`, and no redacted item has been seen on a real board (the architect's ruling on
+ * #285, comment 5835129833). Its content is answered as null, which the schema allows.
+ */
+function ownedItemNode(item) {
+  const content = { issue: { repository: { nameWithOwner: item.repository } }, draftIssue: {}, redacted: null };
+  content.pullRequest = content.issue;
+  return { id: item.id, type: ITEM_TYPES[item.type], content: content[item.type] };
+}
+
+/** Answers a page of the board's items as the report of other repositories selects them. */
+async function ownedItems(board, state, operation) {
+  onTheBoard(state, operation);
+  const nodes = (await board.operations.readItems()).map(ownedItemNode);
   return { repositoryOwner: { projectV2: { items: page(nodes, fieldIn(operation.selections, 'items')) } } };
 }
 
@@ -184,6 +212,8 @@ async function labels(board, state, operation) {
 const COMMANDS = {
   [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
   [graphql(boardShape(`items(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
+  [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${OWNED_ITEM} } }`))]: ownedItems,
+  [graphql(boardShape(`items(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { ${OWNED_ITEM} } }`))]: ownedItems,
   // A field of any other type answers the single-select fragment as an empty object, as GitHub does.
   [graphql(boardShape('fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } }'))]: async (board, state, operation) => {
     onTheBoard(state, operation);

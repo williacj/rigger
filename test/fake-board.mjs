@@ -4,8 +4,9 @@
 /**
  * Everything the fake holds of one board item. Each is a forge fact the board itself carries; a
  * card's linked pull request and any verdict are not, so an item naming either is refused.
- * `type` is `issue`, `draftIssue` or `pullRequest`, and `fieldValues` maps a field's name to the
- * option the item holds in it, as `{ Priority: 'P1' }`.
+ * `type` is `issue`, `draftIssue`, `pullRequest` or `redacted` (an item whose content GitHub
+ * withholds from its reader), and `fieldValues` maps a field's name to the option the item holds
+ * in it, as `{ Priority: 'P1' }`.
  */
 const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', 'column', 'fieldValues'];
 
@@ -66,6 +67,18 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
         return { ...item, priority: { value, declared: priority.options.includes(value) } };
       });
       return { items, declared: [...priority.options], options: field.options };
+    }),
+    /**
+     * What the board holds from outside the repository `repo` names: every other repository
+     * whose issue or pull request is on it, whatever the letter case of the name, in the order
+     * first met, and how many redacted items it holds. The adapter's read takes `repo` from the
+     * config it was given.
+     */
+    readOtherRepositories: (repo) => read(() => {
+      const others = board.items
+        .filter(({ type, repository }) => ['issue', 'pullRequest'].includes(type) && repository.toLowerCase() !== repo.toLowerCase())
+        .map(({ repository }) => repository);
+      return { repositories: [...new Set(others)], unreadable: board.items.filter(({ type }) => type === 'redacted').length };
     }),
     moveItem: async (itemId, column) => {
       if (refuseMoves) throw new Error(`the fake board refuses every move, and refused ${itemId}'s to ${column}`);
