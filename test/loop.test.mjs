@@ -686,6 +686,87 @@ test('while a card is in flight, the drain trigger writes no event, and it write
   assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), ['drain']);
 });
 
+/** The drain events `built`'s L3 has written so far. */
+const drainsOf = (built) => triggersOf(built).filter((trigger) => trigger === 'drain');
+
+/** Fires one pull on `built`'s loop, releases whatever it dispatched, and waits for it to settle. */
+async function pullOnce(built) {
+  const tick = built.loop.pull();
+  await quiesce();
+  built.dispatches.releaseAll();
+  await tick;
+}
+
+test('on one loop, a pull that claims a card after a drain ends that idle period, and the next empty pull writes exactly one drain event', async () => {
+  // Card 1 is on the board but hidden from the reads until the test shows it, so the first pull
+  // finds nothing, the second claims card 1, and the third finds nothing again.
+  const fake = boardOf([1]);
+  let shown = false;
+  const handle = handleOn(fake);
+  const board = {
+    readColumns: handle.readColumns,
+    readPriority: async () => {
+      const answer = await handle.readPriority();
+      return { ...answer, items: shown ? answer.items : [] };
+    },
+  };
+  const built = world({ fake, board, concurrency: 1 });
+
+  await pullOnce(built);
+  assert.deepEqual(drainsOf(built), ['drain'], 'the first idle period drained');
+  shown = true;
+  await pullOnce(built);
+  assert.deepEqual(built.dispatches.started, [1]);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [1]);
+  await pullOnce(built);
+
+  assert.deepEqual(drainsOf(built), ['drain', 'drain'], 'the second idle period drained once');
+});
+
+test('on one loop, empty pulls after a drain with no claim since write no further drain event', async () => {
+  const built = world({ cards: [], concurrency: 2 });
+
+  await pullOnce(built);
+  await pullOnce(built);
+  await pullOnce(built);
+
+  assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 3);
+  assert.deepEqual(drainsOf(built), ['drain']);
+});
+
+test('on one loop whose pull drained with no claim since, a run that starts with nothing to pull writes exactly one drain event', async () => {
+  const built = world({ cards: [], concurrency: 2 });
+  await pullOnce(built);
+  assert.deepEqual(drainsOf(built), ['drain']);
+
+  await drive(built);
+
+  const names = built.l3Events().map(({ event, trigger }) => trigger ?? event);
+  const run = names.slice(names.indexOf('run.start'));
+  assert.deepEqual(run.filter((name) => name === 'drain'), ['drain'], JSON.stringify(names));
+});
+
+test("each card's pull event is recorded before L2 asks the board to move that card to the coding column", async () => {
+  const fake = boardOf([1, 2]);
+  const pulledAtMove = [];
+  let built;
+  const items = {
+    ...fake.operations,
+    moveItem: async (id, column) => {
+      if (column === COLUMNS.coding) pulledAtMove.push([id, cardsOf(built, 'pull')]);
+      return fake.operations.moveItem(id, column);
+    },
+  };
+  built = world({ fake, items, concurrency: 2 });
+
+  await drive(built);
+
+  assert.deepEqual(pulledAtMove.map(([id]) => id).sort(), ['item-1', 'item-2']);
+  for (const [id, pulled] of pulledAtMove) {
+    assert.ok(pulled.includes(Number(id.replace('item-', ''))), `${id} was moved before its pull event: ${JSON.stringify(pulled)}`);
+  }
+});
+
 test('every event L3 writes carries layer L3, and none carries another layer', async () => {
   const built = world({ cards: [1, 2, { ...readyCard(3), labels: [] }], concurrency: 1, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
 

@@ -19,7 +19,8 @@ const DEFAULT_CONCURRENCY = 3;
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
  * - `trigger`, with `trigger` naming which fired: `pull` each time the pull trigger fires, before
- *   it reads the board, and `drain` when a pull finds nothing in flight and nothing to pull.
+ *   it reads the board, and `drain` when a pull finds nothing in flight and nothing to pull, once
+ *   per idle period.
  * - `pull`, under the card, with its `kind`, `queueDepth`, the pullable cards the pull left
  *   waiting, and `inFlight`, the cards in flight with this one. It follows the card's claim and
  *   comes before L2 moves the card, as `ARCHITECTURE.md`, "Failure model", orders a start.
@@ -33,8 +34,9 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
   const claims = new Set();
 
   /**
-   * Whether the drain trigger has fired since L3 last claimed a card. Drain fires once per idle
-   * period, by the owner's U21 ruling, and several pulls can find the board empty in one.
+   * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
+   * the owner's U21 ruling, and several pulls can find the board empty in one. A claim ends an
+   * idle period, and so does a run's start, since drain fires at a start that finds nothing.
    */
   let idle = false;
 
@@ -114,6 +116,7 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
      */
     run: async () => {
       record('run.start', { concurrency });
+      idle = false;
       const failures = [];
       const fire = () => trigger(fire).catch((failure) => {
         failures.push(failure);
