@@ -9,8 +9,9 @@ import { PACKAGE, sourceTreeGuard } from './doctor.mjs';
 /**
  * The state directory, where L5's stream lives. `ARCHITECTURE.md`'s Engine settings row names
  * `.rigger/` as its default, and the published config shape offers no key to name another.
+ * Exported because `once` writes the stream this verb reads.
  */
-const STATE = '.rigger';
+export const STATE = '.rigger';
 
 /** A figure as printed: to four decimal places at most, which states every value a test sets exactly. */
 const figure = (value) => String(Number(value.toFixed(4)));
