@@ -18,14 +18,29 @@ column. So the failure is the adapter's words, naming the key and display name, 
 column fails only its own line. The cost is one field read per column. That is a judgment, not a
 measurement.
 
-The priority line takes the field's options from `readPriority`, the read the engine ranks by, and
-compares them with the declared options as sets. A missing field and a field of another type each
-fail in the adapter's words. The first version read the options from `readFields`, to avoid
-reading every card. Both judges on round 1 found the flaw. `readFields` leaves out `Status`, and
-the validator accepts `Status` as the priority field. So a board whose `Status` options matched
-failed the line, with a `TypeError`'s words. The cost of `readPriority` is that a card the read
-side refuses, such as one holding more than 100 labels, fails the priority line too. That is a
-judgment, not a measurement.
+The priority line reads fields and never cards. It finds the field and its type in the typed
+field listing, then compares the field's option names with the declared ones as sets. A
+single-select field's options come from `readFields`. For `Status`, which `readFields` leaves out,
+they come from `boardOf`, the read `setup-board` takes the column options from.
+
+It took three rounds to get there:
+
+1. **Round 0.** The first version read every option from `readFields`. Both judges on round 1
+   found the flaw: the validator accepts `Status` as the priority field, and `readFields` leaves
+   `Status` out. So a board whose `Status` options matched failed the line, with a `TypeError`'s
+   words.
+2. **Round 1.** The fix read the options through `readPriority`, which finds any field, but it
+   also reads every card. Codex on round 2 showed the flaw. One card holding more than 100
+   labels, which the read side refuses, failed the line whether or not the options matched, and
+   hid the options that differed.
+3. **Round 2.** The line no longer reads cards at all.
+
+The lesson is that a check about one thing reads only that thing. Borrowing a wider read brings its
+failure modes along with it.
+
+Merging #185 brought a case the board lines had not met: validation that throws, as a BigInt
+config does. `boardChecks` now says the board was not checked because the config could not be
+validated, and #185's test counts that line.
 
 A config the validator refuses, or cannot read, earns one `board checks` line saying the board
 was not checked. No request is sent. The board-sharing check still prints nothing in that case,

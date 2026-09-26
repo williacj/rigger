@@ -1119,6 +1119,45 @@ test('the priority line passes when the declared field is the one holding the co
   assert.equal(ran.code, 0, ran.text);
 });
 
+test('beside a card holding more than 100 labels, a priority field holding the columns fails naming exactly the options on one side only', async () => {
+  // The board's columns are the starter's five; the declaration drops Done and adds Someday.
+  const source = starter().replace(/priority: \{[^}]*\}/, "priority: { field: 'Status', options: ['Ready', 'Coding', 'Review', 'Owner', 'Someday'] }");
+  assert.deepEqual(validate((await import(pathToFileURL(join(checked(source), CONFIG)))).default), []);
+
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [], items: [overLabelled()] }, { source });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  for (const option of ['Done', 'Someday']) assert.match(line, new RegExp(`\\b${option}\\b`), line);
+  for (const option of ['Ready', 'Coding', 'Review', 'Owner']) assert.doesNotMatch(line, new RegExp(`\\b${option}\\b`), line);
+});
+
+/** An issue of the repository holding more labels than the read side reads of a card. */
+const overLabelled = () => ({ ...ours(1), labels: Array.from({ length: 101 }, (_, index) => `label-${index}`) });
+
+/** The starter with its priority declaring `options`, in that order. */
+const declaringPriority = (options) => starter().replace(/priority: \{[^}]*\}/, `priority: { field: 'Priority', options: ${JSON.stringify(options)} }`);
+
+test('beside a card holding more than 100 labels, the priority line passes when the field holds exactly the declared options in another order', async () => {
+  const source = declaringPriority(['High', 'Low']);
+  assert.match(source, /options: \["High","Low"\]/, 'the starter declares its priority in a form this test does not replace');
+
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['Low', 'High'] }], items: [overLabelled()] }, { source });
+
+  assert.match(priorityLine(ran.text), /^\s*ok\s/, ran.text);
+});
+
+test('beside a card holding more than 100 labels, the priority line fails naming exactly the options on one side only', async () => {
+  const source = declaringPriority(['High', 'Low']);
+
+  const { ran } = await onFakeBoard({ ...STARTER_HELD, fields: [{ name: 'Priority', options: ['Urgent', 'High'] }], items: [overLabelled()] }, { source });
+
+  const line = priorityLine(ran.text);
+  assert.match(line, /^\s*failed\s/, line);
+  for (const option of ['Urgent', 'Low']) assert.match(line, new RegExp(`\\b${option}\\b`), line);
+  assert.doesNotMatch(line, /\bHigh\b/, line);
+});
+
 test('given a config declaring no priority, the priority line passes and says no priority field is declared', async () => {
   const source = starter().replace(/, priority: \{[^}]*\}/, '');
   assert.doesNotMatch(source, /priority:/, 'the starter declares its priority in a form this test does not remove');

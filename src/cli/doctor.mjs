@@ -7,8 +7,8 @@ import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
-import { readSide } from '../substrate/forge/read.mjs';
-import { readRunner } from '../substrate/forge/runners.mjs';
+import { boardOf, readSide } from '../substrate/forge/read.mjs';
+import { COLUMNS, readRunner } from '../substrate/forge/runners.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 
@@ -442,23 +442,37 @@ async function columns(config, send) {
   return lines;
 }
 
+/** The type GitHub names a single-select field by, as the read side's field types carry it. */
+const SINGLE_SELECT = 'SINGLE_SELECT';
+
 /**
  * Whether the board holds the priority field the config declares: a single-select field of that
  * name, the field holding the columns among them, whose option names are exactly the declared
- * ones. The field's options are the forge adapter's priority read, the one the engine ranks by,
- * so a field not on the board, or of another type, fails the line in the adapter's words, naming
- * the field and its type. Order is not compared, because the config's order is the ranking of
- * whatever options the board holds, and the board's own order ranks nothing. A config declaring
- * no priority passes, since no field is asked for.
+ * ones. Order is not compared, because the config's order is the ranking of whatever options the
+ * board holds, and the board's own order ranks nothing. A config declaring no priority passes,
+ * since no field is asked for.
+ *
+ * Only fields are read, never cards, so a card the read side refuses cannot decide this line.
+ * Every field's name and type comes from the read side's typed field listing. A single-select
+ * field's options come from its single-select field read, which leaves out the field holding the
+ * columns; that field's options come from the board read `setup-board` takes them from.
  */
 async function priority(config, send) {
   const name = 'board priority';
   const declared = config.board.priority;
   if (!declared) return { name, ok: true, detail: 'no priority field is declared, so every card ranks alike' };
   const field = `board ${config.board.project}'s field ${declared.field}`;
+  const reads = readsOf(config, send);
   let held;
   try {
-    ({ options: held } = await readsOf(config, send).readPriority());
+    const typed = (await reads.readFieldTypes()).find((each) => each.name === declared.field);
+    if (!typed) return { name, ok: false, detail: `board ${config.board.project} has no field named ${declared.field}` };
+    if (typed.type !== SINGLE_SELECT) {
+      return { name, ok: false, detail: `${field} is a ${typed.type} field, not a single-select field` };
+    }
+    held = declared.field === COLUMNS
+      ? boardOf('doctor', { repo: config.repo, ...config.board }, send).columns.options.map((option) => option.name)
+      : (await reads.readFields()).find((select) => select.name === declared.field).options;
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
   }
