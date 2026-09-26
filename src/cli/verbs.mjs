@@ -3,6 +3,7 @@
 
 import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
+import { once } from './once.mjs';
 import { plan } from './plan.mjs';
 import { report } from './report.mjs';
 import { run as runVerb } from './run.mjs';
@@ -21,7 +22,7 @@ export const VERBS = [
   ['doctor', 'check gh auth, agent CLI auth, Node, config, board fields'],
   ['setup-board', 'create the board columns, fields, and labels'],
   ['plan', 'show what the next run would pull, and what it refuses'],
-  ['once', 'pull and finish one card, then exit'],
+  ['once', 'claim one card, then exit; dispatches no work before M4'],
   ['run', 'claim cards until the slots are full, then exit; dispatches no work before M4'],
   ['pause', 'stop admitting new cards; in-flight cards finish'],
   ['resume', 'reopen admission'],
@@ -35,7 +36,7 @@ export const VERBS = [
  * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
  * the test would drift from this one the day a verb lands.
  */
-export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, run: runVerb, report };
+export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, report };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {

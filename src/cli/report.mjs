@@ -9,7 +9,7 @@ import { PACKAGE, sourceTreeGuard } from './doctor.mjs';
 /**
  * The state directory, where L5's stream lives. `ARCHITECTURE.md`'s Engine settings row names
  * `.rigger/` as its default, and the published config shape offers no key to name another.
- * Exported because `run` writes the stream this verb reads.
+ * Exported because `once` writes the stream this verb reads.
  */
 export const STATE = '.rigger';
 
