@@ -26,7 +26,7 @@ function required(value, name) {
 }
 
 /** The one stream L5 owns, inside the state directory the consumer named. */
-const streamPath = (directory) => join(directory, STREAM);
+export const streamPath = (directory) => join(directory, STREAM);
 
 /**
  * Open the sink for one run.
