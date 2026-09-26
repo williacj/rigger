@@ -163,7 +163,7 @@ function installFromTarball() {
   symlinkSync(process.execPath, join(bin, 'node'));
   symlinkSync(spawnSync('command -v git', { shell: true, encoding: 'utf8' }).stdout.trim(), join(bin, 'git'));
 
-  installed = { rigger: join(consumer, 'node_modules', '.bin', 'rigger'), path: bin };
+  installed = { consumer, rigger: join(consumer, 'node_modules', '.bin', 'rigger'), path: bin };
   return installed;
 }
 
@@ -182,6 +182,35 @@ test('a tarball packed from the head, installed outside the checkout, runs rigge
   // The installed copy prints what this checkout's surface prints, which is what shows the
   // tarball carries this code rather than merely something that answers.
   assert.equal(ran.stdout, `${help()}\n`);
+});
+
+test('the shipped document check runs against a consumer repository and refuses its strict pointer', () => {
+  const { consumer } = installFromTarball();
+  const instructions = join(consumer, 'node_modules', '@williacj', 'rigger', 'templates', 'doc-reference-check.md');
+  assert.ok(existsSync(instructions), 'the tarball does not ship consumer document-checking instructions');
+  const script = readFileSync(instructions, 'utf8').match(/"check:references": "([^"]+)"/)?.[1];
+  assert.ok(script, 'the shipped instructions name no check:references script');
+
+  writeFileSync(join(consumer, 'package.json'), JSON.stringify({
+    private: true, scripts: { 'check:references': script },
+  }));
+  writeFileSync(join(consumer, 'doc-references.json'), JSON.stringify({
+    documents: { 'checks.md': 'strict' }, exempt: { paths: {} },
+  }));
+  const document = join(consumer, 'checks.md');
+  const run = () => spawnSync('npm', ['run', 'check:references'], {
+    cwd: consumer, encoding: 'utf8', env: gitEnvironment(),
+  });
+
+  writeFileSync(document, 'The check reads this consumer repository.\n');
+  const clean = run();
+  assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+  assert.match(clean.stdout, /0  pointers, across the documents doc-references\.json names/);
+
+  writeFileSync(document, 'See ARCHITECTURE.md:121 for the row.\n');
+  const broken = run();
+  assert.notEqual(broken.status, 0, broken.stdout + broken.stderr);
+  assert.match(broken.stderr, /checks\.md:1  \[strict\]  hand-typed pointer `ARCHITECTURE\.md:121`/);
 });
 
 test('the installed tarball runs init and then doctor in a scratch repository outside the checkout', () => {
