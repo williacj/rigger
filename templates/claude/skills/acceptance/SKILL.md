@@ -11,10 +11,11 @@ then state it as standalone conditions a judge can rule on without asking the au
 Acceptance states what done means in the issue body, not a board field (`D2` rule 2).
 `R-CARD-12` owns its form:
 
-- Use a heading whose text is exactly `Acceptance`. Bullets only under `Acceptance criteria`
-  leave no counted items, so the card is refused (`R-CARD-12`, `R-CARD-7`).
-- Write plain bullets. Task-list items do not count; a card with only those is refused
-  (`R-CARD-12`, `R-CARD-7`).
+- Use `## Acceptance` or another ATX heading whose text is exactly `Acceptance`. Bullets only
+  under `Acceptance criteria` or an underlined heading leave no counted items, so the card is
+  refused (`R-CARD-12`, `R-CARD-7`).
+- Write plain bullets, never task lists (`D2` rule 2). Task-list items do not count; a card
+  with only those is refused (`R-CARD-12`, `R-CARD-7`).
 - Keep bullets outside fenced code blocks. Fenced bullets do not count; a card with only those
   is refused (`R-CARD-12`, `R-CARD-7`).
 
@@ -88,7 +89,7 @@ a named document cites a named id.
 
 A **Given/When/Then** bullet where the ruling needs its context to make sense. `R-CARD-2` still
 holds, so one item carries one independently ruleable outcome, never a scenario with several
-`Then`s. Split a compound result instead. Here is a `plan` card's acceptance (`R-CARD-12`):
+`Then`s. Split a compound result. Example acceptance (`R-CARD-12`):
 
 ```markdown
 ## Acceptance
