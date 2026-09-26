@@ -18,6 +18,7 @@ command: 755 tests passed and none failed. `npm run check:references`, `check:pa
 and `check:headers` each exited zero on that worktree. `npm pack --dry-run --json` listed
 `templates/doc-reference-check.md` there.
 
-`ARCHITECTURE.md` still calls the resolver a template, while U30 has it shipped under `scripts/`.
-That sentence needs an architect's proposal and the owner's ratification; this change does not
-rewrite it.
+The architect proposed correcting the Document checking row to say the resolver ships under
+`scripts/` and that the consumer's checks pass the consumer repository's root. CJ approved that
+wording for this branch. The row now describes the invocation tested here; its binding delta
+awaits the owner's merge.

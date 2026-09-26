@@ -127,7 +127,7 @@ workaround.
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
 | **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
-| **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | The resolver, which ships as a template and runs in the consumer's own checks. No layer reads it | Yes |
+| **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | The resolver ships under scripts/ in the package. The consumer's own checks invoke it with the consumer repository's root as an argument. No layer reads it | Yes |
 | **Provisioning steps** | A command, optionally a working directory, whether the work requires it, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it | L3 schedules; L1 runs | Yes |
 | **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
