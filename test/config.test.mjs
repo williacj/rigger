@@ -414,6 +414,25 @@ test('an epic label that a kind selects is refused, and the refusal names the ke
   assert.match(second, /`type:epic`/);
 });
 
+// GitHub holds label names case-insensitively (#301's measurement), so `Type:Epic` and `type:epic`
+// are one label there.
+test('an epic label differing only in letter case from a label a kind selects is refused, naming that kind', () => {
+  const earned = refusal({
+    ...withKind({ select: { labels: ['type:change', 'type:epic'] } }),
+    epicLabel: 'Type:Epic',
+  });
+  assert.match(earned, /`epicLabel`/);
+  assert.match(earned, /`kinds\.change`/);
+});
+
+test('an epic label no kind selects under any letter case earns no refusal naming epicLabel', () => {
+  const refusals = validate({
+    ...withKind({ select: { labels: ['type:change', 'type:epics'] } }),
+    epicLabel: 'Type:Epic',
+  });
+  assert.deepEqual(refusals.filter((held) => held.includes('`epicLabel`')), []);
+});
+
 // proves R-SCHED-14
 test('a kind selecting one label or two is accepted', () => {
   assert.deepEqual(validate(withKind({ select: { labels: ['type:change'] } })), []);

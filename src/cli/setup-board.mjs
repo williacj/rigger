@@ -1,7 +1,7 @@
 // ABOUTME: The `setup-board` verb: it reads the board the config names, works out what the config
 // declares and the board lacks, and adds that through the schema-write side, one line per write.
 
-import { declaredLabels, validate } from '../config/validate.mjs';
+import { declaredLabels, sameLabel, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
 import { consumerConfig, sharedWith, sourceTreeGuard } from './doctor.mjs';
@@ -56,7 +56,7 @@ function writesFor(config, held) {
     }
   }
   for (const name of declaredLabels(config)) {
-    if (!held.labels.includes(name)) writes.push({ operation: 'createLabel', args: [name], line: `created the label ${shown(name)}` });
+    if (!held.labels.some((label) => sameLabel(label, name))) writes.push({ operation: 'createLabel', args: [name], line: `created the label ${shown(name)}` });
   }
   return { writes };
 }
