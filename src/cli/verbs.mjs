@@ -15,11 +15,15 @@ import { setupBoard } from './setup-board.mjs';
  *
  * The README is the CLI contract (`AGENTS.md`, "What binds"), so it owns which verbs exist and in
  * what order; `test/cli.test.mjs` reads that block and holds this list to it. The help text beside
- * each verb is this command's own, and the check does not match on it.
+ * each verb is this command's own, except `doctor`'s, which that test holds to the README's comment
+ * beside `doctor`, so that `--help` names every check `doctor` runs.
  */
 export const VERBS = [
   ['init', 'write a starter config, fork the role templates'],
-  ['doctor', 'check gh auth, agent CLI auth, Node, config, board fields'],
+  [
+    'doctor',
+    'check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing',
+  ],
   ['setup-board', 'create the board columns, fields, and labels'],
   ['plan', 'show what the next run would pull, and what it refuses'],
   ['once', 'claim one card, then exit; dispatches no work before M4'],
