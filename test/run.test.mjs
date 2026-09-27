@@ -294,24 +294,31 @@ test('given a board with no ready card, a second run writes no L2 transition eve
 // proves R-SAFE-5
 test('run run against the source tree it is running from exits non-zero, names R-SAFE-5, and claims nothing', async () => {
   // The consumer's repository stands as the package too, so the two are one tree. Git alone may be
-  // asked, because naming the tree is the refusal's own work. Every forge call goes through
-  // `send`, which records rather than answers, so a board read or a move shows as a call.
+  // asked, because naming the tree is the refusal's own work. The verb runs in this process, so
+  // the fake `gh`, holding a card the verb would claim, is put first on this process's PATH for
+  // the call: every forge command the verb might run reaches it and is recorded there, so a
+  // board read or a move shows as a call, and never reaches the real `gh`.
   const consumer = consumerRepository(3);
+  const dir = mkdtempSync(join(tmpdir(), 'rigger-run-gh-'));
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [card(10, 'Ready')] } });
   const asked = (command, args) => {
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
     throw new Error(`run ran \`${command}\` before refusing`);
   };
-  const sent = [];
-  const send = (command, args) => {
-    sent.push([command, ...args].join(' '));
-    return { status: 1, stdout: '', stderr: 'no board here' };
-  };
 
-  const ran = await runVerb({ target: consumer, packageRoot: consumer, ask: asked, send });
+  const inherited = process.env.PATH;
+  process.env.PATH = `${dir}${delimiter}${inherited}`;
+  let ran;
+  try {
+    ran = await runVerb({ target: consumer, packageRoot: consumer, ask: asked });
+  } finally {
+    process.env.PATH = inherited;
+  }
 
   assert.notEqual(ran.code, 0, ran.text);
   assert.match(ran.text, /R-SAFE-5/);
-  assert.deepEqual(sent, []);
+  assert.deepEqual(fake.sent(), []);
+  assert.deepEqual(await columnsOf({ model: fake.model }), { 10: 'Ready' });
   assert.ok(!existsSync(join(consumer, '.rigger')), 'no state directory was opened');
 });
 
