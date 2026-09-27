@@ -1097,3 +1097,46 @@ test('when L2 reports a refused transition event, the claim-only call\'s caller 
   });
   assert.deepEqual(await columnsOf(fake), { 1: 'Coding' });
 });
+
+test('given a redo card and a sink that refuses from the first pull event on, a run ends after one board read, and starts nothing', async () => {
+  // Card 5 is a redo, so its start makes no claim move: nothing but the halt stands between the
+  // refused pull event and the next trigger. The sink accepts the run's start and the trigger
+  // event, then refuses from the first read on. A run that pulled again at once after the refused
+  // start would read the board a second time, and the second read throws so that such a run
+  // still ends and reports, rather than pulling without end (the owner's ruling on #228).
+  const fake = boardOf([cardIn(5, COLUMNS.coding)]);
+  let reads = 0;
+  let built;
+  const board = handleOn(fake, {
+    beforeRead: () => {
+      reads += 1;
+      if (reads > 1) throw new Error('the run pulled again at once after a start it did not make');
+      built.refuseAppends(DISK_FULL);
+    },
+  });
+  built = world({ fake, board, concurrency: 1 });
+
+  await assert.rejects(built.loop.run(), (failure) => {
+    const messages = leavesOf(failure).map((held) => held.message);
+    assert.ok(messages.some((message) => message.includes('#5 was not started')), JSON.stringify(messages));
+    assert.ok(messages.every((message) => !message.includes('pulled again')), JSON.stringify(messages));
+    return true;
+  });
+
+  assert.equal(reads, 1);
+  assert.deepEqual(built.dispatches.started, []);
+});
+
+test('given a sink that refuses every append, the claim-only call reports the pull trigger\'s refused event beside the start it did not make', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+  built.refuseAppends(DISK_FULL);
+
+  await assert.rejects(built.claims.claim(), (failure) => {
+    const messages = leavesOf(failure).map((held) => held.message);
+    assert.deepEqual(messages, [
+      `the event sink refused to record the pull trigger: ${DISK_FULL}`,
+      `card #1 was not started, because the event sink refused to record its pull: ${DISK_FULL}`,
+    ]);
+    return true;
+  });
+});

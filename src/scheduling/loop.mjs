@@ -155,7 +155,8 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
    */
   const work = async (claim, freed) => {
     const { card, kind } = claim;
-    let claimed = claim.redo;
+    // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
+    let claimed = false;
     let failure = null;
     try {
       await start(claim);
