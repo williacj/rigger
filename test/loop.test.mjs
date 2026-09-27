@@ -966,6 +966,7 @@ async function refusedClaim() {
   return { built, failure };
 }
 
+// proves R-RECORD-9
 test('given a sink that refuses every append and two pullable cards, the claim-only call claims no card', async () => {
   const { built, failure } = await refusedClaim();
 
@@ -984,6 +985,7 @@ test('given a sink that refuses every append and two pullable cards, the claim-o
   assert.deepEqual(built.fake.writes(), []);
 });
 
+// proves R-RECORD-9
 test('given a sink that refuses every append, the loop with an injected dispatch never calls that dispatch, from a run or from a pull', async () => {
   // Card 5 is a redo, so its start hands it straight to the dispatch with no claim move between:
   // only the halt stands between a refused pull event and the dispatch.
@@ -1027,6 +1029,7 @@ test('given a dispatch already running when the sink starts refusing appends, th
   assert.deepEqual(received, [[1, 'fulfilled', { exit: 0, output: '' }]]);
 });
 
+// proves R-RECORD-9
 test('given a sink that refused the previous claim-only call and now accepts appends, the next claim-only call claims a card, with nothing between the two calls but the sink accepting again', async () => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
@@ -1074,6 +1077,7 @@ test('a start whose pull event the sink refused writes no release event once the
   assert.deepEqual(readdirSync(built.directory), [], 'nothing was appended, so the sink never wrote the stream');
 });
 
+// proves R-RECORD-9
 test('when L2 reports a refused transition event, the claim-only call\'s caller receives the failure L2 reported, with the card, the columns and the sink\'s error unchanged', async () => {
   // The board takes the claim move, and the sink refuses from the move on, so L2's transition
   // event is the first append it refuses.
