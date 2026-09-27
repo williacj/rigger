@@ -341,3 +341,17 @@ test('given a gh command it does not model, the fake gh exits non-zero and print
     assert.equal(said.stdout, '');
   }
 });
+
+test('given a board owner, the fake gh holds its board under that owner and answers no board under the repository\'s owner', async () => {
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, owner: 'octo-org', board: { columns: Object.values(COLUMNS) } });
+
+  const declared = await onPath(fake, () => readSide({ ...BOARD, owner: 'octo-org' }).readColumns());
+  assert.deepEqual(declared, COLUMNS);
+
+  await onPath(fake, () =>
+    assert.rejects(readSide(BOARD).readColumns(), (error) => {
+      assert.ok(error.message.includes('Could not resolve to a ProjectV2 with the number 6'), error.message);
+      return true;
+    }),
+  );
+});

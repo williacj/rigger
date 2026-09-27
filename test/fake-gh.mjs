@@ -83,7 +83,7 @@ const nested = (nodes, field) => ({ pageInfo: { hasNextPage: nodes.length > Numb
 function onTheBoard(state, operation) {
   const owner = fieldIn(operation.selections, 'repositoryOwner');
   const project = fieldIn(operation.selections, 'projectV2');
-  const [held] = state.repo.split('/');
+  const held = state.owner ?? state.repo.split('/')[0];
   if (valueOf(owner, 'login').toLowerCase() !== held.toLowerCase() || Number(valueOf(project, 'number')) !== state.project) {
     throw new GhFailure(`gh: Could not resolve to a ProjectV2 with the number ${valueOf(project, 'number')}.`);
   }
@@ -345,15 +345,16 @@ export async function main(statePath) {
 
 /**
  * Installs a fake `gh` in `dir`, answering as `gh` would for the board numbered `project` among
- * the boards of `repo`'s owner, which holds `board`: the fake board's own arguments.
+ * the boards of `owner`, or of `repo`'s owner where no `owner` is given, which holds `board`: the
+ * fake board's own arguments.
  *
  * It returns the executable's path, `gh`; `model()`, the fake board as the fake `gh` now holds
  * it, whose write record holds every write the fake `gh` was sent; and `sent()`, the arguments of
  * every command the fake `gh` was run with, oldest first, whether or not it answered it.
  */
-export function installFakeGh(dir, { repo, project, board = {} }) {
+export function installFakeGh(dir, { repo, owner, project, board = {} }) {
   const statePath = join(dir, 'board.json');
-  writeFileSync(statePath, JSON.stringify({ repo, project, model: board, writes: [], sent: [] }));
+  writeFileSync(statePath, JSON.stringify({ repo, owner, project, model: board, writes: [], sent: [] }));
   const gh = join(dir, 'gh');
   // CommonJS, because nothing beside it says otherwise, and so it loads this module dynamically.
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
