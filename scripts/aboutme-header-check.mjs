@@ -71,11 +71,11 @@ export function exemptions(agents) {
   const rule = headerRule(agents);
   const named = rule.match(/((?:`[^`]+`(?:,\s*|\s+and\s+))+`[^`]+`) are exempt as well/);
   if (!named) throw new Error('the header rule names no exempt files');
-  const format = rule.match(/A format with no comment syntax[^.]*?\bmeans ([A-Za-z]+)/);
+  const format = rule.match(/A format with no comment syntax[^.]*?\bmeans ([A-Za-z]+(?:(?:,\s*|\s+and\s+)[A-Za-z]+)*)/);
   if (!format) throw new Error('the header rule names no exempt format');
   return {
     names: new Set([...named[1].matchAll(/`([^`]+)`/g)].map((one) => one[1])),
-    formats: new Set([`.${format[1].toLowerCase()}`]),
+    formats: new Set(format[1].split(/,\s*|\s+and\s+/).map((one) => `.${one.toLowerCase()}`)),
   };
 }
 

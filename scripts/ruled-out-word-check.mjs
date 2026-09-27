@@ -42,8 +42,8 @@ export function findings(text, ruledOut) {
  * until it is staged. It lists a file the index holds and the working tree no longer does, so
  * `check` skips one it cannot read rather than failing the suite on a delete mid-work. And it
  * needs a git checkout at all: a source tree with no `.git` directory throws here rather than
- * reporting nothing. It lists a binary file no differently from a text one, and this repository
- * tracks none, so nothing is skipped by type.
+ * reporting nothing. It lists a binary file no differently from a text one, so nothing is skipped
+ * by type.
  */
 export function trackedFiles(root) {
   return execFileSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8', env: gitEnvironment() })
