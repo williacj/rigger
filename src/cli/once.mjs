@@ -17,6 +17,12 @@ import { refusalLine } from './plan.mjs';
 import { STATE } from './report.mjs';
 
 /**
+ * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
+ * deep: L3 reports a pull's failures in one, and a card's own in another inside it.
+ */
+const failuresIn = (failure) => (failure instanceof AggregateError ? failure.errors.flatMap(failuresIn) : [failure]);
+
+/**
  * What a verb named `verb` that claims through L3's claim-only call prints, and the status it
  * exits with. `limit` is the claim limit handed to the call, or undefined for none, in which case
  * the call claims until the slots are full: L3 reads N from the config it is handed.
@@ -42,7 +48,16 @@ export async function claimVerb(verb, limit, { target = process.cwd(), packageRo
     return next;
   };
   // One handle per invocation: two over one board would each claim the same card.
-  const claimed = await claimOnly({ config, board, decide, l2, sink }).claim(limit);
+  let claimed;
+  try {
+    claimed = await claimOnly({ config, board, decide, l2, sink }).claim(limit);
+  } catch (failure) {
+    // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
+    // an event the record refused names an action Rigger took and could not record, or a start
+    // it did not make, and either is loud by the owner's ruling (#277; `ARCHITECTURE.md`,
+    // "Failure model"). The record is not used to say so, because the record is what failed.
+    return { text: [...failuresIn(failure).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'), code: 1 };
+  }
   const { project } = config.board;
   const refused = refusals.map(refusalLine);
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).

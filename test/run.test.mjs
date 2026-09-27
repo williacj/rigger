@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ import template from '../templates/rigger.config.mjs';
 import { run as runVerb } from '../src/cli/run.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { installFakeGh } from './fake-gh.mjs';
+import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -65,14 +65,21 @@ function spawnRun(consumer, env) {
  * Runs the real bin's `run` in a fresh consumer repository whose config declares `concurrency`,
  * with a fake `gh` holding `board` first on PATH, ahead of the refusing one `npm test` puts
  * there, and the agent CLI stand-in beside it. `again()` runs it a second time over the same
- * repository and the same fake board, as the board stands after the first.
+ * repository and the same fake board, as the board stands after the first. `record` says how
+ * the consumer's event stream takes appends: `accepting`, the default; `refusing`, where the
+ * stream is a directory before the run, so it refuses every append from the start; or
+ * `refusing-after-move`, where the `gh` first on PATH answers as the fake does and makes the
+ * stream that directory once it has answered a move.
  */
-function run(board, { concurrency }) {
+function run(board, { concurrency, record = 'accepting' }) {
   const consumer = consumerRepository(concurrency);
   const dir = mkdtempSync(join(tmpdir(), 'rigger-run-gh-'));
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
   const agent = installAgentCli(dir);
-  const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}` };
+  const stream = join(consumer, '.rigger', 'events.jsonl');
+  if (record === 'refusing') mkdirSync(stream, { recursive: true });
+  const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(mkdtempSync(join(tmpdir(), 'rigger-run-wrap-')), fake.gh, stream))] : [];
+  const env = { ...process.env, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   const shared = { consumer, model: fake.model, agentRuns: agent.runs };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
@@ -320,6 +327,53 @@ test('run run against the source tree it is running from exits non-zero, names R
   assert.deepEqual(fake.sent(), []);
   assert.deepEqual(await columnsOf({ model: fake.model }), { 10: 'Ready' });
   assert.ok(!existsSync(join(consumer, '.rigger')), 'no state directory was opened');
+});
+
+// The halt: with the record refusing, `run` starts nothing and says loudly what went unrecorded
+// (`ARCHITECTURE.md`, "Failure model").
+
+test('given an event stream that refuses every append from the start, run exits non-zero', () => {
+  const ran = run(TWO_READY, { concurrency: 3, record: 'refusing' });
+
+  assert.notEqual(ran.code, 0, ran.out);
+});
+
+test('given an event stream that refuses every append from the start, run leaves every card in the ready column', async () => {
+  const ran = run(TWO_READY, { concurrency: 3, record: 'refusing' });
+
+  assert.deepEqual(await columnsOf(ran), { 10: 'Ready', 20: 'Ready' }, ran.err);
+  assert.deepEqual(await movesOf(ran), []);
+});
+
+test('given an event stream that refuses every append from the start, run says in a line of its own each card it did not start, and the sink\'s error', () => {
+  const ran = run(TWO_READY, { concurrency: 3, record: 'refusing' });
+
+  for (const number of [10, 20]) {
+    const line = ran.err.split('\n').find((held) => new RegExp(`#${number}\\b`).test(held));
+    assert.ok(line, ran.err);
+    assert.match(line, /^rigger run: /);
+    assert.match(line, /not started/);
+    assert.match(line, /EISDIR/, 'the sink\'s own error is named');
+  }
+});
+
+test('given the board takes a claim move and the sink then refuses its transition event, run exits non-zero', async () => {
+  const ran = run({ items: [card(10, 'Ready')] }, { concurrency: 3, record: 'refusing-after-move' });
+
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding' }, 'the board took the move');
+  assert.notEqual(ran.code, 0, ran.out);
+});
+
+test('given the board takes a claim move and the sink then refuses its transition event, run names the card, the column left, the column entered, and says the move went unrecorded', async () => {
+  const ran = run({ items: [card(10, 'Ready')] }, { concurrency: 3, record: 'refusing-after-move' });
+
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding' }, 'the board took the move');
+  const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
+  assert.ok(line, ran.err);
+  assert.match(line, /^rigger run: /);
+  assert.match(line, /from ready to coding/);
+  assert.match(line, /refused to record/, 'the move went unrecorded');
+  assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
 test('--help\'s line for run says it dispatches no work before M4', () => {

@@ -362,3 +362,29 @@ export function installFakeGh(dir, { repo, project, board = {} }) {
   const state = () => JSON.parse(readFileSync(statePath, 'utf8'));
   return { gh, model: () => boardOf(state()), sent: () => state().sent };
 }
+
+/** The mutation the item-write side sends for a column move (`src/substrate/forge/item-write.mjs`). */
+const MOVE = 'updateProjectV2ItemFieldValue';
+
+/**
+ * A `gh` at `dir/gh` that answers as the fake `gh` at `fake` does and, once it has answered a
+ * move, replaces the event stream at `stream` with a directory of that name, which no append
+ * can open: the board has taken the claim move, and the record then refuses its event. Placed
+ * on PATH ahead of the fake, whose own directory must follow it there.
+ */
+export function installGhRefusingStreamAfterMove(dir, fake, stream) {
+  const gh = join(dir, 'gh');
+  for (const path of [fake, stream]) {
+    if (path.includes("'")) throw new Error(`${path} holds a quote the wrapper cannot carry`);
+  }
+  writeFileSync(gh, [
+    '#!/bin/sh',
+    `'${fake}' "$@"`,
+    'status=$?',
+    `case "$*" in *${MOVE}*) rm -f '${stream}'; mkdir -p '${stream}' ;; esac`,
+    'exit $status',
+    '',
+  ].join('\n'));
+  chmodSync(gh, 0o755);
+  return gh;
+}

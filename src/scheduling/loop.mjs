@@ -243,7 +243,9 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
  * releases a claim whose card L2 moved, since no work follows it, so calls on one handle never
  * claim a card twice and never together hold more than N. A card whose claim move the board
  * refuses has its slot released, and every such refusal is reported in one AggregateError once
- * the others have moved.
+ * the others have moved. So is every event the sink refused: a start not made, as `start`
+ * says, a transition L2 reported, passed on unchanged, and a trigger or release event, each
+ * beside the others rather than in place of one (`ARCHITECTURE.md`, "Failure model").
  */
 export function claimOnly({ config, board, decide, l2, sink }) {
   const { take, start, release } = claiming({ config, board, decide, l2, sink });
