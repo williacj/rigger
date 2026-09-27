@@ -6,8 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -66,6 +67,57 @@ test('the tape sources the demo world unseen, then records rigger once, into the
   // Settings and outputs must come first in a tape, so the first command after them is Hide.
   assert.equal(commands.find((command) => !/^(Output|Set|Require) /.test(command)), 'Hide', 'the tape captures frames before the world is built');
   assert.ok(commands.includes('Output docs/demo.gif'), 'the tape writes no GIF at docs/demo.gif');
+});
+
+const workflow = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+/** Every one-line command the workflow runs, in order. */
+const runCommands = () => [...workflow.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)].map(([, command]) => command);
+
+/**
+ * The screen the tape leaves at this head, written by hand from what `once` prints (the once
+ * tests) and the tape's typed lines, rather than recorded: the checks below are asked about a
+ * screen whose content is known, and what the tape records is the demo job's to check.
+ */
+const SCREEN = [
+  '> rigger once',
+  'rigger once: claimed #12 from board 3, and it was not worked: dispatch arrives with M2 and M4',
+  '> echo exit $?',
+  'exit 1',
+  '> ',
+  '',
+].join('\n');
+
+/**
+ * The exit status of each command CI runs over a file at `path`, run over `content` instead: the
+ * commands naming that path, with a file holding `content` in its place.
+ */
+function ciChecksOver(path, content) {
+  const file = join(mkdtempSync(join(tmpdir(), 'rigger-demo-check-')), basename(path));
+  writeFileSync(file, content);
+  const checks = runCommands().filter((command) => command.includes(path));
+  assert.ok(checks.length > 0, `CI runs no command over ${path}; it runs:\n${runCommands().join('\n')}`);
+  return checks.map((command) => spawnSync(command.replaceAll(path, file), { shell: true, encoding: 'utf8', env: gitEnvironment() }).status);
+}
+
+test('CI runs the tape, and its checks pass on the screen the tape leaves at this head', () => {
+  assert.ok(runCommands().includes('vhs docs/demo.tape'), `CI never runs the tape; it runs:\n${runCommands().join('\n')}`);
+  assert.deepEqual(ciChecksOver('docs/demo.txt', SCREEN).filter((status) => status !== 0), []);
+});
+
+test('a CI check fails on a screen where rigger once exited zero', () => {
+  const statuses = ciChecksOver('docs/demo.txt', SCREEN.replace('exit 1', 'exit 0'));
+  assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed on a zero exit');
+});
+
+test('a CI check fails on a screen missing the claimed-but-not-worked message', () => {
+  const statuses = ciChecksOver('docs/demo.txt', SCREEN.replace(/^rigger once: .*\n/m, ''));
+  assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the message missing');
+});
+
+test('a CI check fails on an empty GIF, and none does on one holding anything', () => {
+  assert.notDeepEqual(ciChecksOver('docs/demo.gif', '').filter((status) => status !== 0), [], 'every check passed on an empty GIF');
+  assert.deepEqual(ciChecksOver('docs/demo.gif', 'GIF89a').filter((status) => status !== 0), []);
 });
 
 test('rigger once in the demo world claims a card, says it was not worked, and exits non-zero', () => {
