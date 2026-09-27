@@ -70,7 +70,9 @@ function usageLines(readme, packageName) {
   const block = section(readme, 'Install and usage').match(/```[a-z]*\n([\s\S]*?)```/);
   assert.ok(block, "the README's Install and usage section holds no command block");
   const name = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const invocation = new RegExp(`^npx\\s+${name}\\s+([\\w-]+)(?:\\s+#\\s*(.*?))?\\s*$`);
+  // Whatever follows the verb up to a `#` is its arguments, and is skipped, so an invocation
+  // carrying one still names its verb.
+  const invocation = new RegExp(`^npx\\s+${name}\\s+([\\w-]+)[^#]*(?:#\\s*(.*?))?\\s*$`);
   return block[1]
     .split('\n')
     .map((line) => line.match(invocation))
@@ -234,6 +236,14 @@ test('the verbs are read out of the README, so a README listing others reports t
   // whatever it is given, and one whose scope is wider than the block, which would make a verb
   // named anywhere in the README part of the contract.
   assert.deepEqual(usageVerbs(readmeListing(['beta', 'alpha']), '@williacj/rigger'), ['beta', 'alpha']);
+});
+
+test('an invocation that carries an argument still names its verb', () => {
+  // The defect this catches is a reader that takes a verb only when a comment or the line's end
+  // follows it: a verb the README shows with a flag would then drop out of the contract, and a CLI
+  // missing that verb would pass the verb-list check.
+  const readme = readmeListing(['init', 'run --once'], () => 'y');
+  assert.deepEqual(usageVerbs(readme, '@williacj/rigger'), ['init', 'run']);
 });
 
 test('changing a verb help text moves neither side of the check', () => {
