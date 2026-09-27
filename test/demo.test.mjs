@@ -114,6 +114,17 @@ test('a CI check fails on a screen where rigger once exited zero', () => {
   assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed on a zero exit');
 });
 
+test('a CI check fails on a screen where rigger once exited zero after printing a line that reads as a status', () => {
+  // The status is what the tape's echo prints, so a line of the verb's own output reading
+  // `exit 1` must not stand in for it.
+  const screen = SCREEN
+    .replace(/^(rigger once: .*)$/m, '$1\nexit 1')
+    .replace(/^exit 1$(?![\s\S]*^exit 1$)/m, 'exit 0');
+  assert.match(screen, /^exit 1\n> echo exit \$\?\nexit 0$/m, `the screen is not the one meant:\n${screen}`);
+  const statuses = ciChecksOver('docs/demo.txt', screen);
+  assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the echo reporting a zero exit');
+});
+
 test('a CI check fails on a screen missing the claimed-but-not-worked message', () => {
   const statuses = ciChecksOver('docs/demo.txt', SCREEN.replace(/^rigger once: .*\n/m, ''));
   assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the message missing');
