@@ -46,7 +46,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    L0's: kill it, log its name, return the exit code. L1 sees a clean result. L2 never learns the
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
-2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output. L2 gives L3 next
+2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never started. L2 gives L3 next
    actions. L3 gives L1 dispatches. L0's forge adapter gives L3 the board's items and L2 a card's
    facts. It carries L2's column changes back to the board, and no other layer changes a card's
    column. The forge adapter has three sides, and each sends only through its own runner, which
@@ -239,24 +239,57 @@ only the engine.
 
 ## Failure model
 
-Rigger owns every process it starts: each dispatch runs in one process group Rigger created, and
-Rigger records that group id. On its own exit it kills every group it holds. On start, L1 kills
-every group it recorded before anything else runs. L3 then reads the board, and L2 computes each
-card's next action from its stage and observable facts. Those facts are the card's column, its
+Rigger owns every process it starts. Every command Rigger runs, a dispatch or not, runs in a
+process group of its own that L0's process adapter creates. L0's own reads of the process table,
+made to contain those groups, are the one exception. L0 holds each group it created until the
+group is empty, and on Rigger's own exit it kills every group it holds.
+
+L1 also records each dispatch's group, so that a later start can end what a dead engine left. L0
+hands L1 the group in the step that creates it, and L1 records it there. A dispatch whose group
+L1 cannot record runs no command. Each entry names:
+
+- the group's id;
+- what L0 needs to tell that group from a later one given the same id;
+- the dispatch's id;
+- the dispatch's card, where it has one.
+
+L1 removes an entry once its group is empty, and on Rigger's own exit. On start, L3 has L1 kill
+every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once
+it has confirmed that the group is the one recorded. Every kill of a dispatch's processes, on
+Rigger's exit or on a later start, is recorded under that dispatch and its card.
+
+A refused event never stops a kill. L0 ends every process a kill covers before it records any of
+them, and reports every kill it could not record to its caller. On Rigger's own exit no caller is
+left, so L0 writes those kills to standard error. A kill left unrecorded stops what made the
+call: a start at L3, as a refused start event does, or a verb, which exits non-zero naming it.
+
+L3 then reads the board, and L2 computes each card's next action from its stage and observable
+facts. Those facts are the card's column, its
 pull request, that request's head SHA, the SHA and acceptance revision each verdict names, and the
 last transition the board shows. L2 derives them on every read, so no card state is kept.
 
-`.rigger/` holds three things and no others: the process group ids L1 must read back to kill,
-whether admission is open and why it closed, and L5's event stream. Two more things outlive a
+`.rigger/` holds three things and no others: the process groups L1 must read back to kill, each
+with its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more things outlive a
 restart outside it — a card's worktree, which holds work not yet committed, and the verdict
 markers in the repository. Rigger writes no other state. Recovery machinery enters L1 only after a recorded production incident in which
 redo was demonstrably insufficient.
 
-The result of a command is its exit code and captured output. L2 classifies a failure as the
-work's or as its environment's. An environment failure retries the card once; a second of the same
-kind, with no success between, has L3 close admission. A process still alive
-when the direct child exits is terminated by L0 and recorded by name and command line; it never
-changes the result.
+The result of a command is its exit code and captured output. The exit code is the direct
+child's alone, and a command ended by a signal, its timeout's included, has a non-zero integer
+exit code. The captured output is everything the command's group wrote to its standard output
+and standard error until L0 killed what was left of the group. A command that never started
+has no result: L1 reports to its caller that it did not start, naming what was missing. L2
+classifies a failure as the work's or as its environment's. An environment failure retries the
+card once; a second of the same kind, with no success between, has L3 close admission.
+
+A process still in the command's group when the direct child exits is terminated by L0 and
+recorded by name and command line; it never changes the exit code. A process that leaves its
+group is outside this containment. Where one holds the command's output open once the group is
+empty, L0 stops reading after a bound it sets and records that it did. A dispatch ends only once
+L0 has terminated the group's processes. L1 then records the dispatch's end. It records one end
+for every dispatch whose start it recorded, and a command that never started is included. Each
+end carries the exit code or why the command did not start. L3 frees the dispatch's slot only
+once L1 hands back the dispatch's outcome.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
 is a pull, which claims a card, or a dispatch. L3 records each start before it acts outside
@@ -284,10 +317,21 @@ already running, as running cards finish under a closed admission (`R-SCHED-3`).
 
 L5 stamps every event with a timestamp, run id, layer, and the card and dispatch it arose under.
 The emitting layer supplies neither, which is how an L0 event carries a card id that L0 never
-knew. Each layer owns one event family and no layer writes another layer's events. L5 owns the sink,
-one JSONL stream in the consumer's state directory, and the report. Six layers produce a signal
-set. L5 owns the sink rather than a signal, and L7 is a person. A signal is derived, where an
-event is recorded: L2 records a tier correction, and L4's tier accuracy is the rate across them.
+knew. L3 allocates a dispatch's id as it starts the dispatch, and the start's event carries it. No
+two dispatches recorded in one state directory share an id, because a later start records its
+kills under a dispatch of the run that died.
+
+Each layer owns one event family and no layer writes another layer's events. L5 owns the sink,
+one JSONL stream in the consumer's state directory, and the report. A verb opens the sink before
+its first spawn, which may come before it knows the state directory. The sink holds what it is
+given until the verb names that directory, and writes it there before anything later. A verb
+that ends without naming one writes what the sink held to standard error, and writes nothing
+under its target. The verb ends the sink on every path it returns through. On any other exit,
+L0's exit cleanup ends the sink after its own kills, so those kills are among what the sink
+writes.
+
+Six layers produce a signal set. L5 owns the sink rather than a signal, and L7 is a person. A
+signal is derived, where an event is recorded: L2 records a tier correction, and L4's tier accuracy is the rate across them.
 
 - **L0** substrate fault rate
 - **L1** execution duration and survivor rate
