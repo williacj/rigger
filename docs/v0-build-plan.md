@@ -249,8 +249,7 @@ Exit:
 
 - A tree with a lingering grandchild whose parent exits 0 yields result 0, and the grandchild is
   dead and named in the log (`R-STATE-5`).
-- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling
-  (`R-STATE-4`).
+- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling.
 
 **M3. Worktrees and provisioning.**
 
@@ -346,6 +345,7 @@ Exit:
 - A card that fails on infrastructure twice yields two attempts, one hold, and zero escalations.
   Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-3`, `R-FAIL-4`).
 - `pause` during a run finishes in-flight cards and admits none (`R-SCHED-3`).
+- A closed admission and its reason are still in force after the engine restarts (`R-STATE-4`).
 
 **M7. Report complete, clock triggers.**
 
