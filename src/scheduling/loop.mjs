@@ -17,51 +17,99 @@ function claiming({ config, board, decide, l2, sink }) {
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
   const claims = new Set();
 
-  /** Appends one of L3's events, under `card` where it concerns one. */
+  /**
+   * Appends one of L3's events, under `card` where it concerns one. An append the sink refuses
+   * throws the sink's own error, and no caller here drops it (`ARCHITECTURE.md`, "Telemetry").
+   */
   const record = (event, fields, card) => sink.emitter({ layer: 'L3', card }).emit(event, fields);
+
+  /** The failure L3 reports for an append the sink refused: `sentence`, then the sink's error, kept as the cause. */
+  const refused = (sentence, refusal) => new Error(`${sentence}: ${refusal.message}`, { cause: refusal });
 
   return {
     concurrency,
     claims,
     record,
+    refused,
 
     /**
      * Fires the pull trigger's read: records the trigger, reads the board, and claims as many
      * cards as there are free slots and no more than `limit`, first pulled first. Every claim is
      * taken in the same synchronous step as the pull order it follows, so no other trigger can
-     * claim a card between the two. Answers each claim with its pull, its card, the pullable cards
-     * it left waiting and the cards in flight with it. A read that fails rejects with the read's
-     * own error, and no card is claimed.
+     * claim a card between the two. Answers `claims`, each with its pull, its card, the pullable
+     * cards it left waiting and the cards in flight with it, and `failures`, holding the trigger
+     * event's refusal where the sink refused it. A trigger is no start, so its refusal stops
+     * nothing: each start still tries its own event, which is what names the cards not started,
+     * and the refusal is reported beside theirs. A read that fails rejects with the read's own
+     * error, and no card is claimed.
      */
     take: async (limit) => {
-      record('trigger', { trigger: 'pull' });
+      const failures = [];
+      try {
+        record('trigger', { trigger: 'pull' });
+      } catch (refusal) {
+        failures.push(refused('the event sink refused to record the pull trigger', refusal));
+      }
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
       const unclaimed = items.filter((item) => !claims.has(item.number));
       const { pulls } = pullOrder({ items: unclaimed, columns, declared }, decide);
-      return pulls.slice(0, Math.max(0, Math.min(limit, concurrency - claims.size))).map((pull, index) => {
+      const taken = pulls.slice(0, Math.max(0, Math.min(limit, concurrency - claims.size))).map((pull, index) => {
         claims.add(pull.card);
         const card = unclaimed.find((item) => item.number === pull.card);
         return { ...pull, card, queueDepth: pulls.length - index - 1, inFlight: claims.size };
       });
+      return { claims: taken, failures };
     },
 
     /**
      * Records a claim's pull event, then has L2 move a card pulled from Ready into Coding. The
      * event follows the claim and comes before the move, as `ARCHITECTURE.md`, "Failure model",
-     * orders a start.
+     * orders a start. A pull event the sink refuses is the halt: the start is not made, the
+     * claim is released, nothing is recorded for it, since no pull holds a slot in the record,
+     * and the failure names the card not started and the sink's error.
      */
     start: async ({ card, kind, redo, queueDepth, inFlight }) => {
-      record('pull', { kind, queueDepth, inFlight }, card.number);
+      try {
+        record('pull', { kind, queueDepth, inFlight }, card.number);
+      } catch (refusal) {
+        claims.delete(card.number);
+        throw refused(`card #${card.number} was not started, because the event sink refused to record its pull`, refusal);
+      }
       if (!redo) await l2.claimed(card);
     },
 
-    /** Releases `card`'s slot, which ends its claim, and records the release. */
+    /**
+     * Releases `card`'s slot, which ends its claim, and records the release. A claim already
+     * released, as a refused pull event releases one, holds no slot in the record, so nothing is
+     * recorded for it. A release event the sink refuses is reported naming the card.
+     */
     release: (card) => {
-      claims.delete(card.number);
-      record('slot.release', {}, card.number);
+      if (!claims.delete(card.number)) return;
+      try {
+        record('slot.release', {}, card.number);
+      } catch (refusal) {
+        throw refused(`card #${card.number}'s slot was released, and the event sink refused to record it`, refusal);
+      }
     },
   };
+}
+
+/** The reasons of every rejected result among `settled`, as `Promise.allSettled` answered them. */
+const rejections = (settled) => settled.filter((result) => result.status === 'rejected').map((result) => result.reason);
+
+/**
+ * Releases `claim`'s slot through `release` once `failure`, or nothing, ended its work, and
+ * answers what its caller reports: `failure` as it is, the release's own refusal where there
+ * was no failure, or the two in one AggregateError, since neither may hide the other.
+ */
+function released(release, claim, failure) {
+  try {
+    release(claim.card);
+    return failure;
+  } catch (refusal) {
+    return failure === null ? refusal : new AggregateError([failure, refusal], `card #${claim.card.number} failed, and its release went unrecorded`);
+  }
 }
 
 /**
@@ -87,7 +135,7 @@ function claiming({ config, board, decide, l2, sink }) {
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
  */
 export function loop({ config, board, decide, l2, dispatch, sink }) {
-  const { concurrency, claims, record, take, start, release } = claiming({ config, board, decide, l2, sink });
+  const { concurrency, claims, record, refused, take, start, release } = claiming({ config, board, decide, l2, sink });
 
   /**
    * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
@@ -98,23 +146,29 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
 
   /**
    * One claimed card's work: its start, the dispatch, and L2's handling of its outcome, handed
-   * over unread. The slot is released however it ends, and then `freed` runs, unless the board
-   * refused the claim move: a refused claim waits for the next trigger rather than starting
-   * another pull at once, by the owner's ruling on #228, so a board refusing every claim cannot
-   * keep a run pulling.
+   * over unread. The slot is released however it ends, and then `freed` runs, unless the start
+   * was not made: a claim the board refused to move, or whose pull event the sink refused, waits
+   * for the next trigger rather than starting another pull at once, by the owner's ruling on
+   * #228, so a board refusing every claim, or a sink refusing every event, cannot keep a run
+   * pulling. A failure of the work and a refused release event are both reported, as `released`
+   * says, and L2's report of a refused transition event passes through unchanged.
    */
   const work = async (claim, freed) => {
     const { card, kind } = claim;
-    let claimed = claim.redo;
+    // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
+    let claimed = false;
+    let failure = null;
     try {
       await start(claim);
       claimed = true;
       const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
       await l2.settled(card, outcome);
-    } finally {
-      release(card);
-      if (claimed) await freed();
+    } catch (thrown) {
+      failure = thrown;
     }
+    failure = released(release, claim, failure);
+    if (claimed) await freed();
+    if (failure !== null) throw failure;
   };
 
   /**
@@ -123,21 +177,24 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
    * card's work is not over until it settles.
    *
    * Settles once every card it claimed has been worked. A read that fails rejects with the
-   * read's own error, and no card is claimed. A card whose work fails is reported in an
-   * AggregateError naming how many failed, each failure unchanged in its `errors`.
+   * read's own error, and no card is claimed. A card whose work fails, and a trigger event the
+   * sink refused, are reported in one AggregateError naming how many failed, each failure
+   * unchanged in its `errors`.
    */
   const trigger = async (freed = () => {}) => {
-    const claimed = await take(concurrency);
+    const { claims: claimed, failures } = await take(concurrency);
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
-      record('trigger', { trigger: 'drain' });
+      try {
+        record('trigger', { trigger: 'drain' });
+      } catch (refusal) {
+        failures.push(refused('the event sink refused to record the drain trigger', refusal));
+      }
     }
-    const failures = (await Promise.allSettled(claimed.map((claim) => work(claim, freed))))
-      .filter((result) => result.status === 'rejected')
-      .map((result) => result.reason);
+    failures.push(...rejections(await Promise.allSettled(claimed.map((claim) => work(claim, freed)))));
     if (failures.length > 0) {
-      throw new AggregateError(failures, `${failures.length} of the ${claimed.length} cards this pull claimed failed`);
+      throw new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`);
     }
   };
 
@@ -187,7 +244,9 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
  * releases a claim whose card L2 moved, since no work follows it, so calls on one handle never
  * claim a card twice and never together hold more than N. A card whose claim move the board
  * refuses has its slot released, and every such refusal is reported in one AggregateError once
- * the others have moved.
+ * the others have moved. So is every event the sink refused: a start not made, as `start`
+ * says, a transition L2 reported, passed on unchanged, and a trigger or release event, each
+ * beside the others rather than in place of one (`ARCHITECTURE.md`, "Failure model").
  */
 export function claimOnly({ config, board, decide, l2, sink }) {
   const { take, start, release } = claiming({ config, board, decide, l2, sink });
@@ -197,19 +256,16 @@ export function claimOnly({ config, board, decide, l2, sink }) {
         const shown = typeof limit === 'string' ? `'${limit}'` : String(limit);
         throw new Error(`the claim limit must be a positive whole number, and ${shown} is not one`);
       }
-      const claimed = await take(limit ?? Infinity);
-      const failures = (await Promise.allSettled(claimed.map(async (claim) => {
+      const { claims: claimed, failures } = await take(limit ?? Infinity);
+      failures.push(...rejections(await Promise.allSettled(claimed.map(async (claim) => {
         try {
           await start(claim);
-        } catch (refusal) {
-          release(claim.card);
-          throw refusal;
+        } catch (failure) {
+          throw released(release, claim, failure);
         }
-      })))
-        .filter((result) => result.status === 'rejected')
-        .map((result) => result.reason);
+      }))));
       if (failures.length > 0) {
-        throw new AggregateError(failures, `${failures.length} of the ${claimed.length} cards this call claimed failed`);
+        throw new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this call claimed`);
       }
       return claimed.map((claim) => claim.card);
     },
