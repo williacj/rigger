@@ -57,16 +57,33 @@ function section(markdown, heading) {
  * invocation is help text, which the block's own note puts outside the match.
  */
 export function usageVerbs(readme, packageName) {
+  const verbs = usageLines(readme, packageName).map(({ verb }) => verb);
+  assert.ok(verbs.length > 0, `no line in the block invokes \`npx ${packageName} <verb>\``);
+  return verbs;
+}
+
+/**
+ * Each invocation in the README's "Install and usage" block, as its verb and the `#` comment
+ * beside it, in the order the block lists them. A line with no comment carries `undefined`.
+ */
+function usageLines(readme, packageName) {
   const block = section(readme, 'Install and usage').match(/```[a-z]*\n([\s\S]*?)```/);
   assert.ok(block, "the README's Install and usage section holds no command block");
-  const invocation = new RegExp(`^npx\\s+${packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+([\\w-]+)`);
-  const verbs = block[1]
+  const name = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const invocation = new RegExp(`^npx\\s+${name}\\s+([\\w-]+)(?:\\s+#\\s*(.*?))?\\s*$`);
+  return block[1]
     .split('\n')
     .map((line) => line.match(invocation))
     .filter(Boolean)
-    .map(([, verb]) => verb);
-  assert.ok(verbs.length > 0, `no line in the block invokes \`npx ${packageName} <verb>\``);
-  return verbs;
+    .map(([, verb, comment]) => ({ verb, comment }));
+}
+
+/** The `#` comment beside one verb's invocation in the README's "Install and usage" block. */
+export function usageComment(readme, packageName, verb) {
+  const found = usageLines(readme, packageName).filter((line) => line.verb === verb);
+  assert.equal(found.length, 1, `the README's block invokes \`${verb}\` ${found.length} times, not once`);
+  assert.ok(found[0].comment, `the README's block carries no comment beside \`${verb}\``);
+  return found[0].comment;
 }
 
 /**
@@ -76,15 +93,28 @@ export function usageVerbs(readme, packageName) {
  * of this check's business: the acceptance puts help text outside the verb match.
  */
 export function helpVerbs(help) {
+  return helpLines(help).map(({ verb }) => verb);
+}
+
+/** Each line of the verb list `--help` prints, as its verb and the description after it. */
+function helpLines(help) {
   const lines = linesOf(help);
   const start = lines.findIndex((line) => line.trim() === 'Verbs:');
   assert.notEqual(start, -1, 'the help output holds no verb list');
   const listed = [];
   for (const line of lines.slice(start + 1)) {
     if (!line.trim()) break;
-    listed.push(line.trim().split(/\s+/)[0]);
+    const [, verb, summary] = line.trim().match(/^(\S+)\s*(.*)$/);
+    listed.push({ verb, summary });
   }
   return listed;
+}
+
+/** The description `--help` prints beside one verb. */
+export function helpSummary(help, verb) {
+  const found = helpLines(help).filter((line) => line.verb === verb);
+  assert.equal(found.length, 1, `\`--help\` lists \`${verb}\` ${found.length} times, not once`);
+  return found[0].summary;
 }
 
 test('--help lists exactly the verbs the README lists, in that order and no others', () => {
@@ -96,6 +126,28 @@ test('--help lists exactly the verbs the README lists, in that order and no othe
 
   assert.equal(shown.code, 0, `\`rigger --help\` failed: ${shown.err}`);
   assert.deepEqual(helpVerbs(shown.out), usageVerbs(read('README.md'), manifest.name));
+});
+
+test("--help describes doctor in the words of the README's comment beside doctor", () => {
+  // The defect this catches is `doctor` gaining a check that the README's line names and `--help`
+  // does not, or the reverse. Only `doctor` is held to its comment: `once` and `run` say in
+  // `--help` that they dispatch no work before M4, which their README comments do not. The
+  // expected text is read from the README on every run, so rewording the README's comment moves
+  // this test rather than needing the test edited with it.
+  const shown = rigger('--help');
+
+  assert.equal(shown.code, 0, `\`rigger --help\` failed: ${shown.err}`);
+  assert.equal(helpSummary(shown.out, 'doctor'), usageComment(read('README.md'), manifest.name, 'doctor'));
+});
+
+test("the readers take a verb's description from its own line, whatever that line says", () => {
+  // The defect this catches is either reader answering with text of its own, or with another
+  // verb's line, which would hold `doctor` to something other than the README's comment on it.
+  const readme = readmeListing(['beta', 'alpha']);
+  assert.equal(usageComment(readme, '@williacj/rigger', 'alpha'), 'what alpha does');
+
+  const summaries = [['beta', 'what beta does'], ['alpha', 'alpha does something else']];
+  assert.equal(helpSummary(help(summaries), 'alpha'), 'alpha does something else');
 });
 
 test('a verb whose milestone has not landed says so and exits non-zero', () => {
