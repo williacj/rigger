@@ -9,7 +9,7 @@ Output docs/demo.txt
 Set Shell bash
 Set FontSize 16
 Set Width 1100
-Set Height 360
+Set Height 240
 Set Padding 20
 
 # The world is built and entered before any frame is captured, so the GIF opens on the prompt
@@ -19,6 +19,8 @@ Type ". test/demo-world.sh"
 Enter
 # Packing and installing takes longer than the default wait of 15 seconds allows for.
 Wait@2m
+# The line typed above is still on the screen; the recording opens on a bare prompt.
+Ctrl+L
 Show
 
 Type "rigger once"
