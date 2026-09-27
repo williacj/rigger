@@ -924,3 +924,23 @@ test('in one sequence of the sink\'s appends and the fake board\'s writes, each 
     assert.ok(pulled < moved, `card ${number}'s pull event came before its move: ${JSON.stringify(built.sequence)}`);
   }
 });
+
+/** Every failure `error` reports, an AggregateError opened to the failures it holds, however deep. */
+const leavesOf = (error) => (error instanceof AggregateError ? error.errors.flatMap(leavesOf) : [error]);
+
+/** What the world's refusing sink says of every append it refuses. */
+const DISK_FULL = 'ENOSPC: no space left on device';
+
+test('given a sink that refuses every append and one pullable card, the claim-only call fails naming the card it did not start and the sink\'s error', async () => {
+  const built = world({ cards: [8], concurrency: 2 });
+  built.refuseAppends(DISK_FULL);
+
+  await assert.rejects(built.claims.claim(), (failure) => {
+    const reported = leavesOf(failure).filter((held) => /#8\b/.test(held.message));
+    assert.equal(reported.length, 1, `one failure names card 8: ${JSON.stringify(leavesOf(failure).map((held) => held.message))}`);
+    assert.match(reported[0].message, /not started/);
+    assert.match(reported[0].message, /ENOSPC: no space left on device/);
+    assert.equal(reported[0].cause?.message, DISK_FULL, 'the sink\'s own error is the cause');
+    return true;
+  });
+});
