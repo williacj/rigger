@@ -252,6 +252,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-RECORD-6 | The record loses no event. What Rigger emitted is what a later reader finds. | the engine | the test suite | |
 | R-RECORD-7 | Every event says when it happened, which run it belongs to, and which card and dispatch it concerns, so a reader can put two events beside each other. | the engine | the test suite | |
 | R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | the engine | the test suite | |
+| R-RECORD-9 | When Rigger cannot record an event, it says what went unrecorded and starts no further work until it can. | the engine | the test suite | |
 
 ## R-IMPROVE — what the loops may do
 

@@ -229,6 +229,7 @@ test('given an event stream that refuses every append from the start, once exits
   assert.notEqual(ran.code, 0, ran.out);
 });
 
+// proves R-RECORD-9
 test('given an event stream that refuses every append from the start, once leaves every card in the ready column', async () => {
   const ran = once({ items: [card(10, 'Ready'), card(20, 'Ready')] }, { record: 'refusing' });
 
@@ -253,6 +254,7 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.notEqual(ran.code, 0, ran.out);
 });
 
+// proves R-RECORD-9
 test('given the board takes a claim move and the sink then refuses its transition event, once names the card, the column left, the column entered, and says the move went unrecorded', async () => {
   const ran = once({ items: [card(10, 'Ready')] }, { record: 'refusing-after-move' });
 
