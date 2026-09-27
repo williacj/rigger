@@ -931,6 +931,13 @@ const leavesOf = (error) => (error instanceof AggregateError ? error.errors.flat
 /** What the world's refusing sink says of every append it refuses. */
 const DISK_FULL = 'ENOSPC: no space left on device';
 
+/** Passes a rejection whose failures, opened, include one saying card `number` was not started. */
+const notStarted = (number) => (failure) => {
+  const messages = leavesOf(failure).map((held) => held.message);
+  assert.ok(messages.some((message) => message.includes(`#${number} was not started`)), JSON.stringify(messages));
+  return true;
+};
+
 test('given a sink that refuses every append and one pullable card, the claim-only call fails naming the card it did not start and the sink\'s error', async () => {
   const built = world({ cards: [8], concurrency: 2 });
   built.refuseAppends(DISK_FULL);
@@ -943,4 +950,150 @@ test('given a sink that refuses every append and one pullable card, the claim-on
     assert.equal(reported[0].cause?.message, DISK_FULL, 'the sink\'s own error is the cause');
     return true;
   });
+});
+
+/**
+ * One claim-only call over ready cards 1 and 2 under concurrency 2, with the sink refusing every
+ * append from before the call. Answers the call's failure and what `world` built.
+ */
+async function refusedClaim() {
+  const built = world({ cards: [1, 2], concurrency: 2 });
+  built.refuseAppends(DISK_FULL);
+  let failure = null;
+  await built.claims.claim().catch((thrown) => {
+    failure = thrown;
+  });
+  return { built, failure };
+}
+
+test('given a sink that refuses every append and two pullable cards, the claim-only call claims no card', async () => {
+  const { built, failure } = await refusedClaim();
+
+  assert.ok(failure, 'the call failed');
+  assert.deepEqual(await columnsOf(built.fake), { 1: 'Ready', 2: 'Ready' });
+  // A claim held in memory would keep its card from the next call: both slots are free, so the
+  // next call over an accepting sink claims both cards.
+  built.acceptAppends();
+  assert.deepEqual(numbersOf(await built.claims.claim()), [1, 2]);
+});
+
+test('given a sink that refuses every append and two pullable cards, the claim-only call leaves the fake board\'s write record empty', async () => {
+  const { built, failure } = await refusedClaim();
+
+  assert.ok(failure, 'the call failed');
+  assert.deepEqual(built.fake.writes(), []);
+});
+
+test('given a sink that refuses every append, the loop with an injected dispatch never calls that dispatch, from a run or from a pull', async () => {
+  // Card 5 is a redo, so its start hands it straight to the dispatch with no claim move between:
+  // only the halt stands between a refused pull event and the dispatch.
+  for (const fire of [(built) => built.loop.run(), (built) => built.loop.pull()]) {
+    const built = world({ cards: [cardIn(5, COLUMNS.coding), 1], concurrency: 2 });
+    built.refuseAppends(DISK_FULL);
+
+    const fired = fire(built);
+    fired.catch(() => {});
+    // A dispatch the halt let through would be held open here, so it is released: a loop that
+    // called the dispatch then fails on its start count rather than never settling.
+    await quiesce();
+    built.dispatches.releaseAll();
+    await assert.rejects(fired, (failure) => {
+      assert.ok(leavesOf(failure).every((held) => held.message.includes(DISK_FULL)), JSON.stringify(leavesOf(failure).map((held) => held.message)));
+      return true;
+    });
+
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.handed, []);
+    assert.deepEqual(built.fake.writes(), []);
+  }
+});
+
+test('given a dispatch already running when the sink starts refusing appends, the loop still hands that dispatch\'s outcome to L2', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+  const received = [];
+  const settled = built.l2.settled;
+  built.l2.settled = (card, outcome) => {
+    received.push([card.number, outcome.status, outcome.value]);
+    return settled(card, outcome);
+  };
+  const run = built.loop.run();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [1], "card 1's dispatch is running");
+  built.refuseAppends(DISK_FULL);
+
+  built.dispatches.releaseAll();
+  await run.catch(() => {});
+
+  assert.deepEqual(received, [[1, 'fulfilled', { exit: 0, output: '' }]]);
+});
+
+test('given a sink that refused the previous claim-only call and now accepts appends, the next claim-only call claims a card, with nothing between the two calls but the sink accepting again', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+  built.refuseAppends(DISK_FULL);
+  await assert.rejects(built.claims.claim(), notStarted(1));
+  assert.deepEqual(await columnsOf(built.fake), { 1: 'Ready' });
+
+  built.acceptAppends();
+  const claimed = numbersOf(await built.claims.claim());
+
+  assert.deepEqual(claimed, [1]);
+  assert.deepEqual(await columnsOf(built.fake), { 1: 'Coding' });
+});
+
+test('across a claim-only call the sink refused and a later one it accepted, the event stream holds no event recording a change of admission', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+  built.refuseAppends(DISK_FULL);
+  await assert.rejects(built.claims.claim(), notStarted(1));
+  built.acceptAppends();
+  assert.deepEqual(numbersOf(await built.claims.claim()), [1]);
+
+  // The accepted call's own events, and no other: R-SCHED-4 has only the owner and a repeated
+  // infrastructure failure change admission, and the halt is neither.
+  assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`), ['L3 trigger', 'L3 pull', 'L2 transition']);
+});
+
+test('after a claim-only call the sink refused, followed by one it accepted, the state directory holds nothing but the event stream', async () => {
+  const built = world({ cards: [1], concurrency: 1 });
+  built.refuseAppends(DISK_FULL);
+  await assert.rejects(built.claims.claim(), notStarted(1));
+  built.acceptAppends();
+  assert.deepEqual(numbersOf(await built.claims.claim()), [1]);
+
+  assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl']);
+});
+
+test('a start whose pull event the sink refused writes no release event once the sink accepts again, so no release event lacks its pull', async () => {
+  // The trigger event and the pull event are the first two appends of a claim-only call, and the
+  // sink refuses exactly those two: whatever L3 appends after them, it accepts.
+  const built = world({ cards: [1], concurrency: 1 });
+  built.refuseAppends(DISK_FULL, 2);
+
+  await assert.rejects(built.claims.claim(), notStarted(1));
+
+  assert.deepEqual(built.sequence.filter((entry) => entry.append), []);
+  assert.deepEqual(readdirSync(built.directory), [], 'nothing was appended, so the sink never wrote the stream');
+});
+
+test('when L2 reports a refused transition event, the claim-only call\'s caller receives the failure L2 reported, with the card, the columns and the sink\'s error unchanged', async () => {
+  // The board takes the claim move, and the sink refuses from the move on, so L2's transition
+  // event is the first append it refuses.
+  const fake = boardOf([1]);
+  let built;
+  const items = {
+    ...fake.operations,
+    moveItem: async (id, column) => {
+      await fake.operations.moveItem(id, column);
+      built.refuseAppends(DISK_FULL);
+    },
+  };
+  built = world({ fake, items, concurrency: 1 });
+
+  await assert.rejects(built.claims.claim(), (failure) => {
+    const reported = leavesOf(failure).filter((held) => /moved from/.test(held.message));
+    assert.equal(reported.length, 1, JSON.stringify(leavesOf(failure).map((held) => held.message)));
+    assert.equal(reported[0].message, `card #1 moved from ready to coding, and the event sink refused to record it: ${DISK_FULL}`);
+    assert.equal(reported[0].cause?.message, DISK_FULL);
+    return true;
+  });
+  assert.deepEqual(await columnsOf(fake), { 1: 'Coding' });
 });

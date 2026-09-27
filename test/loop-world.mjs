@@ -126,10 +126,11 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  * `{ append, layer, card }` with the event's name.
  *
  * L2 and L3 share one sink, whose clock ticks once per event, so no two events share a time.
- * `layers` records the layer of every emitter L3 asks the sink for. `refuseAppends(reason)` has
- * the shared sink refuse every append from then on, each with an error carrying `reason`, and
- * `acceptAppends()` has it accept again; the sink itself is the real one throughout, and what
- * the two switch is whether an append reaches it.
+ * `layers` records the layer of every emitter L3 asks the sink for. `refuseAppends(reason, next)`
+ * has the shared sink refuse the next `next` appends, or every append from then on where no
+ * count is given, each with an error carrying `reason`, and `acceptAppends()` has it accept
+ * again; the sink itself is the real one throughout, and what the two switch is whether an
+ * append reaches it.
  */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
@@ -148,14 +149,18 @@ export function world({
   };
   let tick = 0;
   const real = openSink({ directory, run, now: () => (tick += 1) });
-  /** Why the sink refuses every append now, or null while it accepts them. */
+  /** Why the sink refuses an append now, or null while it accepts them, and how many more it refuses. */
   let refusing = null;
+  let refusals = Infinity;
   const sink = {
     emitter: (context) => {
       const emitter = real.emitter(context);
       return {
         emit: (event, fields) => {
-          if (refusing !== null) throw new Error(refusing);
+          if (refusing !== null && refusals > 0) {
+            refusals -= 1;
+            throw new Error(refusing);
+          }
           emitter.emit(event, fields);
           sequence.push({ append: event, layer: context.layer, card: context.card });
         },
@@ -193,8 +198,11 @@ export function world({
   };
   return {
     fake, l2, dispatches, sequence, layers, handed, decisions, directory,
-    /** Has the shared sink refuse every append from now on, each with an error carrying `reason`. */
-    refuseAppends: (reason = 'the event sink refuses every append') => { refusing = reason; },
+    /** Has the shared sink refuse the next `next` appends, or every one from now on, each with an error carrying `reason`. */
+    refuseAppends: (reason = 'the event sink refuses every append', next = Infinity) => {
+      refusing = reason;
+      refusals = next;
+    },
     /** Has the shared sink accept appends again. */
     acceptAppends: () => { refusing = null; },
     /** Every event the run has recorded so far, in the order recorded. */
