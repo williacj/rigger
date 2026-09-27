@@ -49,3 +49,29 @@ test('the demo world leaves the shell in a repository outside the checkout, with
   // The fake is what `test/fake-gh.mjs` installs: an entry that loads that module by its path.
   assert.match(readFileSync(gh, 'utf8'), /test\/fake-gh\.mjs/, `the gh on PATH, ${gh}, is not the fake`);
 });
+
+/** The tape's commands in order, each with its comment and surrounding space dropped. */
+const tapeCommands = () => readFileSync(join(root, 'docs', 'demo.tape'), 'utf8')
+  .split('\n')
+  .map((line) => line.replace(/#.*$/, '').trim())
+  .filter(Boolean);
+
+test('the tape sources the demo world unseen, then records rigger once, into the GIF under docs/', () => {
+  const commands = tapeCommands();
+  // The order matters: the world is built and entered before frames are captured, so the GIF
+  // opens on the prompt, and what runs in view is the installed rigger the world put on PATH.
+  const order = [`Type ". ${WORLD}"`, 'Show', 'Type "rigger once"'].map((command) => commands.indexOf(command));
+  assert.ok(order.every((at) => at >= 0), `the tape lacks one of the commands it must carry; it holds:\n${commands.join('\n')}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, `the tape runs them out of order:\n${commands.join('\n')}`);
+  // Settings and outputs must come first in a tape, so the first command after them is Hide.
+  assert.equal(commands.find((command) => !/^(Output|Set|Require) /.test(command)), 'Hide', 'the tape captures frames before the world is built');
+  assert.ok(commands.includes('Output docs/demo.gif'), 'the tape writes no GIF at docs/demo.gif');
+});
+
+test('rigger once in the demo world claims a card, says it was not worked, and exits non-zero', () => {
+  const ran = inTheWorld('rigger once');
+
+  assert.match(ran.err, /^rigger once: claimed #\d+ from board 3\b/m, ran.err);
+  assert.match(ran.err, /not worked: dispatch arrives with M2 and M4/, ran.err);
+  assert.notEqual(ran.code, 0, ran.out);
+});

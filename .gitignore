@@ -3,3 +3,5 @@ node_modules/
 *.log
 .DS_Store
 /spikes/
+# The demo tape's final screen as text, which CI reads; the GIF beside it is what is kept.
+/docs/demo.txt
