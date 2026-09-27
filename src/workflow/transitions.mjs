@@ -58,6 +58,8 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
      * dispatch that ran is fulfilled with L1's result, `{ exit, output }`, and one that threw
      * before it ran is rejected. The exit code alone decides, by the owner's ruling on #220: zero
      * moves the card to review, whatever the output says, and anything else leaves it in coding.
+     * A card L3 read in review, a redo, is there already: zero leaves it there, so L2 writes no
+     * move and records no transition the board never received (`R-WORK-5`).
      */
     settled: async (card, outcome) => {
       if (outcome?.status === 'rejected') return;
@@ -65,7 +67,7 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
       if (!Number.isInteger(exit)) {
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
-      if (exit === 0) await change(card, 'returned');
+      if (exit === 0 && card.column !== columns.review) await change(card, 'returned');
     },
   };
 }
