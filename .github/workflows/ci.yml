@@ -56,8 +56,9 @@ jobs:
       - run: brew install vhs
       - run: vhs docs/demo.tape
       - run: test -s docs/demo.gif
-      - run: grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+, and it was not worked: dispatch arrives with M2 and M4' docs/demo.txt
-      - run: grep -E '^exit [1-9]' docs/demo.txt
+      # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+, and it was not worked: dispatch arrives with M2 and M4' docs/demo.txt"
+      - run: "grep -E '^exit [1-9]' docs/demo.txt"
       # The GIF a run regenerates, for whoever commits it: vhs is not on every host (D12's notes).
       - uses: actions/upload-artifact@v4
         with:

@@ -71,8 +71,12 @@ test('the tape sources the demo world unseen, then records rigger once, into the
 
 const workflow = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
 
-/** Every one-line command the workflow runs, in order. */
-const runCommands = () => [...workflow.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)].map(([, command]) => command);
+/**
+ * Every one-line command the workflow runs, in order. A command YAML holds double-quoted, because
+ * a plain scalar cannot carry what it carries, is read without the quotes; none carries an escape.
+ */
+const runCommands = () => [...workflow.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)]
+  .map(([, command]) => command.replace(/^"(.*)"$/, '$1'));
 
 /**
  * The screen the tape leaves at this head, written by hand from what `once` prints (the once
