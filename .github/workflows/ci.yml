@@ -54,6 +54,9 @@ jobs:
         with:
           node-version: '24'
       - run: brew install vhs
+      # The committed GIF sits where the tape writes, so it goes first: the check below then reads
+      # only what this run recorded.
+      - run: rm -f docs/demo.gif
       - run: vhs docs/demo.tape
       - run: test -s docs/demo.gif
       # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.

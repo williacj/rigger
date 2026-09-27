@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +75,7 @@ const workflow = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf
  * Every one-line command the workflow runs, in order. A command YAML holds double-quoted, because
  * a plain scalar cannot carry what it carries, is read without the quotes; none carries an escape.
  */
-const runCommands = () => [...workflow.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)]
+const runCommands = (text = workflow) => [...text.matchAll(/^\s*-\s*run:\s*(\S.*?)\s*$/gm)]
   .map(([, command]) => command.replace(/^"(.*)"$/, '$1'));
 
 /**
@@ -119,9 +119,31 @@ test('a CI check fails on a screen missing the claimed-but-not-worked message', 
   assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the message missing');
 });
 
-test('a CI check fails on an empty GIF, and none does on one holding anything', () => {
-  assert.notDeepEqual(ciChecksOver('docs/demo.gif', '').filter((status) => status !== 0), [], 'every check passed on an empty GIF');
-  assert.deepEqual(ciChecksOver('docs/demo.gif', 'GIF89a').filter((status) => status !== 0), []);
+/**
+ * The status the demo job's GIF steps end on, run in order in a checkout holding the committed
+ * GIF, with `tape` standing in for `vhs docs/demo.tape`: a shell command writing what the tape
+ * would. The first status that is not zero, or zero when every step passed.
+ */
+function gifStepsWhenTheTapeRuns(tape) {
+  const checkout = mkdtempSync(join(tmpdir(), 'rigger-demo-job-'));
+  mkdirSync(join(checkout, 'docs'));
+  writeFileSync(join(checkout, 'docs', 'demo.gif'), 'GIF89a, the recording the checkout holds');
+  const job = runCommands(workflow.slice(workflow.search(/^ {2}demo:$/m)))
+    .filter((command) => command.includes('docs/demo.gif') || command === 'vhs docs/demo.tape');
+  assert.ok(job.includes('vhs docs/demo.tape'), `the demo job never runs the tape; its GIF steps are:\n${job.join('\n')}`);
+  for (const command of job) {
+    const ran = spawnSync(command === 'vhs docs/demo.tape' ? tape : command, { shell: true, cwd: checkout, encoding: 'utf8', env: gitEnvironment() });
+    if (ran.status !== 0) return ran.status;
+  }
+  return 0;
+}
+
+test('a CI check fails when the tape writes an empty GIF, or none beside the committed one, and none fails on one holding anything', () => {
+  // The GIF is committed at the path the tape writes, so a check reading that path passes on the
+  // committed copy unless the job clears it before the tape runs.
+  assert.notEqual(gifStepsWhenTheTapeRuns('true'), 0, 'every step passed when the tape wrote no GIF');
+  assert.notEqual(gifStepsWhenTheTapeRuns(': > docs/demo.gif'), 0, 'every step passed on an empty GIF');
+  assert.equal(gifStepsWhenTheTapeRuns('printf GIF89a > docs/demo.gif'), 0);
 });
 
 test('rigger once in the demo world claims a card, says it was not worked, and exits non-zero', () => {
