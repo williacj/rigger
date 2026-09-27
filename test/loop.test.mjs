@@ -907,3 +907,20 @@ test('rule 8 lets a module under src/cli/ import and call the claim-only call fr
   tree.set('src/cli/claim-verb.mjs', "import { loop } from '../scheduling/loop.mjs';\nexport const once = (deps) => loop(deps).pull();");
   assert.ok(boundaryReport(tree).violations.some((violation) => violation.message.includes('rule 8')), 'importing the dispatching entry point still breaks rule 8');
 });
+
+// The halt: L3 records each start before it acts outside Rigger on it, and starts nothing whose
+// event the sink refuses (`ARCHITECTURE.md`, "Failure model").
+
+test('in one sequence of the sink\'s appends and the fake board\'s writes, each card the claim-only call claims has its L3 pull event before L2\'s move of it into the coding column', async () => {
+  const built = world({ cards: [1, 2], concurrency: 2 });
+
+  const claimed = numbersOf(await built.claims.claim());
+
+  assert.deepEqual(claimed, [1, 2]);
+  for (const number of claimed) {
+    const pulled = built.sequence.findIndex((entry) => entry.append === 'pull' && entry.layer === 'L3' && entry.card === number);
+    const moved = built.sequence.findIndex((entry) => entry.move === `item-${number}` && entry.column === COLUMNS.coding);
+    assert.ok(pulled !== -1 && moved !== -1, `card ${number} was pulled and moved: ${JSON.stringify(built.sequence)}`);
+    assert.ok(pulled < moved, `card ${number}'s pull event came before its move: ${JSON.stringify(built.sequence)}`);
+  }
+});
