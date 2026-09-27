@@ -1,6 +1,6 @@
 # ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
-# ruled-out-word check and its test-matrix check, on every push, every pull request and every
-# merge a queue is testing.
+# ruled-out-word check and its test-matrix check, and regenerates the demo GIF from its tape, on
+# every push, every pull request and every merge a queue is testing.
 
 name: CI
 
@@ -42,3 +42,33 @@ jobs:
       - run: npm run check:words
       - run: npm run check:headers
       - run: npm run matrix:check
+  demo:
+    # Regenerates the demo GIF from docs/demo.tape, which records the installed rigger claiming a
+    # card in a world test/demo-world.sh builds. The tape leaves its final screen as text beside
+    # the GIF, and the checks below read the claim, the message and the non-zero exit from it:
+    # `once` exits non-zero after a claim it did not work until dispatch arrives with M2 and M4.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: brew install vhs
+      # The committed GIF sits where the tape writes, so it goes first: the check below then reads
+      # only what this run recorded.
+      - run: rm -f docs/demo.gif
+      - run: vhs docs/demo.tape
+      - run: test -s docs/demo.gif
+      # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+, and it was not worked: dispatch arrives with M2 and M4' docs/demo.txt"
+      # The status is the line after the last `echo exit $?` the tape typed, which comes after
+      # anything the verb printed, so no line of its output can stand in for it.
+      - run: awk '$0 == "> echo exit $?" { getline status } END { exit status !~ /^exit [1-9][0-9]*$/ }' docs/demo.txt
+      # The GIF a run regenerates, for whoever commits it, since vhs is not on every host (D12's
+      # notes), with the screen it ends on as text beside it.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: demo
+          path: |
+            docs/demo.gif
+            docs/demo.txt

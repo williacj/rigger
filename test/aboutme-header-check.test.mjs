@@ -110,8 +110,8 @@ const RULE = [
   '  comment marker its format needs and no prefix. Where the format reserves the first line — a',
   '  shebang, YAML frontmatter — the header goes on the line below it, or below the block that',
   '  line opens. A format with no comment syntax to carry one is exempt, which in this repository',
-  '  means JSON. `README.md`, `CLAUDE.md`, `.gitignore` and `LICENSE` are exempt as well: the first',
-  '  two are the front door and an import, and the others are not ours to caption.',
+  '  means JSON and GIF. `README.md`, `CLAUDE.md`, `.gitignore` and `LICENSE` are exempt as well:',
+  '  the first two are the front door and an import, and the others are not ours to caption.',
   '- **Name what a thing does, never its history.** No `New`, `Legacy`, `V2`, `enhanced`.',
 ].join('\n');
 
@@ -120,7 +120,7 @@ test('the exempt set is the one the rule names, read out of the rule', () => {
   // a reader tracing an exemption lands on the sentence that grants it.
   const { names, formats } = exemptions(RULE);
   assert.deepEqual([...names], ['README.md', 'CLAUDE.md', '.gitignore', 'LICENSE']);
-  assert.deepEqual([...formats], ['.json']);
+  assert.deepEqual([...formats], ['.json', '.gif']);
 });
 
 test('a file carrying no header and no exemption is a finding naming it', () => {
@@ -142,6 +142,24 @@ test('a file whose format the rule exempts is accepted with no header', () => {
   // rather than the files, and this repository tracks five of them.
   assert.deepEqual(headerFindings('package.json', '{}\n', exemptions(RULE)), []);
   assert.deepEqual(headerFindings('.claude/settings.json', '{}\n', exemptions(RULE)), []);
+});
+
+test('a GIF is accepted with no header, because the rule names its format', () => {
+  // A GIF is a binary image with no comment syntax, so the demo recording has nowhere to carry a
+  // header. Its bytes are what the check reads, and the first six are the GIF signature.
+  const gif = 'GIF89a\u0001\u0000\u0001\u0000\u0000\u0000\u0000;';
+  assert.deepEqual(headerFindings('docs/demo.gif', gif, exemptions(RULE)), []);
+});
+
+test('a file in a format the rule does not name is still a finding under the widened exemption', () => {
+  // Widening the exemption to a second format must not widen it to every format: a PNG is as
+  // binary as a GIF, and the rule does not name it.
+  assert.deepEqual(headerFindings('docs/demo.png', '\u0089PNG\r\n', exemptions(RULE)), [
+    { path: 'docs/demo.png', kind: 'missing' },
+  ]);
+  assert.deepEqual(headerFindings('docs/demo.gif.md', 'no header here\n', exemptions(RULE)), [
+    { path: 'docs/demo.gif.md', kind: 'missing' },
+  ]);
 });
 
 /** A repository holding the header rule and the given files, each path relative and posix-spelled. */

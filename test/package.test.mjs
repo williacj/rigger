@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync,
+  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
+import { installFromTarball as installRigger } from './installed-rigger.mjs';
 import { stubGh } from './stub-gh.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -129,41 +130,13 @@ test('the tarball holds every file under src/, templates/ and scripts/, and of t
 });
 
 /**
- * This checkout packed into a tarball and installed from it, both in directories outside the
- * checkout (`R-SAFE-5`: Rigger never runs from its own source tree). Offline, because the package
- * has no runtime dependencies and so an install that needs the network has gone wrong. Built once
- * and shared, because packing and installing is the slow part and the tests below only read it.
+ * This checkout packed into a tarball and installed from it outside the checkout
+ * (`test/installed-rigger.mjs`). Built once and shared, because packing and installing is the
+ * slow part and the tests below only read it.
  */
 let installed;
 function installFromTarball() {
-  if (installed) return installed;
-  // Both npm runs are handed the environment a git child gets, because each command is built at
-  // run time, so the suite's sweep of every spawn cannot rule out that it reaches git
-  // (`test/git-environment.test.mjs`).
-  const packs = mkdtempSync(join(tmpdir(), 'rigger-pack-'));
-  const packed = spawnSync(`npm pack --json --loglevel=error --pack-destination "${packs}"`, {
-    cwd: root, shell: true, encoding: 'utf8', env: gitEnvironment(),
-  });
-  assert.equal(packed.status, 0, packed.stderr);
-  const [{ filename }] = JSON.parse(packed.stdout);
-
-  const consumer = mkdtempSync(join(tmpdir(), 'rigger-installed-'));
-  writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true }));
-  const install = spawnSync(
-    `npm install --offline --no-audit --no-fund --loglevel=error "${join(packs, filename)}"`,
-    { cwd: consumer, shell: true, encoding: 'utf8', env: gitEnvironment() },
-  );
-  assert.equal(install.status, 0, install.stdout + install.stderr);
-
-  // A path holding only node and git, so that `doctor` finds no agent CLI to ask and no `gh` but
-  // the stand-in each run puts in front of it. Asking the real ones reaches the network, and this
-  // test must pass without it; a check that finds no tool to ask reports so, which is still the
-  // report.
-  const bin = mkdtempSync(join(tmpdir(), 'rigger-path-'));
-  symlinkSync(process.execPath, join(bin, 'node'));
-  symlinkSync(spawnSync('command -v git', { shell: true, encoding: 'utf8' }).stdout.trim(), join(bin, 'git'));
-
-  installed = { consumer, rigger: join(consumer, 'node_modules', '.bin', 'rigger'), path: bin };
+  installed ??= installRigger(root, mkdtempSync(join(tmpdir(), 'rigger-installed-')));
   return installed;
 }
 
