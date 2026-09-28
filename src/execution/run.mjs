@@ -6,6 +6,13 @@ import { addGroup, holdsDispatch, readGroups, removeGroup, removePartial, writeG
 import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
 /**
+ * The `code` of the failure a dispatch rejects with when its command ran and the record refused
+ * its entry's removal, so its caller tells it from a command that never started and from a refused
+ * event without reading the message.
+ */
+export const RECORD_REFUSED = 'RECORD_REFUSED';
+
+/**
  * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
  * milliseconds, and settles on L0's result for it: the exit code `exit`, whether the timeout
  * ended it, and the output as bytes, `stdout` and `stderr`. `card` is the dispatch's card, where
@@ -33,7 +40,9 @@ import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../su
  * emptied the group, which it has done when it settles, or rejects naming a refused event. Any
  * other rejection leaves the entry it wrote, for a later start to settle. Where the record
  * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
- * record's failure as `recordFailure`.
+ * record's failure as `recordFailure`. Where it refuses the removal after the command settled, the
+ * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
+ * `recordFailure`.
  */
 export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
@@ -93,13 +102,16 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
   // later start settles it. A removal the record refuses after a refused event rides on the
   // refusal rather than replacing it, so the caller still learns which events went unrecorded.
+  // One the record refuses after the command settled carries the result, because the command ran.
   if (recorded !== undefined && (failure === undefined || failure.code === EVENT_REFUSED)) {
     try {
       removeGroup(directory, recorded);
     } catch (recordFailure) {
-      if (failure === undefined) failure = recordFailure;
-      else {
-        failure.message += `\nand the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+      const kept = `the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+      if (failure === undefined) {
+        failure = Object.assign(new Error(`${named(id, card)} ran ${command}, which exited ${result.exit}, and ${kept}`), { code: RECORD_REFUSED, result, recordFailure });
+      } else {
+        failure.message += `\nand ${kept}`;
         failure.recordFailure = recordFailure;
       }
     }
@@ -142,6 +154,9 @@ function alongside(failure, refusal) {
   return refusal;
 }
 
+/** Dispatch `id` as a failure names it, with its card where it has one. */
+const named = (id, card) => `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+
 /**
  * The failure for dispatch `id`, of `card` where it has one, whose `unrecorded` L1 events the sink
  * refused, each with its fields and why, carrying the dispatch's `result` where its command ran. Its
@@ -149,7 +164,7 @@ function alongside(failure, refusal) {
  */
 function refused(id, card, unrecorded, result) {
   const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
-  const under = `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+  const under = named(id, card);
   return Object.assign(new Error(`the sink refused ${unrecorded.length} L1 event(s) of ${under}, so they went unrecorded:\n${lines.join('\n')}`), { code: EVENT_REFUSED, unrecorded, result });
 }
 
@@ -179,7 +194,7 @@ export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
   const unrecorded = [];
   for (const entry of entries) {
     const { group, started, dispatch, card } = entry;
-    const under = `dispatch ${dispatch}${card === undefined ? '' : `, card #${card}`}`;
+    const under = named(dispatch, card);
     try {
       await killRecordedGroup({ group, started, ps, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
