@@ -1092,21 +1092,36 @@ async function startsIn(ps, group, timeout) {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
  * A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole
- * seconds since the epoch. `Date.UTC` carries a field past its range into the next, so a time no
- * calendar holds, such as `Mon Aug 59 12:00:00 2026`, would read as a real one, and could match
- * a recorded start. So the time is read back into its fields, and one that does not give back
- * every field it was read from is refused.
+ * seconds since the epoch. Only a start that the second it names prints back as, byte for byte,
+ * is read, so a malformed one of any kind is refused: a wrong weekday, a day, hour, minute or
+ * second past its range, which `Date.UTC` would carry into the next, or padding `ps` never
+ * prints. Each could otherwise name a recorded start.
+ *
+ * How `ps` prints it, from the source of adv_cmds's `ps/print.c` (`lstarted`), on 2026-09-28:
+ * the C library's `%c`, left-justified in its column with spaces. Under `PS_ENV`'s locale `%c` is
+ * `%a %b %e %T %Y`, measured with `/bin/ps` from adv_cmds-240 and `/bin/date +%c` on macOS 27.0
+ * (26A428) on 2026-09-28: `ps` printed `Mon Sep 28 23:47:11 2026` and four spaces, and `date`
+ * printed `Tue Sep  1 00:00:00 2026` for a one-digit day, padded with a space. So the column's
+ * trailing spaces are its padding, and are not the time's own.
  */
 function secondsOf(printed) {
-  const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
-  const fields = at && [Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])];
-  const time = fields && new Date(Date.UTC(...fields));
-  const back = time && [time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate(), time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()];
-  if (!back?.every((field, i) => field === fields[i])) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
-  return time.getTime() / 1000;
+  const text = printed.replace(/ +$/, '');
+  const at = /^\S+ (\S+) +(\d+) (\d+):(\d+):(\d+) (\d+)$/.exec(text);
+  const seconds = at ? Date.UTC(Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000 : NaN;
+  if (Number.isNaN(seconds) || lstartOf(seconds) !== text) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return seconds;
+}
+
+/** The second `seconds` as `ps` prints a start under `PS_ENV`, less its column's padding: `%a %b %e %T %Y` in UTC. */
+function lstartOf(seconds) {
+  const time = new Date(seconds * 1000);
+  const two = (field) => String(field).padStart(2, '0');
+  const clock = [time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()].map(two).join(':');
+  return `${WEEKDAYS[time.getUTCDay()]} ${MONTHS[time.getUTCMonth()]} ${String(time.getUTCDate()).padStart(2, ' ')} ${clock} ${time.getUTCFullYear()}`;
 }
 
 /**

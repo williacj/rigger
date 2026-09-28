@@ -464,38 +464,78 @@ for (const [how, body] of Object.entries(FAILING_READS)) {
 }
 
 /**
- * Start times no calendar holds, each of which would read as 2026-09-28 12:00:00 UTC were its
- * day, hour, minute or second carried into the next: 1790596800 seconds since the epoch, by
+ * A stand-in for `ps` in `directory` whose start-time read lists every member of the group, the
+ * read's third argument, with the start `lstart`, and which passes every other read through to
+ * `ps`, so a group the start-time read admitted would be killed. `lstart` is shell text inside
+ * double quotes, so a command substitution in it runs under the read's environment.
+ */
+const startsAs = (directory, lstart) => fixture(directory, 'ps', [
+  'case "$*" in',
+  `  *lstart*) /bin/ps -g "$3" -o pid=,stat= | /usr/bin/sed "s/\\$/ ${lstart}/" ;;`,
+  '  *) exec /bin/ps "$@" ;;',
+  'esac',
+].join('\n'));
+
+/**
+ * The second each malformed start below names, were it taken for a real start: 2026-09-28
+ * 12:00:00 UTC, a Monday, 1790596800 seconds since the epoch, by
  * `date -u -j -f "%Y-%m-%d %H:%M:%S" "2026-09-28 12:00:00" +%s`.
  */
-const IMPOSSIBLE_STARTS = ['Mon Aug 59 12:00:00 2026', 'Sun Sep 27 36:00:00 2026', 'Mon Sep 28 11:60:00 2026', 'Mon Sep 28 11:59:60 2026'];
 const CARRIED_INTO = 1790596800;
 
-for (const impossible of IMPOSSIBLE_STARTS) {
-  test(`given a recorded group whose start-time read lists every member with the start ${impossible}, which no calendar holds, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
-    const directory = scratch(t);
-    const started = await startGroup(directory, 'group');
-    // The entry names the time the impossible start would be carried into, so a read that took
-    // it for that time would find the leader's start the one recorded and kill the group.
-    const entry = entryFor(started, { started: CARRIED_INTO, dispatch: 'd-impossible', card: 35 });
-    writeGroups(stateOf(directory), [entry]);
-    // Every other read passes through to `ps`, so a group this read admitted would be killed.
-    const ps = fixture(directory, 'ps', [
-      'case "$*" in',
-      `  *lstart*) /bin/ps -g "$3" -o pid=,stat= | /usr/bin/sed 's/$/ ${impossible}/' ;;`,
-      '  *) exec /bin/ps "$@" ;;',
-      'esac',
-    ].join('\n'));
+/**
+ * Asserts that, given a live group whose entry records `CARRIED_INTO` and whose start-time read
+ * lists every member as starting at `malformed`, L1's kill of recorded groups kills no process of
+ * that group, fails naming its entry, and keeps that entry. A read that took the start for that
+ * second would find the leader's start the one recorded, and kill the group.
+ */
+async function refusesStart(t, malformed) {
+  const directory = scratch(t);
+  const started = await startGroup(directory, 'group');
+  const entry = entryFor(started, { started: CARRIED_INTO, dispatch: 'd-impossible', card: 35 });
+  writeGroups(stateOf(directory), [entry]);
 
-    await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
-      for (const named of [`group ${started.group}`, 'd-impossible', '#35']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
-      return true;
-    });
-
-    assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
-    assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+  await assert.rejects(killIn(directory, { ps: startsAs(directory, malformed), readTimeout: 300 }), (failure) => {
+    for (const named of [`group ${started.group}`, 'd-impossible', '#35']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    return true;
   });
+
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 }
+
+/** Start times no calendar holds, each of which a day, hour, minute or second carried into the next would make `CARRIED_INTO`. */
+const IMPOSSIBLE_STARTS = ['Mon Aug 59 12:00:00 2026', 'Sun Sep 27 36:00:00 2026', 'Mon Sep 28 11:60:00 2026', 'Mon Sep 28 11:59:60 2026'];
+
+for (const impossible of IMPOSSIBLE_STARTS) {
+  test(`given a recorded group whose start-time read lists every member with the start ${impossible}, which no calendar holds, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, (t) => refusesStart(t, impossible));
+}
+
+/**
+ * Starts that hold `CARRIED_INTO`'s fields but are not how `ps` prints it, `Mon Sep 28 12:00:00
+ * 2026`: one names the wrong weekday, and one pads a two-digit day as `ps` pads only a day of
+ * one digit.
+ */
+const MISPRINTED_STARTS = { 'the wrong weekday': 'Tue Sep 28 12:00:00 2026', 'a two-digit day padded': 'Mon Sep  28 12:00:00 2026' };
+
+for (const [how, misprinted] of Object.entries(MISPRINTED_STARTS)) {
+  test(`given a recorded group whose start-time read lists every member with the entry's start printed with ${how}, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, (t) => refusesStart(t, misprinted));
+}
+
+test('given a recorded group whose leader\'s start falls on a one-digit day, and whose start-time read prints it as the C library\'s %c does, the call kills every process in the group and clears its entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(directory, 'group');
+  // 2026-09-01 00:00:00 UTC, by `date -u -j -f "%Y-%m-%d %H:%M:%S" "2026-09-01 00:00:00" +%s`.
+  // `ps` prints a start with the C library's `%c`, padded to its column (adv_cmds's `lstarted`),
+  // and `date` formats `%c` with the same library, under the read's zone and locale.
+  const entry = entryFor(started, { started: 1788220800 });
+  writeGroups(stateOf(directory), [entry]);
+
+  await killIn(directory, { ps: startsAs(directory, '$(/bin/date -r 1788220800 +%c)    ') });
+
+  assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the group is alive');
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+});
 
 test('given a recorded group whose leader is dead and whose live member\'s start-time read exits 1 and prints nothing, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
