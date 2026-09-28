@@ -37,8 +37,9 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  *
  * While the command runs, the record in `directory` holds an entry naming its process group, the
  * dispatch and the card (`ARCHITECTURE.md`, "Failure model"). The entry is removed once L0 has
- * emptied the group, which it has done when it settles, or rejects naming a refused event. Any
- * other rejection leaves the entry it wrote, for a later start to settle. Where the record
+ * emptied the group, which it has done when it settles, or rejects naming a refused event, and on
+ * Rigger's own exit, once L0's exit cleanup has killed the group. Any other rejection leaves the
+ * entry it wrote, and so does an ending that runs no code, for a later start to settle. Where the record
  * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
  * record's failure as `recordFailure`. Where it refuses the removal after the command settled, the
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
@@ -93,6 +94,8 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         addGroup(directory, { group, started, dispatch: id, card });
         recorded = group;
       },
+      // On Rigger's own exit, L0 kills the group, and then hands it here to remove its entry.
+      onExit: (group) => removeGroup(directory, group),
     });
   } catch (thrown) {
     failure = thrown;
