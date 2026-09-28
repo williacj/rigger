@@ -1,6 +1,6 @@
 // ABOUTME: Tests L0's process adapter: a command's exit code, output, working directory and
 // environment, the process group it runs in, the survivors it kills and records, output held open
-// past the group, and a sink that refuses the record.
+// past the group, a sink that refuses the record, the timeout, and a command that never started.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -830,7 +830,12 @@ test('a command ended by a signal it does not handle has a non-zero integer exit
 
 /**
  * The timeout each test of a command outliving it passes. A judgment: it is the time the fixture
- * has to be ready before the timeout ends it, and `ready` fails the test where it was not.
+ * has to be ready before the timeout ends it, and `ready` fails the test where it was not. Its
+ * premise is a measurement: over 40 calls of this adapter each, with Node 26.5.0 on macOS 27.0 on
+ * 2026-09-27 and nothing else running, the fixture writing 300,001 bytes was ready 6.7 to 10.5 ms
+ * after the call, and the one whose child writes to both streams 10.8 to 13.8 ms after it. The
+ * second fixture took 51 to 1,481 ms while it exec'd its child's freshly written script, so it
+ * runs that script under `/bin/sh` by name.
  */
 const OUTLIVED = 1_000;
 
@@ -893,9 +898,13 @@ test('given a child that writes to standard output and standard error and outliv
   const err = bytes(150_007, 31);
   writeFileSync(join(directory, 'out'), out);
   writeFileSync(join(directory, 'err'), err);
+  // The command blocks opening a FIFO until the child has written both and opens it, so it waits
+  // without taking the CPU the child's writes need. The child runs under `/bin/sh` by name,
+  // because exec'ing a script just written took from 50 ms to over a second (see `OUTLIVED`).
   fixture(directory, 'child', `/bin/cat "$here/out"\n/bin/cat "$here/err" >&2\n: > "$here/written"\nexec ${TAIL}`);
+  const body = ['/usr/bin/mkfifo "$here/written"', '/bin/sh "$here/child" &', 'read -r _ < "$here/written"'].join('\n');
 
-  const result = await adapt(directory, outliving(directory, `${leave('"$here/child"', 'child')}\nwhile [ ! -f "$here/written" ]; do :; done`));
+  const result = await adapt(directory, outliving(directory, body));
 
   ready(directory);
   assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');

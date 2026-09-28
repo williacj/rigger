@@ -1,6 +1,6 @@
-// ABOUTME: L0's process adapter: it runs one command in a process group of its own, and once the
-// command exits, kills what is left of that group, records each process it killed, and stops reading
-// output a process outside the group holds open.
+// ABOUTME: L0's process adapter: it runs one command in a process group of its own, ends the group at
+// the command's timeout, and once the command exits, kills what is left of that group, records each
+// process it killed, and stops reading output a process outside the group holds open.
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -275,14 +275,20 @@ function refused(unrecorded, result, { command, timeout }) {
 }
 
 /**
- * Runs `command` with `args` in `cwd` under exactly `env`, in a process group of its own, and
- * settles on its exit code and the bytes it wrote to standard output and standard error.
+ * Runs `command` with `args` in `cwd` under exactly `env`, in a process group of its own, for at
+ * most `timeout` milliseconds, and settles on its exit code, whether the timeout ended it, and the
+ * bytes it wrote to standard output and standard error.
  *
- * The order is fixed: the command exits; L0 kills what is left of its group and confirms it is
+ * The order is fixed: the command exits, or at its timeout L0 kills its whole group, the command
+ * with it, and confirms the group is empty; L0 kills what is left of its group and confirms it is
  * empty; L0 reads both pipes until they close, or until `outputBound` milliseconds have passed,
  * where a process outside the group holds one open; L0 records each kill, and any such hold; the
  * call settles. So the output is everything the group wrote until that kill, and neither a
  * survivor nor a process that left the group holds the call open.
+ *
+ * A command the timeout or any signal ended has a non-zero exit code, so it never reads as
+ * returned. A command that never started has no result: the call rejects with a `NOT_STARTED`
+ * failure naming what failed.
  *
  * A refused event never stops a kill, because every kill is done before any is recorded. Every
  * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
