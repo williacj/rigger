@@ -583,7 +583,7 @@ export async function killRecordedGroup({ group, started, emitter, ps = PS, read
 /**
  * Whether the live processes of `group`, by their `starts`, are the group recorded with a leader
  * that started at `started`. With its leader alive, the group is the one recorded where the
- * leader's start is the one recorded.
+ * leader's start is the one recorded. A leader that is a zombie is dead, and `starts` holds none.
  *
  * With its leader dead, the leaderless rule decides (the owner's Q5 on #332): the group is the
  * one recorded where every live member started no earlier than the recorded leader. The rule
@@ -642,10 +642,15 @@ function startOf(ps, pid, timeout) {
   return secondsOf(printed.replace(/\n$/, ''));
 }
 
-/** The start time of each live process in `group`, by its pid, read as `startOf` reads one. */
+/**
+ * The start time of each live process in `group`, by its pid, read as `startOf` reads one. A
+ * zombie is left out: it has exited, though `ps` still lists it, with its start time, until its
+ * parent reaps it. So a leader that has exited reads as dead whether or not it has been reaped.
+ */
 async function startsIn(ps, group, timeout) {
-  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,lstart='], timeout, timeout));
-  return new Map([...rows].map(([pid, printed]) => [pid, secondsOf(printed)]));
+  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], timeout, timeout));
+  const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
+  return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

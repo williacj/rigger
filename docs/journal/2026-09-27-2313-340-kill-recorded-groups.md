@@ -73,6 +73,15 @@ process group a dead engine recorded, once L0 has confirmed it is the group reco
   with `UNREAPED_BOUND`, and once main carried it here a test records a group whose one member is
   a zombie its parent outside the group never reaps: the call settles in about that bound, records
   no kill and clears the entry. Taking the bound out of `ended()` has the test time out.
+- **A zombie leader read as a live one (Codex's judge, item 6).** `ps -g` lists a zombie with its
+  start time, so a leader that had exited but was not yet reaped matched its entry, and the call
+  killed a member that started before it without asking when. The start read now takes each
+  process's state and leaves zombies out, so such a leader reads as dead and the leaderless rule
+  decides. The test builds the case Codex named: an older process joins a later leader's group
+  in the same session, and the leader exits unreaped. Keeping zombies in the read fails it.
+- **Signal 0 reaches a killed process whose parent never reaps it.** That test's first check of
+  the older member was `alive`, which passed while the member had been killed, because it stayed
+  a zombie. It now also asks `ps` that the member is not one.
 - **Perl buffers what it prints into a pipe.** The zombie fixture's first draft never saw the
   fork's pid, because Perl held it until it exited, and the fixture's wait spun past the test's
   bound. It sets `$|` now.

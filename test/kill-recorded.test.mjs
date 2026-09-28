@@ -189,6 +189,67 @@ test('given a recorded group that holds only an unreaped zombie, the call settle
   assert.deepEqual(readGroups(stateOf(directory)), []);
 });
 
+/** `ps`'s state and process group for `pid`, or nothing where no process has it. */
+function psRowOf(pid) {
+  const row = /^(\S+)\s+(\d+)$/.exec(spawnSync('/bin/ps', ['-o', 'stat=,pgid=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim());
+  return row ? { state: row[1], group: Number(row[2]) } : undefined;
+}
+
+/**
+ * A process group led by a zombie, holding a live member that started before it: the case in
+ * which an older process joins a later leader's group in the same session, and the leader then
+ * exits unreaped. Perl, outside the group, forks the older member first, and waits until the
+ * clock's second has turned, so `ps` reads the two starts apart. It then forks the leader, which
+ * makes the group. The older member joins it and runs `tail` on a file nothing writes to, and the
+ * leader exits once it has joined. Perl never reaps either. Every process carries `directory` in
+ * its command line, so the teardown ends them. Settles once `ps` reads the leader as a zombie
+ * leading the group and the older member in it, on the group's id and the member's pid.
+ */
+async function zombieLedGroup(directory) {
+  writeFileSync(join(directory, 'hold'), '');
+  const program = [
+    '$| = 1;',
+    'pipe(my $toMember, my $fromParent) or die; pipe(my $toLeader, my $fromMember) or die;',
+    'my $member = fork() // die;',
+    'if ($member == 0) {',
+    '  my $leader = <$toMember>; chomp $leader;',
+    '  setpgrp(0, $leader) or die "join: $!";',
+    '  syswrite($fromMember, "joined\\n");',
+    '  exec("/usr/bin/tail", "-f", "$ARGV[0]/hold") or die;',
+    '}',
+    'my $first = time(); 1 while time() <= $first;',
+    'my $leader = fork() // die;',
+    'if ($leader == 0) { setpgrp(0, 0); <$toLeader>; exit 0 }',
+    'setpgrp($leader, $leader);',
+    'syswrite($fromParent, "$leader\\n");',
+    'print "$leader $member\\n";',
+    '<STDIN>;',
+  ].join('\n');
+  const parent = spawn('/usr/bin/perl', ['-e', program, directory], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] });
+  let printed = '';
+  parent.stdout.on('data', (chunk) => { printed += chunk; });
+  await until(() => printed.endsWith('\n'));
+  const [group, member] = printed.trim().split(' ').map(Number);
+  await until(() => psRowOf(group)?.state.startsWith('Z') && psRowOf(group)?.group === group && psRowOf(member)?.group === group && !psRowOf(member)?.state.startsWith('Z'));
+  return { group, member };
+}
+
+test('given a recorded group whose leader is an unreaped zombie and a live member of which started before the entry\'s leader, the call leaves the member alive and records no kill', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const { group, member } = await zombieLedGroup(directory);
+  // The entry names the zombie leader's own start, so only its being dead tells the case apart.
+  writeGroups(stateOf(directory), [{ group, started: startOf(group), dispatch: 'd-zombie-led', card: 1412 }]);
+  assert.ok(startOf(member) < startOf(group), 'the member did not start before the leader');
+
+  await killIn(directory);
+
+  // Perl never reaps the member, so a member killed stays a zombie, which signal 0 still reaches.
+  assert.equal(alive(member) && !psRowOf(member).state.startsWith('Z'), true, 'the member that started before the leader was killed');
+  assert.deepEqual(killsIn(directory), []);
+  // A group the call leaves alone loses its entry, as #340's acceptance has it for every such group.
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+});
+
 test('given a recorded group with no live process, the call kills nothing and records no kill', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const bystander = await startGroup(directory, 'bystander');
