@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
 import { installFakeGh } from './fake-gh.mjs';
+import { UNKILLED } from './process-fixtures.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 
 /** The repository and board the fake `gh` answers for, and the config names. */
@@ -28,7 +29,7 @@ async function reported(items) {
   const held = process.env.PATH;
   process.env.PATH = `${dirname(fake.gh)}${delimiter}${held}`;
   try {
-    return await readSide(BOARD).readOtherRepositories();
+    return await readSide(BOARD, { emitter: UNKILLED }).readOtherRepositories();
   } finally {
     process.env.PATH = held;
   }

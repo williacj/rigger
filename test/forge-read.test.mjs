@@ -642,10 +642,10 @@ test('every request a full read issues is one the read runner receives and admit
   assert.deepEqual([...new Set(callers)], ['readRunner'], `requests reached the spawn from ${callers}`);
   for (const [, ...args] of sent) {
     const received = [];
-    readRunner(args, { send: (command, admitted) => received.push([command, ...admitted]) });
+    await readRunner(args, { send: (command, admitted) => received.push([command, ...admitted]) });
     assert.deepEqual(received, [['gh', ...args]], `the read runner did not send ${args.join(' ')}`);
-    assert.throws(() => itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
-    assert.throws(() => schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
+    await assert.rejects(itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
+    await assert.rejects(schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
   }
 });
 
