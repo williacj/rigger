@@ -1,5 +1,6 @@
 // ABOUTME: L0's process adapter: it runs one command in a process group of its own, and once the
-// command exits, kills what is left of that group and records each process it killed.
+// command exits, kills what is left of that group, records each process it killed, and stops reading
+// output a process outside the group holds open.
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -25,8 +26,11 @@ export const READ_TIMEOUT = 5_000;
  * that left the group holds a pipe open. A judgment, not a measurement. Its premise: once the group
  * is empty, every byte the group wrote is already in the pipes, and the output is only what the
  * group wrote (the Failure model), so the bound waits for nothing of the command's own but a read
- * of what is buffered. One second covers that on a loaded host, and costs a command whose output a
- * detached process holds no more than a second.
+ * of what is buffered. That read is measured: with no process outside the group holding a pipe,
+ * both pipes closed at most 0.129 ms after the group was empty, over 400 calls of this adapter
+ * writing 300,000 bytes, half of them leaving a survivor on both pipes, with Node 26.5.0 on macOS
+ * 27.0 on 2026-09-27. One second is over seven thousand times that, room for a loaded host, and
+ * costs a command whose output a detached process holds one second.
  */
 export const OUTPUT_BOUND = 1_000;
 
@@ -263,8 +267,14 @@ function refused(unrecorded, result) {
  * settles on its exit code and the bytes it wrote to standard output and standard error.
  *
  * The order is fixed: the command exits; L0 kills what is left of its group and confirms it is
- * empty; L0 reads both pipes until they close; the call settles. So the output is everything the
- * group wrote until that kill, and a survivor holding a pipe never holds the call open.
+ * empty; L0 reads both pipes until they close, or until `outputBound` milliseconds have passed,
+ * where a process outside the group holds one open; L0 records each kill, and any such hold; the
+ * call settles. So the output is everything the group wrote until that kill, and neither a
+ * survivor nor a process that left the group holds the call open.
+ *
+ * A refused event never stops a kill, because every kill is done before any is recorded. Every
+ * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
+ * failure naming each unrecorded event and carrying the result.
  */
 export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no

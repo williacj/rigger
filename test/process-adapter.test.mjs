@@ -1,5 +1,6 @@
 // ABOUTME: Tests L0's process adapter: a command's exit code, output, working directory and
-// environment, the process group it runs in, and the survivors it kills and records.
+// environment, the process group it runs in, the survivors it kills and records, output held open
+// past the group, and a sink that refuses the record.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
