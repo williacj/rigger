@@ -34,11 +34,24 @@ export const streamPath = (directory) => join(directory, STREAM);
  * `now` is the run's clock, read once per event, and it returns epoch milliseconds.
  */
 export function openSink({ directory, run, now }) {
-  required(directory, 'directory');
   required(run, 'run');
   required(now, 'now');
-  mkdirSync(directory, { recursive: true });
-  const path = streamPath(directory);
+  let named = directory;
+  let made = false;
+  const held = [];
+
+  /** One event onto the stream. The directory is made at the first, so a quiet verb makes none. */
+  function append(line) {
+    if (!made) mkdirSync(named, { recursive: true });
+    made = true;
+    appendFileSync(streamPath(named), line);
+  }
+
+  /** Name the state directory, and write there first every event held until now. */
+  function name(given) {
+    named = given;
+    for (const line of held.splice(0)) append(line);
+  }
 
   /** An emitter for one layer, and the card and dispatch its events arise under. */
   function emitter({ layer, card, dispatch }) {
@@ -59,12 +72,14 @@ export function openSink({ directory, run, now }) {
           dispatch,
           ...fields,
         };
-        appendFileSync(path, `${JSON.stringify(record)}\n`);
+        const line = `${JSON.stringify(record)}\n`;
+        if (named === undefined) held.push(line);
+        else append(line);
       },
     };
   }
 
-  return { emitter };
+  return { emitter, name };
 }
 
 /**

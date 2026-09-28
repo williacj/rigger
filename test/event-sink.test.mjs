@@ -208,11 +208,88 @@ test('the sink refuses to open, or to emit, without an envelope field it cannot 
   // reads it back later.
   const directory = stateDir();
   const now = clockOver([]);
-  assert.throws(() => openSink({ run: 'r-8f21', now }), /directory/);
+  // The directory is not among them: a sink opened without one holds its events until the verb
+  // names it (delta H5).
   assert.throws(() => openSink({ directory, now }), /run/);
   assert.throws(() => openSink({ directory, run: 'r-8f21' }), /now/);
 
   const sink = openSink({ directory, run: 'r-8f21', now });
   assert.throws(() => sink.emitter({ card: 1412 }), /layer/);
   assert.throws(() => sink.emitter({ layer: 'L3', card: 1412 }).emit(undefined, { queueDepth: 7 }), /event/);
+});
+
+/**
+ * Run `body` in a child Node process that has imported `openSink`, and report what it left.
+ *
+ * Standard error is only observable from outside the process that writes it, and a write at exit
+ * is only proved whole once the process has gone. The child's working directory and its temp
+ * directory are one fresh directory, so a file the sink wrote where no directory was named lands
+ * where the test can see it.
+ */
+function inChild(body) {
+  const home = stateDir();
+  const script = [
+    `import { openSink } from ${JSON.stringify(sinkModule)};`,
+    // Touching process.stderr is what every verb that prints does, and it leaves the descriptor
+    // non-blocking, where a single write to a full pipe comes back short.
+    "process.stderr.write('');",
+    body,
+  ].join('\n');
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: home,
+    env: { ...process.env, TMPDIR: home },
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return { ...child, home, left: readdirSync(home, { recursive: true }) };
+}
+
+/** Each line of a child's standard error, read back as the event it records. */
+const eventsIn = (stderr) => stderr.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line));
+
+test('a sink opened with no state directory accepts events and writes no file anywhere', () => {
+  const { status, stderr, left } = inChild([
+    `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+    "sink.emitter({ layer: 'L0', card: 1412 }).emit('survivor.killed', { name: 'git' });",
+  ].join('\n'));
+
+  assert.equal(stderr, '', 'the child failed, or wrote before it was ended');
+  assert.equal(status, 0);
+  assert.deepEqual(left, []);
+});
+
+test('a sink given its state directory late writes what it held there first, in order, ahead of what follows', () => {
+  const directory = join(stateDir(), '.rigger');
+  const sink = openSink({ run: 'r-8f21', now: clockOver([AT_14_14, AT_14_14, AT_14_19]) });
+  const { emit } = sink.emitter({ layer: 'L0' });
+
+  emit('survivor.killed', { name: 'first' });
+  emit('survivor.killed', { name: 'second' });
+  sink.name(directory);
+  emit('survivor.killed', { name: 'third' });
+
+  assert.deepEqual(readEvents(directory).map((event) => event.name), ['first', 'second', 'third']);
+});
+
+test('a held event carries the time it was emitted, not the time it was written', () => {
+  const directory = stateDir();
+  // The clock is wound for the one emit and no more, so a sink that read it again when it wrote
+  // the held event fails on the clock before it reaches the assertion.
+  const sink = openSink({ run: 'r-8f21', now: clockOver([AT_14_14]) });
+  sink.emitter({ layer: 'L0' }).emit('survivor.killed', { name: 'git' });
+
+  sink.name(directory);
+
+  assert.deepEqual(readEvents(directory).map((event) => event.ts), ['2026-09-13T14:14:45.882Z']);
+});
+
+test('a sink named a state directory that never records an event creates neither the directory nor a file', () => {
+  const parent = stateDir();
+  const atOpen = join(parent, 'named-at-open');
+  const later = join(parent, 'named-later');
+
+  openSink({ directory: atOpen, run: 'r-8f21', now: clockOver([]) });
+  openSink({ run: 'r-8f21', now: clockOver([]) }).name(later);
+
+  assert.deepEqual(readdirSync(parent), []);
 });
