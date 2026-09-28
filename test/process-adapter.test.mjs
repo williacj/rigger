@@ -1423,6 +1423,20 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
   }
 });
 
+test('the refusal of an invalid timeout names the value and its type', async (t) => {
+  for (const [timeout, named] of [['5', 'the timeout 5 (of type string)'], [null, 'the timeout null (of type null)'], [NaN, 'the timeout NaN (of type number)']]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), (error) => {
+      assert.ok(error.message.includes(named), `the failure does not say "${named}": ${error.message}`);
+      return true;
+    });
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${named}`);
+  }
+});
+
 test('a command ended by a signal it does not handle has a non-zero integer exit code in the result', async (t) => {
   const directory = scratch(t);
   // The shell sends itself `SIGTERM`, which a non-interactive shell with no trap does not handle.

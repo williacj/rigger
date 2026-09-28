@@ -518,9 +518,10 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
-  if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
-    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a positive finite number of milliseconds, so it did not start ${command}`);
+    // The type is named because a string, a bigint or a boxed number prints as the number it holds.
+    const type = timeout === null ? 'null' : typeof timeout;
+    throw new Error(`the process adapter was given the timeout ${timeout} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
