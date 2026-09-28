@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
@@ -980,4 +980,32 @@ test('a working directory that does not exist rejects as a failure to start, nam
 
   unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
   neverRan(directory);
+});
+
+test('a working directory that is a file rejects as a failure to start, naming it, and the command never runs', async (t) => {
+  const directory = scratch(t);
+  const cwd = join(directory, 'a-file');
+  writeFileSync(cwd, '');
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});
+
+test('a command that is not executable rejects as a failure to start, naming it, and never runs', async (t) => {
+  const directory = scratch(t);
+  const command = starting(directory);
+  chmodSync(command, 0o644);
+
+  unstarted(await rejection(directory, { command }), command);
+  neverRan(directory);
+});
+
+test('a command that never started and a refused event reject with codes that tell them apart', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const never = await rejection(directory, { command: join(directory, 'absent') });
+  const refusal = await rejection(directory, { command: leavingTwo(directory), emitter: refusing(directory) });
+
+  assert.equal(never.code, NOT_STARTED);
+  assert.equal(refusal.code, EVENT_REFUSED);
 });
