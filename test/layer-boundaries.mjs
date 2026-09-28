@@ -86,8 +86,13 @@ const LOADER_MODULES = ['node:module', 'module'];
  * constructor, or an async or generator function its own kind of it, with no other name spelled;
  * and the enumerators of an object's own properties, which reach a prototype's `constructor` with
  * no key spelled at all. A name that only keys an object or a class member reads nothing and
- * passes, so a class may declare its constructor. A key the source does not fix is a review
- * finding, as it is for the loaders.
+ * passes, so a class may declare its constructor.
+ *
+ * The limit: a property read whose key the source does not fix is outside this rule, as it is
+ * outside the loaders', and is a review finding. A key built by joining strings is one, so
+ * `globalThis[['ev','al'].join('')](code)` passes. The rule does not refuse every such read,
+ * because the judges on PR #381 counted 44 of them in 10 modules under src/, and refusing them all
+ * would fail the source tree at this head.
  */
 const GENERATORS = ['eval', 'Function', 'constructor', 'getOwnPropertyDescriptors', 'getOwnPropertyNames', 'ownKeys'];
 
