@@ -1,6 +1,6 @@
 // ABOUTME: Parses every module under src/ and reports each boundary it crosses: the forge adapter's
 // sides a directory may not import, the facts a layer may not touch, what may spawn, and who may
-// hold L3's dispatching entry point.
+// hold L3's dispatching entry point or L1's dispatching function.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
@@ -43,12 +43,18 @@ const NAMES = [
 ];
 
 /**
- * L3's dispatching entry point, which no module outside src/scheduling/ may bind (rule 8; the
- * architect's ruling 5, §4): the function its module exports as `exported`, whatever that function
- * is called where it is defined. A binding holds it as a binding holds a write side: through the
- * hand-on steps the reader of what each binding holds follows, and no further.
+ * The functions no module outside src/scheduling/ may bind, each the function its module exports as
+ * `exported`, whatever that function is called where it is defined. Rule 8 holds L3's dispatching
+ * entry point there, and rule 9 L1's dispatching function, because L3 alone gives L1 dispatches
+ * (`ARCHITECTURE.md`, boundary rule 2; the M1 architect's ruling 5, §4). Rule 9 bars that one
+ * function and nothing else L1 exports (the architect's ruling 1, P1, on #332), so the CLI may
+ * import L1's kill of recorded groups. A binding holds one as a binding holds a write side: through
+ * the hand-on steps the reader of what each binding holds follows, and no further.
  */
-const ENTRY = { file: 'src/scheduling/loop.mjs', exported: 'loop' };
+const HELD = [
+  { rule: 'rule 8', file: 'src/scheduling/loop.mjs', exported: 'loop', what: 'L3\'s dispatching entry point' },
+  { rule: 'rule 9', file: 'src/execution/run.mjs', exported: 'dispatch', what: 'L1\'s dispatching function' },
+];
 
 /**
  * The modules that may import `node:child_process`: the runners, L0's process adapter, and two
@@ -1182,9 +1188,11 @@ export function boundaryReport(tree) {
       report(file, error.line ?? '?', 'the unreadable-module rule', error.message);
     }
   }
-  if (!tree.has(ENTRY.file)) throw new Error(`L3's dispatching entry point has no module at ${ENTRY.file}, so rule 8 could not fail`);
-  if (modules.has(ENTRY.file) && !modules.get(ENTRY.file).exported.has(ENTRY.exported)) {
-    throw new Error(`${ENTRY.file} exports no \`${ENTRY.exported}\`, L3's dispatching entry point, so rule 8 could not fail`);
+  for (const { rule, file, exported, what } of HELD) {
+    if (!tree.has(file)) throw new Error(`${what} has no module at ${file}, so ${rule} could not fail`);
+    if (modules.has(file) && !modules.get(file).exported.has(exported)) {
+      throw new Error(`${file} exports no \`${exported}\`, ${what}, so ${rule} could not fail`);
+    }
   }
   const runners = modules.get(RUNNERS);
   for (const side of SIDES) {
@@ -1275,15 +1283,17 @@ export function boundaryReport(tree) {
 
   const ownModule = (file, side) => file === sideModule(side) || file === RUNNERS;
 
-  // The definitions the entry point's export resolves to. One the reader cannot resolve is already
-  // refused under the unresolved-import rule, in the entry point's own module.
-  let entry = [];
-  try {
-    if (modules.has(ENTRY.file)) entry = resolveExport(ENTRY.file, ENTRY.exported);
-  } catch {
-    // Reported below, where the entry point's module is read.
-  }
-  const isEntry = (definition) => entry.some((held) => held.file === definition.file && held.local === definition.local);
+  // The definitions each held function's export resolves to. One the reader cannot resolve is
+  // already refused under the unresolved-import rule, in the held function's own module.
+  const held = HELD.map((each) => {
+    try {
+      return { ...each, definitions: modules.has(each.file) ? resolveExport(each.file, each.exported) : [] };
+    } catch {
+      // Reported below, where the held function's module is read.
+      return { ...each, definitions: [] };
+    }
+  });
+  const holds = (definitions, { definitions: own }) => definitions.some((definition) => own.some((each) => each.file === definition.file && each.local === definition.local));
 
   for (const module of modules.values()) {
     const { file } = module;
@@ -1344,7 +1354,9 @@ export function boundaryReport(tree) {
     }
     if (!file.startsWith('src/scheduling/')) {
       for (const { line, name, definitions } of bindings) {
-        if (definitions.some(isEntry)) report(file, line, 'rule 8', `it binds \`${name}\`, which holds L3's dispatching entry point, and only src/scheduling/ may hold it`);
+        for (const each of held) {
+          if (holds(definitions, each)) report(file, line, each.rule, `it binds \`${name}\`, which holds ${each.what}, and only src/scheduling/ may hold it`);
+        }
       }
     }
     for (const { line, name, definitions } of handedOn) {
