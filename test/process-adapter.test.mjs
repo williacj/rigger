@@ -11,7 +11,11 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
+import { alive, fixture, read, running, scratch, startOf } from './process-fixtures.mjs';
+
+// A bound on the test alone, so that a call which never settles fails here rather than holding
+// the suite: nothing waits on it when the call settles.
+const SETTLES_WITHIN = { timeout: 20_000 };
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
 function l0(directory) {
@@ -311,6 +315,29 @@ test('the caller\'s onGroup is handed the command\'s process group before the ca
   assert.equal(beforeYielding, Number(read(directory, 'group')));
 });
 
+test('the caller\'s onGroup is handed, with the group, its leader\'s start time as ps reads it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  let handed;
+
+  const settled = adapt(directory, { command, onGroup: (group, started) => { handed = { group, started, read: startOf(group) }; process.kill(group, 'SIGKILL'); } });
+  await settled;
+
+  assert.equal(handed.started, handed.read);
+});
+
+test('given an onGroup and a start-time read that fails, the call rejects naming that read, onGroup is not called, and no process of the command is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  const ps = fixture(directory, 'ps', 'exit 2');
+  let called = false;
+
+  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started/);
+
+  assert.equal(called, false, 'onGroup was called');
+  assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
+});
+
 test('given an onGroup that throws, the call rejects with what it threw, and no process of the command\'s group is alive', async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `exec ${TAIL}`);
@@ -384,10 +411,6 @@ test('given a process-table read that never answers, the call settles with no pr
   assert.deepEqual(events.map(({ layer, event, group: killed }) => ({ layer, event, group: killed })), [{ layer: 'L0', event: 'group.killed', group }]);
   assert.match(events[0].census, /process-table read timed out/);
 });
-
-// A bound on the test alone, so that a call which never settles fails here rather than holding
-// the suite: nothing waits on it when the call settles.
-const SETTLES_WITHIN = { timeout: 20_000 };
 
 test('survivors that keep forking while the group is killed are all dead when the call settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);

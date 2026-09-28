@@ -1,8 +1,9 @@
 // ABOUTME: L0's process adapter: it runs one command in a process group of its own, and once the
 // command exits, kills what is left of that group, records each process it killed, and stops reading
-// output a process outside the group holds open.
+// output a process outside the group holds open. On a start, it kills a group a dead engine
+// recorded, once it has confirmed that group is the one recorded.
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setImmediate as turn } from 'node:timers/promises';
 
@@ -11,6 +12,12 @@ import { setImmediate as turn } from 'node:timers/promises';
  * the installed engine runs under one holding only node, git and `gh` (`test/package.test.mjs`).
  */
 export const PS = '/bin/ps';
+
+/**
+ * The whole environment `ps` runs under: a UTF-8 locale, so text outside ASCII reads unchanged,
+ * and UTC, so a start time reads the same whatever zone the host is in. See `census`.
+ */
+const PS_ENV = { LC_ALL: 'C.UTF-8', TZ: 'UTC0' };
 
 /**
  * How long L0 waits for one read of the process table before it gives up on the census and kills
@@ -139,7 +146,7 @@ function signal(group, name) {
  *   `<defunct>` in its place.
  * - Under no locale, `ps` writes each byte outside ASCII in `vis` form, so `ü` reads `M-CM-<`.
  *   Under `LC_ALL=C.UTF-8`, which `ps` is given here, UTF-8 text reads unchanged. So `ps` gets
- *   that locale and nothing else of the caller's environment.
+ *   that locale, the zone `startOf` gives it, and nothing else of the caller's environment.
  * - The engineer measured a whole-table read (`ps -A`) cutting command lines at about 1,160
  *   characters where a read of one pid returned all 10,031 (card #336, engineer's round 4 on
  *   #332). On this host and date it did not reproduce: `ps -A`, `ps -g` and `ps -p` each returned
@@ -210,7 +217,7 @@ function rowsOf(printed) {
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(new Error(`the census found the group not all stopped within ${timeout} ms`));
-    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
+    execFile(ps, args, { env: PS_ENV, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
       if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
       resolve(stdout);
@@ -219,13 +226,13 @@ function run(ps, args, remaining, timeout) {
 }
 
 /**
- * Ends what is left of `group` once its command has exited, in the order that keeps each name:
+ * Ends what is left of `group`, in the order that keeps each name:
  * the census, which stops the group and reads it while its processes still exist; the kill; the
  * confirmation that the group is empty; and only then the `L0` events to record, one per process
- * killed, which it hands back. A census that fails still kills the group, and hands back the kill
- * of the group with why its processes went unnamed.
+ * killed, each named `killed`, which it hands back. A census that fails still kills the group, and
+ * hands back the kill of the group with why its processes went unnamed.
  */
-async function contain(group, { ps, readTimeout }) {
+async function contain(group, { ps, readTimeout }, killed = 'survivor.killed') {
   if (!occupied(group)) return [];
   let survivors;
   let unnamed;
@@ -236,7 +243,7 @@ async function contain(group, { ps, readTimeout }) {
   }
   await ended(group);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return survivors.map((survivor) => ['survivor.killed', survivor]);
+  return survivors.map((survivor) => [killed, survivor]);
 }
 
 /**
@@ -291,7 +298,7 @@ export async function runCommand({ command, args, cwd, env, emitter, onGroup, ps
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   if (child.pid !== undefined) {
     try {
-      onGroup?.(child.pid);
+      if (onGroup) onGroup(child.pid, startOf(ps, child.pid, readTimeout));
     } catch (refusal) {
       // A group the caller could not take runs no further: it is ended, and recorded, as a
       // survivor would be, before the caller hears why.
@@ -316,6 +323,100 @@ export async function runCommand({ command, args, cwd, env, emitter, onGroup, ps
   const unrecorded = record(emitter, events);
   if (unrecorded.length > 0) throw refused(unrecorded, result);
   return result;
+}
+
+/**
+ * Kills the process group `group` that L1 recorded with a leader that started at `started`, once
+ * it has confirmed from each live process's start time that the group is the one recorded. It
+ * leaves a group it finds is not, and does nothing where the group has no live process. A kill
+ * runs as `runCommand`'s does, census first, and records each process it killed as
+ * `recorded.killed` through `emitter`. Where the sink refused any of those, it rejects with an
+ * `EVENT_REFUSED` failure, once the group is empty. Where the start times cannot be read, it
+ * rejects having killed nothing.
+ */
+export async function killRecordedGroup({ group, started, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
+  const starts = await startsIn(ps, group, readTimeout);
+  if (!recorded(group, started, starts)) return;
+  const unrecorded = record(emitter, await contain(group, { ps, readTimeout }, 'recorded.killed'));
+  if (unrecorded.length > 0) throw refused(unrecorded);
+}
+
+/**
+ * Whether the live processes of `group`, by their `starts`, are the group recorded with a leader
+ * that started at `started`. With its leader alive, the group is the one recorded where the
+ * leader's start is the one recorded.
+ *
+ * With its leader dead, the leaderless rule decides (the owner's Q5 on #332): the group is the
+ * one recorded where every live member started no earlier than the recorded leader. The rule
+ * rests on two premises (the architect's ruling 1, B3, on #332):
+ *
+ * - a group id is not given out again while the group has a member;
+ * - every member of a group Rigger created descends from the leader it recorded, so started no
+ *   earlier than it.
+ *
+ * It admits one wrong kill. The recorded group empties, its id is given to a later group of
+ * processes Rigger did not start, that group's leader dies, and its members live on until the
+ * start. Each of them started after the recorded leader, so the rule kills them.
+ * `test/kill-recorded.test.mjs` shows it with a fabricated entry naming a group the test started
+ * outside Rigger ("the wrong kill the leaderless rule admits"). That is an inference from the two
+ * premises and the rule, not a measurement: no host run waits for an id to be given again.
+ */
+function recorded(group, started, starts) {
+  if (starts.has(group)) return starts.get(group) === started;
+  return [...starts.values()].every((start) => start >= started);
+}
+
+/**
+ * The start time of process `pid`, read in the step that spawned it, before the caller yields,
+ * and given up on after `timeout` milliseconds. L0 reads it only for a caller that takes the
+ * group, to tell the group from a later one given the same id. It blocks the event loop while
+ * `ps` runs: one read took 0.95 ms at the median and 1.55 ms at most, over 200 reads in the tick
+ * that spawned the process, with Node 26.5.0 on macOS 27.0 on 2026-09-27.
+ *
+ * Where `ps`'s start time can differ from the process's true start (`D16` rule 3), measured with
+ * `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
+ *
+ * - `lstart` is whole seconds: 100 of 100 pairs of processes Node spawned one after the other
+ *   read the same `lstart`. So two processes started at one group id within one second are not
+ *   told apart, and the second is taken for the first. That needs the id given out twice within
+ *   one second. 2,001 processes Node spawned one after another, at 1,255 a second, were given
+ *   pids rising from 52,223 to 54,266. That the kernel hands pids out rising until they wrap is
+ *   an inference from that run, not a measurement; on it, an id is given again only once every
+ *   other free id has been.
+ * - It is the time the process was forked, which comes before it runs its command.
+ * - It prints in the local zone unless `ps` is given one, and with no zone in the text, so it is
+ *   given UTC (`PS_ENV`): one process read `Sun Sep 27 22:50:08 2026` under the host's zone and
+ *   `Mon Sep 28 03:50:08 2026` under UTC.
+ * - A zombie, a process that has exited and not been reaped, still reads its start time, in a
+ *   read of its group and in a read of its pid alone. So does a leader that exited at once, read
+ *   in the tick that spawned it (the engineer's round 1 on #332).
+ * - It is read from the wall clock at the fork. How a change to the host's clock after the fork
+ *   moves it is not measured here.
+ */
+function startOf(ps, pid, timeout) {
+  let printed;
+  try {
+    printed = execFileSync(ps, ['-p', String(pid), '-o', 'lstart='], { env: PS_ENV, timeout, killSignal: 'SIGKILL', encoding: 'utf8' });
+  } catch (cause) {
+    throw new Error(`L0 could not read when the leader of group ${pid} started, so it ended the group: ${cause.message}`, { cause });
+  }
+  return secondsOf(printed.replace(/\n$/, ''));
+}
+
+/** The start time of each live process in `group`, by its pid, read as `startOf` reads one. */
+async function startsIn(ps, group, timeout) {
+  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,lstart='], timeout, timeout));
+  return new Map([...rows].map(([pid, printed]) => [pid, secondsOf(printed)]));
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole seconds since the epoch. */
+function secondsOf(printed) {
+  const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
+  const month = MONTHS.indexOf(at?.[1]);
+  if (month < 0) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return Date.UTC(Number(at[6]), month, Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000;
 }
 
 /** Whether `output` is still unread once `bound` milliseconds have passed. */

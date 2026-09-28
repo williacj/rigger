@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import childProcess, { spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs, { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -13,16 +13,11 @@ import { PassThrough } from 'node:stream';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { dispatch } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, runCommand } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
+import { alive, fixture, read, running, scratch, startOf, until } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
 const SETTLES_WITHIN = { timeout: 20_000 };
-
-/** Settles once `condition` holds, checked once per turn of the event loop. */
-async function until(condition) {
-  while (!condition()) await new Promise((resolve) => setImmediate(resolve));
-}
 
 /** The state directory a test's dispatches name: `.rigger/` in the scratch directory. */
 const stateOf = (directory) => join(directory, '.rigger');
@@ -92,7 +87,14 @@ test('while a dispatch with a card runs, its record entry carries that card', SE
 test('while a dispatch with no card runs, its record entry carries its dispatch id and no card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   await whileHeld(directory, { id: 'd-report' }, (group) => {
-    assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group, dispatch: 'd-report' }]);
+    assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group, started: startOf(group), dispatch: 'd-report' }]);
+  });
+});
+
+test('while a dispatch runs, its record entry carries its group leader\'s start time as ps reads it', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  await whileHeld(directory, { id: 'd-1', card: 1412 }, (group) => {
+    assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group).map((entry) => entry.started), [startOf(group)]);
   });
 });
 
@@ -176,14 +178,17 @@ function failingAfterSpawn(t, pid, error) {
 
 test('given a dispatch L0 rejects for any reason but a refused event, the record keeps its entry for a later start to settle', async (t) => {
   const directory = scratch(t);
-  // A pid no process holds: the entry is only read, and nothing is signalled.
-  const pid = 999_999_999;
+  // The pid of a group the test holds, so L0 reads a start time for it, as it does for every
+  // group it hands over. The entry is only read, and nothing is signalled; the teardown ends it.
+  const held = spawn(holdingCommand(directory), [], { detached: true, stdio: 'ignore', env: {} });
+  await until(() => existsSync(join(directory, 'group')));
+  const { pid } = held;
   const error = new Error('the child failed after its spawn');
   failingAfterSpawn(t, pid, error);
 
   await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: '/usr/bin/true' }), (thrown) => thrown === error);
 
-  assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group: pid, dispatch: 'd-1', card: 1412 }]);
+  assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group: pid, started: startOf(pid), dispatch: 'd-1', card: 1412 }]);
 });
 
 /** A command whose first action writes `$here/started`. */
@@ -384,7 +389,7 @@ test('a partial record a stopped writer left in the state directory is gone once
 test('a reader finds the record as it was before a write or as it is after it, never part of one, when its writer is stopped part-way through', async (t) => {
   const groups = new URL('../src/execution/groups.mjs', import.meta.url).href;
   // Entries long enough that half of the record's bytes is not a whole record.
-  const entry = (group) => ({ group, dispatch: `d-${'x'.repeat(200)}-${group}`, card: 1412 });
+  const entry = (group) => ({ group, started: 1_790_000_000, dispatch: `d-${'x'.repeat(200)}-${group}`, card: 1412 });
   const earlier = [entry(101), entry(102)];
   for (const at of ['bytes', 'rename']) {
     const directory = scratch(t);
