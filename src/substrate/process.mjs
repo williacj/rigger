@@ -93,9 +93,13 @@ function answers(target) {
 }
 
 /**
- * Kills every process left in `group` and settles once the group is empty, or once it has held
- * nothing but zombies for `UNREAPED_BOUND`. The wait is on that condition, looked at after each
- * pause, so nothing else in Rigger stops meanwhile.
+ * Kills every process left in `group` and settles once the group is empty, or once `UNREAPED_BOUND`
+ * has passed with no read of its states finding a member that is not a zombie. The wait is on that
+ * condition, looked at after each pause, so nothing else in Rigger stops meanwhile.
+ *
+ * A read that fails, or times out, finds no such member, so the call settles whatever the process
+ * table does. A group whose table L0 cannot read is still sent the kill on every look until the
+ * bound passes.
  *
  * The kill is sent again on every look, because a process can be in the group without having
  * received it. One forked while the kernel delivers a group kill can miss it and run on: the
@@ -110,24 +114,28 @@ async function ended(group, ps, readTimeout) {
     if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL');
     if (!occupied(group)) return;
-    if (wait > 0 && await zombiesOnly(group, ps, readTimeout)) {
-      unreapedSince ??= Date.now();
-      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return;
-    } else {
+    if (wait === 0) continue;
+    const looked = Date.now();
+    if (await living(group, ps, readTimeout)) {
       unreapedSince = undefined;
+    } else {
+      unreapedSince ??= looked;
+      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return;
     }
   }
 }
 
-/** Whether a read of `group`'s states finds nothing but zombies. A read that fails finds no answer. */
-async function zombiesOnly(group, ps, timeout) {
+/** Whether a read of `group`'s states finds a member that is not a zombie. One that fails does not. */
+async function living(group, ps, timeout) {
   try {
-    const states = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], timeout, timeout));
-    return [...states.values()].every((state) => state.startsWith('Z'));
+    return [...(await statesOf(group, ps, timeout)).values()].some((state) => !state.startsWith('Z'));
   } catch {
     return false;
   }
 }
+
+/** Each process in `group` and its state, by pid, read in one `ps` run given up on after `timeout` ms. */
+const statesOf = async (group, ps, timeout) => rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], timeout, timeout));
 
 /** Sends `name` to every process in `group`, and to none where the group has emptied. */
 function signal(group, name) {

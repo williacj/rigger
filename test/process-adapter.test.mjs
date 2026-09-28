@@ -972,3 +972,25 @@ test('a survivor the census named that exits on its own before the kill is not r
     { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')) },
   ]);
 });
+
+// A `ps` stand-in that never answers: it `exec`s a wait the adapter times out and kills, and names
+// the scratch directory, so the teardown finds any the adapter left.
+const HUNG_PS = 'exec /usr/bin/tail -f "$here/hold"';
+
+// A `ps` stand-in that fails as `ps` fails given what it cannot read.
+const FAILING_PS = 'echo "ps: failing on purpose" >&2\nexit 2';
+
+for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) {
+  test(`a group holding a zombie that its parent outside the group never reaps settles where the process-table read ${what}, with no live process of the group left`, SETTLES_WITHIN, async (t) => {
+    const directory = holding(t);
+    const command = unreaped(directory);
+    const ps = fixture(directory, 'ps', body);
+
+    const { events } = await recorded(directory, { command, ps, readTimeout: 200 });
+
+    const zombie = Number(read(directory, 'zombie.pid'));
+    assert.equal(spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(zombie)], { encoding: 'utf8' }).stdout[0], 'Z', 'the zombie was reaped, so the test proves nothing');
+    assert.deepEqual(statesIn(Number(read(directory, 'group'))), ['Z'], 'a process of the command\'s group other than the zombie is left');
+    assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+  });
+}
