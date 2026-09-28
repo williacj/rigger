@@ -585,8 +585,9 @@ const timedOut = (timeout) => new Error(`the process-table read timed out after 
  * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
  * matched.
  *
- * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
- * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
+ * What `ps` cannot show is that the kernel handed it every process there is, so none of the census,
+ * the kill and the start-time read takes a process as gone because a read left it out (`census`,
+ * `killedOf`, `startsIn`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
