@@ -656,3 +656,65 @@ test('a survivor whose executable\'s name holds a newline is named, and costs no
   assert.deepEqual(byPid.get(Number(read(directory, 'broken.pid'))), { event: 'survivor.killed', name: 'a\nb' });
   assert.equal(events.length, 2);
 });
+
+/**
+ * The lines of a fixture that start a holder which leaves the command's process group, then holds
+ * the command's standard output open until it is killed, writing its pid to `$here/holder.pid`.
+ * They wait until it has left, or the group kill at the command's exit would end it first and the
+ * test would prove nothing (engineer, round 2, 10). On macOS no `setsid` binary exists, and perl's
+ * `setpgrp(0, 0)` leaves the group. Its standard error goes to a file, so it holds only the one
+ * pipe, and says there why it failed where it did.
+ */
+const DETACH = [
+  `/usr/bin/perl -e 'my $here = $ARGV[0]; setpgrp(0, 0) or die "leave: $!"; open(my $f, ">", "$here/left") or die "left: $!"; close $f; exec "/usr/bin/tail", "-f", "$here/hold"' "$here" 2>"$here/holder.err" &`,
+  'echo $! > "$here/holder.pid"',
+  'while [ ! -f "$here/left" ]; do :; done',
+].join('\n');
+
+test('a command leaving a process outside its group that holds its standard output settles once the bound has passed, without waiting for that process', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);
+  const outputBound = 300;
+
+  const started = performance.now();
+  const { result } = await recorded(directory, { command, outputBound });
+  const elapsed = performance.now() - started;
+
+  assert.equal(result.exit, 0);
+  assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
+  assert.equal(alive(Number(read(directory, 'holder.pid'))), true, 'the holder was not alive at the settle, so it proves nothing');
+  assert.ok(elapsed >= outputBound, `the call settled after ${elapsed} ms, before the bound of ${outputBound} ms passed`);
+});
+
+test('a command whose output a process outside its group holds open is recorded under L0 as held past its group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);
+
+  const { events } = await recorded(directory, { command, outputBound: 100 });
+
+  assert.deepEqual(events.map(({ layer, event, group }) => ({ layer, event, group })), [
+    { layer: 'L0', event: 'output.held', group: Number(read(directory, 'group')) },
+  ]);
+});
+
+test('a caller whose call settled past a process holding its output can exit while that process is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', DETACH);
+  // A caller in a process of its own, which does nothing once the call has settled, so the one
+  // thing that could keep it from exiting is what the adapter holds.
+  const caller = join(directory, 'caller.mjs');
+  writeFileSync(caller, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
+  ].join('\n'));
+
+  const run = spawn(process.execPath, [caller], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(run, 'exit');
+
+  assert.equal(status, 0, stderr);
+  assert.equal(alive(Number(read(directory, 'holder.pid'))), true, 'the holder was not alive when the caller exited, so it proves nothing');
+});

@@ -20,6 +20,16 @@ export const PS = '/bin/ps';
  */
 export const READ_TIMEOUT = 5_000;
 
+/**
+ * How long L0 reads a command's output once its group is empty before it stops, because a process
+ * that left the group holds a pipe open. A judgment, not a measurement. Its premise: once the group
+ * is empty, every byte the group wrote is already in the pipes, and the output is only what the
+ * group wrote (the Failure model), so the bound waits for nothing of the command's own but a read
+ * of what is buffered. One second covers that on a loaded host, and costs a command whose output a
+ * detached process holds no more than a second.
+ */
+export const OUTPUT_BOUND = 1_000;
+
 /** Every chunk `stream` carries, as one buffer, once the stream has closed. */
 async function drained(stream) {
   const chunks = [];
@@ -227,7 +237,7 @@ async function contain(group, { emitter, ps, readTimeout }) {
  * empty; L0 reads both pipes until they close; the call settles. So the output is everything the
  * group wrote until that kill, and a survivor holding a pipe never holds the call open.
  */
-export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
+export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -236,6 +246,21 @@ export async function runCommand({ command, args, cwd, env, emitter, ps = PS, re
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const [exit] = await once(child, 'exit');
   await contain(child.pid, { emitter, ps, readTimeout });
+  if (await heldPast(output, outputBound)) {
+    // Closing the pipes lets go of their handles, which would otherwise hold this process open.
+    child.stdout.destroy();
+    child.stderr.destroy();
+    emitter.emit('output.held', { group: child.pid, bound: outputBound });
+  }
   const [stdout, stderr] = await output;
   return { exit, stdout, stderr };
+}
+
+/** Whether `output` is still unread once `bound` milliseconds have passed. */
+async function heldPast(output, bound) {
+  let timer;
+  const passed = new Promise((resolve) => { timer = setTimeout(resolve, bound, true); });
+  const held = await Promise.race([output.then(() => false), passed]);
+  clearTimeout(timer);
+  return held;
 }
