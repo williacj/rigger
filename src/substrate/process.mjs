@@ -1041,6 +1041,16 @@ function startOf(ps, pid, timeout) {
  * the table says which processes the group holds (`D16` rule 3). Where the leader is dead, such a
  * read decides the leaderless rule without that member's start.
  *
+ * So one case is left, and nothing but the process table can close it (`D16` rule 3), as on the
+ * kill (`outlived`): a read that exits 0 and consistently leaves out a live member while listing
+ * the group's zombies, its dead leader among them. The live starts are then none, the leaderless
+ * rule admits the group, and the hidden member is killed, even one that started before the
+ * recorded leader. No read of the table can tell that from a group holding only zombies: such a
+ * read is exactly what the table gives for one, and signal 0 reaches a zombie, and a group holding
+ * only zombies, as it reaches a live process (`outlived`). Refusing every group whose read lists
+ * only zombies would instead keep the entry of every group a dead engine left holding zombies, for
+ * ever.
+ *
  * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
  * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
  * with this read's arguments and `PS_ENV`: a group whose one process had exited and been reaped
