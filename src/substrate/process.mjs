@@ -98,29 +98,45 @@ export function atExit(step) {
 /** Whether the exit cleanup is installed, which L0 does when it creates its first group. */
 let installed = false;
 
-/** Whether the exit cleanup has run, so it runs once, whichever ending reached it first. */
-let cleaned = false;
-
-/** Installs the exit cleanup, once: on `exit`, and on every signal in `HANDLED`. */
+/**
+ * Installs the exit cleanup, once: on `exit`, and ahead of every other listener on every signal in
+ * `HANDLED`. It stays ahead: a listener put ahead of it later has it put back in front before
+ * anything else runs, because a signal is only ever emitted from the event loop.
+ */
 function install() {
   if (installed) return;
   installed = true;
   process.on('exit', cleanup);
-  for (const name of HANDLED) process.on(name, onSignal);
+  for (const name of HANDLED) process.prependListener(name, onSignal);
+  process.on('newListener', (name) => {
+    if (HANDLED.includes(name)) queueMicrotask(() => ahead(name));
+  });
+}
+
+/** Puts `onSignal` first among `name`'s listeners, where it is there at all. */
+function ahead(name) {
+  const listeners = process.listeners(name);
+  if (!listeners.includes(onSignal) || listeners[0] === onSignal) return;
+  // Node removes the last instance of a listener added twice, which is the one behind.
+  process.prependListener(name, onSignal);
+  process.removeListener(name, onSignal);
 }
 
 /**
- * Cleans up on signal `name`, then ends the process by that signal, as it would have ended with
- * no listener. Where another listener is there for it, the process would not have ended by it,
- * so this leaves it to that listener, and cleans up at whatever exit follows.
+ * On signal `name`, cleans up first, and then leaves the process to end as it would have with no
+ * cleanup. So it takes itself off the signal before any other listener runs: they then find only
+ * each other, as they would have. Where none is left, Node gives the signal its default action
+ * again, and raising it ends the process by it. Where one is left, the process ends as that
+ * listener has it, and a process it keeps running has the cleanup back on the signal a turn later.
+ *
+ * It runs ahead of every other listener, so a `once` listener that has not yet run is still
+ * counted, and no listener can end the process before the cleanup has run.
  */
 function onSignal(name) {
-  if (process.listenerCount(name) > 1) return;
   cleanup();
-  // With no listener left, Node gives the signal its default action again, so raising it ends
-  // the process by it.
   process.removeListener(name, onSignal);
-  process.kill(process.pid, name);
+  if (process.listenerCount(name) === 0) process.kill(process.pid, name);
+  else setImmediate(() => process.listeners(name).includes(onSignal) || process.prependListener(name, onSignal));
 }
 
 /**
@@ -131,13 +147,19 @@ function onSignal(name) {
  * caller's step for its group, which is L1's removal of the group's entry, and last the steps
  * handed to `atExit`. A failure in any of these is written to standard error and never stops the
  * rest, nor changes how the process ends.
+ *
+ * It ends only the groups it holds when it runs, and lets each go, so a process that a signal
+ * listener of its caller keeps running has the groups it starts later ended at its next ending.
+ * So it can run more than once, and each step handed to `atExit` must bear being taken again, as
+ * the sink's end does.
  */
 function cleanup() {
-  if (cleaned) return;
-  cleaned = true;
   for (const read of reads) read.kill('SIGKILL');
   const ended = [];
-  for (const [group, call] of groups) attempt(() => ended.push([group, call, containNow(group, call)]));
+  for (const [group, call] of groups) {
+    groups.delete(group);
+    attempt(() => ended.push([group, call, containNow(group, call)]));
+  }
   const unrecorded = ended.flatMap(([, { emitter }, events]) => record(emitter, events));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
   for (const [group, { onExit }] of ended) attempt(() => onExit?.(group));
@@ -501,10 +523,11 @@ export async function runCommand({ command, args, cwd, env, emitter, onGroup, on
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
+  // A group the exit cleanup took is one it has ended and recorded, so the call records it again
+  // only where it still held it.
   const empty = async () => {
     const events = await contain(child.pid, { ps, readTimeout });
-    groups.delete(child.pid);
-    return events;
+    return groups.delete(child.pid) ? events : [];
   };
   if (child.pid !== undefined) {
     install();

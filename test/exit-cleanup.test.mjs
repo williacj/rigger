@@ -35,8 +35,10 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
  *   read of the process table does not answer, so that group is stopped when the caller ends.
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
- * - `listens`: whether the caller has a `SIGTERM` listener of its own, which says `heard`, runs on
- *   until the test writes `go`, and then exits 3.
+ * - `before` and `after`: code of the test's own, which the caller runs before it starts its first
+ *   group and once its groups are up. It can call `start(label)`, which starts a command as the
+ *   caller starts its own, and settles once its child is up; and `turn()`, which settles a turn
+ *   of the event loop later.
  */
 const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
@@ -50,27 +52,26 @@ const CALLER = [
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
   'atExit(sink.end);',
-  "if (options.listens) process.on('SIGTERM', async () => {",
-  // It says so a turn later, once every other listener for the signal has run.
-  '  await turn();',
-  "  process.stdout.write('heard\\n');",
-  "  while (!existsSync(join(directory, 'go'))) await turn();",
-  '  process.exit(3);',
-  '});',
   // Touching process.stderr is what every verb that prints does, and it leaves the descriptor
   // non-blocking, where a single write to a full pipe comes back short.
   "process.stderr.write('');",
   'const turn = () => new Promise((resolve) => setImmediate(resolve));',
+  'function begin(label) {',
+  "  const command = join(directory, label === 1 && options.stopped ? 'leaving' : options.commands?.[label] ?? 'command');",
+  "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
+  "  const call = { command, args, cwd: directory, env: {}, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
+  "  const started = label === 1 && options.dispatch",
+  "    ? dispatch({ id: 'd-1', card: 7, directory: state, sink, ...call })",
+  "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }) });",
+  '  started.catch(() => {});',
+  '}',
+  'async function start(label) {',
+  '  begin(label);',
+  "  while (!existsSync(join(directory, `child.${label}`))) await turn();",
+  '}',
+  'if (options.before) eval(options.before);',
   'if (options.groups) {',
-  '  for (const label of [1, 2]) {',
-  "    const command = join(directory, label === 1 && options.stopped ? 'leaving' : 'command');",
-  "    const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
-  "    const call = { command, args, cwd: directory, env: {}, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
-  "    const started = label === 1 && options.dispatch",
-  "      ? dispatch({ id: 'd-1', card: 7, directory: state, sink, ...call })",
-  "      : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }) });",
-  '    started.catch(() => {});',
-  '  }',
+  '  for (const label of [1, 2]) begin(label);',
   "  while (!existsSync(join(directory, 'child.1')) || !existsSync(join(directory, 'child.2'))) await turn();",
   '  if (options.stopped) {',
   "    const child = readFileSync(join(directory, 'child.1'), 'utf8').trim();",
@@ -78,6 +79,7 @@ const CALLER = [
   "    while (!existsSync(join(directory, 'ps-asked')) || !state().startsWith('T')) await turn();",
   '  }',
   '}',
+  'if (options.after) eval(options.after);',
   "process.stdout.write('ready\\n');",
   // The test reads the process table before the caller ends, and says so by writing `go`.
   "if (options.ending !== 'wait') while (!existsSync(join(directory, 'go'))) await turn();",
@@ -114,15 +116,51 @@ function fixtures(directory) {
     'exec /bin/ps "$@"',
   ].join('\n'));
   fixture(directory, 'ps-never', 'exec /usr/bin/tail -f "$here/ps-hold"');
+  // `joining` is `command` with a joiner beside its child: a process that leaves the group at once,
+  // waits for the child to die, and then puts a process of its own into the group, which runs until
+  // killed. `ps-join` holds the first read of group 1 made for anything but a census, which is
+  // the cleanup's confirmation, until that process has joined.
+  const joiner = [
+    'my ($here, $group, $child) = @ARGV;',
+    'setpgrp(0, 0) or die "leaving: $!";',
+    'open my $ready, ">", "$here/joiner.ready" or die; close $ready;',
+    '1 while kill 0, $child;',
+    'my $pid = fork // die "fork: $!";',
+    'if (!$pid) {',
+    '  setpgrp(0, $group) or die "joining: $!";',
+    '  open my $file, ">", "$here/joined.pid" or die; print $file $$; close $file;',
+    '  exec "/usr/bin/tail", "-f", "$here/hold";',
+    '}',
+    'waitpid($pid, 0);',
+  ].join(' ');
+  fixture(directory, 'joining', [
+    'echo $$ > "$here/group.$1"',
+    "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
+    'echo $! > "$here/child.$1.tmp"',
+    "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
+    `/usr/bin/perl -e '${joiner}' "$here" $$ $! &`,
+    'while [ ! -f "$here/joiner.ready" ]; do :; done',
+    '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
+    'wait',
+  ].join('\n'));
+  fixture(directory, 'ps-join', [
+    'case " $* " in',
+    '  *" -ww "*) ;;',
+    '  *" -g $(/bin/cat "$here/group.1") "*) while [ ! -f "$here/joined.pid" ]; do :; done ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
 }
 
 /**
  * Runs the caller in a scratch directory under `options`, sends it `signal` once it is ready,
  * where one is given, and answers how it ended and what it left. `inspect`, where given, is handed
  * the directory once the caller is ready and before it ends, and what it answers is `seen`. So is
- * `whileHeard`, once a caller that listens has heard the signal, and what it answers is `heard`.
+ * `whileHeard`, once the caller has said `heard` on its standard output, and what it answers is
+ * `heard`. Then, where `again` names a signal, the caller is sent it; and where it does not, the
+ * test writes `go`.
  */
-async function endCaller(t, options, { signal, refusing = false, inspect, whileHeard } = {}) {
+async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard } = {}) {
   const directory = scratch(t);
   fixtures(directory);
   if (refusing) {
@@ -153,7 +191,8 @@ async function endCaller(t, options, { signal, refusing = false, inspect, whileH
     while (!stdout.includes('heard\n')) await new Promise((resolve) => setImmediate(resolve));
     heard = whileHeard(directory);
   }
-  if (signal === undefined || whileHeard !== undefined) writeFileSync(join(directory, 'go'), '');
+  if (again !== undefined) process.kill(run.pid, again);
+  else if (signal === undefined || whileHeard !== undefined) writeFileSync(join(directory, 'go'), '');
   const [status, killedBy] = await ended;
   return { directory, processes, seen, heard, status, signal: killedBy, stderr };
 }
@@ -243,14 +282,70 @@ for (const ending of ['exit 0', 'exit 1']) {
   });
 }
 
-test('a caller holding two groups whose own SIGTERM listener keeps it running leaves both groups running, and at the exit it makes, none', ENDS_WITHIN, async (t) => {
-  const everyAlive = (directory) => processesOf(directory).every(({ pid }) => alive(pid));
-  const { directory, processes, heard, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, listens: true }, { signal: 'SIGTERM', whileHeard: everyAlive });
+// A caller with signal listeners of its own. Whatever they are, the cleanup runs before the caller
+// ends, and the caller ends as those listeners alone would have ended it.
 
-  assert.equal(heard, true, 'a process of the caller\'s groups died when the caller\'s own listener kept it running');
-  assert.deepEqual({ status, signal }, { status: 3, signal: null }, stderr);
+/**
+ * Listeners a caller adds for `SIGTERM`, each as the code that adds it and where: before the
+ * caller's first group, or once its groups are up.
+ */
+const LISTENERS = [
+  {
+    title: 'a `once` listener added before its first group, which says `heard` and exits 3 once the test says `go`',
+    before: "process.once('SIGTERM', async () => { process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });",
+    heard: true,
+  },
+  {
+    title: 'a listener added after its groups, which removes every listener and raises the signal again',
+    after: "process.on('SIGTERM', () => { process.removeAllListeners('SIGTERM'); process.kill(process.pid, 'SIGTERM'); });",
+  },
+  {
+    title: 'a listener put ahead of every other after its groups, which removes every listener and raises the signal again',
+    after: "process.prependListener('SIGTERM', () => { process.removeAllListeners('SIGTERM'); process.kill(process.pid, 'SIGTERM'); });",
+  },
+  {
+    title: 'a listener added after its groups, which raises the signal again only where it is the one listener left',
+    after: "process.on('SIGTERM', function onTerm() { if (process.listeners('SIGTERM').length === 1) { process.removeListener('SIGTERM', onTerm); process.kill(process.pid, 'SIGTERM'); } });",
+  },
+];
+
+for (const { title, before, after, heard } of LISTENERS) {
+  test(`a caller holding two groups, with ${title}, ends on SIGTERM as it does holding none, with no process of either alive and each kill recorded`, ENDS_WITHIN, async (t) => {
+    const extra = { signal: 'SIGTERM', whileHeard: heard ? () => true : undefined };
+    const expected = await endCaller(t, { ending: 'wait', sink: 'named', groups: false, before, after }, extra);
+
+    const { directory, processes, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, before, after }, extra);
+
+    assert.deepEqual({ status, signal }, { status: expected.status, signal: expected.signal }, stderr);
+    await assertNoneAlive(directory);
+    assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+  });
+}
+
+test('a caller whose own listener keeps it running past a first SIGTERM, and starts a third group, leaves none of the three alive after a second', ENDS_WITHIN, async (t) => {
+  // At the first signal the listener starts group 3 and says `heard`. At the second, it removes
+  // every listener and raises the signal again.
+  const after = [
+    'let heard = 0;',
+    "process.on('SIGTERM', async () => {",
+    '  heard += 1;',
+    "  if (heard === 1) { await start(3); process.stdout.write('heard\\n'); return; }",
+    "  process.removeAllListeners('SIGTERM');",
+    "  process.kill(process.pid, 'SIGTERM');",
+    '});',
+  ].join('\n');
+  const third = (directory) => [Number(read(directory, 'group.3')), Number(read(directory, 'child.3'))];
+
+  const { directory, heard, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, after }, { signal: 'SIGTERM', whileHeard: third, again: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
-  assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+  const [group, child] = heard;
+  const deadline = Date.now() + 10_000;
+  while (occupied(group) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(occupied(group), false, 'a process of the third group is alive');
+  assert.equal(alive(child), false, `process ${child} is alive`);
+  assert.ok(streamOf(directory).some(({ pid }) => pid === child), 'the third group\'s child was not recorded as killed');
 });
 
 /**
@@ -310,8 +405,10 @@ const probe = (listen) => [
  *
  * A process that answers two pings sent after the signal has taken it: the kernel acts on a
  * signal before the process next runs its own code.
+ *
+ * The probe is ended and reaped by `t`'s own teardown, whether the test passes or fails.
  */
-async function answer(name, { listen = false, flags = [] } = {}) {
+async function answer(t, name, { listen = false, flags = [] } = {}) {
   const child = spawn(process.execPath, [...flags, '-e', probe(listen), name], { stdio: ['pipe', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
@@ -319,6 +416,10 @@ async function answer(name, { listen = false, flags = [] } = {}) {
   child.stdin.on('error', () => {});
   let ended;
   const closed = once(child, 'close').then(([status, signal]) => { ended = { status, signal }; });
+  t.after(async () => {
+    if (ended === undefined) child.kill('SIGKILL');
+    await closed;
+  });
   const turn = () => new Promise((resolve) => setImmediate(resolve));
   while (!out.includes('ready\n') && ended === undefined) await turn();
   if (ended === undefined) {
@@ -353,33 +454,34 @@ test('every signal Node names is either handled by the exit cleanup or left out 
   assert.deepEqual([...HANDLED, ...leftOut].sort(), [...NAMED].sort());
 });
 
-test('every signal the exit cleanup handles ends a Node process that has no listener by that signal, and runs a listener where one is given', ENDS_WITHIN, async () => {
-  const bare = await Promise.all(HANDLED.map((name) => answer(name)));
-  const listened = await Promise.all(HANDLED.map((name) => answer(name, { listen: true })));
+test('every signal the exit cleanup handles ends a Node process that has no listener by that signal, and runs a listener where one is given', ENDS_WITHIN, async (t) => {
+  const bare = await Promise.all(HANDLED.map((name) => answer(t, name)));
+  const listened = await Promise.all(HANDLED.map((name) => answer(t, name, { listen: true })));
 
   assert.deepEqual(bare, HANDLED.map((name) => ({ ended: name })));
   assert.deepEqual(listened, HANDLED.map(() => ({ exited: 0, heard: true })));
 });
 
-test('every signal left out as uncatchable is refused a listener by Node', ENDS_WITHIN, async () => {
-  const answers = await Promise.all(LEFT_OUT.uncatchable.map((name) => answer(name, { listen: true })));
+test('every signal left out as uncatchable is refused a listener by Node', ENDS_WITHIN, async (t) => {
+  const answers = await Promise.all(LEFT_OUT.uncatchable.map((name) => answer(t, name, { listen: true })));
   assert.deepEqual(answers, LEFT_OUT.uncatchable.map(() => ({ refused: true })));
 });
 
-test('every signal left out as unsafe ends a Node process that has no listener, so Node\'s own word alone keeps it out', ENDS_WITHIN, async () => {
-  const answers = await Promise.all(LEFT_OUT.unsafe.map((name) => answer(name)));
+test('every signal left out as unsafe ends a Node process that has no listener, so Node\'s own word alone keeps it out', ENDS_WITHIN, async (t) => {
+  const answers = await Promise.all(LEFT_OUT.unsafe.map((name) => answer(t, name)));
   assert.deepEqual(answers, LEFT_OUT.unsafe.map((name) => ({ ended: name })));
 });
 
-test('every signal left out as harmless, or for the inspector, leaves a Node process that has no listener running or stopped', ENDS_WITHIN, async () => {
+test('every signal left out as harmless, or for the inspector, leaves a Node process that has no listener running or stopped', ENDS_WITHIN, async (t) => {
   const names = [...LEFT_OUT.harmless, ...LEFT_OUT.inspector];
-  const answers = await Promise.all(names.map((name) => answer(name)));
+  const answers = await Promise.all(names.map((name) => answer(t, name)));
   assert.deepEqual(answers, names.map(() => ({ survived: true })));
 });
 
 test('a listener for the signal left out for the profiler changes how a profiled Node process ends', ENDS_WITHIN, async (t) => {
   const directory = scratch(t);
-  const profiled = (code) => spawnSync(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${directory}`, '-e', code], { encoding: 'utf8' });
+  // Each run is ended and reaped at the bound, so a run that hangs fails the test and leaves nothing.
+  const profiled = (code) => spawnSync(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${directory}`, '-e', code], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
   const [name] = LEFT_OUT.profiler;
 
   const without = profiled('');
@@ -474,6 +576,17 @@ test('given a census that has one group stopped when the caller receives SIGTERM
   assert.equal(signal, 'SIGTERM', `status ${status}: ${stderr}`);
   await assertNoneAlive(directory);
   assert.deepEqual(running(`${directory}/ps-hold`), [], 'the census\'s read of the process table is alive');
+});
+
+// The confirmation of the exit kill.
+
+test('a process that joins a group after the cleanup has killed it is killed before the caller ends', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join' }, { signal: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  assert.ok(existsSync(join(directory, 'joined.pid')), 'no process joined the group after its kill, so this proves nothing');
+  await assertNoneAlive(directory);
+  assert.equal(alive(Number(read(directory, 'joined.pid'))), false, 'the process that joined the group after its kill is alive');
 });
 
 // Items 38 and 39: L1's entry for a dispatch.
