@@ -10,7 +10,7 @@ const RECORD = 'groups.json';
 export const recordPath = (directory) => join(directory, RECORD);
 
 /** The file a write of the record in `directory` fills before it renames it over the record. */
-const partialPath = (directory) => `${recordPath(directory)}.partial`;
+export const partialPath = (directory) => `${recordPath(directory)}.partial`;
 
 /**
  * Every entry the record in `directory` holds, or none where there is no record. A record whose

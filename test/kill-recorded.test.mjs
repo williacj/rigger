@@ -294,7 +294,6 @@ function leavePartial(directory) {
   writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
 }
 
-// proves R-STATE-4
 test('given a leftover partial record beside a record holding no entry, or beside no record, the call leaves no partial record in the state directory', SETTLES_WITHIN, async (t) => {
   for (const record of ['[]', undefined]) {
     const directory = scratch(t);
@@ -307,7 +306,6 @@ test('given a leftover partial record beside a record holding no entry, or besid
   }
 });
 
-// proves R-STATE-4, R-STATE-10
 test('given a leftover partial record beside a record holding an entry, the call kills the entry\'s group, clears its entry, and leaves no partial record', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(directory, 'group');
@@ -319,6 +317,67 @@ test('given a leftover partial record beside a record holding an entry, the call
   assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
   assert.deepEqual(readGroups(stateOf(directory)), []);
   assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), ['groups.json']);
+});
+
+/**
+ * The L1 events in the stream in `directory`'s state directory recording a partial record the
+ * call could not remove, as the fields a reader names them by.
+ */
+const partialsKeptIn = (directory) => readEvents(stateOf(directory))
+  .filter((event) => event.event === 'record.partial-kept')
+  .map(({ layer, path, reason }) => ({ layer, path, reason: typeof reason }));
+
+/**
+ * The two partial records a start cannot remove: a file in a state directory that refuses writes,
+ * and a directory where the file would be. The stream exists beforehand, so the sink appends to
+ * it in either.
+ */
+const UNREMOVABLE = {
+  'where the state directory refuses writes': (state, t) => {
+    writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
+    chmodSync(state, 0o555);
+    t.after(() => chmodSync(state, 0o755));
+  },
+  'where the partial record is a directory': (state) => mkdirSync(join(state, 'groups.json.partial')),
+};
+
+for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
+  test(`given a leftover partial record the call cannot remove, ${unremovable}, beside a record holding an entry, the call still kills the entry's group, and records why the partial record stayed`, SETTLES_WITHIN, async (t) => {
+    const directory = scratch(t);
+    const state = stateOf(directory);
+    const started = await startGroup(directory, 'group');
+    writeGroups(state, [entryFor(started)]);
+    writeFileSync(streamPath(state), '');
+    leave(state, t);
+
+    await killIn(directory).catch(() => {});
+
+    assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
+    assert.deepEqual(partialsKeptIn(directory), [{ layer: 'L1', path: join(state, 'groups.json.partial'), reason: 'string' }]);
+  });
+}
+
+test('given a leftover partial record the call cannot remove beside a record holding no entry, the call settles without failing, and records why the partial record stayed', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const state = stateOf(directory);
+  writeGroups(state, []);
+  writeFileSync(streamPath(state), '');
+  UNREMOVABLE['where the partial record is a directory'](state);
+
+  await killIn(directory);
+
+  assert.deepEqual(partialsKeptIn(directory), [{ layer: 'L1', path: join(state, 'groups.json.partial'), reason: 'string' }]);
+});
+
+test('given a leftover partial record the call cannot remove and a sink that refuses every append, the call rejects naming the unrecorded event and the partial record', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const state = stateOf(directory);
+  writeGroups(state, []);
+  UNREMOVABLE['where the partial record is a directory'](state);
+
+  const failure = await failureOf(killRecordedGroups({ directory: state, sink: refusingSink(directory) }));
+
+  assert.ok(failure.message.includes('record.partial-kept') && failure.message.includes(join(state, 'groups.json.partial')), failure.message);
 });
 
 test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
