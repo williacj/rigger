@@ -173,13 +173,14 @@ function signal(group, name) {
  * adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
  *
  * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a name longer
- *   than that is recorded as its first 16 bytes: `abcdefghijklmnopq` is recorded as
- *   `abcdefghijklmnop`. A cut can fall inside a character and leave bytes that are not UTF-8 (the
+ *   than that is recorded as its first 16 bytes, less any spaces they end in: `abcdefghijklmnopq`
+ *   is recorded as `abcdefghijklmnop`, and `abcdefghijklmno xyz` as `abcdefghijklmno`. A cut can fall inside a character and leave bytes that are not UTF-8 (the
  *   engineer judge on #354 saw `日本語テール` recorded as `日本語テー` and U+FFFD).
  * - `ucomm` is padded with spaces to 16 columns, even as the last column, so a name's own trailing
- *   spaces cannot be told from the padding, and are not recorded. `sp` and `sp` with a space
- *   print the same 17 bytes, and so do `abcdefghijklmno`, the same with a space, and the same
- *   with a space and `x`.
+ *   spaces cannot be recovered, and are not recorded. `sp` and `sp` with a space print the same
+ *   17 bytes, and so do `abcdefghijklmno`, the same with a space, and the same with a space and
+ *   `x`, under every `ucomm` form and locale tried. Other trailing whitespace is the name's own:
+ *   a trailing newline or tab is recorded.
  * - `ucomm` prints control characters raw, a newline included, so a name `x`, newline,
  *   `<pid> evil` read in the group's table named that other pid's process `evil` (the engineer
  *   judge on #354). It names what runs, not what was asked for: a script run by `/bin/sh` is

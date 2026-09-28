@@ -805,6 +805,18 @@ test('a survivor whose executable\'s name ends in a newline is recorded by that 
   ]);
 });
 
+test('a survivor whose executable\'s name ends in a tab is recorded by that name, the tab included', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', leaveNamed(`"t"$'\\t'`, 'survivor', 't'));
+
+  const { events } = await recorded(directory, { command });
+
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 't\t' },
+  ]);
+});
+
 test('two survivors, one whose executable\'s name ends in a newline and one with no trailing whitespace, are each recorded by their own name, byte for byte', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   waiter(directory, 'waiter');
@@ -1007,9 +1019,10 @@ for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) 
 }
 
 test('survivors whose executables\' names are longer than 16 bytes are each recorded by their first 16 bytes', SETTLES_WITHIN, async (t) => {
-  // `ucomm` holds the kernel's cut of the name at 16 bytes (`D16` rule 3). The second name holds a
-  // newline inside the cut.
-  const names = [['abcdefghijklmnopqrs', 'abcdefghijklmnop'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmno']];
+  // `ucomm` holds the kernel's cut of the name at 16 bytes (`D16` rule 3). The first name's cut
+  // ends in a letter, the second's holds a newline, and the third's ends in a space, which `ps`'s
+  // padding makes indistinguishable from the name's own, so it is not recorded.
+  const names = [['abcdefghijklmnopqrs', 'abcdefghijklmnop'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmno'], ['abcdefghijklmno xyz', 'abcdefghijklmno']];
   const directory = holding(t);
   waiter(directory, 'waiter');
   const command = fixture(directory, 'command', names.map(([name], n) => leaveNamed(`$'${[...Buffer.from(name)].map((byte) => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}'`, `long${n}`, name[0])).join('\n'));
