@@ -147,10 +147,10 @@ function signal(group, name) {
  * group was stopped. So the census reads the states, then the names, then the command lines,
  * then the executables' names unpadded, then the states again, each in a `ps` run of its own. It
  * keeps them only when both state reads find every member stopped, or a zombie, and all five
- * reads find the same processes. Otherwise
- * it stops the group again and reads again: a member not yet stopped is one the signal has not
- * reached, one caught mid-exec (state `?`), or a fork the signal missed. A zombie cannot exec
- * either, and is left out, because it is already dead.
+ * reads find the same processes. Otherwise it pauses, then stops the group again and reads again:
+ * a member not yet stopped is one the signal has not reached, one caught mid-exec (state `?`), or
+ * a fork the signal missed. A zombie cannot exec either, and is left out, because it is already
+ * dead.
  *
  * A read of states or command lines holds the pid and that one column, so no field of varying
  * width comes before the one split it takes. `ps` pads a column by display width, and a name of
@@ -201,7 +201,8 @@ async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
   const read = (args, encoding) => run(ps, args, deadline - Date.now(), timeout, encoding);
   const column = async (name, flags = []) => rowsOf(await read([...flags, '-ww', '-g', String(group), '-o', `pid=,${name}=`]));
-  for (;;) {
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
     signal(group, 'SIGSTOP');
     const before = await column('stat');
     if (!stopped(before)) continue;

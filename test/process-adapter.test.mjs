@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
@@ -919,4 +919,32 @@ test('while the call waits for a killed group to empty, it uses less than half t
   t.diagnostic(`${cpu} ms of the processor over a wait of at least ${waited} ms`);
   assert.ok(waited > 0, `the wait lasted ${waited} ms`);
   assert.ok(cpu < waited / 2, `the call used ${cpu} ms of the processor over a wait of at least ${waited} ms`);
+});
+
+test('while the call re-reads a census, it uses less than half those re-reads\' time of the processor', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The stand-in resumes the group before every read of states, so the census never finds it
+  // stopped and reads again until it gives up. Its second call marks the re-reads' start.
+  const ps = fixture(directory, 'ps', [
+    'if ! /bin/mkdir "$here/called" 2>/dev/null; then [ -f "$here/second" ] || : > "$here/second"; fi',
+    'case "$*" in *stat=*) kill -s CONT -- "-$(/bin/cat "$here/group")" ;; esac',
+    ': > "$here/reads/$$"',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  mkdirSync(join(directory, 'reads'));
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
+  const readTimeout = 1_500;
+  const used = process.cpuUsage();
+
+  const { events } = await recorded(directory, { command, ps, readTimeout });
+
+  const { user, system } = process.cpuUsage(used);
+  assert.deepEqual(events.map(({ event }) => event), ['group.killed'], 'the census did not give up on a group it never found stopped');
+  // The census began once the command had exited, and re-read until `readTimeout` had passed
+  // from its start, so the re-reads lasted at least this long.
+  const rereading = writtenAt(directory, 'exited') + readTimeout - writtenAt(directory, 'second');
+  // The processor time over the whole call is no less than over the re-reads alone.
+  const cpu = (user + system) / 1000;
+  t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
+  assert.ok(cpu < rereading / 2, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
 });
