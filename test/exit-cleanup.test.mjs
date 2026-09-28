@@ -38,6 +38,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
  * - `timed`: whether the caller writes to `end.took` how many milliseconds its sink's end took,
  *   where the exit cleanup takes it.
+ * - `untouched`: whether the caller leaves `process.stderr` untouched, so that a standard error on
+ *   a pipe is still the blocking descriptor it inherited when the cleanup writes to it.
  * - `before` and `after`: code of the test's own, which the caller runs before it starts its first
  *   group and once its groups are up. It can call `start(label)`, which starts a command as the
  *   caller starts its own, and settles once its child is up; `settled`, how many of its calls to
@@ -61,7 +63,7 @@ const CALLER = [
   "if (options.timed) atExit(() => writeFileSync(join(directory, 'end.took'), String(performance.now() - began)));",
   // Touching process.stderr is what every verb that prints does, and it leaves the descriptor
   // non-blocking, where a single write to a full pipe comes back short.
-  "process.stderr.write('');",
+  "if (!options.untouched) process.stderr.write('');",
   'const turn = () => new Promise((resolve) => setImmediate(resolve));',
   'let settled = 0;',
   'function begin(label) {',
@@ -182,7 +184,7 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   }
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
-  const run = spawn(process.execPath, [caller, directory, JSON.stringify(options)], { stdio: ['ignore', 'pipe', stuck ? undrained(t, directory) : 'pipe'] });
+  const run = spawn(process.execPath, [caller, directory, JSON.stringify(options)], { stdio: ['ignore', 'pipe', stuck ? undrained(t, directory).writer : 'pipe'] });
   let stdout = '';
   let stderr = '';
   run.stderr?.on('data', (chunk) => { stderr += chunk; });
@@ -579,19 +581,22 @@ test('the unrecorded kills the cleanup writes to standard error arrive whole pas
 
 // A standard error whose reader stays open and never drains.
 
-test(`given a standard error that is never drained, a caller whose exit cleanup has more to write than the pipe holds still ends on SIGTERM, its write given up within ${UNDRAINED_BOUND} ms`, ENDS_WITHIN, async (t) => {
-  // The sink is unnamed, so the kills it holds are what its end writes in the exit cleanup, and
-  // each command's command line carries 40,000 more bytes, so they pass the 65,536 bytes a pipe on
-  // macOS holds.
-  const filler = 'x'.repeat(40_000);
-  const { directory, signal } = await endCaller(t, { ending: 'wait', sink: 'unnamed', groups: true, filler, timed: true }, { signal: 'SIGTERM', stuck: true });
+for (const untouched of [false, true]) {
+  const which = untouched ? 'the caller never touched' : 'the caller has written to';
+  test(`given a standard error ${which} that is never drained, a caller whose exit cleanup has more to write than the pipe holds still ends on SIGTERM, its write given up within ${UNDRAINED_BOUND} ms`, ENDS_WITHIN, async (t) => {
+    // The sink is unnamed, so the kills it holds are what its end writes in the exit cleanup,
+    // and each command's command line carries 40,000 more bytes, so they pass the 65,536 bytes a
+    // pipe on macOS holds.
+    const filler = 'x'.repeat(40_000);
+    const { directory, signal } = await endCaller(t, { ending: 'wait', sink: 'unnamed', groups: true, filler, timed: true, untouched }, { signal: 'SIGTERM', stuck: true });
 
-  assert.equal(signal, 'SIGTERM');
-  await assertNoneAlive(directory);
-  const took = Number(read(directory, 'end.took'));
-  assert.ok(took >= UNDRAINED_BOUND / 2, `the sink's end took ${took} ms, so the pipe never held it and this proves nothing`);
-  assert.ok(took <= UNDRAINED_BOUND, `the sink's end took ${took} ms`);
-});
+    assert.equal(signal, 'SIGTERM');
+    await assertNoneAlive(directory);
+    const took = Number(read(directory, 'end.took'));
+    assert.ok(took >= UNDRAINED_BOUND / 2, `the sink's end took ${took} ms, so the pipe never held it and this proves nothing`);
+    assert.ok(took <= UNDRAINED_BOUND, `the sink's end took ${took} ms`);
+  });
+}
 
 // Item 37: a group the census has stopped when the caller ends.
 

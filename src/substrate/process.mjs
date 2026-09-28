@@ -46,8 +46,8 @@ export const READ_TIMEOUT = 5_000;
  *
  * A process that left the group and holds a pipe is outside containment (the owner's Q6 on #332),
  * so what it writes is not the group's, and the bound does not keep it out. What it writes before
- * the bound passes is in the result, after the group's own bytes; what it writes after is dropped,
- * because L0 closes the pipes then. How much lands depends on when it writes: the engineer judge on
+ * the bound passes is in the result, among the group's own bytes where it wrote while the group
+ * ran; what it writes after is dropped, because L0 closes the pipes then. How much lands depends on when it writes: the engineer judge on
  * #361 saw a holder printing a line every millisecond put 198 lines into standard output.
  */
 export const OUTPUT_BOUND = 1_000;

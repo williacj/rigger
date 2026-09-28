@@ -26,9 +26,9 @@ export function scratch(t) {
 }
 
 /**
- * The write end of a FIFO in `directory` whose read end this process holds open and never reads,
- * for a standard error whose reader stays open and never drains. Both ends close at the test's
- * teardown, whether it passed or failed.
+ * Both ends of a FIFO in `directory`, for a standard error whose reader stays open and drains only
+ * when the test reads `reader`, which is non-blocking. A child is handed `writer`. Both ends close
+ * at the test's teardown, whether it passed or failed.
  */
 export function undrained(t, directory) {
   const path = join(directory, 'undrained');
@@ -40,7 +40,7 @@ export function undrained(t, directory) {
     closeSync(writer);
     closeSync(reader);
   });
-  return writer;
+  return { reader, writer };
 }
 
 /** `text` as a pattern `pgrep` and `pkill` match only as written. */
