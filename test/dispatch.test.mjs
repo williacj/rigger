@@ -1,5 +1,5 @@
-// ABOUTME: Tests L1's dispatching function in its minimal form: it writes each dispatch's process
-// group to the record in the state directory while the dispatch runs, and removes it after.
+// ABOUTME: Tests L1's dispatching function: its result, the dispatch's start, timeout and one end it
+// records, the refusals it reports, and the process group it records while the dispatch runs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,8 +12,8 @@ import { PassThrough } from 'node:stream';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { dispatch } from '../src/execution/run.mjs';
-import { EVENT_REFUSED, runCommand } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch, startOf, until } from './process-fixtures.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, until } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
@@ -31,11 +31,36 @@ const holdingCommand = (directory) => fixture(directory, 'command', [
   'while [ ! -f "$here/release" ]; do :; done',
 ].join('\n'));
 
+/**
+ * A timeout no command in this file reaches, under `SETTLES_WITHIN`, so a command that hangs is
+ * ended by L0 and fails its test rather than holding the suite.
+ */
+const UNREACHED = 15_000;
+
+/**
+ * A sink over the state directory `state` that refuses each event `refuses` picks by its layer and
+ * name, throwing as a sink whose append the disk refuses does, and appends every other.
+ */
+function refusingSome(state, refuses) {
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+  return {
+    emitter(envelope) {
+      const emitter = sink.emitter(envelope);
+      return {
+        emit(event, fields) {
+          if (refuses(envelope.layer, event)) throw new Error(`the test's sink refuses ${envelope.layer} ${event}`);
+          emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+}
+
 /** Starts a dispatch of `command` through L1's function, with the state directory in `directory`. */
 function dispatchIn(directory, options) {
   const state = stateOf(directory);
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  return dispatch({ directory: state, sink, args: [], cwd: directory, env: {}, ...options });
+  return dispatch({ directory: state, sink, args: [], cwd: directory, env: {}, timeout: UNREACHED, ...options });
 }
 
 /**
@@ -113,15 +138,14 @@ test('once a dispatch has settled and its group holds no live process, the recor
 test('once a dispatch whose kill event the sink refused has settled, its group holds no live process, the record no longer holds that group, and the caller hears the refusal', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   writeFileSync(join(directory, 'hold'), '');
-  // The command leaves a `tail` alive in its group, so L0 kills it and records the kill, which a
-  // sink under a regular file refuses. The record stays in the state directory, which takes writes.
+  // The command leaves a `tail` alive in its group, so L0 kills it and records the kill, which the
+  // sink refuses. The record stays in the state directory, which takes writes.
   const command = fixture(directory, 'command', [
     'echo $$ > "$here/group"',
     '/usr/bin/tail -f "$here/hold" &',
     'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
   ].join('\n'));
-  writeFileSync(join(directory, 'blocked'), '');
-  const sink = openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
 
   await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command, sink }), (failure) => failure.code === EVENT_REFUSED);
 
@@ -150,7 +174,8 @@ test('given a sink that refuses the kill event and a record that refuses the rem
   const failure = await dispatchIn(directory, { id: 'd-1', card: 1412, command }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
 
   assert.equal(failure.code, EVENT_REFUSED, failure.stack);
-  assert.deepEqual(failure.unrecorded.map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }]);
+  // The stream refuses L1's end as well, so it is among the unrecorded events.
+  assert.deepEqual(failure.unrecorded.map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }, { event: 'dispatch.end', name: undefined }]);
   assert.equal(failure.result?.exit, 4);
   assert.equal(failure.recordFailure?.code, 'EACCES', 'the removal\'s failure is not carried on the refusal');
   assert.ok(failure.message.includes(state), `the refusal does not say the record in ${state} kept its entry: ${failure.message}`);
@@ -228,7 +253,7 @@ test('given a state directory whose event stream exists and which refuses new en
   assertNeverRan(directory);
   // A command spawned and then killed before its first action leaves neither trace above, so the
   // stream is read too: L0 records every process it kills, and the stream still takes appends.
-  assert.deepEqual(readEvents(state), [], 'L0 killed a process of the dispatch');
+  assert.deepEqual(readEvents(state).filter((event) => event.layer === 'L0'), [], 'L0 killed a process of the dispatch');
 });
 
 test('given a state directory whose event stream exists and which refuses new entries, the caller\'s failure names the state directory', async (t) => {
@@ -247,7 +272,7 @@ test('a command run through L0\'s adapter and not through L1\'s function leaves 
   const directory = scratch(t);
   const state = stateOf(directory);
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  const adapter = (_, options) => runCommand({ args: [], cwd: directory, env: {}, emitter: sink.emitter({ layer: 'L0' }), ...options });
+  const adapter = (_, options) => runCommand({ args: [], cwd: directory, env: {}, timeout: UNREACHED, emitter: sink.emitter({ layer: 'L0' }), ...options });
 
   await whileHeld(directory, {}, () => {
     assert.deepEqual(readInAnotherProcess(state), [], 'the record held an entry while the command ran');
@@ -435,4 +460,303 @@ test('a reader finds the record as it was before a write or as it is after it, n
     const found = readInAnotherProcess(state);
     assert.ok([JSON.stringify(earlier), JSON.stringify(later)].includes(JSON.stringify(found)), `stopped at ${at}, the reader found ${JSON.stringify(found)}`);
   }
+});
+
+/** Every event in the state directory `state`, or none where nothing has been recorded there. */
+const eventsIn = (state) => (existsSync(streamPath(state)) ? readEvents(state) : []);
+
+test('the stream holds an L1 dispatch-start event carrying the id L1 was handed, ahead of every L0 event carrying that id', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  await dispatchIn(directory, { id: 'd-start', card: 1412, command });
+
+  const events = eventsIn(stateOf(directory));
+  const start = events.findIndex((each) => each.layer === 'L1' && each.event === 'dispatch.start' && each.dispatch === 'd-start');
+  const l0 = events.flatMap((each, index) => (each.layer === 'L0' && each.dispatch === 'd-start' ? [index] : []));
+  assert.ok(start >= 0, `no L1 dispatch-start event carries d-start: ${JSON.stringify(events)}`);
+  assert.ok(l0.length > 0, 'the survivor\'s kill was not recorded under L0, so the order proves nothing');
+  assert.ok(l0.every((index) => index > start), `an L0 event comes before the start: ${JSON.stringify(events)}`);
+});
+
+/** A sink whose every append is refused, because its state directory would sit under a regular file. */
+function refusingEvery(directory) {
+  writeFileSync(join(directory, 'blocked'), '');
+  return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+}
+
+// proves R-RECORD-9
+test('given a sink that refuses every append, L1\'s function starts no process, and rejects naming the unrecorded start event', async (t) => {
+  const directory = scratch(t);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory), sink: refusingEvery(directory) }), (failure) => {
+    assert.ok(failure.message.includes('dispatch.start'), `the failure does not name the start event: ${failure.message}`);
+    return true;
+  });
+
+  assertNeverRan(directory);
+});
+
+/** The dispatch-end events in the stream in `directory`'s state directory carrying dispatch `id`. */
+const endsOf = (directory, id) => eventsIn(stateOf(directory)).filter((each) => each.event === 'dispatch.end' && each.dispatch === id);
+
+/** A clock that reads each of `readings` in turn, in milliseconds, and the last one after that. */
+const clockReading = (...readings) => () => (readings.length > 1 ? readings.shift() : readings[0]);
+
+test('given a dispatch whose command returned on its own, the stream holds one L1 dispatch-end event under its id, carrying its exit code and its duration', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'exit 3');
+
+  await dispatchIn(directory, { id: 'd-returned', card: 1412, command, clock: clockReading(1_000, 1_734) });
+
+  assert.deepEqual(endsOf(directory, 'd-returned').map(({ layer, card, exit, ms }) => ({ layer, card, exit, ms })), [{ layer: 'L1', card: 1412, exit: 3, ms: 734 }]);
+});
+
+test('given a dispatch whose command cannot start, the stream holds one dispatch-end event under its id, which carries no exit code and names the missing command', async (t) => {
+  const directory = scratch(t);
+  const missing = join(directory, 'no-such-command');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-missing', card: 1412, command: missing }));
+
+  const ends = endsOf(directory, 'd-missing');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.equal('exit' in ends[0], false, `the end carries an exit code: ${JSON.stringify(ends[0])}`);
+  assert.ok(JSON.stringify(ends[0]).includes(JSON.stringify(missing).slice(1, -1)), `the end does not name ${missing}: ${JSON.stringify(ends[0])}`);
+});
+
+test('given a dispatch whose command cannot start, the caller can tell the rejection is a failure to start without reading its message', async (t) => {
+  const directory = scratch(t);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-missing', card: 1412, command: join(directory, 'no-such-command') }), (failure) => failure.code === NOT_STARTED);
+});
+
+test('given a dispatch that outlives its timeout, the stream holds an L1 event recording the timeout under its id', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, leave(TAIL, 'child')) });
+
+  ready(directory);
+  const timeouts = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L1' && each.dispatch === 'd-late' && /timeout/.test(each.event));
+  assert.deepEqual(timeouts.map(({ card, timeout }) => ({ card, timeout })), [{ card: 1412, timeout: OUTLIVED }]);
+});
+
+test('given a dispatch that outlives its timeout, the stream holds one dispatch-end event under its id, carrying a non-zero integer exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The command exits 0 on the SIGTERM a timeout could send, so only the timeout makes it non-zero.
+  await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, `trap 'exit 0' TERM\n${leave(TAIL, 'child')}`) });
+
+  ready(directory);
+  const ends = endsOf(directory, 'd-late');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.ok(Number.isInteger(ends[0].exit) && ends[0].exit !== 0, `the end's exit code is ${ends[0].exit}`);
+});
+
+test('given a state directory whose event stream exists and which refuses new entries, the dispatch\'s one dispatch-end event names that state directory and carries no exit code', async (t) => {
+  const directory = scratch(t);
+  const state = refusingNewEntries(t, directory);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }));
+
+  const ends = endsOf(directory, 'd-1');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.equal('exit' in ends[0], false, `the end carries an exit code: ${JSON.stringify(ends[0])}`);
+  // The directory itself, and not only a file in it, as the file system's own error would.
+  const text = JSON.stringify(ends[0]);
+  const quoted = JSON.stringify(state).slice(1, -1);
+  assert.ok(text.split(quoted).slice(1).some((after) => !after.startsWith('/')), `the end does not name ${state}: ${text}`);
+});
+
+/** A command that leaves a `tail` alive in its group, writing its pid to `$here/survivor.pid`, and exits 0. */
+const leavingTail = (directory) => fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\nexit 0`);
+
+test('given a sink that accepts L1\'s events and refuses the L0 kill event of a dispatch leaving a child alive, the stream holds exactly one dispatch-end event for it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-kill', card: 1412, command: leavingTail(directory), sink }));
+
+  assert.equal(endsOf(directory, 'd-kill').length, 1, JSON.stringify(endsOf(directory, 'd-kill')));
+});
+
+// proves R-RECORD-9
+test('given a sink that accepts L1\'s events and refuses the L0 kill event of a dispatch leaving a child alive, the call rejects as a refused event, naming the unrecorded kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-kill', card: 1412, command: leavingTail(directory), sink }), (failure) => {
+    assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+    assert.ok(failure.message.includes('survivor.killed'), `the failure does not name the kill: ${failure.message}`);
+    assert.ok(failure.message.includes(`"pid":${read(directory, 'survivor.pid')}`), `the failure does not name the killed child: ${failure.message}`);
+    return true;
+  });
+});
+
+/** Whether any process of the dispatch whose command wrote its group to `$here/group` is alive. */
+const groupAlive = (directory) => alive(-Number(read(directory, 'group')));
+
+// proves R-RECORD-9
+test('given a sink that refuses only L1\'s timeout event of a dispatch outliving its timeout with a child, no process of its group is alive when the call settles, and it rejects as a refused event naming the timeout event', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && /timeout/.test(event));
+
+  const failure = await dispatchIn(directory, { id: 'd-late', card: 1412, sink, ...outliving(directory, leave(TAIL, 'child')) }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  ready(directory);
+  assert.equal(alive(-Number(read(directory, 'command.pid'))), false, 'a process of the dispatch\'s group is alive');
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  const named = (failure.unrecorded ?? []).map(({ event }) => event);
+  assert.equal(named.length, 1, `the unrecorded events are ${named}`);
+  assert.match(named[0], /timeout/);
+  assert.ok(failure.message.includes(named[0]), `the failure's message does not name ${named[0]}: ${failure.message}`);
+});
+
+// proves R-RECORD-9
+test('given a sink that accepts the start event and refuses the end event, the caller receives a refused event naming the dispatch, its card and the end, and no process of the group is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && event === 'dispatch.end');
+
+  const failure = await dispatchIn(directory, { id: 'd-unended', card: 1412, command: leavingTail(directory), sink }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  assert.equal(groupAlive(directory), false, 'a process of the dispatch\'s group is alive');
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  for (const name of ['d-unended', '1412', 'dispatch.end']) assert.ok(failure.message.includes(name), `the failure does not name ${name}: ${failure.message}`);
+});
+
+test('given a command, a cwd, an env, a timeout and a dispatch id, L1\'s function settles with an integer exit code and the captured output as bytes', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'printf "to standard output"\nprintf "to standard error" >&2\nexit 5');
+
+  const result = await dispatch({ id: 'd-1', directory: stateOf(directory), sink: openSink({ directory: stateOf(directory), run: 'r-test', now: () => 0 }), command, args: [], cwd: directory, env: {}, timeout: UNREACHED });
+
+  assert.equal(result.exit, 5);
+  assert.ok(Buffer.isBuffer(result.stdout) && result.stdout.equals(Buffer.from('to standard output')), `standard output is ${result.stdout}`);
+  assert.ok(Buffer.isBuffer(result.stderr) && result.stderr.equals(Buffer.from('to standard error')), `standard error is ${result.stderr}`);
+});
+
+test('given a command writing a payload to each stream and a child writing a third to standard output before the command exits and stays alive, L1\'s result holds every byte of each in the stream it was written to', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const [first, second, third] = [bytes(200_003, 7), bytes(150_007, 13), bytes(100_019, 37)];
+  writeFileSync(join(directory, 'first'), first);
+  writeFileSync(join(directory, 'second'), second);
+  writeFileSync(join(directory, 'third'), third);
+  fixture(directory, 'child', `/bin/cat "$here/third"\n: > "$here/written"\nexec ${TAIL}`);
+  const command = fixture(directory, 'command', [
+    '/bin/cat "$here/first"',
+    '/bin/cat "$here/second" >&2',
+    leave('"$here/child"', 'survivor'),
+    'while [ ! -f "$here/written" ]; do :; done',
+    'exit 0',
+  ].join('\n'));
+
+  const result = await dispatchIn(directory, { id: 'd-1', card: 1412, command });
+
+  assert.ok(result.stdout.equals(Buffer.concat([first, third])), 'standard output holds every byte of the command\'s payload, then the child\'s');
+  assert.ok(result.stderr.equals(second), 'standard error holds every byte of the command\'s payload to it');
+});
+
+test('given a dispatch whose command writes a payload and then outlives its timeout, L1\'s result holds every byte of it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const payload = bytes(300_001, 23);
+  writeFileSync(join(directory, 'payload'), payload);
+
+  const result = await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, `/bin/cat "$here/payload"\n${leave(TAIL, 'child')}`) });
+
+  ready(directory);
+  assert.ok(result.stdout.equals(payload), 'standard output holds every byte of the command\'s payload');
+});
+
+test('given a dispatch whose child writes a payload to each stream and outlives its timeout with it, L1\'s result holds every byte of each in the stream it was written to', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const out = bytes(200_003, 29);
+  const err = bytes(150_007, 31);
+  writeFileSync(join(directory, 'out'), out);
+  writeFileSync(join(directory, 'err'), err);
+  // The command blocks opening a FIFO until the child has written both and opens it, as in the
+  // adapter's own test of this case, and runs the child under `/bin/sh` by name (see `OUTLIVED`).
+  fixture(directory, 'child', `/bin/cat "$here/out"\n/bin/cat "$here/err" >&2\n: > "$here/written"\nexec ${TAIL}`);
+  const body = ['/usr/bin/mkfifo "$here/written"', '/bin/sh "$here/child" &', 'read -r _ < "$here/written"'].join('\n');
+
+  const result = await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, body) });
+
+  ready(directory);
+  assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');
+  assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
+});
+
+test('given an env that sets a variable, the dispatch\'s command sees exactly the value given', async (t) => {
+  const directory = scratch(t);
+  // Spaces, a newline, a quote and a byte outside ASCII: none of them may be split, trimmed or changed.
+  const value = ' two  words\nand a "quote" ü ';
+  const command = fixture(directory, 'command', 'printf "%s" "$RIGGER_TEST_VALUE"');
+
+  const result = await dispatchIn(directory, { id: 'd-1', card: 1412, command, env: { RIGGER_TEST_VALUE: value } });
+
+  assert.equal(result.stdout.toString('utf8'), value);
+});
+
+test('every L0 event a dispatch\'s processes give rise to carries its dispatch id, and its card where it has one', SETTLES_WITHIN, async (t) => {
+  for (const card of [1412, undefined]) {
+    const directory = holding(t);
+
+    await dispatchIn(directory, { id: 'd-l0', card, command: leavingTail(directory) });
+
+    const l0 = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L0');
+    assert.ok(l0.length > 0, 'no L0 event was recorded, so the test proves nothing');
+    assert.deepEqual(l0.map((each) => ({ dispatch: each.dispatch, card: each.card, hasCard: 'card' in each })), l0.map(() => ({ dispatch: 'd-l0', card, hasCard: card !== undefined })));
+  }
+});
+
+test('given a dispatch whose command leaves a child alive and exits 0, its dispatch-end event follows every event recording that child\'s kill, and it settles only once that child is dead', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await dispatchIn(directory, { id: 'd-after', card: 1412, command: leavingTail(directory) });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false, 'the child is alive');
+  const events = eventsIn(stateOf(directory));
+  const kills = events.flatMap((each, index) => (each.layer === 'L0' && each.pid === Number(read(directory, 'survivor.pid')) ? [index] : []));
+  const end = events.findIndex((each) => each.event === 'dispatch.end' && each.dispatch === 'd-after');
+  assert.ok(kills.length > 0, `the child's kill was not recorded: ${JSON.stringify(events)}`);
+  assert.ok(end >= 0 && kills.every((index) => index < end), `the end does not follow every kill: ${JSON.stringify(events)}`);
+});
+
+test('given a dispatch whose command leaves alive a child holding none of its pipes and exits 0, it settles only once that child is dead', SETTLES_WITHIN, async (t) => {
+  // The child's output goes nowhere, so the pipes close when the command exits, and only L1
+  // awaiting L0's kill holds the call until the child is dead.
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${leave(`${TAIL} >/dev/null 2>&1 </dev/null`, 'survivor')}\nexit 0`);
+
+  await dispatchIn(directory, { id: 'd-pipeless', card: 1412, command });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false, 'the child is alive');
+});
+
+test('given a dispatch whose command leaves a child alive and exits 0, the record holds no entry for it when its dispatch-end event is appended', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const state = stateOf(directory);
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+  // What another process reading the record finds at the moment the sink is handed the end.
+  let atEnd;
+  const reading = {
+    emitter(envelope) {
+      const emitter = sink.emitter(envelope);
+      return {
+        emit(event, fields) {
+          if (envelope.layer === 'L1' && event === 'dispatch.end') atEnd = readInAnotherProcess(state);
+          emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+
+  await dispatchIn(directory, { id: 'd-cleared', card: 1412, command: leavingTail(directory), sink: reading });
+
+  assert.ok(atEnd !== undefined, 'the sink was never handed the dispatch\'s end');
+  assert.deepEqual(atEnd.filter((entry) => entry.dispatch === 'd-cleared'), []);
+});
+
+test('given a state directory whose event stream exists and which refuses new entries, the caller can tell the rejection is a failure to start without reading its message', async (t) => {
+  const directory = scratch(t);
+  refusingNewEntries(t, directory);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }), (failure) => failure.code === NOT_STARTED);
 });
