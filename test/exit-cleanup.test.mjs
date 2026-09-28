@@ -39,6 +39,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `exitOnReap`: whether the caller calls process.exit(0) in the turn Node reaps its first command.
  * - `exitOnSettle`: whether the caller calls process.exit(0) as the first of its calls settles, in
  *   the turn it settles.
+ * - `signalInOutputWait`: whether the caller raises SIGTERM as the adapter starts waiting out its
+ *   bound on a command's output.
  * - `ps`, a fixture's name, and `readTimeout`: handed to the adapter for every command, where given.
  * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
  *   read of the process table does not answer, so that group is stopped when the caller ends.
@@ -89,6 +91,12 @@ const CALLER = [
   "  while (!existsSync(join(directory, `child.${label}`))) await turn();",
   '}',
   'if (options.before) eval(options.before);',
+  // The caller raises SIGTERM as the adapter starts waiting out its bound on a command's output,
+  // which is once it has ended the command's group and before it records what it killed.
+  'if (options.signalInOutputWait) {',
+  '  const set = globalThis.setTimeout;',
+  "  globalThis.setTimeout = (callback, delay, ...rest) => { if (delay === 1_000) process.kill(process.pid, 'SIGTERM'); return set(callback, delay, ...rest); };",
+  '}',
   // The caller calls process.exit(0) as Node emits the first command's exit, which is the turn in
   // which Node reaps it, before anything awaiting that exit has run.
   'if (options.exitOnReap) {',
@@ -152,14 +160,15 @@ function fixtures(directory) {
     'while [ ! -f "$here/release" ]; do :; done',
     'exit 3',
   ].join('\n'));
-  // `escaping` is `exiting` with a process beside it that leaves the group at once and holds the
-  // command's output open until killed.
+  // `escaping` starts a process that leaves the group at once and holds the command's output open
+  // until killed, and a child as `command` does, and exits 3 once the caller writes `release`,
+  // leaving the child in its group.
   const holder = 'setpgrp(0, 0) or die "leaving: $!"; open my $ready, ">", "$ARGV[0]/escaped" or die; close $ready; exec "/usr/bin/tail", "-f", "$ARGV[0]/hold";';
   fixture(directory, 'escaping', [
     `/usr/bin/perl -e '${holder}' "$here" &`,
     'while [ ! -f "$here/escaped" ]; do :; done',
     'echo $$ > "$here/group.$1"',
-    'echo $$ > "$here/child.$1"',
+    child,
     'while [ ! -f "$here/release" ]; do :; done',
     'exit 3',
   ].join('\n'));
@@ -816,28 +825,32 @@ test('given a dispatch whose command exits 0 leaving its child in the group, rea
 });
 
 test('given a dispatch whose command has exited 3 while a process outside its group holds its output open, after the caller receives SIGTERM its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
-  // Once Node has reaped the command, the caller notes whether its call is still unsettled, and
-  // raises SIGTERM in that turn.
-  const after = [
-    "writeFileSync(join(directory, 'release'), '');",
-    '(async () => {',
-    "  const leader = Number(readFileSync(join(directory, 'group.1'), 'utf8'));",
-    '  const gone = () => { try { process.kill(leader, 0); return false; } catch { return true; } };',
-    '  while (!gone()) await turn();',
-    "  if (settled === 0) writeFileSync(join(directory, 'unsettled'), '');",
-    "  process.kill(process.pid, 'SIGTERM');",
-    '})();',
-  ].join('\n');
+  // The command leaves its child in the group, and the caller is signalled once the adapter has
+  // killed that child and waits on the output.
+  const after = "writeFileSync(join(directory, 'release'), '');";
 
-  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'escaping' }, after });
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'escaping' }, signalInOutputWait: true, after });
 
   assert.deepEqual({ status, signal }, { status: null, signal: 'SIGTERM' }, stderr);
-  assert.ok(existsSync(join(directory, 'unsettled')), 'the call had settled when the caller was signalled, so this proves nothing');
   const events = streamOf(directory);
   assert.equal(events.some(({ event }) => event === 'output.held'), false, 'the call recorded its hold on the output, so it settled before the caller ended');
   await assertNoneAlive(directory);
-  assert.deepEqual(endsOf(events, 'd-1').map(({ exit }) => exit), [3]);
+  const ends = endsOf(events, 'd-1');
+  assert.deepEqual(ends.map(({ exit }) => exit), [3]);
+  const child = Number(read(directory, 'child.1'));
+  const kill = events.findIndex(({ event, dispatch, pid }) => event === 'survivor.killed' && dispatch === 'd-1' && pid === child);
+  assert.ok(kill !== -1 && kill < events.indexOf(ends[0]), 'the child\'s kill was not recorded before the end');
   assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+});
+
+test('the cleanup hands a call\'s step the command\'s exit code where the caller ends in the turn the call settles', ENDS_WITHIN, async (t) => {
+  const after = "writeFileSync(join(directory, 'release'), '');";
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'exiting' }, exits: true, exitOnSettle: true, after });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  assert.equal(read(directory, 'exit.1'), '3');
 });
 
 test('given a dispatch whose command exits 3, when the caller calls process.exit(0) in the turn the dispatch settles, the stream holds its one dispatch end, carrying 3', ENDS_WITHIN, async (t) => {
