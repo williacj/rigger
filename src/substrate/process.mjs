@@ -164,25 +164,29 @@ async function ended(group, ps, readTimeout) {
 }
 
 /**
- * Whether `group` still holds a member that is not a zombie: signal 0 reaches it, and a read of its
- * states finds such a member, or fails. A read that lists no process while signal 0 still reaches
- * the group is taken again, because a member that is exiting still answers signal 0 (`occupied`)
- * and may not be listed, until the group no longer answers or `timeout` has passed, which counts
- * as holding one.
+ * Why `group` may still hold a member that is not a zombie, or nothing where it holds none: signal 0
+ * reaches it, and a read of its states finds such a member, or fails. A read that lists no process
+ * while signal 0 still reaches the group is taken again, because a member that is exiting still
+ * answers signal 0 (`occupied`) and may not be listed, until the group no longer answers or
+ * `timeout` has passed, which counts as holding one. Only a read that found such a member says it
+ * saw one.
  */
 async function outlived(group, ps, timeout) {
   const deadline = Date.now() + timeout;
+  const unseen = ', so the kill of the group may have ended a process the census and the kill had not named';
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
-    if (!occupied(group)) return false;
-    if (Date.now() >= deadline) return true;
+    if (!occupied(group)) return undefined;
+    if (Date.now() >= deadline) return `the reads of the group before its kill listed no process for ${timeout} ms while signal 0 still reached it${unseen}`;
     let states;
     try {
       states = [...(await statesOf(group, ps, deadline - Date.now())).values()];
-    } catch {
-      return true;
+    } catch (error) {
+      return `the read of the group before its kill failed while signal 0 still reached it${unseen}: ${error.message}`;
     }
-    if (states.length > 0) return states.some((state) => !state.startsWith('Z'));
+    if (states.length === 0) continue;
+    if (states.some((state) => !state.startsWith('Z'))) return 'the group still held a live process the census and the kill had not named, which the kill of the group ended';
+    return undefined;
   }
 }
 
@@ -387,9 +391,10 @@ function run(ps, args, remaining, timeout) {
  *
  * A kill whose reads all left out a live member ends without having named it, and the group's
  * kill then ends it. So before that kill the group is read once more, and where it still holds a
- * member that is not a zombie, or signal 0 reaches it and the read lists nothing or fails, the
- * kill of the group is handed back beside the processes the kill named. A process that joins the
- * group after that read is ended by the group's kill unrecorded.
+ * member that is not a zombie, or signal 0 reaches it and the read fails or lists nothing until
+ * `readTimeout`, the kill of the group is handed back beside the processes the kill named, saying
+ * which (`outlived`). A process that joins the group after that read is ended by the group's kill
+ * unrecorded.
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
@@ -403,12 +408,12 @@ async function contain(group, { ps, readTimeout }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
-  const left = unnamed === undefined && (await outlived(group, ps, readTimeout));
+  const left = unnamed === undefined ? await outlived(group, ps, readTimeout) : undefined;
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   const named = dead.map((survivor) => [killed, survivor]);
-  if (!left) return named;
-  return [...named, ['group.killed', { group, census: 'the group still held a live process the census and the kill had not named, which the kill of the group ended' }]];
+  if (left === undefined) return named;
+  return [...named, ['group.killed', { group, census: left }]];
 }
 
 /**

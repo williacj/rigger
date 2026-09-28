@@ -1422,6 +1422,46 @@ test('a census and a kill whose every read leaves out one of two survivors still
   }
 });
 
+/**
+ * Runs a group holding a survivor and a zombie its parent outside the group never reaps, so signal
+ * 0 still reaches the group once the survivor is killed, through a `ps` stand-in that answers every
+ * read as `ps` does except the reads of the group's states alone (`-g <group> -o pid=,stat=`), taken
+ * once the kill has named the survivor, which run the shell lines `failing` instead. Hands back
+ * the survivor's pid and the events.
+ */
+async function lastReadFailing(t, failing) {
+  const directory = holding(t);
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-g "*" -o pid=,stat=")',
+    '  : > "$here/failed"',
+    failing,
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = unreaped(directory);
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the group\'s states failed, so the test proves nothing');
+  return { survivor: Number(read(directory, 'tail.pid')), events };
+}
+
+test('where the read of the group before its kill fails while signal 0 reaches the group, the kill of the group is recorded beside the names, not saying it saw a live process', SETTLES_WITHIN, async (t) => {
+  const { survivor, events } = await lastReadFailing(t, '  echo "ps: failing on purpose" >&2\n  exit 2');
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: survivor }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /ps: failing on purpose/);
+  assert.doesNotMatch(events[1].census, /held a live process/);
+});
+
+test('where the reads of the group before its kill list nothing while signal 0 reaches the group, the kill of the group is recorded beside the names, not saying it saw a live process', SETTLES_WITHIN, async (t) => {
+  const { survivor, events } = await lastReadFailing(t, '  exit 1');
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: survivor }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /listed no process/);
+  assert.doesNotMatch(events[1].census, /held a live process/);
+});
+
 test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
   const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
 
