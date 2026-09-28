@@ -321,7 +321,7 @@ test('given a leftover partial record beside a record holding an entry, the call
   assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), ['groups.json']);
 });
 
-test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file',SETTLES_WITHIN, async (t) => {
+test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
   // A record torn part-way, JSON that is no list, entries missing a field or holding one of the
   // wrong type, a card that is no issue number, and a group id no dispatch's group can have: 1 is
   // launchd's.
