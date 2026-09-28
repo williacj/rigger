@@ -160,6 +160,8 @@ function fixtures(directory) {
     'while [ ! -f "$here/release" ]; do :; done',
     'exit 3',
   ].join('\n'));
+  // `lingering` is `leaving` that exits only once the caller writes `release`.
+  fixture(directory, 'lingering', `echo $$ > "$here/group.$1"\n${child}\nwhile [ ! -f "$here/release" ]; do :; done\nexit 0`);
   // `escaping` starts a process that leaves the group at once and holds the command's output open
   // until killed, and a child as `command` does, and exits 3 once the caller writes `release`,
   // leaving the child in its group.
@@ -812,7 +814,9 @@ test('given a dispatch whose command exits 3 and is reaped in the turn in which 
 });
 
 test('given a dispatch whose command exits 0 leaving its child in the group, reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 0 and follows the child\'s kill', ENDS_WITHIN, async (t) => {
-  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'leaving' }, exitOnReap: true });
+  const after = "writeFileSync(join(directory, 'release'), '');";
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'lingering' }, exitOnReap: true, after });
 
   assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
   await assertNoneAlive(directory);
