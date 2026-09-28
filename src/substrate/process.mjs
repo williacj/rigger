@@ -170,6 +170,17 @@ async function ended(group, ps, readTimeout) {
  * answers signal 0 (`occupied`) and may not be listed, until the group no longer answers or
  * `timeout` has passed, which counts as holding one. Only a read that found such a member says it
  * saw one.
+ *
+ * One case is left unrecorded, and nothing but the process table can close it (`D16` rule 3): a
+ * table that leaves a live member of the group out of every read, of the census, the kill and this
+ * one alike, while listing the group's zombies. Signal 0 reaches a zombie, and a group holding only
+ * a zombie, as it reaches a live process: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
+ * `process.kill(pid, 0)` succeeded on a zombie, and a group left holding only a zombie its parent
+ * outside the group never reaps kept answering signal 0 (`UNREAPED_BOUND`). So only the table
+ * tells a zombie from a live process, and such a table reads exactly as a group holding only
+ * zombies does. Recording the group's kill whenever signal 0 reaches the group would record the
+ * kill of every group left holding only zombies, which L0 did not end, so the group's kill then
+ * ends that hidden member unrecorded.
  */
 async function outlived(group, ps, timeout) {
   const deadline = Date.now() + timeout;
@@ -394,7 +405,8 @@ function run(ps, args, remaining, timeout) {
  * member that is not a zombie, or signal 0 reaches it and the read fails or lists nothing until
  * `readTimeout`, the kill of the group is handed back beside the processes the kill named, saying
  * which (`outlived`). A process that joins the group after that read is ended by the group's kill
- * unrecorded.
+ * unrecorded, and so is one the table hides from every read while listing the group's zombies
+ * (`outlived` says why no read can find it).
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
