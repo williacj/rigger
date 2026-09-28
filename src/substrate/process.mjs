@@ -13,10 +13,10 @@ export const PS = '/bin/ps';
 
 /**
  * How long L0 waits for one read of the process table before it gives up on the census and kills
- * the group unnamed. A judgment, not a measurement: its premise is that a read of one group took
- * 1.8 to 3.9 ms over 20 reads with macOS 27.0's `ps` on 2026-09-27, so five seconds is over a
- * thousand times that, room for a loaded host, while a read that hangs holds a kill back by no
- * more than five seconds.
+ * the group unnamed. A judgment, not a measurement. Its premise is a measurement: 20 reads of one
+ * four-process group, `ps -g <group> -o pid=,comm=` with macOS 27.0's `ps` on 2026-09-27, took
+ * 1.8 to 3.9 ms each. Five seconds is over a thousand times that, room for a loaded host, while a
+ * read that hangs holds a kill back by no more than five seconds.
  */
 export const READ_TIMEOUT = 5_000;
 
@@ -77,9 +77,11 @@ async function ended(group) {
  *   that locale and nothing else of the caller's environment.
  * - The engineer measured a whole-table read (`ps -A`) cutting command lines at about 1,160
  *   characters where a read of one pid returned all 10,031 (card #336, engineer's round 4 on
- *   #332). On this host and date that did not reproduce: `ps -A`, `ps -g` and `ps -p` each
- *   returned command lines of 10,031 and 100,000 characters whole, with `COLUMNS` unset, 80 and
- *   1160. This reads one group, with `-ww`, which the manual says uses as many columns as needed.
+ *   #332). On this host and date it did not reproduce: `ps -A`, `ps -g` and `ps -p` each returned
+ *   whole a command line carrying one argument of 10,031 characters, with `COLUMNS` unset, 80 or
+ *   1160, and one carrying an argument of 100,000. The cause of the engineer's cut is not known,
+ *   so this reads one group rather than the whole table, with `-ww`, which the manual says uses
+ *   as many columns as are needed.
  * - `-g` lists the processes whose group is `group`. A process that leaves the group before the
  *   read is not listed, and one that joins it after the read is killed unnamed.
  * - `ps` exits 1, printing nothing, when no process matches.
