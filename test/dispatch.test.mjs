@@ -11,7 +11,7 @@ import { join, relative } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { dispatch } from '../src/execution/run.mjs';
+import { RECORD_REFUSED, dispatch } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, until } from './process-fixtures.mjs';
 
@@ -179,6 +179,39 @@ test('given a sink that refuses the kill event and a record that refuses the rem
   assert.equal(failure.result?.exit, 4);
   assert.equal(failure.recordFailure?.code, 'EACCES', 'the removal\'s failure is not carried on the refusal');
   assert.ok(failure.message.includes(state), `the refusal does not say the record in ${state} kept its entry: ${failure.message}`);
+});
+
+/**
+ * A command that, once the record names its group, writes `out` and `err` to its two streams,
+ * makes the state directory refuse writes, and exits 5, leaving nothing alive in its group. The
+ * stream already exists, so the sink still appends to it.
+ */
+const refusingRemovalCommand = (directory) => fixture(directory, 'command', [
+  'while ! /usr/bin/grep -q "\\"group\\":$$," "$here/.rigger/groups.json" 2>/dev/null; do :; done',
+  'printf out',
+  'printf err >&2',
+  '/bin/chmod 555 "$here/.rigger"',
+  'exit 5',
+].join('\n'));
+
+test('given a record that refuses the entry\'s removal after the command ran, the caller can tell the rejection from a failure to start and from a refused event without reading its message', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  t.after(() => chmodSync(stateOf(directory), 0o755));
+
+  const failure = await dispatchIn(directory, { id: 'd-1', card: 1412, command: refusingRemovalCommand(directory) }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  assert.equal(failure.code, RECORD_REFUSED, failure.stack);
+  assert.notEqual(RECORD_REFUSED, NOT_STARTED);
+  assert.notEqual(RECORD_REFUSED, EVENT_REFUSED);
+});
+
+test('given a record that refuses the entry\'s removal after the command ran, the rejection carries the command\'s exit code and output', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  t.after(() => chmodSync(stateOf(directory), 0o755));
+
+  const failure = await dispatchIn(directory, { id: 'd-1', card: 1412, command: refusingRemovalCommand(directory) }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  assert.deepEqual({ exit: failure.result?.exit, stdout: failure.result?.stdout, stderr: failure.result?.stderr }, { exit: 5, stdout: Buffer.from('out'), stderr: Buffer.from('err') }, failure.stack);
 });
 
 /**

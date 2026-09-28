@@ -1,13 +1,16 @@
 // ABOUTME: L1's record of the process group each running dispatch holds, one file in the state
 // directory, so that a later start can end what a dead engine left.
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const RECORD = 'groups.json';
 
 /** The record's file, inside the state directory the caller names. */
 export const recordPath = (directory) => join(directory, RECORD);
+
+/** The file a write of the record in `directory` fills before it renames it over the record. */
+export const partialPath = (directory) => `${recordPath(directory)}.partial`;
 
 /**
  * Every entry the record in `directory` holds, or none where there is no record. A record whose
@@ -60,15 +63,22 @@ export const holdsDispatch = (id, card) => typeof id === 'string' && id !== ''
  * The whole record is written beside it and renamed over it, so a reader finds it as it was
  * before the write or as it is after, never part of one: a rename within one directory replaces
  * the name in one step (POSIX `rename`). A writer stopped before the rename leaves the partial
- * file beside the record, and the next write replaces it. Nothing is flushed to the disk, as in
- * L5's stream: what this buys is surviving the engine's death, not the machine's.
+ * file beside the record, and the next write replaces it, or `removePartial` removes it. Nothing
+ * is flushed to the disk, as in L5's stream: what this buys is surviving the engine's death, not
+ * the machine's.
  */
 export function writeGroups(directory, entries) {
   mkdirSync(directory, { recursive: true });
-  const partial = `${recordPath(directory)}.partial`;
+  const partial = partialPath(directory);
   writeFileSync(partial, JSON.stringify(entries));
   renameSync(partial, recordPath(directory));
 }
+
+/**
+ * Removes the partial file a writer stopped before its rename left in `directory`, where there is
+ * one. Its entries never reached the record, so nothing reads them.
+ */
+export const removePartial = (directory) => rmSync(partialPath(directory), { force: true });
 
 /** Adds `entry` to the record in `directory`. */
 export const addGroup = (directory, entry) => writeGroups(directory, [...readGroups(directory), entry]);

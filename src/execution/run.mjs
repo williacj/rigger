@@ -2,8 +2,15 @@
 // process adapter while recording the command's process group, and records the dispatch's end.
 // And L1's kill of recorded groups, which on a start ends what a dead engine's dispatches left.
 
-import { addGroup, holdsDispatch, readGroups, removeGroup, writeGroups } from './groups.mjs';
+import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
 import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
+
+/**
+ * The `code` of the failure a dispatch rejects with when its command ran and the record refused
+ * its entry's removal, so its caller tells it from a command that never started and from a refused
+ * event without reading the message.
+ */
+export const RECORD_REFUSED = 'RECORD_REFUSED';
 
 /**
  * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
@@ -40,7 +47,9 @@ import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../su
  * Rigger's own exit, once L0's exit cleanup has killed the group. Any other rejection leaves the
  * entry it wrote, and so does an ending that runs no code, for a later start to settle. Where the record
  * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
- * record's failure as `recordFailure`.
+ * record's failure as `recordFailure`. Where it refuses the removal after the command settled, the
+ * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
+ * `recordFailure`.
  */
 export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
@@ -126,13 +135,16 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
   // later start settles it. A removal the record refuses after a refused event rides on the
   // refusal rather than replacing it, so the caller still learns which events went unrecorded.
+  // One the record refuses after the command settled carries the result, because the command ran.
   if (recorded !== undefined && (failure === undefined || failure.code === EVENT_REFUSED)) {
     try {
       removeGroup(directory, recorded);
     } catch (recordFailure) {
-      if (failure === undefined) failure = recordFailure;
-      else {
-        failure.message += `\nand the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+      const kept = `the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+      if (failure === undefined) {
+        failure = Object.assign(new Error(`${named(id, card)} ran ${command}, which exited ${result.exit}, and ${kept}`), { code: RECORD_REFUSED, result, recordFailure });
+      } else {
+        failure.message += `\nand ${kept}`;
         failure.recordFailure = recordFailure;
       }
     }
@@ -175,6 +187,9 @@ function alongside(failure, refusal) {
   return refusal;
 }
 
+/** Dispatch `id` as a failure names it, with its card where it has one. */
+const named = (id, card) => `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+
 /**
  * The failure for dispatch `id`, of `card` where it has one, whose `unrecorded` L1 events the sink
  * refused, each on a line of its own naming the dispatch and card, its fields and why, carrying the
@@ -182,7 +197,7 @@ function alongside(failure, refusal) {
  * never started without reading the message.
  */
 function refused(id, card, unrecorded, result) {
-  const under = `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+  const under = named(id, card);
   const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} of ${under} ${JSON.stringify(fields)}: ${cause.message}`);
   return Object.assign(new Error(`the sink refused ${unrecorded.length} L1 event(s) of ${under}, so they went unrecorded:\n${lines.join('\n')}`), { code: EVENT_REFUSED, unrecorded, result });
 }
@@ -201,16 +216,47 @@ function refused(id, card, unrecorded, result) {
  * kill went unrecorded is dead, so its entry goes too: keeping it would record nothing later
  * (the architect's ruling 2, §5, on #332). Where the record then refuses its rewrite, that
  * failure is added to the rejection and carried on it as `recordFailure`.
+ *
+ * Once every entry has been acted on, the partial file a writer stopped before its rename left
+ * beside the record goes, because `.rigger/` holds no file but the three things `ARCHITECTURE.md`
+ * names ("Failure model"). Where it cannot be removed, the call appends an L1 `record.partial-kept`
+ * event naming it and why, and fails on that alone only where the sink refuses the event.
  */
 export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
   const entries = readGroups(directory);
+  let failure;
+  try {
+    await killEntries({ directory, sink, ps, readTimeout, entries });
+  } catch (thrown) {
+    failure = thrown;
+  }
+  // The partial file goes once every entry has been acted on, so one that cannot be removed stops
+  // no kill. Its removal is not the start's to fail on, because nothing reads it: the call records
+  // why it stayed, and fails only where the sink refuses that.
+  try {
+    removePartial(directory);
+  } catch (cause) {
+    const kept = { path: partialPath(directory), reason: cause.message };
+    try {
+      sink.emitter({ layer: 'L1' }).emit('record.partial-kept', kept);
+    } catch (refusal) {
+      const unrecorded = `the sink refused L1's record.partial-kept ${JSON.stringify(kept)}, so it went unrecorded: ${refusal.message}`;
+      if (failure === undefined) failure = new Error(unrecorded);
+      else failure.message += `\nand ${unrecorded}`;
+    }
+  }
+  if (failure !== undefined) throw failure;
+}
+
+/** Acts on each of the record's `entries`, as `killRecordedGroups` says. */
+async function killEntries({ directory, sink, ps, readTimeout, entries }) {
   if (entries.length === 0) return;
   const kept = [];
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
     const { group, started, dispatch, card } = entry;
-    const under = `dispatch ${dispatch}${card === undefined ? '' : `, card #${card}`}`;
+    const under = named(dispatch, card);
     try {
       await killRecordedGroup({ group, started, ps, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
