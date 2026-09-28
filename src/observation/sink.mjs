@@ -1,5 +1,6 @@
 // ABOUTME: L5's event sink: it stamps every event with the envelope and appends it to one JSONL
-// stream in the consumer's state directory, and reads that stream back.
+// stream in the consumer's state directory, holding events until the verb names that directory,
+// and reads the stream back.
 
 // What this buys, and what it does not. One event is one synchronous append of one line, so the
 // stream only ever grows and a process killed outright loses no event whose call had already
@@ -8,7 +9,7 @@
 // refused by the reader rather than repaired here. Two processes appending to one stream at once
 // is not measured, and nothing emits yet, so nothing has needed either.
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 const STREAM = 'events.jsonl';
@@ -25,20 +26,80 @@ function required(value, name) {
   if (value === undefined) throw new Error(`the sink was given no ${name}, which every event carries`);
 }
 
+/**
+ * Write all of `text` to standard error before returning, even as the process exits.
+ *
+ * A verb that has printed has left the descriptor non-blocking, and a write to a full pipe then
+ * comes back short or refused with EAGAIN. `process.stderr.write` queues the rest, which an exit
+ * drops. Measured on macOS 27.0 with Node 20.20.2, 24.21.0 and 26.5.0, one `writeSync` of
+ * 200,000 bytes after `process.stderr` was touched delivered 8,192 bytes on Node 20 and 65,536
+ * on 24 and 26. This loop delivered 2,000,000 bytes whole on all three, from an `exit` listener
+ * and from a re-raised `SIGTERM`. `test/event-sink.test.mjs` writes past 65,536 bytes at exit.
+ */
+function writeWhole(text) {
+  let rest = Buffer.from(text);
+  while (rest.length > 0) {
+    try {
+      rest = rest.subarray(writeSync(2, rest));
+    } catch (error) {
+      // The reader has not drained the pipe yet, and there is nothing to wait on at exit. A reader
+      // that never drains it holds the process here.
+      if (error.code !== 'EAGAIN') throw error;
+    }
+  }
+}
+
 /** The one stream L5 owns, inside the state directory the consumer named. */
 export const streamPath = (directory) => join(directory, STREAM);
 
 /**
  * Open the sink for one run.
  *
- * `now` is the run's clock, read once per event, and it returns epoch milliseconds.
+ * `now` is the run's clock, read once per event, and it returns epoch milliseconds. `directory`
+ * may be left out: a verb opens the sink before its first spawn, which comes before it knows the
+ * state directory, and names it later (delta H5). Until then the sink holds each event, stamped
+ * when it was emitted.
+ *
+ * `end` is idempotent, because the verb and L0's exit cleanup can each call it. A sink never
+ * named writes what it held to standard error there, and any event after that as it arrives.
  */
 export function openSink({ directory, run, now }) {
-  required(directory, 'directory');
   required(run, 'run');
   required(now, 'now');
-  mkdirSync(directory, { recursive: true });
-  const path = streamPath(directory);
+  let named = directory;
+  let made = false;
+  let ended = false;
+  const held = [];
+
+  /** One event onto the stream. The directory is made at the first, so a quiet verb makes none. */
+  function append(line) {
+    if (!made) mkdirSync(named, { recursive: true });
+    made = true;
+    appendFileSync(streamPath(named), line);
+  }
+
+  /**
+   * Name the state directory, and write there first every event held until now.
+   *
+   * A held event was never an append, so nothing refused it. A refusal here is the first, and the
+   * failure carries every held event it left unrecorded, because once it is thrown the sink no
+   * longer holds them.
+   */
+  function name(given) {
+    named = given;
+    const lines = held.splice(0);
+    for (const [index, line] of lines.entries()) {
+      try {
+        append(line);
+      } catch (cause) {
+        const unrecorded = lines.slice(index);
+        throw new Error(
+          `${cause.message}\n${unrecorded.length} held event(s) went unrecorded:\n${unrecorded.join('')}`,
+          { cause },
+        );
+      }
+    }
+  }
 
   /** An emitter for one layer, and the card and dispatch its events arise under. */
   function emitter({ layer, card, dispatch }) {
@@ -59,12 +120,21 @@ export function openSink({ directory, run, now }) {
           dispatch,
           ...fields,
         };
-        appendFileSync(path, `${JSON.stringify(record)}\n`);
+        const line = `${JSON.stringify(record)}\n`;
+        if (named !== undefined) append(line);
+        else if (ended) writeWhole(line);
+        else held.push(line);
       },
     };
   }
 
-  return { emitter };
+  /** End the run's sink. One never named writes what it held to standard error. */
+  function end() {
+    ended = true;
+    writeWhole(held.splice(0).join(''));
+  }
+
+  return { emitter, name, end };
 }
 
 /**
