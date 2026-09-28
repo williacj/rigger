@@ -1,5 +1,6 @@
 // ABOUTME: Tests L0's process adapter: a command's exit code, output, working directory and
-// environment, the process group it runs in, and the survivors it kills and records.
+// environment, the process group it runs in, the survivors it kills and records, output held open
+// past the group, and a sink that refuses the record.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSy
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { PS, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
 import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
@@ -319,6 +320,21 @@ test('given an onGroup that throws, the call rejects with what it threw, and no 
   await assert.rejects(adapt(directory, { command, onGroup: (group) => { handed = group; throw refusal; } }), (thrown) => thrown === refusal);
 
   assert.equal(alive(-handed), false, 'a process of the command\'s group is alive');
+});
+
+test('given an onGroup that throws and a sink that refuses every append, the call rejects naming the unrecorded kill, caused by what onGroup threw', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  const refusal = new Error('the group could not be recorded');
+  let handed;
+
+  const error = await rejection(directory, { command, emitter: refusing(directory), onGroup: (group) => { handed = group; throw refusal; } });
+
+  assert.equal(alive(-handed), false, 'a process of the command\'s group is alive');
+  assert.equal(error.code, EVENT_REFUSED);
+  assert.equal(error.cause, refusal);
+  // The kill can land before or after the shell execs `tail`, so the process is named by its pid.
+  assert.deepEqual(error.unrecorded.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: handed }]);
 });
 
 test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
@@ -633,4 +649,146 @@ test('a survivor whose executable\'s name holds a newline is named, and costs no
   assert.deepEqual(byPid.get(Number(read(directory, 'tail.pid'))), { event: 'survivor.killed', name: 'tail' });
   assert.deepEqual(byPid.get(Number(read(directory, 'broken.pid'))), { event: 'survivor.killed', name: 'a\nb' });
   assert.equal(events.length, 2);
+});
+
+/**
+ * The lines of a fixture that start a holder which leaves the command's process group, then holds
+ * the command's standard output open until it is killed, writing its pid to `$here/holder.pid`.
+ * They wait until it has left, or the group kill at the command's exit would end it first and the
+ * test would prove nothing (engineer, round 2, 10). On macOS no `setsid` binary exists, and perl's
+ * `setpgrp(0, 0)` leaves the group. Its standard error goes to a file, so it holds only the one
+ * pipe, and says there why it failed where it did.
+ */
+const DETACH = [
+  `/usr/bin/perl -e 'my $here = $ARGV[0]; setpgrp(0, 0) or die "leave: $!"; open(my $f, ">", "$here/left") or die "left: $!"; close $f; exec "/usr/bin/tail", "-f", "$here/hold"' "$here" 2>"$here/holder.err" &`,
+  'echo $! > "$here/holder.pid"',
+  'while [ ! -f "$here/left" ]; do :; done',
+].join('\n');
+
+test('a command leaving a process outside its group that holds its standard output settles once the bound has passed, without waiting for that process', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);
+  const outputBound = 300;
+
+  const started = performance.now();
+  const { result } = await recorded(directory, { command, outputBound });
+  const elapsed = performance.now() - started;
+
+  assert.equal(result.exit, 0);
+  assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
+  assert.equal(alive(Number(read(directory, 'holder.pid'))), true, 'the holder was not alive at the settle, so it proves nothing');
+  assert.ok(elapsed >= outputBound, `the call settled after ${elapsed} ms, before the bound of ${outputBound} ms passed`);
+});
+
+test('a command whose output a process outside its group holds open is recorded under L0 as held past its group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);
+
+  const { events } = await recorded(directory, { command, outputBound: 100 });
+
+  assert.deepEqual(events.map(({ layer, event, group }) => ({ layer, event, group })), [
+    { layer: 'L0', event: 'output.held', group: Number(read(directory, 'group')) },
+  ]);
+});
+
+test('a caller whose call settled past a process holding its output can exit while that process is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', DETACH);
+  // A caller in a process of its own, which does nothing once the call has settled, so the one
+  // thing that could keep it from exiting is what the adapter holds.
+  const caller = join(directory, 'caller.mjs');
+  writeFileSync(caller, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
+  ].join('\n'));
+
+  const run = spawn(process.execPath, [caller], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(run, 'exit');
+
+  assert.equal(status, 0, stderr);
+  assert.equal(alive(Number(read(directory, 'holder.pid'))), true, 'the holder was not alive when the caller exited, so it proves nothing');
+});
+
+/**
+ * An `L0` emitter over a real sink that refuses every append, because its state directory would
+ * sit under a regular file, so the sink can never make it.
+ */
+function refusing(directory) {
+  writeFileSync(join(directory, 'blocked'), '');
+  return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 }).emitter({ layer: 'L0' });
+}
+
+/**
+ * A command that writes to both its outputs, leaves two children alive, a `tail` and a `cat`, and
+ * exits 5.
+ */
+const leavingTwo = (directory) => fixture(directory, 'command', [
+  '/usr/bin/mkfifo "$here/fifo"',
+  leave(TAIL, 'tail'),
+  leave('/bin/cat "$here/fifo"', 'cat', 'cat'),
+  'printf "to standard output"',
+  'printf "to standard error" >&2',
+  'exit 5',
+].join('\n'));
+
+test('given a sink that refuses every append, both children a command leaves alive are dead when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  await assert.rejects(adapt(directory, { command, emitter: refusing(directory) }));
+
+  assert.equal(alive(Number(read(directory, 'tail.pid'))), false, 'the tail is alive');
+  assert.equal(alive(Number(read(directory, 'cat.pid'))), false, 'the cat is alive');
+});
+
+/** What the adapter's call rejects with, given `options`; it fails the test if the call resolves. */
+async function rejection(directory, options) {
+  try {
+    await adapt(directory, options);
+  } catch (error) {
+    return error;
+  }
+  assert.fail('the call settled without rejecting');
+}
+
+test('given a sink that refuses every append, the call rejects naming each unrecorded kill by process name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+
+  // Each name and command line is read off the fixture, not asked of `ps`.
+  const killed = [
+    { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+    { event: 'survivor.killed', pid: Number(read(directory, 'cat.pid')), name: 'cat', cmd: `/bin/cat ${directory}/fifo` },
+  ];
+  const byPid = (a, b) => a.pid - b.pid;
+  assert.deepEqual((error.unrecorded ?? []).map(({ event, pid, name, cmd }) => ({ event, pid, name, cmd })).sort(byPid), killed.sort(byPid));
+  for (const { cmd } of killed) assert.ok(error.message.includes(cmd), `the failure's message does not give ${cmd}: ${error.message}`);
+});
+
+test('given a sink that refuses every append, the failure carries the command\'s exit code and output', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+
+  assert.equal(error.result?.exit, 5);
+  assert.equal(error.result?.stdout.toString(), 'to standard output');
+  assert.equal(error.result?.stderr.toString(), 'to standard error');
+});
+
+test('given a sink that refuses every append, the failure\'s code tells it from a command that never started', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+  const unstarted = await rejection(directory, { command: join(directory, 'absent'), emitter: l0(directory).emitter });
+
+  assert.equal(error.code, EVENT_REFUSED);
+  assert.notEqual(unstarted.code, EVENT_REFUSED, 'a command that never started reads as a refused event');
 });
