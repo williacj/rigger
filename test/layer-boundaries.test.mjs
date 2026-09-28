@@ -1,6 +1,6 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
 // may import, to the config keys, card facts and processes its layer may touch, and to whether it
-// may hold L3's dispatching entry point.
+// may hold L3's dispatching entry point or L1's dispatching function.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,9 +12,10 @@ import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 
 /**
  * The smallest tree the rules read: the forge adapter's three side modules, the one module
- * holding their runners, and L3's loop, whose export is L3's dispatching entry point. Each fixture
- * adds the module it is about to it. The names in the adapter's modules are placeholders standing
- * for whatever a side exports, not the adapter's operations.
+ * holding their runners, L3's loop, whose export is L3's dispatching entry point, and L1's run
+ * module, whose `dispatch` is L1's dispatching function. Each fixture adds the module it is about
+ * to it. The names in the adapter's modules are placeholders standing for whatever a side exports,
+ * not the adapter's operations.
  */
 const ADAPTER = {
   'src/substrate/forge/runners.mjs': [
@@ -27,6 +28,7 @@ const ADAPTER = {
   'src/substrate/forge/schema-write.mjs': "import { schemaWriteRunner } from './runners.mjs';\nexport function shape() { return schemaWriteRunner([]); }",
   'src/substrate/forge/item-write.mjs': "import { itemWriteRunner } from './runners.mjs';\nexport function write() { return itemWriteRunner([]); }",
   'src/scheduling/loop.mjs': 'export function loop(deps) { return { pull: async () => deps }; }',
+  'src/execution/run.mjs': 'export async function dispatch(request) { return request; }\nexport async function killRecordedGroups(options) { return options; }',
 };
 
 /** The report on the adapter plus `modules`, a map of path to source. */
@@ -1325,5 +1327,76 @@ test('rule 8: a src/scheduling/ function that only names the entry point, by a p
       'src/cli/start.mjs': "import { tick } from '../scheduling/tick.mjs';\nexport const start = (deps) => tick(deps);",
     };
     assert.deepEqual(messages(modules), [], tick);
+  }
+});
+
+test('rule 9: a named import of L1\'s dispatching function from each directory under src/ but src/scheduling/ fails, src/cli/ and src/workflow/ among them', () => {
+  const directories = outsideScheduling();
+  assert.ok(directories.includes('src/cli/') && directories.includes('src/workflow/'), `the tree read no directories: ${directories.join(', ')}`);
+  for (const directory of directories) {
+    const file = `${directory}start.mjs`;
+    assertBreaks({ [file]: "import { dispatch } from '../execution/run.mjs';\nexport const start = (request) => dispatch(request);" }, file, 'rule 9');
+  }
+});
+
+test('rule 9 follows re-exports to where L1\'s dispatching function is defined, from src/cli/ and from src/workflow/', () => {
+  const shapes = {
+    'renamed through a relay under src/execution/': {
+      'src/execution/index.mjs': "export { dispatch as run } from './run.mjs';",
+      IMPORTER: "import { run } from '../execution/index.mjs';\nexport const start = (request) => run(request);",
+    },
+    'a star re-export under src/execution/': {
+      'src/execution/index.mjs': "export * from './run.mjs';",
+      IMPORTER: "import { dispatch } from '../execution/index.mjs';\nexport const start = (request) => dispatch(request);",
+    },
+    'relayed through src/scheduling/': {
+      'src/scheduling/relay.mjs': "export { dispatch as send } from '../execution/run.mjs';",
+      IMPORTER: "import { send } from '../scheduling/relay.mjs';\nexport const start = (request) => send(request);",
+    },
+    'defined elsewhere and exported by run.mjs as dispatch': {
+      'src/execution/run.mjs': "export { go as dispatch } from './go.mjs';\nexport async function killRecordedGroups(options) { return options; }",
+      'src/execution/go.mjs': 'export async function go(request) { return request; }',
+      IMPORTER: "import { go } from '../execution/go.mjs';\nexport const start = (request) => go(request);",
+    },
+    'an alias run.mjs exports as dispatch': {
+      'src/execution/run.mjs': 'async function go(request) { return request; }\nexport const dispatch = go;\nexport { go };\nexport async function killRecordedGroups(options) { return options; }',
+      IMPORTER: "import { go } from '../execution/run.mjs';\nexport const start = (request) => go(request);",
+    },
+    'a namespace import': {
+      IMPORTER: "import * as l1 from '../execution/run.mjs';\nexport const start = (request) => l1.dispatch(request);",
+    },
+    'a dynamic import': {
+      IMPORTER: "export const start = async (request) => (await import('../execution/run.mjs')).dispatch(request);",
+    },
+  };
+  for (const importer of ['src/cli/start.mjs', 'src/workflow/start.mjs']) {
+    for (const [shape, { IMPORTER, ...modules }] of Object.entries(shapes)) {
+      const found = messages({ ...modules, [importer]: IMPORTER });
+      assert.ok(found.some((message) => message.startsWith(`${importer} `) && message.includes('breaks rule 9:')), `${shape}, ${importer}:\n${found.join('\n') || '(nothing)'}`);
+    }
+  }
+});
+
+test('rule 9: a module under src/scheduling/ importing L1\'s dispatching function passes', () => {
+  const loop = "import { dispatch } from '../execution/run.mjs';\nexport function loop(deps) { return { pull: async () => dispatch(deps) }; }";
+  assert.deepEqual(messages({ 'src/scheduling/loop.mjs': loop }), []);
+});
+
+test('rule 9 bars no other L1 function: a module under src/cli/ importing L1\'s kill of recorded groups passes', () => {
+  const start = "import { killRecordedGroups } from '../execution/run.mjs';\nexport const start = (options) => killRecordedGroups(options);";
+  assert.deepEqual(messages({ 'src/cli/start.mjs': start }), []);
+  // The real module, whose kill of recorded groups the CLI hands L3 (the architect's ruling 1, P1, on #332).
+  const tree = sourceTree();
+  tree.set('src/cli/start.mjs', start);
+  assert.deepEqual(boundaryReport(tree).violations.map((violation) => violation.message), []);
+});
+
+test('rule 9: a tree whose run.mjs is absent, or exports no dispatch, is refused, naming the function it looked for', () => {
+  const absent = new Map(Object.entries(ADAPTER));
+  absent.delete('src/execution/run.mjs');
+  assert.throws(() => boundaryReport(absent), /L1's dispatching function has no module at src\/execution\/run\.mjs, so rule 9 could not fail/);
+  for (const source of ['export async function run(request) { return request; }', 'async function dispatch(request) { return request; }\nexport { dispatch as run };']) {
+    const tree = new Map(Object.entries({ ...ADAPTER, 'src/execution/run.mjs': source }));
+    assert.throws(() => boundaryReport(tree), /src\/execution\/run\.mjs exports no `dispatch`, L1's dispatching function, so rule 9 could not fail/, source);
   }
 });
