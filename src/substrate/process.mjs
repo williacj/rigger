@@ -586,9 +586,9 @@ const timedOut = (timeout) => new Error(`the process-table read timed out after 
  * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
  * matched.
  *
- * What `ps` cannot show is that the kernel handed it every process there is, so none of the census,
- * the kill and the start-time read takes a process as gone because a read left it out (`census`,
- * `killedOf`, `startsIn`).
+ * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`), and the
+ * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
@@ -1027,10 +1027,19 @@ function startOf(ps, pid, timeout) {
  *
  * A read that lists no process is kept only where signal 0 no longer reaches the group, because a
  * read that failed can list nothing, even one that exits 1 and prints nothing (`run`), and the
- * leaderless rule would take that empty table as a group to kill (`recorded`). While the group
- * still answers, it reads again, since a member that is exiting answers signal 0 and may not be
- * listed (`occupied`), and where `timeout` passes first it fails, so nothing in the group is
- * killed.
+ * leaderless rule would take that empty table as a group to kill (`recorded`). A read that leaves
+ * out the leader is kept only where signal 0 no longer reaches the leader's pid, which is the
+ * group's id: a leader that has exited and not been reaped is listed as a zombie, so a leader left
+ * out while its pid still answers was left out by a read that failed, and the leaderless rule
+ * would otherwise judge the group without the one start that can show it is not the one
+ * recorded. While either holds, it reads again, since a process that is exiting answers signal 0
+ * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
+ * group is killed. A leader that has left the group for another holds the read to `timeout` the
+ * same way, which kills nothing.
+ *
+ * A read that leaves out a member other than the leader is taken as complete, because nothing but
+ * the table says which processes the group holds (`D16` rule 3). Where the leader is dead, such a
+ * read decides the leaderless rule without that member's start.
  *
  * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
  * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
@@ -1045,9 +1054,9 @@ async function startsIn(ps, group, timeout) {
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`the reads of the group's start times listed no process for ${timeout} ms while signal 0 still reached it`);
+    if (remaining <= 0) throw new Error(`the reads of the group's start times left out a process signal 0 still reached, its leader or every member, for ${timeout} ms`);
     const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
-    if (rows.size === 0 && occupied(group)) continue;
+    if ((rows.size === 0 && occupied(group)) || (!rows.has(group) && answers(group))) continue;
     const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
     return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
   }

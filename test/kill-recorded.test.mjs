@@ -463,6 +463,40 @@ for (const [how, body] of Object.entries(FAILING_READS)) {
   });
 }
 
+test('given a recorded group whose leader is dead and whose live member\'s start-time read exits 1 and prints nothing, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await withoutLeader(await startGroup(directory, 'group'));
+  const entry = entryFor(started, { dispatch: 'd-unread-leaderless', card: 34 });
+  writeGroups(stateOf(directory), [entry]);
+
+  await assert.rejects(killIn(directory, { ps: fixture(directory, 'ps', 'exit 1'), readTimeout: 300 }), (failure) => {
+    for (const named of [`group ${started.group}`, 'd-unread-leaderless', '#34']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    return true;
+  });
+
+  assert.equal(alive(started.member), true, 'the member was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
+test('given a live group that is not the recorded one, whose start-time read prints the table less its live leader\'s row and exits 0, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(directory, 'group');
+  // The entry names a leader that started five seconds before this group's, so this group is not
+  // the one recorded, and only its leader's start shows that. The read's third argument is the
+  // group's id, which is its leader's pid.
+  const entry = entryFor(started, { started: started.started - 5, dispatch: 'd-leaderless', card: 33 });
+  writeGroups(stateOf(directory), [entry]);
+  const ps = fixture(directory, 'ps', '/bin/ps "$@" | /usr/bin/grep -v "^ *$3 "; exit 0');
+
+  await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
+    for (const named of [`group ${started.group}`, 'd-leaderless', '#33']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    return true;
+  });
+
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
 /** A sink whose stream lies under a regular file in `directory`, so it refuses every append. */
 function refusingSink(directory) {
   writeFileSync(join(directory, 'blocked'), '');
