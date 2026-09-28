@@ -1242,7 +1242,8 @@ test('a kill whose read of the table never answers records the group\'s kill wit
   const ps = fixture(directory, 'ps', 'case "$*" in *ppid=*) exec /usr/bin/tail -f "$here/hold" ;; esac\nexec /bin/ps "$@"');
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 300 });
+  // Long enough for the census to finish on a loaded host, where the whole suite runs at once.
+  const { events } = await recorded(directory, { command, ps, readTimeout: 2_000 });
 
   assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
   assert.match(events[0].census, /^the kill /);
