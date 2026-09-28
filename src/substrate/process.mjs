@@ -231,6 +231,13 @@ const samePids = (one, other) => one.size === other.size && [...one.keys()].ever
  * What `ucomm` prints for each of `pids`, as bytes, read in a `ps` run of its own, so the whole of
  * that run's output is that one process's name, whatever bytes it holds, and `ps`'s padding. A
  * process no longer there is left out.
+ *
+ * So the census grows with the group. Measured with `/bin/ps` from adv_cmds-240 and Node 26.5.0 on
+ * macOS 27.0 (26A428) on 2026-09-27, at a load average of about 23 on 12 cores: 300 such reads, one
+ * per `tail` in one group, took 1.09 to 1.23 ms each over three runs, and one read of that group's
+ * command lines took about 9 ms. At 1.23 ms a survivor, the names alone reach `READ_TIMEOUT` at
+ * about 4,000 survivors, and fewer once the group's own reads are counted. Such a group is killed
+ * unnamed.
  */
 async function namesOf(pids, read) {
   const names = new Map();
