@@ -1,5 +1,6 @@
 // ABOUTME: L0's process adapter: it runs one command in a process group of its own, and once the
-// command exits, kills what is left of that group and records each process it killed.
+// command exits, kills what is left of that group, records each process it killed, and stops reading
+// output a process outside the group holds open.
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -19,6 +20,25 @@ export const PS = '/bin/ps';
  * read that hangs holds a kill back by no more than five seconds.
  */
 export const READ_TIMEOUT = 5_000;
+
+/**
+ * How long L0 reads a command's output once its group is empty before it stops, because a process
+ * that left the group holds a pipe open. A judgment, not a measurement. Its premise: once the group
+ * is empty, every byte the group wrote is already in the pipes, and the output is only what the
+ * group wrote (the Failure model), so the bound waits for nothing of the command's own but a read
+ * of what is buffered. That read is measured: with no process outside the group holding a pipe,
+ * both pipes closed at most 0.129 ms after the group was empty, over 400 calls of this adapter
+ * writing 300,000 bytes, half of them leaving a survivor on both pipes, with Node 26.5.0 on macOS
+ * 27.0 on 2026-09-27. One second is over seven thousand times that, room for a loaded host, and
+ * costs a command whose output a detached process holds one second.
+ */
+export const OUTPUT_BOUND = 1_000;
+
+/**
+ * The `code` of the failure a call rejects with when the sink refused an event it had to record,
+ * so its caller tells it from a command that never started without reading the message.
+ */
+export const EVENT_REFUSED = 'EVENT_REFUSED';
 
 /** Every chunk `stream` carries, as one buffer, once the stream has closed. */
 async function drained(stream) {
@@ -201,12 +221,12 @@ function run(ps, args, remaining, timeout) {
 /**
  * Ends what is left of `group` once its command has exited, in the order that keeps each name:
  * the census, which stops the group and reads it while its processes still exist; the kill; the
- * confirmation that the group is empty; and only then one `L0` event per process killed. A
- * census that fails still kills the group, and records the kill of the group with why its
- * processes went unnamed.
+ * confirmation that the group is empty; and only then the `L0` events to record, one per process
+ * killed, which it hands back. A census that fails still kills the group, and hands back the kill
+ * of the group with why its processes went unnamed.
  */
-async function contain(group, { emitter, ps, readTimeout }) {
-  if (!occupied(group)) return;
+async function contain(group, { ps, readTimeout }) {
+  if (!occupied(group)) return [];
   let survivors;
   let unnamed;
   try {
@@ -215,8 +235,31 @@ async function contain(group, { emitter, ps, readTimeout }) {
     unnamed = error.message;
   }
   await ended(group);
-  if (unnamed !== undefined) emitter.emit('group.killed', { group, census: unnamed });
-  else for (const survivor of survivors) emitter.emit('survivor.killed', survivor);
+  if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
+  return survivors.map((survivor) => ['survivor.killed', survivor]);
+}
+
+/**
+ * Appends each of `events` through `emitter`, trying every one whatever became of those before
+ * it, and hands back each the sink refused, with its fields and why.
+ */
+function record(emitter, events) {
+  const unrecorded = [];
+  for (const [event, fields] of events) {
+    try {
+      emitter.emit(event, fields);
+    } catch (cause) {
+      unrecorded.push({ event, ...fields, cause });
+    }
+  }
+  return unrecorded;
+}
+
+/** The failure for a call whose `unrecorded` events the sink refused, carrying its `result`. */
+function refused(unrecorded, result) {
+  const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
+  const error = new Error(`the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
+  return Object.assign(error, { code: EVENT_REFUSED, unrecorded, result });
 }
 
 /**
@@ -224,10 +267,16 @@ async function contain(group, { emitter, ps, readTimeout }) {
  * settles on its exit code and the bytes it wrote to standard output and standard error.
  *
  * The order is fixed: the command exits; L0 kills what is left of its group and confirms it is
- * empty; L0 reads both pipes until they close; the call settles. So the output is everything the
- * group wrote until that kill, and a survivor holding a pipe never holds the call open.
+ * empty; L0 reads both pipes until they close, or until `outputBound` milliseconds have passed,
+ * where a process outside the group holds one open; L0 records each kill, and any such hold; the
+ * call settles. So the output is everything the group wrote until that kill, and neither a
+ * survivor nor a process that left the group holds the call open.
+ *
+ * A refused event never stops a kill, because every kill is done before any is recorded. Every
+ * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
+ * failure naming each unrecorded event and carrying the result.
  */
-export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
+export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -235,7 +284,25 @@ export async function runCommand({ command, args, cwd, env, emitter, ps = PS, re
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const [exit] = await once(child, 'exit');
-  await contain(child.pid, { emitter, ps, readTimeout });
+  const events = await contain(child.pid, { ps, readTimeout });
+  if (await heldPast(output, outputBound)) {
+    // Closing the pipes lets go of their handles, which would otherwise hold this process open.
+    child.stdout.destroy();
+    child.stderr.destroy();
+    events.push(['output.held', { group: child.pid, bound: outputBound }]);
+  }
   const [stdout, stderr] = await output;
-  return { exit, stdout, stderr };
+  const result = { exit, stdout, stderr };
+  const unrecorded = record(emitter, events);
+  if (unrecorded.length > 0) throw refused(unrecorded, result);
+  return result;
+}
+
+/** Whether `output` is still unread once `bound` milliseconds have passed. */
+async function heldPast(output, bound) {
+  let timer;
+  const passed = new Promise((resolve) => { timer = setTimeout(resolve, bound, true); });
+  const held = await Promise.race([output.then(() => false), passed]);
+  clearTimeout(timer);
+  return held;
 }
