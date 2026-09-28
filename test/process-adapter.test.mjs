@@ -1350,6 +1350,54 @@ test('a census whose every read of the group exits 1 and prints nothing while th
   assert.match(events[0].census, /named no process/);
 });
 
+test('a census whose every read of the group lists only one of two survivors still has both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in cuts every read of the census down to the first survivor's row, and none other.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/one.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.deepEqual(survivors.map(alive), [false, false]);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
+  }
+});
+
+test('a census whose every read of the group lists only its zombie, while a survivor lives, still has the survivor recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in cuts every read of the census down to the zombie's row, and none other.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = unreaped(directory);
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivor = Number(read(directory, 'tail.pid'));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.equal(alive(survivor), false);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid), [survivor], `the survivor was not recorded: ${JSON.stringify(events)}`);
+  }
+});
+
 test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
   const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
 

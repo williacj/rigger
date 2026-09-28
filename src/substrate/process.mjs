@@ -407,6 +407,11 @@ async function contain(group, { ps, readTimeout }, killed) {
  * that goes on leaving it out holds the kill to `timeout`, where the group is killed unnamed. So
  * does a survivor's pid the system has handed on to another process meanwhile.
  *
+ * The census's reads can fail the other way, agreeing on only some of the group's live members.
+ * So each live member a read of the kill finds must be one the census named, and the kill fails
+ * where it finds another, so the group is killed unnamed rather than that process ended
+ * unrecorded. The kill reads the table at least once, even where the census named no one.
+ *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
@@ -424,11 +429,12 @@ async function contain(group, { ps, readTimeout }, killed) {
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
   const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
+  const named = new Set(pending.keys());
   const sent = new Set();
   const killed = [];
   const [began, used] = [performance.now(), process.cpuUsage()];
   let [rounds, paused] = [0, 0];
-  for (let wait = 0; pending.size > 0; ) {
+  for (let wait = 0; rounds === 0 || pending.size > 0; ) {
     if (wait > 0) await pause(wait);
     paused += wait;
     const remaining = deadline - Date.now();
@@ -444,6 +450,8 @@ async function killedOf(survivors, group, ps, timeout) {
       moved = true;
     }
     const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
+    const unnamed = living.find(([pid]) => !named.has(pid));
+    if (unnamed) throw new Error(`the kill found process ${unnamed[0]} in the group, which the census did not name`);
     const parents = new Set(living.map(([, row]) => row.parent));
     for (const [pid] of living) {
       if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
