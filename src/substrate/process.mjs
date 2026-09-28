@@ -7,7 +7,7 @@ import { execFile, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { accessSync, constants as files, statSync } from 'node:fs';
 import { constants } from 'node:os';
-import { setImmediate as turn } from 'node:timers/promises';
+import { setTimeout as pause } from 'node:timers/promises';
 
 import { writeWhole } from './standard-error.mjs';
 
@@ -38,6 +38,43 @@ export const READ_TIMEOUT = 5_000;
  * costs a command whose output a detached process holds one second.
  */
 export const OUTPUT_BOUND = 1_000;
+
+/**
+ * How long L0 goes on killing a group that holds nothing but zombies before it settles. A zombie
+ * cannot run, but it keeps its group in being, so a process can still join the group, and L0 kills
+ * any that does within the bound. A zombie whose parent never reaps it is left behind once the
+ * bound passes. A judgment, not a measurement. Its premise is a measurement: over 30 calls of this
+ * adapter, 10 each of the three tests in `test/process-adapter.test.mjs` whose group holds a zombie
+ * that is reaped (the forkers, the process that joins after the kill, and the zombie left out of
+ * the census), 12 read only zombies before the group was empty, and each was empty 2 to 5 ms
+ * later, with Node 26.5.0 on macOS 27.0 on 2026-09-27. One second is 200 times that, room for a
+ * loaded host, and costs a group whose zombie is never reaped one second.
+ */
+export const UNREAPED_BOUND = 1_000;
+
+/**
+ * The longest L0 pauses between two looks at a group it is waiting on. The pause starts at one
+ * millisecond and doubles up to this, so a wait costs next to no processor time however long it
+ * lasts. A judgment, not a measurement.
+ */
+const LONGEST_PAUSE = 50;
+
+/**
+ * How many times the processor time a kill has used, since it began, the kill lets pass before
+ * its next round, where a round saw a survivor end or sent the kill: a group killed in many
+ * rounds, a chain of parents and children, would otherwise be read back to back. A judgment, not
+ * a measurement. Its premise is a measurement: a chain 120 deep read back to back used 13 to 15%
+ * of the processor on macOS 27.0 with Node 26.5.0 on 2026-09-28, and 11 to 13% on CI's macOS
+ * runners, where a fixed 5 ms pause did not hold it under a tenth. At twelve, the chain's kill,
+ * measured from its first round to the call's settling, used 8.8 to 9.2%, because the settling
+ * counts too. Twenty holds it near a twentieth, a margin under the tenth #358 asks for, and costs
+ * a kill of many rounds twenty times its processor time, less where its deadline could not
+ * afford that (`killedOf`).
+ */
+const ROUND_SHARE = 20;
+
+/** The pause after `wait`, doubling it up to `LONGEST_PAUSE`. */
+const longer = (wait) => Math.min(Math.max(1, 2 * wait), LONGEST_PAUSE);
 
 /**
  * The `code` of the failure a call rejects with when the sink refused an event it had to record,
@@ -212,9 +249,12 @@ async function drained(stream) {
  * 200 groups each SIGKILLed with two members: the kernel answered `EPERM` once in every one of
  * them while its members were exiting, and `ESRCH` on a later poll.
  */
-function occupied(group) {
+const occupied = (group) => answers(-group);
+
+/** Whether signal 0 reaches `target`, a pid or a group's id negated, `EPERM` counting as reached. */
+function answers(target) {
   try {
-    process.kill(-group, 0);
+    process.kill(target, 0);
     return true;
   } catch (error) {
     if (error.code === 'ESRCH') return false;
@@ -224,23 +264,49 @@ function occupied(group) {
 }
 
 /**
- * Kills every process left in `group` and settles once the group is empty. The wait is on that
- * condition, checked once per turn of the event loop, so nothing else in Rigger stops meanwhile.
+ * Kills every process left in `group` and settles once the group is empty, or once `UNREAPED_BOUND`
+ * has passed with no read of its states finding a member that is not a zombie. The wait is on that
+ * condition, looked at after each pause, so nothing else in Rigger stops meanwhile.
  *
- * The kill is sent again on every turn, because a process can be in the group without having
+ * A read that fails, or times out, finds no such member, so the call settles whatever the process
+ * table does. A group whose table L0 cannot read is still sent the kill on every look until the
+ * bound passes.
+ *
+ * The kill is sent again on every look, because a process can be in the group without having
  * received it. One forked while the kernel delivers a group kill can miss it and run on: the
  * engineer judge on #354 saw that in 9 of 12 runs of a survivor forking in a loop, macOS 27.0,
  * 2026-09-27, where the group was running at the kill. A census that stopped the group leaves
  * nothing forking, but one that failed may not have. And a process outside the group can join it
  * after the kill while a zombie keeps it in being.
  */
-async function ended(group) {
-  for (;;) {
+async function ended(group, ps, readTimeout) {
+  let unreapedSince;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL');
     if (!occupied(group)) return;
-    await turn();
+    if (wait === 0) continue;
+    const looked = Date.now();
+    if (await living(group, ps, readTimeout)) {
+      unreapedSince = undefined;
+    } else {
+      unreapedSince ??= looked;
+      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return;
+    }
   }
 }
+
+/** Whether a read of `group`'s states finds a member that is not a zombie. One that fails does not. */
+async function living(group, ps, timeout) {
+  try {
+    return [...(await statesOf(group, ps, timeout)).values()].some((state) => !state.startsWith('Z'));
+  } catch {
+    return false;
+  }
+}
+
+/** Each process in `group` and its state, by pid, read in one `ps` run given up on after `timeout` ms. */
+const statesOf = async (group, ps, timeout) => rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], timeout, timeout));
 
 /** Sends `name` to every process in `group`, and to none where the group has emptied. */
 function signal(group, name) {
@@ -255,8 +321,9 @@ function signal(group, name) {
 /**
  * Every live process in `group`, each with its pid, its name, which is the executable's name, and
  * its command line. It yields each read of the process table it makes, as the arguments `ps` is
- * given, and takes back what `ps` printed, so one census serves the call, which waits on each
- * read, and the exit cleanup, which can wait on none (`reading` and `readingNow`).
+ * given, and takes back what `ps` printed, and each pause before it tries again, as milliseconds.
+ * So one census serves the call, which waits on each read and each pause, and the exit cleanup,
+ * which can wait on none, and tries again at once (`reading` and `readingNow`).
  *
  * The group is stopped first, because a stopped process cannot exec. One `ps` run reads a
  * process's name from the process table and its arguments a moment later, so a process that
@@ -264,10 +331,10 @@ function signal(group, name) {
  * measured that in 16 of 3,000 direct reads, and 34 of 1,500 calls to this adapter, before the
  * group was stopped. So the census reads the states, then the names, then the command lines,
  * then the states again, each in a `ps` run of its own. It keeps them only when both state reads
- * find every member stopped, or a zombie, and all four reads find the same processes. Otherwise
- * it stops the group again and reads again: a member not yet stopped is one the signal has not
- * reached, one caught mid-exec (state `?`), or a fork the signal missed. A zombie cannot exec
- * either, and is left out, because it is already dead.
+ * find every member stopped, or a zombie, and all four reads find the same processes. Otherwise it pauses, then stops the group again and reads again:
+ * a member not yet stopped is one the signal has not reached, one caught mid-exec (state `?`), or
+ * a fork the signal missed. A zombie cannot exec either, and is left out, because it is already
+ * dead.
  *
  * A read of states or command lines holds the pid and that one column, so no field of varying
  * width comes before the one split it takes. `ps` pads a column by display width, and a name of
@@ -279,15 +346,25 @@ function signal(group, name) {
  * Where `ps`'s answer can differ from the process's own (`D16` rule 3), measured with `ps` from
  * adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
  *
- * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a cut can fall
- *   inside a character and leave bytes that are not UTF-8 (the engineer judge on #354 saw
- *   `日本語テール` recorded as `日本語テー` and U+FFFD). It is padded with spaces, so a name's own
- *   trailing spaces are lost. It prints control characters raw, a newline included, so a name
- *   `x`, newline, `<pid> evil` read in the group's table named that other pid's process `evil`
- *   (the engineer judge on #354). It names what runs, not what was asked for: a script run by
- *   `/bin/sh` is named `bash`.
+ * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a name longer
+ *   than that is recorded as its first 16 bytes, less any spaces they end in: `abcdefghijklmnopq`
+ *   is recorded as `abcdefghijklmnop`, and `abcdefghijklmno xyz` as `abcdefghijklmno`. A cut can fall inside a character and leave bytes that are not UTF-8 (the
+ *   engineer judge on #354 saw `日本語テール` recorded as `日本語テー` and U+FFFD).
+ * - `ucomm` is padded with spaces to 16 columns, even as the last column, so a name's own trailing
+ *   spaces cannot be recovered, and are not recorded. `sp` and `sp` with a space print the same
+ *   17 bytes, and so do `abcdefghijklmno`, the same with a space, and the same with a space and
+ *   `x`, under every `ucomm` form and locale tried. Other trailing whitespace is the name's own:
+ *   a trailing newline or tab is recorded.
+ * - `ucomm` prints control characters raw, a newline included, so a name `x`, newline,
+ *   `<pid> evil` read in the group's table named that other pid's process `evil` (the engineer
+ *   judge on #354). It names what runs, not what was asked for: a script run by `/bin/sh` is
+ *   named `bash`.
+ * - `-c` makes `command` argv[0]'s last part, not the executable's name: `exec -a Tx` shows `Tx`.
  * - `stat`'s first character is the process's state: `T` stopped, `Z` a zombie, `?` caught
  *   mid-exec.
+ * - `xstat` is a zombie's wait status in hexadecimal: `0` for a process that exited 0, `300` for
+ *   one that exited 3, `9` for one `SIGKILL` ended and `f` for one `SIGTERM` ended. It is there to
+ *   read only while the zombie's parent has not reaped it.
  * - `comm` is argv[0], so `exec -a <anything>` names the process `<anything>`. It is cut to 16
  *   characters, measured with an ASCII name, unless it is the last column. The command line
  *   already begins with argv[0], so the name is the executable's.
@@ -314,7 +391,8 @@ function* census(group) {
   const column = function* (name) {
     return rowsOf(yield ['-ww', '-g', String(group), '-o', `pid=,${name}=`]);
   };
-  for (;;) {
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) yield wait;
     signal(group, 'SIGSTOP');
     const before = yield* column('stat');
     if (!stopped(before)) continue;
@@ -337,13 +415,20 @@ const samePids = (one, other) => one.size === other.size && [...one.keys()].ever
 /**
  * Each of `pids`' names, read in a `ps` run of its own, so the whole of that run's output is that
  * one process's name, whatever bytes it holds. A process no longer there is left out.
+ *
+ * So the census grows with the group. Measured with `/bin/ps` from adv_cmds-240 and Node 26.5.0
+ * on macOS 27.0 (26A428) on 2026-09-27, on 12 cores: 300 such reads, one per `tail` in one group,
+ * took 1.09 to 1.23 ms each over three runs at a load average of about 23, and 2.13 to 3.29 ms
+ * each over three more at about 9. One read of that group's command lines took 9 to 15 ms. At
+ * 3.29 ms a survivor, the names alone reach `READ_TIMEOUT` at about 1,500 survivors, and fewer
+ * once the group's other reads are counted. Such a group is killed unnamed.
  */
 function* namesOf(pids) {
   const names = new Map();
   for (const pid of pids) {
     const printed = yield ['-p', String(pid), '-o', 'ucomm='];
-    // `ps` ends the name with its padding and a newline, which are not the name's own.
-    if (printed !== '') names.set(pid, printed.replace(/\n$/, '').trimEnd());
+    // `ps` ends the name with its padding, spaces alone, and a newline, which are not the name's own.
+    if (printed !== '') names.set(pid, printed.replace(/ *\n$/, ''));
   }
   return names;
 }
@@ -363,21 +448,27 @@ function rowsOf(printed) {
 }
 
 /**
- * Runs each read of the process table `looks` yields in `ps`, one at a time, and hands back what
- * `looks` returns. The reads are given up on `timeout` milliseconds after the first starts.
+ * Runs each read of the process table `looks` yields in `ps`, one at a time, and waits out each
+ * pause it yields, and hands back what `looks` returns. The reads are given up on `timeout`
+ * milliseconds after the first starts.
  */
 async function reading(looks, ps, timeout) {
   const deadline = Date.now() + timeout;
   let look = looks.next();
-  while (!look.done) look = looks.next(await run(ps, look.value, deadline - Date.now(), timeout));
+  while (!look.done) {
+    if (typeof look.value === 'number') {
+      await pause(look.value);
+      look = looks.next();
+    } else look = looks.next(await run(ps, look.value, deadline - Date.now(), timeout));
+  }
   return look.value;
 }
 
-/** `reading`, synchronously, for the exit cleanup. */
+/** `reading`, synchronously, for the exit cleanup, which passes over each pause. */
 function readingNow(looks, ps, timeout) {
   const deadline = Date.now() + timeout;
   let look = looks.next();
-  while (!look.done) look = looks.next(runNow(ps, look.value, deadline - Date.now(), timeout));
+  while (!look.done) look = typeof look.value === 'number' ? looks.next() : looks.next(runNow(ps, look.value, deadline - Date.now(), timeout));
   return look.value;
 }
 
@@ -427,21 +518,26 @@ function runNow(ps, args, remaining, timeout) {
 /**
  * Ends what is left of `group`, once its command has exited or at its timeout, in the order that
  * keeps each name: the census, which stops the group and reads it while its processes still
- * exist; the kill; the confirmation that the group is empty; and only then the `L0` events to
- * record, one `killed` event per process, which it hands back. A census that fails still kills the
- * group, and hands back the kill of the group with why its processes went unnamed.
+ * exist; the kill, which reads how each survivor ended; the confirmation that the group is empty;
+ * and only then the `L0` events to record, one `killed` event per process the kill ended, which it
+ * hands back. A census or a kill whose read fails still kills the group, and hands back the kill
+ * of the group with why its processes went unnamed.
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
-  let survivors;
+  let dead;
   let unnamed;
   try {
-    survivors = await reading(census(group), ps, readTimeout);
+    const survivors = await reading(census(group), ps, readTimeout);
+    dead = await killedOf(survivors, group, ps, readTimeout).catch((error) => {
+      throw new Error(`the kill could not read how every survivor ended: ${error.message}`);
+    });
   } catch (error) {
     unnamed = error.message;
   }
-  await ended(group);
-  return killsOf(group, survivors, unnamed, killed);
+  await ended(group, ps, readTimeout);
+  if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
+  return dead.map((survivor) => [killed, survivor]);
 }
 
 /**
@@ -488,6 +584,116 @@ function* emptied(group) {
 function killsOf(group, survivors, unnamed, killed) {
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   return survivors.map((survivor) => [killed, survivor]);
+}
+
+/**
+ * Kills the stopped `group`'s live members, those with no live child first, and hands back each
+ * of `survivors` that L0's kill ended, given up on `timeout` milliseconds after it starts.
+ *
+ * A survivor can exit on its own after any read of the table and before L0's kill lands, and its
+ * parent, stopped, leaves it a zombie, which signal 0 still reaches. Its exit status tells the two
+ * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the group, sorts out
+ * each survivor sent the kill since the round before, by that status, and sends the kill to each
+ * live member none of whose children is live. Its parent is then alive, and stopped, until a later
+ * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
+ * before L0 sent it the kill exited on its own, and so does one the kill found gone (`ESRCH`),
+ * reaped at once by a parent the group does not hold. One gone after the kill reached it is
+ * counted as killed, because such a parent may reap it at once.
+ *
+ * So one window is left open, and the process table cannot close it (`D16` rule 3, measured with
+ * `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27): a survivor that exits on its own
+ * as L0's kill reaches it, and whose parent outside the group reaps it before the next read, is
+ * counted as killed. How a process ended is in the table only as its zombie's `xstat`, which `ps`
+ * shows until the parent reaps it and never after. A parent the group does not hold is not
+ * stopped, so it can reap before any read, and the table then holds nothing to tell that exit
+ * from L0's kill. A read that fails, or a group still not ended at `timeout`, fails the whole,
+ * and the group is killed unnamed.
+ *
+ * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
+ * times the processor time the kill has used has passed since it began, and after one that sees
+ * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
+ * back. That pacing is what holds the kill's processor time under a tenth of its wall-clock time,
+ * and it holds only while the deadline leaves room.
+ *
+ * Room is the time left before the deadline after holding back, for each round still to come,
+ * three times what a round has cost on average so far. The rounds still to come are taken as one
+ * more than the depth of the live tree. Each pause is capped at its share of that room, so the pace
+ * tightens as the deadline nears. Where no room is left the cap is zero, and the rounds run back to
+ * back, over the tenth. Close to the deadline, naming the group's processes takes precedence over
+ * that bound, so a kill that reading alone could finish in time is not pushed past the deadline and
+ * killed unnamed.
+ */
+async function killedOf(survivors, group, ps, timeout) {
+  const deadline = Date.now() + timeout;
+  const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
+  const sent = new Set();
+  const killed = [];
+  const [began, used] = [performance.now(), process.cpuUsage()];
+  let [rounds, paused] = [0, 0];
+  for (let wait = 0; pending.size > 0; ) {
+    if (wait > 0) await pause(wait);
+    paused += wait;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`not every survivor had ended within ${timeout} ms`);
+    const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
+    let moved = false;
+    for (const [pid, survivor] of pending) {
+      const row = table.get(pid);
+      if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
+      pending.delete(pid);
+      moved = true;
+    }
+    const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
+    const parents = new Set(living.map(([, row]) => row.parent));
+    for (const [pid] of living) {
+      if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
+      sent.add(pid);
+      moved = true;
+    }
+    rounds += 1;
+    const { user, system } = process.cpuUsage(used);
+    const elapsed = performance.now() - began;
+    const paced = moved ? (ROUND_SHARE * (user + system)) / 1000 - elapsed : longer(wait);
+    const left = depthOf(living) + 1;
+    const spare = deadline - Date.now() - 3 * left * ((elapsed - paused) / rounds);
+    wait = Math.max(0, Math.min(paced, spare / left));
+  }
+  return killed;
+}
+
+/** The length of the longest line of parent and child among the `living` rows of a table. */
+function depthOf(living) {
+  const parents = new Map(living.map(([pid, row]) => [pid, row.parent]));
+  const depths = new Map();
+  const depth = (pid) => {
+    if (!parents.has(pid)) return 0;
+    if (!depths.has(pid)) depths.set(pid, 1 + depth(parents.get(pid)));
+    return depths.get(pid);
+  };
+  return [...parents.keys()].reduce((deepest, pid) => Math.max(deepest, depth(pid)), 0);
+}
+
+/** Each row of a read of `pid=,ppid=,stat=,xstat=`, by pid. */
+function tableOf(printed) {
+  const rows = new Map();
+  for (const line of printed.split('\n').filter(Boolean)) {
+    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
+    if (!row) throw new Error(`the process table held a row the kill cannot read: ${JSON.stringify(line)}`);
+    rows.set(Number(row[1]), { parent: Number(row[2]), state: row[3], status: row[4] });
+  }
+  return rows;
+}
+
+/** Sends `SIGKILL` to the process `pid`, and whether it was there to send to. */
+function end(pid) {
+  try {
+    process.kill(pid, 'SIGKILL');
+    return true;
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+    return false;
+  }
 }
 
 /**
