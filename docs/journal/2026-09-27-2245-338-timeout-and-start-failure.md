@@ -26,11 +26,16 @@ can be 0, and reporting it as timed out would pair "the timeout ended it" with s
 result says the timeout ended it only where the exit shows a signal. The engineer judge on #364
 forced that race by blocking Node's loop past the timer. The test does the same on a condition:
 it holds the thread until the command is a zombie Node has not reaped. When the loop resumes, Node
-runs the due timer before it reaps the command.
+runs the due timer before it reaps the command. Because that wait holds the thread, no test
+timeout can end it, and the suite runs with `--test-timeout=0`. So the wait carries a deadline of
+its own. The engineer judge's mutation, which rejects before the command runs when `timeout` is
+1, then reds the test after 5 seconds rather than hanging the suite.
 
-**No `cwd` at all is the check's other difference from the spawn.** Like an empty string, it
-fails the check, while Node's spawn runs the command in the caller's own directory. Both judges
-on #364 found it missing from the note, and the note now records it, measured.
+**The check refuses every `cwd` the spawn reads as unset.** Node's spawn runs the command in the
+caller's own directory for `undefined`, `null`, `''` and an empty `Buffer`, and the check refuses
+all four. The judges on #364 found these one value at a time, first `undefined` and then `null`.
+So the note now states the class, with every value measured, including those for which the two
+agree.
 
 **Node reports a spawn failure two ways.** Measured with Node 26.5.0 on macOS 27.0, a `cwd` that is
 a file, a link loop and an executable of garbage bytes each throw synchronously (`ENOTDIR`,

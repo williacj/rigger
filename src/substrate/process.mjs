@@ -371,9 +371,13 @@ function spawned(command, spawning) {
  *   them passes the check and fails the spawn. That spawn then reports what Node reports, which
  *   for a missing directory is `spawn /bin/pwd ENOENT`, naming the command alone. The call still
  *   rejects as a failure to start.
- * - An empty string fails the check (`ENOENT`), and so does no `cwd` at all (Node's
- *   `ERR_INVALID_ARG_TYPE`), while the spawn runs the command in the caller's own working
- *   directory for either: `/bin/pwd` exited 0 and printed it, for `''` and for `undefined`.
+ * - Every `cwd` the spawn reads as unset, the check refuses, while the spawn runs the command in
+ *   the caller's own working directory. This covers the whole class the spawn so reads, as far as
+ *   it was measured: `undefined` and `null` (`ERR_INVALID_ARG_TYPE` from the check), and `''` and
+ *   an empty `Buffer` (`ENOENT`). For each, `/bin/pwd` exited 0 and printed the caller's
+ *   directory. Of the other values tried, `false`, `0`, `NaN`, `[]` and `{}` made the spawn
+ *   throw `ERR_INVALID_ARG_TYPE` too, and `' '` failed it with `ENOENT`, so for those the two
+ *   agree.
  * - Elsewhere the two agreed: a missing directory and a dangling link (`ENOENT` from both), a file
  *   (not a directory here, `ENOTDIR` from the spawn), a link loop (`ELOOP` from both), a
  *   directory of mode 000 or 444 (`EACCES` from both), and one of mode 111, which both accept.

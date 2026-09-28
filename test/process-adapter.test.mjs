@@ -884,7 +884,15 @@ test('given a command that exits 0 on its own after its timeout is due but befor
   const call = adapt(directory, { command, timeout: 1 });
   const zombie = () => existsSync(join(directory, 'command.pid'))
     && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
-  while (!zombie());
+  // The wait holds the thread, so no test timeout can end it: it carries its own deadline, and a
+  // command that never runs fails the test rather than holding the suite. The deadline is a
+  // judgment: the command, which only writes its pid and exits, has nothing to wait for.
+  const deadline = Date.now() + 5_000;
+  while (!zombie() && Date.now() < deadline);
+  if (!zombie()) {
+    const outcome = await call.then((result) => JSON.stringify(result), (error) => error.message);
+    assert.fail(`the command was not a zombie within 5,000 ms, so the race was not set up; the call settled with: ${outcome}`);
+  }
   const result = await call;
 
   assert.equal(result.timedOut, false);
