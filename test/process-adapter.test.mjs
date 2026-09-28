@@ -967,3 +967,17 @@ test('a command that does not exist rejects as a failure to start, naming the co
 
   unstarted(await rejection(directory, { command }), command);
 });
+
+/** A command whose first action writes `$here/started`. */
+const starting = (directory) => fixture(directory, 'command', ': > "$here/started"');
+
+/** Fails the test where the command's first action ran. */
+const neverRan = (directory) => assert.equal(existsSync(join(directory, 'started')), false, 'the command\'s first action ran');
+
+test('a working directory that does not exist rejects as a failure to start, naming the directory, and the command never runs', async (t) => {
+  const directory = scratch(t);
+  const cwd = join(directory, 'absent');
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});

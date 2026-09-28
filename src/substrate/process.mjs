@@ -4,6 +4,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { accessSync, constants as files, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { setImmediate as turn } from 'node:timers/promises';
 
@@ -293,6 +294,8 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
+  const unfit = unusable(cwd);
+  if (unfit !== undefined) throw notStarted(command, unfit);
   const child = await started(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const exited = once(child, 'exit');
@@ -331,6 +334,34 @@ async function started(command, spawning) {
     return child;
   } catch (error) {
     throw notStarted(command, error.message);
+  }
+}
+
+/**
+ * Why `cwd` cannot be a command's working directory, or nothing where it can. The file system
+ * decides, and is asked before the spawn because Node reports a missing `cwd` as
+ * `spawn <command> ENOENT`, naming the command and not the directory.
+ *
+ * Where this answer can differ from what the spawn would have found, measured with Node 26.5.0
+ * on macOS 27.0 (26A428) on 2026-09-27, spawning `/bin/pwd` detached with both outputs piped:
+ *
+ * - The check and the spawn read the directory at two moments, so one removed or replaced between
+ *   them passes the check and fails the spawn. That spawn then reports what Node reports, which
+ *   for a missing directory is `spawn /bin/pwd ENOENT`, naming the command alone. The call still
+ *   rejects as a failure to start.
+ * - An empty string fails the check (`ENOENT`), while the spawn runs the command in the caller's
+ *   own working directory: `/bin/pwd` exited 0.
+ * - Elsewhere the two agreed: a missing directory and a dangling link (`ENOENT` from both), a file
+ *   (not a directory here, `ENOTDIR` from the spawn), a link loop (`ELOOP` from both), a
+ *   directory of mode 000 or 444 (`EACCES` from both), and one of mode 111, which both accept.
+ */
+function unusable(cwd) {
+  try {
+    if (!statSync(cwd).isDirectory()) return `its working directory ${cwd} is not a directory`;
+    accessSync(cwd, files.X_OK);
+    return undefined;
+  } catch (error) {
+    return `its working directory ${cwd} cannot be used: ${error.message}`;
   }
 }
 
