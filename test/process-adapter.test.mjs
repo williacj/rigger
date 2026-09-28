@@ -1053,13 +1053,17 @@ test('a survivor whose argv[0] differs from its executable\'s name is recorded b
 
 /**
  * A command that leaves a keeper, and a `ps` stand-in that has the keeper's child, the quitter,
- * exit on its own inside the census's last read of states. The keeper forks the quitter, which
- * exits once told to go, and never reaps it. The keeper is in the group, so the census stops it
- * too, and the quitter stays a zombie until the kill. The stand-in tells the quitter to go, and
- * resumes it, inside that read, which it answers as the table stood before, once the quitter is a
- * zombie. Every later read of states runs `later`, shell, in place of `ps`, where one is given.
+ * exit on its own inside one read of states once the census has read the names. The keeper forks
+ * the quitter, which exits once told to go, and never reaps it. The keeper is in the group, so
+ * the census stops it too, and the quitter stays a zombie until the kill. The stand-in reads the
+ * table, then tells the quitter to go and resumes it, and answers with the table it read once the
+ * quitter is a zombie.
+ *
+ * `at` is `census` for the census's last read of states, or `kill` for the read the adapter takes
+ * after the census, just before its kill, which begins `-g` where the census's begin `-ww`. Every
+ * read of states after that one runs `later`, shell, in place of `ps`, where one is given.
  */
-function quittingUnreaped(directory, later = 'exec /bin/ps "$@"') {
+function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"' } = {}) {
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'keeper'), [
     'my $here = $ARGV[0];',
@@ -1071,18 +1075,16 @@ function quittingUnreaped(directory, later = 'exec /bin/ps "$@"') {
   ].join('\n'));
   const ps = fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
-    'case "$*" in *stat=*)',
-    '  if [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null; then',
-    '    table=$(/bin/ps "$@")',
-    '    quitter=$(/bin/cat "$here/quitter.pid")',
-    '    : > "$here/go"',
-    '    kill -s CONT "$quitter"',
-    '    until /bin/ps -o stat= -p "$quitter" | /usr/bin/grep -q "^Z"; do :; done',
-    '    printf "%s\\n" "$table"',
-    '    exit 0',
-    '  fi',
-    `  [ -d "$here/told" ] && { ${later}; } ;;`,
-    'esac',
+    `case "$*" in *stat=*) ${at === 'kill' ? '[ "$1" = "-g" ]' : 'true'} ;; *) false ;; esac && [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {`,
+    '  table=$(/bin/ps "$@")',
+    '  quitter=$(/bin/cat "$here/quitter.pid")',
+    '  : > "$here/go"',
+    '  kill -s CONT "$quitter"',
+    '  until /bin/ps -o stat= -p "$quitter" | /usr/bin/grep -q "^Z"; do :; done',
+    '  printf "%s\\n" "$table"',
+    '  exit 0',
+    '}',
+    `case "$*" in *stat=*) [ -d "$here/told" ] && { ${later}; } ;; esac`,
     'exec /bin/ps "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', [
@@ -1107,10 +1109,21 @@ test('a survivor the census named that exits on its own before the kill, and is 
 test('a survivor the census named that exits on its own before the kill, left unreaped, is not recorded as killed where the read of states before the kill fails', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
-  const { events } = await recorded(directory, quittingUnreaped(directory, 'echo "ps: failing on purpose" >&2; exit 2'));
+  const { events } = await recorded(directory, quittingUnreaped(directory, { later: 'echo "ps: failing on purpose" >&2; exit 2' }));
 
   assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
   const quitter = Number(read(directory, 'quitter.pid'));
   assert.deepEqual(events.filter(({ pid }) => pid === quitter), [], 'the quitter is recorded as killed');
   assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+});
+
+test('a survivor the census named that exits on its own inside the read of states just before the kill, and is left unreaped, is not recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { events } = await recorded(directory, quittingUnreaped(directory, { at: 'kill' }));
+
+  assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'keeper.pid')) },
+  ]);
 });

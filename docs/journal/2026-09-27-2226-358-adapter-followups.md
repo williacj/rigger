@@ -20,9 +20,14 @@ keeps the whole name. The card's author then ruled that the adapter names a surv
 process-table reads, which the Failure model excepts, so a name is what `ucomm` holds.
 
 **A zombie answers signal 0.** `kill -0` and Node's `process.kill(pid, 0)` both succeed on a zombie
-on macOS 27.0. So a survivor that exits on its own and is left unreaped is told from a live one
-only by a read of states, which the adapter takes just before the kill. Where that read fails, the
-survivors go unnamed, as they do when the census fails.
+on macOS 27.0. The third round read states just before the kill to leave such a zombie out, but a
+survivor could still exit between that read and the kill (the engineer's round-3 B3 on #363).
+No read taken before a kill closes that window, so the adapter now reads how each survivor ended
+after the kill: `xstat` reads `9` for one `SIGKILL` ended, and `0` or `300` for one that exited 0
+or 3. A zombie keeps that status only until its parent reaps it, so the kill goes to the group's
+live members children first, one round at a time, with each parent alive and stopped until a
+read has seen how its children ended. Where a read fails, the survivors go unnamed, as they do
+when the census fails.
 
 **A read that fails must not hold the wait.** The first round counted a failed read of states as
 finding a live member, so a zombie never reaped and a `ps` that failed or hung kept the call

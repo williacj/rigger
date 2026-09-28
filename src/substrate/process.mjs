@@ -188,6 +188,9 @@ function signal(group, name) {
  * - `-c` makes `command` argv[0]'s last part, not the executable's name: `exec -a Tx` shows `Tx`.
  * - `stat`'s first character is the process's state: `T` stopped, `Z` a zombie, `?` caught
  *   mid-exec.
+ * - `xstat` is a zombie's wait status in hexadecimal: `0` for a process that exited 0, `300` for
+ *   one that exited 3, `9` for one `SIGKILL` ended and `f` for one `SIGTERM` ended. It is there to
+ *   read only while the zombie's parent has not reaped it.
  * - `comm` is argv[0], so `exec -a <anything>` names the process `<anything>`. It is cut to 16
  *   characters, measured with an ASCII name, unless it is the last column. The command line
  *   already begins with argv[0], so the name is the executable's.
@@ -287,30 +290,83 @@ function run(ps, args, remaining, timeout) {
 
 /**
  * Ends what is left of `group` once its command has exited, in the order that keeps each name:
- * the census, which stops the group and reads it while its processes still exist; a read of
- * states; the kill; the confirmation that the group is empty; and only then the `L0` events to
- * record, one per process killed, which it hands back. A census or a read of states that fails
- * still kills the group, and hands back the kill of the group with why its processes went unnamed.
+ * the census, which stops the group and reads it while its processes still exist; the kill, which
+ * reads how each survivor ended; the confirmation that the group is empty; and only then the `L0`
+ * events to record, one per process killed, which it hands back. A census or a kill whose read
+ * fails still kills the group, and hands back the kill of the group with why its processes went
+ * unnamed.
  */
 async function contain(group, { ps, readTimeout }) {
   if (!occupied(group)) return [];
   let killed;
   let unnamed;
   try {
-    const survivors = await census(ps, group, readTimeout);
-    // A survivor that exited on its own after the census's last read is not one L0 killed. A
-    // read of states just before the kill finds it a zombie, or gone, and signal 0, asked in the
-    // turn that sends the kill, finds it reaped since. Signal 0 alone would not do: it reaches a
-    // zombie (measured with Node 26.5.0 on macOS 27.0 on 2026-09-27). So a read that fails leaves
-    // the survivors unnamed, as a census that fails does.
-    const states = await statesOf(group, ps, readTimeout);
-    killed = survivors.filter(({ pid }) => states.get(pid)?.startsWith('Z') === false && answers(pid));
+    killed = await killedOf(await census(ps, group, readTimeout), group, ps, readTimeout);
   } catch (error) {
     unnamed = error.message;
   }
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   return killed.map((survivor) => ['survivor.killed', survivor]);
+}
+
+/**
+ * Kills the stopped `group`'s live members, those with no live child first, and hands back each
+ * of `survivors` that L0's kill ended, given up on `timeout` milliseconds after it starts.
+ *
+ * A survivor can exit on its own after any read of the table and before L0's kill lands, and its
+ * parent, stopped, leaves it a zombie, which signal 0 still reaches. Its exit status tells the two
+ * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the group, sorts out
+ * each survivor sent the kill since the round before, by that status, and sends the kill to each
+ * live member none of whose children is live. Its parent is then alive, and stopped, until a later
+ * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
+ * before L0 sent it the kill exited on its own; one gone after it is counted as killed, because a
+ * parent the group does not hold may reap it at once. A read that fails, or a group still not
+ * ended at `timeout`, fails the whole, and the group is killed unnamed.
+ */
+async function killedOf(survivors, group, ps, timeout) {
+  const deadline = Date.now() + timeout;
+  const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
+  const sent = new Set();
+  const killed = [];
+  while (pending.size > 0) {
+    const remaining = deadline - Date.now();
+    const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
+    for (const [pid, survivor] of pending) {
+      const row = table.get(pid);
+      if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
+      pending.delete(pid);
+    }
+    const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
+    const parents = new Set(living.map(([, row]) => row.parent));
+    for (const [pid] of living) {
+      if (parents.has(pid) || sent.has(pid)) continue;
+      sent.add(pid);
+      end(pid);
+    }
+  }
+  return killed;
+}
+
+/** Each row of a read of `pid=,ppid=,stat=,xstat=`, by pid. */
+function tableOf(printed) {
+  const rows = new Map();
+  for (const line of printed.split('\n').filter(Boolean)) {
+    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
+    if (!row) throw new Error(`the process table held a row the kill cannot read: ${JSON.stringify(line)}`);
+    rows.set(Number(row[1]), { parent: Number(row[2]), state: row[3], status: row[4] });
+  }
+  return rows;
+}
+
+/** Sends `SIGKILL` to the process `pid`, and to none where it has gone. */
+function end(pid) {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
 }
 
 /**
