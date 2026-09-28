@@ -90,10 +90,12 @@ function signal(group, name) {
  * reached, one caught mid-exec (state `?`), or a fork the signal missed. A zombie cannot exec
  * either, and is left out, because it is already dead.
  *
- * Each read holds the pid and one column, so no field of varying width comes before the one
- * split it takes. `ps` pads a column by display width, and a name of wide characters is padded to
- * fewer characters than a narrow one, so splitting after it misread the row (the engineer judge
- * on #354, with `日本語日本` run as `exec -a Tx`).
+ * A read of states or command lines holds the pid and that one column, so no field of varying
+ * width comes before the one split it takes. `ps` pads a column by display width, and a name of
+ * wide characters is padded to fewer characters than a narrow one, so splitting after it misread
+ * the row (the engineer judge on #354, with `日本語日本` run as `exec -a Tx`). Each name is read in
+ * a `ps` run for that pid alone, because a name can hold a newline, and in a read of the group it
+ * then prints as a line of its own that reads as another process's row.
  *
  * Where `ps`'s answer can differ from the process's own (`D16` rule 3), measured with `ps` from
  * adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
@@ -101,12 +103,17 @@ function signal(group, name) {
  * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a cut can fall
  *   inside a character and leave bytes that are not UTF-8 (the engineer judge on #354 saw
  *   `日本語テール` recorded as `日本語テー` and U+FFFD). It is padded with spaces, so a name's own
- *   trailing spaces are lost. It names what runs, not what was asked for: a script run by
+ *   trailing spaces are lost. It prints control characters raw, a newline included, so a name
+ *   `x`, newline, `<pid> evil` read in the group's table named that other pid's process `evil`
+ *   (the engineer judge on #354). It names what runs, not what was asked for: a script run by
  *   `/bin/sh` is named `bash`.
  * - `stat`'s first character is the process's state: `T` stopped, `Z` a zombie, `?` caught
  *   mid-exec.
- * - `comm`, argv[0], would name `exec -a <anything>` as `<anything>`, and the command line
+ * - `comm` is argv[0], so `exec -a <anything>` names the process `<anything>`. It is cut to 16
+ *   characters, measured with an ASCII name, unless it is the last column. The command line
  *   already begins with argv[0], so the name is the executable's.
+ * - `command` writes control characters escaped, a newline as `\012` (the engineer judge on #354),
+ *   so each process's command line is one line of the group's read.
  * - `command` is the process's arguments joined by spaces, so arguments holding spaces cannot be
  *   told apart from more arguments. A process caught mid-exec, or a zombie, shows `(name)` or
  *   `<defunct>` in its place.
@@ -126,18 +133,19 @@ function signal(group, name) {
  */
 async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
-  const read = (column) => table(ps, group, column, deadline - Date.now(), timeout);
+  const read = (args) => run(ps, args, deadline - Date.now(), timeout);
+  const column = async (name) => rowsOf(await read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   for (;;) {
     signal(group, 'SIGSTOP');
-    const before = await read('stat');
+    const before = await column('stat');
     if (!stopped(before)) continue;
-    const names = await read('ucomm');
-    const commands = await read('command');
-    const after = await read('stat');
+    const names = await namesOf([...before.keys()], read);
+    const commands = await column('command');
+    const after = await column('stat');
     if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
-      .map(([pid]) => ({ pid, name: names.get(pid).trimEnd(), cmd: commands.get(pid) }));
+      .map(([pid]) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
   }
 }
 
@@ -148,26 +156,44 @@ const stopped = (states) => [...states.values()].every((state) => state.startsWi
 const samePids = (one, other) => one.size === other.size && [...one.keys()].every((pid) => other.has(pid));
 
 /**
- * One column of every process in `group`, by pid, read with `ps` at the path `ps` names and given
- * up on after `remaining` milliseconds of the census's `timeout`.
+ * Each of `pids`' names, read in a `ps` run of its own, so the whole of that run's output is that
+ * one process's name, whatever bytes it holds. A process no longer there is left out.
  */
-function table(ps, group, column, remaining, timeout) {
+async function namesOf(pids, read) {
+  const names = new Map();
+  for (const pid of pids) {
+    const printed = await read(['-p', String(pid), '-o', 'ucomm=']);
+    // `ps` ends the name with its padding and a newline, which are not the name's own.
+    if (printed !== '') names.set(pid, printed.replace(/\n$/, '').trimEnd());
+  }
+  return names;
+}
+
+/** Each line of a read of one column, by the pid it begins with. */
+function rowsOf(printed) {
+  const rows = new Map();
+  for (const line of printed.split('\n').filter(Boolean)) {
+    // The pid is right-aligned and followed by one space, so the rest of the line is the column.
+    const row = /^\s*(\d+) (.*)$/.exec(line);
+    // A row this cannot read is a process it cannot name, so the census fails rather than
+    // leave that process out of it.
+    if (!row) throw new Error(`the process table held a row the census cannot read: ${JSON.stringify(line)}`);
+    rows.set(Number(row[1]), row[2]);
+  }
+  return rows;
+}
+
+/**
+ * What one run of `ps`, at the path `ps` names, prints given `args`, or nothing where no process
+ * matches. It is given up on after `remaining` milliseconds of the census's `timeout`.
+ */
+function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(new Error(`the census found the group not all stopped within ${timeout} ms`));
-    const args = ['-ww', '-g', String(group), '-o', `pid=,${column}=`];
     execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
       if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
-      const rows = new Map();
-      for (const line of stdout.split('\n').filter(Boolean)) {
-        // The pid is right-aligned and followed by one space, so the rest of the line is the column.
-        const row = /^\s*(\d+) (.*)$/.exec(line);
-        // A row this cannot read is a process it cannot name, so the census fails rather than
-        // leave that process out of it.
-        if (!row) return reject(new Error(`the process table held a row the census cannot read: ${JSON.stringify(line)}`));
-        rows.set(Number(row[1]), row[2]);
-      }
-      resolve(rows);
+      resolve(stdout);
     });
   });
 }

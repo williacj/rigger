@@ -595,7 +595,7 @@ test('a survivor missing from one of the census\'s reads is read again, not left
   const directory = holding(t);
   // The stand-in's first read of names finds nothing, as `ps` does when no process matches.
   const ps = fixture(directory, 'ps', [
-    'case "$5" in *,ucomm=) /bin/mkdir "$here/names-read" 2>/dev/null && exit 1 ;; esac',
+    'case "$*" in *ucomm=*) /bin/mkdir "$here/names-read" 2>/dev/null && exit 1 ;; esac',
     'exec /bin/ps "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -606,4 +606,53 @@ test('a survivor missing from one of the census\'s reads is read again, not left
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
     { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
   ]);
+});
+
+/**
+ * The lines of a fixture that copy the compiled waiter to `$here/<name>`, where `name` is shell
+ * that may hold a newline, start it, write its pid to `$here/<pidName>.pid`, and wait until it
+ * runs as `ps` reads it, its name starting with `first`.
+ */
+const leaveNamed = (name, pidName, first) => [
+  `n=${name}`,
+  '/bin/cp "$here/waiter" "$here/$n"',
+  '"$here/$n" "$here" &',
+  `echo $! > "$here/${pidName}.pid"`,
+  `while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^${first}"; do :; done`,
+].join('\n');
+
+test('a survivor whose executable\'s name holds a newline and another\'s pid cannot rename that other survivor', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  // `ps` prints `ucomm` with control characters raw (the engineer judge on #354), so this name
+  // prints as a second line that reads as a row for the `tail`'s pid, naming it `evil`.
+  const command = fixture(directory, 'command', [
+    leave(TAIL, 'tail'),
+    leaveNamed(`"x"$'\\n'"$(/bin/cat "$here/tail.pid") evil"`, 'forger', 'x'),
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const tail = Number(read(directory, 'tail.pid'));
+  const forger = Number(read(directory, 'forger.pid'));
+  const byPid = new Map(events.map(({ pid, name, cmd }) => [pid, { name, cmd }]));
+  assert.deepEqual(byPid.get(tail), { name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` });
+  assert.equal(byPid.get(forger)?.name, `x\n${tail} evil`);
+  assert.equal(events.length, 2);
+});
+
+test('a survivor whose executable\'s name holds a newline is named, and costs no other survivor its name', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', [
+    leave(TAIL, 'tail'),
+    leaveNamed(`"a"$'\\n'"b"`, 'broken', 'a'),
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const byPid = new Map(events.map(({ event, pid, name }) => [pid, { event, name }]));
+  assert.deepEqual(byPid.get(Number(read(directory, 'tail.pid'))), { event: 'survivor.killed', name: 'tail' });
+  assert.deepEqual(byPid.get(Number(read(directory, 'broken.pid'))), { event: 'survivor.killed', name: 'a\nb' });
+  assert.equal(events.length, 2);
 });
