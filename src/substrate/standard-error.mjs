@@ -59,6 +59,15 @@ let abandoned = false;
  * blocked after 3 s, and with it opened, each was refused with EAGAIN once the pipe was full.
  * Reopening `/dev/fd/2` non-blocking does not do it: it shares the inherited, blocking file.
  *
+ * A standard error that is a terminal is the one limit: Node opens it blocking, so a terminal that
+ * stops reading holds the write in the kernel, and neither bound here holds. Measured with Node
+ * 20.20.2 and 26.5.0 on macOS 27.0 on 2026-09-28, standard error a pty whose other end nothing
+ * read: `writeWhole` of 200,000 bytes, `process.stderr` opened, was still blocked after 3 s, three
+ * runs of 26.5.0 and one of 20.20.2, where with that end read it returned in 1 to 2 ms. The limit
+ * stands because a terminal that stops reading holds any program writing to it, and bounding the
+ * write would need a second writer, in a thread or a process, for the exit alone (the card's
+ * author on #376).
+ *
  * A write to a full non-blocking pipe comes back short or refused with EAGAIN.
  * `process.stderr.write` queues the rest, which an exit drops. Measured on macOS 27.0 with Node
  * 20.20.2, 24.21.0 and 26.5.0, one `writeSync` of 200,000 bytes after `process.stderr` was touched
