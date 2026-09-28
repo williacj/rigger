@@ -357,14 +357,34 @@ function refused(unrecorded, result) {
  * A refused event never stops a kill, because every kill is done before any is recorded. Every
  * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
  * failure naming each unrecorded event and carrying the result.
+ *
+ * `onGroup`, where the caller gives one, is handed the group's id in the step that creates the
+ * group, before the call first yields (`ARCHITECTURE.md`, "Failure model"). L1 records a
+ * dispatch's group there. A command that never started has no group, and `onGroup` is not called.
+ * Where `onGroup` throws, L0 ends and records the group, and the call rejects with what it threw,
+ * or, where the sink refused a kill event, with the `EVENT_REFUSED` failure, caused by it.
  */
-export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, emitter, onGroup, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
+  if (child.pid !== undefined) {
+    try {
+      onGroup?.(child.pid);
+    } catch (refusal) {
+      // A group the caller could not take runs no further: it is ended, and recorded, as a
+      // survivor would be, before the caller hears why.
+      // Nothing reads the output of a command that runs no further, so its pipes are let go.
+      const unrecorded = record(emitter, await contain(child.pid, { ps, readTimeout }));
+      child.stdout.destroy();
+      child.stderr.destroy();
+      if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
+      throw refusal;
+    }
+  }
   const [exit] = await once(child, 'exit');
   const events = await contain(child.pid, { ps, readTimeout });
   if (await heldPast(output, outputBound)) {
