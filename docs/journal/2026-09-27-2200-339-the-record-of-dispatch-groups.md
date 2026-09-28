@@ -32,6 +32,15 @@ dispatch's process group in the state directory while it runs and removes it aft
   nothing was left outside to find. The test now watches every writing call of `node:fs` while the
   dispatch runs, and that mutant fails it.
 
+- **The first round left an entry behind on a refused event.** `dispatch` removed the entry only
+  when L0 fulfilled. Since #337, however, L0 rejects with `EVENT_REFUSED` only after it has
+  emptied the group, so a refused kill event left an entry naming an empty group. Both judges
+  found it. The entry is now removed on that rejection as well, and the refusal still reaches the
+  caller.
+- **Item 7's test still passed by a race after its first fix.** Without the writable check, L0
+  killed the spawned command inside the failed hand-off before its first action, so neither
+  `pgrep` nor the file saw it (the engineer judge's N1). The test now also reads the stream, where
+  L0 records that kill.
 - **A fixture process from `test/process-adapter.test.mjs` can outlive its file's run by a
   moment.** `pgrep` right after `npm test -- test/process-adapter.test.mjs` listed one in one of
   four runs at base `061ee47`, and it was gone on the next read. That behaviour predates this card

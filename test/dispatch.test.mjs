@@ -8,9 +8,9 @@ import fs, { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from
 import { syncBuiltinESMExports } from 'node:module';
 import { join, relative } from 'node:path';
 
-import { openSink, streamPath } from '../src/observation/sink.mjs';
+import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { dispatch } from '../src/execution/run.mjs';
-import { runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, runCommand } from '../src/substrate/process.mjs';
 import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
@@ -106,6 +106,26 @@ test('once a dispatch has settled and its group holds no live process, the recor
   assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === recorded), []);
 });
 
+test('once a dispatch whose kill event the sink refused has settled, its group holds no live process, the record no longer holds that group, and the caller hears the refusal', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  writeFileSync(join(directory, 'hold'), '');
+  // The command leaves a `tail` alive in its group, so L0 kills it and records the kill, which a
+  // sink under a regular file refuses. The record stays in the state directory, which takes writes.
+  const command = fixture(directory, 'command', [
+    'echo $$ > "$here/group"',
+    '/usr/bin/tail -f "$here/hold" &',
+    'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
+  ].join('\n'));
+  writeFileSync(join(directory, 'blocked'), '');
+  const sink = openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command, sink }), (failure) => failure.code === EVENT_REFUSED);
+
+  const group = Number(read(directory, 'group'));
+  assert.equal(alive(-group), false, 'a process of the dispatch\'s group is alive');
+  assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group), []);
+});
+
 /** A command whose first action writes `$here/started`. */
 const startingCommand = (directory) => fixture(directory, 'command', ': > "$here/started"');
 
@@ -135,11 +155,14 @@ function refusingNewEntries(t, directory) {
 
 test('given a state directory whose event stream exists and which refuses new entries, the dispatch\'s command never runs', async (t) => {
   const directory = scratch(t);
-  refusingNewEntries(t, directory);
+  const state = refusingNewEntries(t, directory);
 
   await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }));
 
   assertNeverRan(directory);
+  // A command spawned and then killed before its first action leaves neither trace above, so the
+  // stream is read too: L0 records every process it kills, and the stream still takes appends.
+  assert.deepEqual(readEvents(state), [], 'L0 killed a process of the dispatch');
 });
 
 test('given a state directory whose event stream exists and which refuses new entries, the caller\'s failure names the state directory', async (t) => {
@@ -241,11 +264,14 @@ test('given a dispatch whose command never started, the record holds no entry fo
 });
 
 test('a call to L1\'s function with no dispatch id starts no process, and fails naming the missing id', async (t) => {
-  const directory = scratch(t);
+  // Left out, null and empty: none of them tells one dispatch's entry from another's.
+  for (const [what, id] of [['left out', undefined], ['null', null], ['empty', '']]) {
+    const directory = scratch(t);
 
-  await assert.rejects(dispatchIn(directory, { command: startingCommand(directory), card: 1412 }), /dispatch id/);
+    await assert.rejects(dispatchIn(directory, { id, command: startingCommand(directory), card: 1412 }), /dispatch id/, what);
 
-  assertNeverRan(directory);
+    assertNeverRan(directory);
+  }
 });
 
 /**
@@ -280,6 +306,19 @@ function stopping(directory, state, at) {
   ].join('\n'));
   return path;
 }
+
+test('a partial record a stopped writer left in the state directory is gone once the next dispatch has settled', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const state = stateOf(directory);
+  // What a writer stopped before its rename leaves: the partial file beside an intact record.
+  mkdirSync(state);
+  writeFileSync(join(state, 'groups.json'), '[]');
+  writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
+
+  await whileHeld(directory, { id: 'd-1', card: 1412 }, () => {});
+
+  assert.deepEqual(readdirSync(state).filter((file) => file !== 'events.jsonl'), ['groups.json']);
+});
 
 test('a reader finds the record as it was before a write or as it is after it, never part of one, when its writer is stopped part-way through', async (t) => {
   const groups = new URL('../src/execution/groups.mjs', import.meta.url).href;
