@@ -1298,6 +1298,21 @@ for (const [what, failing, options] of [
   });
 }
 
+test('a census whose every read of the group exits 1 and prints nothing while the group holds a survivor records the group\'s kill, saying why', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in fails every read of the census and none other.
+  const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec /bin/ps "$@"');
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the census failed, so the test proves nothing');
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+  assert.match(events[0].census, /named no process/);
+});
+
 test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
   const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
 

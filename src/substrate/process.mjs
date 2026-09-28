@@ -193,6 +193,11 @@ function signal(group, name) {
  * a fork the signal missed. A zombie cannot exec either, and is left out, because it is already
  * dead.
  *
+ * Reads that agree on no process at all are kept only where signal 0 no longer reaches the group,
+ * because a read that failed can list nothing, even one that exits 1 and prints nothing (`run`).
+ * While the group still answers, the census reads again, and where `timeout` passes first it fails
+ * saying so, and the group is killed unnamed.
+ *
  * A read of states or command lines holds the pid and that one column, so no field of varying
  * width comes before the one split it takes. `ps` pads a column by display width, and a name of
  * wide characters is padded to fewer characters than a narrow one, so splitting after it misread
@@ -247,7 +252,11 @@ function signal(group, name) {
  */
 async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
-  const read = (args) => run(ps, args, deadline - Date.now(), timeout);
+  // Whether the census's last reads that agreed named no process while the group still had one.
+  let unseen = false;
+  const read = (args) => run(ps, args, deadline - Date.now(), timeout).catch((error) => {
+    throw unseen ? new Error(`the census's reads named no process of the group while it still had one: ${error.message}`) : error;
+  });
   const column = async (name) => rowsOf(await read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
@@ -258,6 +267,8 @@ async function census(ps, group, timeout) {
     const commands = await column('command');
     const after = await column('stat');
     if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
+    unseen = after.size === 0 && occupied(group);
+    if (unseen) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
       .map(([pid]) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
@@ -320,8 +331,8 @@ function rowsOf(printed) {
  * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
  * matched.
  *
- * What `ps` cannot show is that the kernel handed it every process there is, so the kill does not
- * take a survivor as ended because a read left it out (`killedOf`).
+ * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
