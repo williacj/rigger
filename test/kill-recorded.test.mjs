@@ -463,6 +463,40 @@ for (const [how, body] of Object.entries(FAILING_READS)) {
   });
 }
 
+/**
+ * Start times no calendar holds, each of which would read as 2026-09-28 12:00:00 UTC were its
+ * day, hour, minute or second carried into the next: 1790596800 seconds since the epoch, by
+ * `date -u -j -f "%Y-%m-%d %H:%M:%S" "2026-09-28 12:00:00" +%s`.
+ */
+const IMPOSSIBLE_STARTS = ['Mon Aug 59 12:00:00 2026', 'Sun Sep 27 36:00:00 2026', 'Mon Sep 28 11:60:00 2026', 'Mon Sep 28 11:59:60 2026'];
+const CARRIED_INTO = 1790596800;
+
+for (const impossible of IMPOSSIBLE_STARTS) {
+  test(`given a recorded group whose start-time read lists every member with the start ${impossible}, which no calendar holds, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
+    const directory = scratch(t);
+    const started = await startGroup(directory, 'group');
+    // The entry names the time the impossible start would be carried into, so a read that took
+    // it for that time would find the leader's start the one recorded and kill the group.
+    const entry = entryFor(started, { started: CARRIED_INTO, dispatch: 'd-impossible', card: 35 });
+    writeGroups(stateOf(directory), [entry]);
+    // Every other read passes through to `ps`, so a group this read admitted would be killed.
+    const ps = fixture(directory, 'ps', [
+      'case "$*" in',
+      `  *lstart*) /bin/ps -g "$3" -o pid=,stat= | /usr/bin/sed 's/$/ ${impossible}/' ;;`,
+      '  *) exec /bin/ps "$@" ;;',
+      'esac',
+    ].join('\n'));
+
+    await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
+      for (const named of [`group ${started.group}`, 'd-impossible', '#35']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+      return true;
+    });
+
+    assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+    assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+  });
+}
+
 test('given a recorded group whose leader is dead and whose live member\'s start-time read exits 1 and prints nothing, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await withoutLeader(await startGroup(directory, 'group'));

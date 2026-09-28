@@ -1078,12 +1078,20 @@ async function startsIn(ps, group, timeout) {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole seconds since the epoch. */
+/**
+ * A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole
+ * seconds since the epoch. `Date.UTC` carries a field past its range into the next, so a time no
+ * calendar holds, such as `Mon Aug 59 12:00:00 2026`, would read as a real one, and could match
+ * a recorded start. So the time is read back into its fields, and one that does not give back
+ * every field it was read from is refused.
+ */
 function secondsOf(printed) {
   const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
-  const month = MONTHS.indexOf(at?.[1]);
-  if (month < 0) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
-  return Date.UTC(Number(at[6]), month, Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000;
+  const fields = at && [Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])];
+  const time = fields && new Date(Date.UTC(...fields));
+  const back = time && [time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate(), time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()];
+  if (!back?.every((field, i) => field === fields[i])) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return time.getTime() / 1000;
 }
 
 /**
