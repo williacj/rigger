@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
 function l0(directory) {
@@ -58,8 +58,6 @@ test('a command that exits 3 has exit code 3 in the result', async (t) => {
 // capture built on one of them would stop at.
 const MAX_BUFFER = 1024 * 1024;
 
-/** `length` bytes that step through every byte value, so they hold bytes no UTF-8 text allows. */
-const bytes = (length, step) => Buffer.from(Array.from({ length }, (_, i) => (i * step) % 256));
 
 /** A Node script, run by this Node, that writes `length` of `bytes(length, step)` to `stream`. */
 function writing(directory, stream, length, step) {
@@ -160,30 +158,7 @@ test('two commands running at once through the adapter report different process 
   assert.notEqual(read(directory, 'one'), read(directory, 'two'));
 });
 
-/**
- * The lines of a fixture that start `program` in the background, holding the command's standard
- * output and standard error, and write its pid to `$here/<name>.pid`. `program` runs until it is
- * killed, and names the scratch directory in its command line.
- *
- * The lines then wait until the background process runs the executable `image`, as `ps` reads
- * it, or has ended. Until then it can still be the shell that forked it, and a census taken then
- * names the shell.
- */
-const leave = (program, name, image = 'tail') => [
-  `${program} &`,
-  `echo $! > "$here/${name}.pid"`,
-  `while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx '${image} *'; do :; done`,
-].join('\n');
 
-/** A survivor that runs until killed: `tail` following a file nothing writes to. */
-const TAIL = '/usr/bin/tail -f "$here/hold"';
-
-/** A scratch directory holding the file `TAIL` follows. */
-function holding(t) {
-  const directory = scratch(t);
-  writeFileSync(join(directory, 'hold'), '');
-  return directory;
-}
 
 test('a command that exits 0 leaving a child alive that holds its standard output has exit code 0, and all its payload', async (t) => {
   const directory = holding(t);
@@ -1378,29 +1353,6 @@ test('a command ended by a signal it does not handle has a non-zero integer exit
   assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
 });
 
-/**
- * The timeout each test of a command outliving it passes. A judgment: it is the time the fixture
- * has to be ready before the timeout ends it, and `ready` fails the test where it was not. Its
- * premise is a measurement: over 40 calls of this adapter each, with Node 26.5.0 on macOS 27.0 on
- * 2026-09-27 and nothing else running, the fixture writing 300,001 bytes was ready 6.7 to 10.5 ms
- * after the call, and the one whose child writes to both streams 10.8 to 13.8 ms after it. The
- * second fixture took 51 to 1,481 ms while it exec'd its child's freshly written script, so it
- * runs that script under `/bin/sh` by name.
- */
-const OUTLIVED = 1_000;
-
-/**
- * A command that runs `body`, which starts at least one child, then writes its pid to
- * `$here/command.pid`, marks `$here/ready`, and waits on its children, which run until killed. It
- * is run by `/bin/bash` by name, so the process the adapter starts is `bash` from its first line.
- */
-function outliving(directory, body) {
-  const script = fixture(directory, 'command', [body, 'echo $$ > "$here/command.pid"', ': > "$here/ready"', 'wait'].join('\n'));
-  return { command: '/bin/bash', args: [script], timeout: OUTLIVED };
-}
-
-/** Fails the test where the timeout ended an `outliving` command before it was ready. */
-const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
 
 test('given a command and its child outliving its timeout, no process of the group is alive when the call settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
