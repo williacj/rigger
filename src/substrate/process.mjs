@@ -49,14 +49,22 @@ function occupied(group) {
 /**
  * Kills every process left in `group` and settles once the group is empty. The wait is on that
  * condition, checked once per turn of the event loop, so nothing else in Rigger stops meanwhile.
+ *
+ * The kill is sent again on every turn. A process forked while the kernel delivers a group kill
+ * can join the group without receiving it, and then runs on: the engineer judge on #354 saw that
+ * in 9 of 12 runs of a survivor forking in a loop, macOS 27.0, 2026-09-27.
  */
 async function ended(group) {
-  try {
-    process.kill(-group, 'SIGKILL');
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error;
+  for (;;) {
+    try {
+      process.kill(-group, 'SIGKILL');
+    } catch (error) {
+      // `EPERM` is the answer `occupied` reads as members still exiting, so the next turn retries.
+      if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
+    }
+    if (!occupied(group)) return;
+    await turn();
   }
-  while (occupied(group)) await turn();
 }
 
 /**

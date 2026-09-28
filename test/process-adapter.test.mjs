@@ -371,3 +371,33 @@ test('given a process-table read that never answers, the call settles with no pr
   assert.deepEqual(events.map(({ layer, event, group: killed }) => ({ layer, event, group: killed })), [{ layer: 'L0', event: 'group.killed', group }]);
   assert.match(events[0].census, /process-table read timed out/);
 });
+
+// A bound on the test alone, so that a call which never settles fails here rather than holding
+// the suite: nothing waits on it when the call settles.
+const SETTLES_WITHIN = { timeout: 20_000 };
+
+test('survivors that keep forking while the group is killed are all dead when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // Each forker starts a `tail`, ends the one before it, and goes round again until it is killed,
+  // so a fork is in flight whenever the kill arrives while no forker holds more than two `tail`s.
+  fixture(directory, 'forker', [
+    'previous=',
+    ': > "$here/forking.$1"',
+    'while :; do',
+    `  ${TAIL} &`,
+    '  [ -n "$previous" ] && kill -KILL "$previous"',
+    '  previous=$!',
+    'done',
+  ].join('\n'));
+  const forkers = ['1', '2', '3', '4'];
+  const command = fixture(directory, 'command', [
+    'echo $$ > "$here/group"',
+    ...forkers.map((n) => `"$here/forker" ${n} &`),
+    ...forkers.map((n) => `while [ ! -f "$here/forking.${n}" ]; do :; done`),
+    'exit 0',
+  ].join('\n'));
+
+  await adapt(directory, { command });
+
+  assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
+});
