@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { accessSync, constants as files, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
+import { inspect } from 'node:util';
 
 /**
  * The process-table tool, by absolute path, so it is found whatever `PATH` the caller runs under:
@@ -521,7 +522,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
     // The type is named because a string, a bigint or a boxed number prints as the number it holds.
     const type = timeout === null ? 'null' : typeof timeout;
-    throw new Error(`the process adapter was given the timeout ${timeout} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
+    throw new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
@@ -709,6 +710,26 @@ function unusable(cwd) {
     return undefined;
   } catch (error) {
     return `its working directory ${cwd} cannot be used: ${error.message}`;
+  }
+}
+
+/**
+ * `value` as text for a refusal, which no value can make throw. Its own conversion is used where
+ * that prints something; where it throws, as a Symbol's does in a template literal and a
+ * null-prototype object's does anywhere, or prints nothing, as `[]` and `''` do, Node's `inspect`
+ * is; and where that throws too, the refusal says so.
+ */
+function shown(value) {
+  try {
+    const text = String(value);
+    if (text.trim() !== '') return text;
+  } catch {
+    // Printed by `inspect` below.
+  }
+  try {
+    return inspect(value);
+  } catch {
+    return 'that cannot be printed';
   }
 }
 

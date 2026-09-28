@@ -1423,8 +1423,23 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
   }
 });
 
+/** A value whose every conversion to text throws: its `toString`, and the hook `util.inspect` calls. */
+const unprintable = { toString() { throw new Error('no toString'); }, [Symbol.for('nodejs.util.inspect.custom')]() { throw new Error('no inspect'); } };
+
 test('the refusal of an invalid timeout names the value and its type', async (t) => {
-  for (const [timeout, named] of [['5', 'the timeout 5 (of type string)'], [null, 'the timeout null (of type null)'], [NaN, 'the timeout NaN (of type number)']]) {
+  for (const [timeout, named] of [
+    ['5', 'the timeout 5 (of type string)'],
+    [null, 'the timeout null (of type null)'],
+    [NaN, 'the timeout NaN (of type number)'],
+    // A template literal throws on each of these three, so the refusal must print them another way.
+    [Symbol('t'), 'the timeout Symbol(t) (of type symbol)'],
+    [Object.create(null), 'the timeout [Object: null prototype] {} (of type object)'],
+    [{ toString() { throw new Error('no toString'); } }, 'the timeout { toString: [Function: toString] } (of type object)'],
+    // Each of these prints as nothing, so the refusal must print them so they show.
+    [[], 'the timeout [] (of type object)'],
+    ['', 'the timeout \'\' (of type string)'],
+    [unprintable, 'the timeout that cannot be printed (of type object)'],
+  ]) {
     const directory = scratch(t);
     const command = fixture(directory, 'command', ': > "$here/started"');
 
