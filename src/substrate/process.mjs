@@ -13,6 +13,12 @@ import { setTimeout as pause } from 'node:timers/promises';
 export const PS = '/bin/ps';
 
 /**
+ * The tool that reads the path of the executable a process runs, by absolute path for the same
+ * reason as `PS`, because `ps` prints only the first 16 bytes of an executable's name.
+ */
+export const LSOF = '/usr/sbin/lsof';
+
+/**
  * How long L0 waits for one read of the process table before it gives up on the census and kills
  * the group unnamed. A judgment, not a measurement. Its premise is a measurement: 20 reads of one
  * four-process group, the census's own `ps -ww -g <group> -o pid=,ucomm=,command=` with macOS
@@ -156,9 +162,9 @@ function signal(group, name) {
  * execs in between is named by one image and described by the other: the engineer judge on #354
  * measured that in 16 of 3,000 direct reads, and 34 of 1,500 calls to this adapter, before the
  * group was stopped. So the census reads the states, then the names, then the command lines,
- * then the executables' names unpadded, then the states again, each in a `ps` run of its own. It
- * keeps them only when both state reads find every member stopped, or a zombie, and all five
- * reads find the same processes. Otherwise it pauses, then stops the group again and reads again:
+ * then the executables' paths, then the states again, each in a run of its own. It keeps them
+ * only when both state reads find every member stopped, or a zombie, and the names, the command
+ * lines and both state reads find the same processes. Otherwise it pauses, then stops the group again and reads again:
  * a member not yet stopped is one the signal has not reached, one caught mid-exec (state `?`), or
  * a fork the signal missed. A zombie cannot exec either, and is left out, because it is already
  * dead.
@@ -180,10 +186,13 @@ function signal(group, name) {
  *   `x`, newline, `<pid> evil` read in the group's table named that other pid's process `evil`
  *   (the engineer judge on #354). It names what runs, not what was asked for: a script run by
  *   `/bin/sh` is named `bash`.
- * - `-c` makes `command` the executable's name, unpadded and uncut (`日本語テール` whole), with
- *   control characters escaped and a backslash not, so `a\012b` and `a`, newline, `b` print
- *   alike. So it is read for the spaces a name ends in alone. Where a name is longer than 16 bytes,
- *   the cut can end in spaces the whole name does not, and those are lost.
+ * - `-c` makes `command` argv[0]'s last part, not the executable's name: `exec -a Tx` shows `Tx`.
+ * - `lsof -F n -d txt` (`/usr/sbin/lsof`) gives the executable's path first among a process's
+ *   `txt` files, its name whole and unpadded. It writes a backslash as `\\`, a newline as `\n`, a
+ *   tab as `\t`, another control character as `^` and a letter (`^A`), and DEL as `\x7f`, but a
+ *   `^` of the name's own as it is, so a `^A` in a name reads as the control character `^A`
+ *   stands for. The path is the one the file has when `lsof` reads it, so a file renamed or
+ *   removed since the exec gives another name, or none.
  * - `stat`'s first character is the process's state: `T` stopped, `Z` a zombie, `?` caught
  *   mid-exec.
  * - `comm` is argv[0], so `exec -a <anything>` names the process `<anything>`. It is cut to 16
@@ -211,7 +220,7 @@ function signal(group, name) {
 async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
   const read = (args, encoding) => run(ps, args, deadline - Date.now(), timeout, encoding);
-  const column = async (name, flags = []) => rowsOf(await read([...flags, '-ww', '-g', String(group), '-o', `pid=,${name}=`]));
+  const column = async (name) => rowsOf(await read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     signal(group, 'SIGSTOP');
@@ -219,13 +228,12 @@ async function census(ps, group, timeout) {
     if (!stopped(before)) continue;
     const names = await namesOf([...before.keys()], read);
     const commands = await column('command');
-    // `-c` makes the command column the executable's name, unpadded, which keeps its trailing spaces.
-    const executables = await column('command', ['-c']);
+    const paths = await pathsOf([...before.keys()], deadline);
     const after = await column('stat');
-    if (!stopped(after) || ![before, names, commands, executables].every((each) => samePids(each, after))) continue;
+    if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
-      .map(([pid]) => ({ pid, name: named(names.get(pid), executables.get(pid)), cmd: commands.get(pid) }));
+      .map(([pid]) => ({ pid, name: named(names.get(pid), paths.get(pid)), cmd: commands.get(pid) }));
   }
 }
 
@@ -256,22 +264,77 @@ async function namesOf(pids, read) {
   return names;
 }
 
-/** The longest name `ucomm` prints, in bytes: the kernel's cut of the executable's name. */
-const NAME_BYTES = 16;
+/**
+ * The path of the executable each of `pids` runs, as `lsof` writes it, by pid, read in one run
+ * given up on at `deadline`. A process whose path `lsof` did not give, or a run that failed or
+ * timed out, gives none, and that process is named by `ucomm` alone.
+ */
+function pathsOf(pids, deadline) {
+  return new Promise((resolve) => {
+    const args = ['-w', '-n', '-P', '-p', pids.join(','), '-a', '-d', 'txt', '-F', 'pn'];
+    const timeout = Math.max(1, deadline - Date.now());
+    execFile(LSOF, args, { env: { LC_ALL: 'C.UTF-8' }, timeout, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'latin1' }, (error, stdout) => {
+      const paths = new Map();
+      let pid;
+      for (const line of error?.killed ? [] : stdout.split('\n')) {
+        if (line.startsWith('p')) pid = Number(line.slice(1));
+        else if (line.startsWith('n') && pid !== undefined && !paths.has(pid)) paths.set(pid, Buffer.from(line.slice(1), 'latin1'));
+      }
+      resolve(paths);
+    });
+  });
+}
 
 /**
- * The name `ucomm` printed, with the trailing spaces that are the name's own and none of `ps`'s.
+ * The executable's whole name, from the bytes `ucomm` printed and the path `lsof` wrote.
  *
- * `ps` ends a name with a newline, after padding it with spaces, so the spaces a name ends in
- * cannot be told from the padding. The executable's name as `-c` prints it has no padding, so the
- * spaces it ends in are the name's own. That name is not cut, so where it is longer than the cut,
- * the cut holds only as many of them as fit.
+ * `ucomm` prints the name's first 16 bytes raw, padded with spaces that cannot be told from
+ * spaces of its own. `lsof` writes the whole name, but a `^` and a letter of the name's own as it
+ * writes a control character. So each byte `ucomm` printed, bar the spaces it ends in, is taken as
+ * it is, where the path's last part begins with that byte as `lsof` can write it. The rest of the
+ * path is the rest of the name, read as `lsof` writes. Where the two do not agree, or `lsof` gave
+ * no path, the name is what `ucomm` printed, bar those spaces.
  */
-function named(printed, executable) {
+function named(printed, path) {
   let end = printed.length - 1;
   while (end > 0 && printed[end - 1] === 0x20) end -= 1;
-  const own = Math.min(executable.length - executable.replace(/ +$/, '').length, NAME_BYTES - end);
-  return Buffer.concat([printed.subarray(0, end), Buffer.alloc(own, ' ')]).toString('utf8');
+  const cut = printed.subarray(0, end);
+  if (path === undefined) return cut.toString('utf8');
+  const written = path.subarray(path.lastIndexOf(0x2f) + 1);
+  let at = 0;
+  for (const byte of cut) {
+    const form = writings(byte).find((each) => written.subarray(at, at + each.length).equals(each));
+    if (form === undefined) return cut.toString('utf8');
+    at += form.length;
+  }
+  const rest = [];
+  while (at < written.length) {
+    const [byte, length] = unwritten(written, at);
+    rest.push(byte);
+    at += length;
+  }
+  return Buffer.concat([cut, Buffer.from(rest)]).toString('utf8');
+}
+
+/** The escapes `lsof` writes, by the byte each stands for. */
+const ESCAPES = new Map([[0x5c, '\\\\'], [0x0a, '\\n'], [0x09, '\\t'], [0x0d, '\\r'], [0x08, '\\b'], [0x0c, '\\f']]);
+
+/** Each way `lsof` can write `byte`. */
+function writings(byte) {
+  const forms = [Buffer.from(ESCAPES.get(byte) ?? String.fromCharCode(byte), 'latin1')];
+  if (byte < 0x20) forms.push(Buffer.from(`^${String.fromCharCode(byte + 0x40)}`, 'latin1'));
+  forms.push(Buffer.from(`\\x${byte.toString(16).padStart(2, '0')}`, 'latin1'));
+  return forms;
+}
+
+/** The byte that `lsof`'s writing at `at` in `written` stands for, and how many bytes it takes. */
+function unwritten(written, at) {
+  const next = written.subarray(at, at + 4).toString('latin1');
+  for (const [byte, escape] of ESCAPES) if (next.startsWith(escape)) return [byte, escape.length];
+  const hex = /^\\x([0-9a-f]{2})/i.exec(next);
+  if (hex) return [Number.parseInt(hex[1], 16), 4];
+  if (/^\^[@-_]/.test(next)) return [next.charCodeAt(1) - 0x40, 2];
+  return [written[at], 1];
 }
 
 /** Each line of a read of one column, by the pid it begins with. */

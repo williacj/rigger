@@ -994,3 +994,36 @@ for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) 
     assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
   });
 }
+
+test('survivors whose executables\' names are longer than 16 bytes are each recorded by the whole name, trailing whitespace included', SETTLES_WITHIN, async (t) => {
+  // `ps` cuts the kernel's name at 16 bytes (`D16` rule 3), past which the first ends in a space,
+  // the second in two, the third in a newline, and the fourth holds a backslash, a newline and a
+  // character cut through at the 16th byte.
+  const names = ['abcdefghijklmnop ', 'abcdefghijklmnopq  ', 'abcdefghijklmnop\n', 'a\\b\nc日本語テール '];
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', names.map((name, n) => leaveNamed(`$'${[...Buffer.from(name)].map((byte) => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}'`, `long${n}`, 'a')).join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const byPid = new Map(events.map(({ pid, name }) => [pid, Buffer.from(name).toString('hex')]));
+  assert.deepEqual(names.map((_, n) => byPid.get(Number(read(directory, `long${n}.pid`)))), names.map((name) => Buffer.from(name).toString('hex')));
+});
+
+test('a survivor whose argv[0] differs from its executable\'s name in its trailing whitespace or past 16 bytes is recorded by the executable\'s name', SETTLES_WITHIN, async (t) => {
+  // Each pair is an executable's name and the argv[0] it is run under.
+  const runs = [['abcdefghijklmnop ', '/elsewhere/abcdefghijklmnopXYZ'], ['w', 'w  ']];
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', runs.map(([name, argv0], n) => [
+    `/bin/cp "$here/waiter" "$here/${name}"`,
+    `/bin/bash -c 'exec -a "$1" "$0" "$2"' "$here/${name}" '${argv0}' "$here" &`,
+    `echo $! > "$here/run${n}.pid"`,
+    'while /bin/ps -o ucomm= -p $! | /usr/bin/grep -qE "^(sh|bash) *$"; do :; done',
+  ].join('\n')).join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const byPid = new Map(events.map(({ pid, name }) => [pid, name]));
+  assert.deepEqual(runs.map((_, n) => byPid.get(Number(read(directory, `run${n}.pid`)))), runs.map(([name]) => name));
+});
