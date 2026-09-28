@@ -263,6 +263,32 @@ test('given a git stand-in for the guard that leaves a child alive, a target the
   assert.deepEqual(fake.sent(), []);
 });
 
+/** Every path under `directory`, however deep, sorted. */
+const everyPath = (directory) => readdirSync(directory, { recursive: true }).map(String).sort();
+
+for (const verb of ['once', 'run', 'plan', 'setup-board', 'report', 'doctor']) {
+  test(`given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, ${verb} exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and ${verb} writes no file under the target`, (t) => {
+    const directory = holding(t);
+    gitLeavingChild(directory);
+    // An agent CLI stand-in, so a doctor that went on past the guard would ask it rather than the host's.
+    claude(directory, false);
+    const fake = fakeGh(directory);
+    const { where, state } = consumer();
+    // The stream is a directory, which no append can open.
+    mkdirSync(join(state, 'events.jsonl'), { recursive: true });
+    const before = everyPath(where);
+
+    const ran = runBin(verb, where, directory);
+
+    const said = `exited ${ran.code}: ${ran.out}${ran.err}`;
+    assert.notEqual(ran.code, 0, said);
+    assert.match(ran.err, /went unrecorded/, said);
+    holdsChildKill(eventsIn(ran.err), directory, said);
+    assert.deepEqual(fake.sent(), [], said);
+    assert.deepEqual(everyPath(where), before, said);
+  });
+}
+
 /** What the agent CLI states when signed in, as Claude Code 2.1.281 printed it (`test/doctor.test.mjs`). */
 const SIGNED_IN = '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}';
 

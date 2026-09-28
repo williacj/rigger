@@ -25,15 +25,58 @@ sending through L0's process adapter, and every verb stopping at a kill its sink
   package from its own location, so a copy of `src/`, `templates/` and `package.json` committed
   into a fixture repository is a source tree whose own bin refuses it. Its
   `git status --porcelain --ignored` is then measured on a tree nothing else writes to.
-- **Mutations shown to discriminate** (anchor found once, the diff read back, the file restored
-  with `git checkout`, `git status` clean), each run against the 13 tests in
-  `test/guard-probe-kill.test.mjs`, which all reported:
-  - `settled` handing the guard an emitter that drops events: 6 failed — the stream order, the
-    source tree, no repository, the refused config and the refusing state directory tests on
-    their kill-event assertions, and the SIGTERM test on its assertion that each kill is on
-    standard error.
-  - `doctor` pushing a failed line for a refused kill instead of stopping: the two refusing-sink
-    `doctor` tests failed, each on its assertion that the output names the unrecorded kill.
-  - `agentAuth` passing over `timedOut`: the probe timeout test failed.
-  - `repoRoot` passing over `timedOut`: the guard timeout test failed.
-  - `failedRead` folding a refused kill: the board-read refusal test failed.
+- **Mutations shown to discriminate.** Each was run on 2026-09-28, at the head after the merge of
+  `origin/main` (`ca86596`) plus the items 24 and 25 tests, against `test/guard-probe-kill.test.mjs`
+  through `npm test -- test/guard-probe-kill.test.mjs` with TMPDIR outside any checkout. Unmutated,
+  that target reports 19 tests, 19 pass. For each mutation:
+  - the anchor was counted in the file's bytes, and it occurred exactly once;
+  - after the write, the file was read back off disk. It held the replacement, the anchor 0 times,
+    and `git diff` showed the one hunk;
+  - the run reported 19 tests, each by its own name, so the mutant loaded and reached a verdict;
+  - the file was restored with `git checkout`, and `git status` then showed no change to it.
+
+  Each row below gives the file, the anchor, what replaced it, and each test that failed with the
+  assertion it failed on.
+
+  1. `src/cli/doctor.mjs`, `settled`: `{ ...options, emitter: sink.emitter({ layer: 'L0' }) }`
+     became `{ ...options, emitter: { emit() {} } }`, so the guard's kills went nowhere. 12 of 19
+     failed:
+     - the stream-order, source-tree and no-repository tests failed in `holdsChildKill` on
+       `assert.equal(kills.length, 1)`, with actual 0. The refused-config test failed where it
+       reads the stream, `readEvents(state)`, with `ENOENT`, because no event was ever written
+       there. That is a failure of the claim, and not a mutant that failed to load: the other
+       tests in the run reached their own assertions;
+     - the SIGTERM test failed on its per-process `assert.equal(of.length, 1)`, with actual 0;
+     - the `once` refusing-directory test and the six per-verb tests each failed at their first
+       reading of the run. `once`, `run`, `report` and `doctor` failed on
+       `assert.match(ran.err, /went unrecorded/)`: the verb went on and failed later for another
+       reason (`the event sink refused to record the pull trigger`, `EISDIR ... so no signal is
+       derived`, `11 of 12 checks passed`). `plan` and `setup-board` failed on
+       `assert.notEqual(ran.code, 0)`, because they exited 0 (`the next run would pull 1 card`,
+       `7 writes to board 3`).
+  2. `src/cli/doctor.mjs`, `checking`: the line `return { text: \`rigger doctor: ${failure.message}\`,
+     code: 1 };` became `results.push({ name: 'refused', ok: false, detail: 'x' });`, so the refused
+     kill was folded into a failed line. 2 of 19 failed: the refusing-sink agent probe test and the
+     board-read refusal test, each on `assert.match(ran.err, /went unrecorded/)`. The report printed
+     `10 of 12` and `3 of 6 checks passed` instead.
+  3. `src/cli/doctor.mjs`, `agentAuth`: `if (said.timedOut) {` became `if (false) {`. 1 of 19
+     failed: the probe timeout test, on `assert.match(said.detail, /timeout of 1000 ms ended \`claude /)`.
+     The detail read `` `claude auth status --json` exited 137 and stated no `loggedIn` ``.
+  4. `src/cli/doctor.mjs`, `repoRoot`: `if (said.timedOut) return { root: null, why:` became
+     `if (false) return { root: null, why:`. 1 of 19 failed: the guard timeout test, on
+     `assert.match(refusal?.text ?? '', /timeout of 1000 ms ended \`git /)`. The refusal named git's
+     exit instead.
+  5. `src/cli/doctor.mjs`, `failedRead`: the line `if (threw?.code === EVENT_REFUSED) throw threw;`
+     was deleted. 1 of 19 failed: the board-read refusal test, on
+     `assert.ok(ran.err.includes('/usr/bin/tail -f <directory>/hold'))`, with actual false. The report
+     printed `3 of 12 checks passed` and named no kill.
+  6. `src/cli/doctor.mjs`, `settled`: the line
+     `return { refusal: { text: \`rigger ${verb}: ${refused.message}\`, code: 1 } };` became
+     `return guarded;`, so a refused naming was passed over. 7 of 19 failed: the `once`
+     refusing-directory test and all six per-verb tests, each on the same first assertion and with
+     the same output as in mutation 1.
+  7. `src/cli/report.mjs`: `recording((opened) => reporting(opened, options));` became
+     `recording((opened) => reporting({ ...opened, name: () => {} }, options));`, so `report` never
+     named its state directory. 1 of 19 failed: the per-verb `report` test, on
+     `assert.match(ran.err, /went unrecorded/)`. The held kill was written to standard error as a
+     bare event line, which says nothing went unrecorded.
