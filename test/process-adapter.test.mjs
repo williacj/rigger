@@ -3,13 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { runCommand } from '../src/substrate/process.mjs';
+import { PS, runCommand } from '../src/substrate/process.mjs';
 
 /**
  * A scratch directory for one test, torn down with every process that names it.
@@ -314,4 +315,59 @@ test('a survivor whose command line holds text outside ASCII is recorded with th
   const { events } = await recorded(directory, { command });
 
   assert.deepEqual(events.map(({ cmd }) => cmd), [`/usr/bin/tail -f ${directory}/hold ü ✓ 日本`]);
+});
+
+test('a call with no L0 emitter starts no process, and fails naming the missing emitter', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', ': > "$here/started"');
+
+  await assert.rejects(adapt(directory, { command, emitter: undefined }), /emitter/);
+
+  assert.equal(existsSync(join(directory, 'started')), false, 'the command ran');
+});
+
+test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
+  assert.ok(isAbsolute(PS), `${PS} is not an absolute path`);
+  assert.equal(basename(PS), 'ps');
+  accessSync(PS, constants.X_OK);
+});
+
+test('a caller whose PATH holds no ps still has a surviving child killed and recorded by name', async (t) => {
+  const directory = holding(t);
+  const path = dirname(process.execPath);
+  assert.equal(existsSync(join(path, 'ps')), false, `the narrow PATH ${path} holds a ps`);
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+  // A caller in a process of its own, so that its PATH is the narrow one and the suite's is not.
+  const caller = join(directory, 'caller.mjs');
+  writeFileSync(caller, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }) });`,
+  ].join('\n'));
+
+  const run = spawn(process.execPath, [caller], { env: { PATH: path }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(run, 'close');
+
+  assert.equal(status, 0, stderr);
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: '/usr/bin/tail' }]);
+});
+
+test('given a process-table read that never answers, the call settles with no process of the group alive, and records the group\'s kill and the timeout', async (t) => {
+  const directory = holding(t);
+  // The stand-in `exec`s its wait, so the process the adapter times out and kills is the wait.
+  const ps = fixture(directory, 'ps', `echo $$ > "$here/ps.pid"\nexec ${TAIL}`);
+  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}`);
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 200 });
+
+  const group = Number(read(directory, 'group'));
+  assert.equal(alive(-group), false, 'a process of the command\'s group is alive');
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+  assert.equal(alive(Number(read(directory, 'ps.pid'))), false, 'the stand-in for ps is alive');
+  assert.deepEqual(events.map(({ layer, event, group: killed }) => ({ layer, event, group: killed })), [{ layer: 'L0', event: 'group.killed', group }]);
+  assert.match(events[0].census, /process-table read timed out/);
 });
