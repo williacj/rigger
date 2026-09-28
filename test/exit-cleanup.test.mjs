@@ -84,7 +84,10 @@ const CALLER = [
   'if (options.after) eval(options.after);',
   "process.stdout.write('ready\\n');",
   // The test reads the process table before the caller ends, and says so by writing `go`.
-  "if (options.ending !== 'wait') while (!existsSync(join(directory, 'go'))) await turn();",
+  // It waits at least one turn whether or not `go` is already there, so an ending always comes
+  // after an await. A rejection at the top level of the module before any await prints Node's
+  // module-loader frames too, and the report would then depend on which the test won.
+  "if (options.ending !== 'wait') do await turn(); while (!existsSync(join(directory, 'go')));",
   "if (options.ending === 'exit 0') process.exit(0);",
   "if (options.ending === 'exit 1') process.exit(1);",
   "if (options.ending === 'throw') setImmediate(() => { throw new Error('the caller threw this'); });",
