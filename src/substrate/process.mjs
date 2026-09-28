@@ -147,8 +147,9 @@ async function contain(group, { emitter, ps, readTimeout }) {
  */
 export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
-  // default: a kill with nowhere to be recorded is refused before anything starts.
-  if (emitter === undefined) throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
+  // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
+  // is only one that has an `emit` to call.
+  if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const [exit] = await once(child, 'exit');

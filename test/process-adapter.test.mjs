@@ -329,12 +329,15 @@ test('a survivor whose command line holds text outside ASCII is recorded with th
 });
 
 test('a call with no L0 emitter starts no process, and fails naming the missing emitter', async (t) => {
-  const directory = scratch(t);
-  const command = fixture(directory, 'command', ': > "$here/started"');
+  // Absent, null, and a value with no `emit` to call: none of them can record a kill.
+  for (const [what, emitter] of [['undefined', undefined], ['null', null], ['an object with no emit', {}], ['emit that is not a function', { emit: 'L0' }]]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
 
-  await assert.rejects(adapt(directory, { command, emitter: undefined }), /emitter/);
+    await assert.rejects(adapt(directory, { command, emitter }), /emitter/, what);
 
-  assert.equal(existsSync(join(directory, 'started')), false, 'the command ran');
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
+  }
 });
 
 test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
