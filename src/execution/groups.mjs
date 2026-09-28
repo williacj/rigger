@@ -9,17 +9,50 @@ const RECORD = 'groups.json';
 /** The record's file, inside the state directory the caller names. */
 export const recordPath = (directory) => join(directory, RECORD);
 
-/** Every entry the record in `directory` holds, or none where there is no record. */
+/**
+ * Every entry the record in `directory` holds, or none where there is no record. A record whose
+ * content is not a list of entries fails whole, naming its file, so nothing acts on part of it.
+ */
 export function readGroups(directory) {
+  const path = recordPath(directory);
   let text;
   try {
-    text = readFileSync(recordPath(directory), 'utf8');
+    text = readFileSync(path, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;
   }
-  return JSON.parse(text);
+  let entries;
+  try {
+    entries = JSON.parse(text);
+  } catch (cause) {
+    throw new Error(`L1's record of process groups ${path} cannot be read as entries: ${cause.message}`, { cause });
+  }
+  const unreadable = Array.isArray(entries) ? entries.find((entry) => !isEntry(entry)) : entries;
+  if (!Array.isArray(entries) || unreadable !== undefined) {
+    throw new Error(`L1's record of process groups ${path} cannot be read as entries: it holds ${JSON.stringify(unreadable)}`);
+  }
+  return entries;
 }
+
+/**
+ * Whether `entry` names a group a dispatch can hold, the start of its leader, and a dispatch the
+ * record can hold. No group Rigger creates has an id of 1 or less, and L0 signals a group by its
+ * id negated, so 1, 0 or a negative id would reach launchd, the caller's own group, or every
+ * process.
+ */
+const isEntry = (entry) => typeof entry === 'object' && entry !== null
+  && Number.isSafeInteger(entry.group) && entry.group > 1
+  && Number.isSafeInteger(entry.started)
+  && holdsDispatch(entry.dispatch, entry.card);
+
+/**
+ * Whether the record can hold dispatch `id` of `card`: an id is a string that is not empty, and a
+ * card is an issue number, where there is one. L1 asks before it starts a dispatch, because an
+ * entry the record would refuse on its next read would refuse every later dispatch and start.
+ */
+export const holdsDispatch = (id, card) => typeof id === 'string' && id !== ''
+  && (card === undefined || (Number.isSafeInteger(card) && card > 0));
 
 /**
  * Replaces the record in `directory` with `entries`.

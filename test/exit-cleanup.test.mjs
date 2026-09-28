@@ -610,13 +610,19 @@ test('a process that joins a group after the cleanup has killed it is killed bef
 
 // Items 38 and 39: L1's entry for a dispatch.
 
-/** The record's entries, read once the caller is ready, and the group its first command reported. */
+/**
+ * The record's entries, read once the caller is ready, and the group its first command reported.
+ * Each entry also names when its group's leader started, which L0 reads and this test does not.
+ */
 const entries = (directory) => ({ group: Number(read(directory, 'group.1')), record: readGroups(join(directory, 'state')) });
+
+/** `record`'s entries without the start each names. */
+const unstarted = (record) => record.map(({ started, ...entry }) => entry);
 
 test('given a dispatch started through L1\'s function and still running, after the caller calls process.exit(0) the record no longer holds its entry', ENDS_WITHIN, async (t) => {
   const { directory, seen, status, stderr } = await endCaller(t, { ending: 'exit 0', sink: 'named', groups: true, dispatch: true }, { inspect: entries });
 
-  assert.deepEqual(seen.record, [{ group: seen.group, dispatch: 'd-1', card: 7 }], 'the dispatch was not recorded while it ran, so its removal proves nothing');
+  assert.deepEqual(unstarted(seen.record), [{ group: seen.group, dispatch: 'd-1', card: 7 }], 'the dispatch was not recorded while it ran, so its removal proves nothing');
   assert.equal(status, 0, stderr);
   await assertNoneAlive(directory);
   assert.deepEqual(readGroups(join(directory, 'state')), []);
@@ -626,5 +632,6 @@ test('given a dispatch started through L1\'s function and still running, after t
   const { directory, seen, signal } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: true }, { signal: 'SIGKILL', inspect: entries });
 
   assert.equal(signal, 'SIGKILL');
-  assert.deepEqual(readGroups(join(directory, 'state')), [{ group: seen.group, dispatch: 'd-1', card: 7 }]);
+  assert.deepEqual(unstarted(seen.record), [{ group: seen.group, dispatch: 'd-1', card: 7 }], 'the dispatch was not recorded while it ran, so this proves nothing');
+  assert.deepEqual(readGroups(join(directory, 'state')), seen.record);
 });
