@@ -215,17 +215,17 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
 | R-STATE-4 | Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
-| R-STATE-6 | Rigger ends every process still in a process group it created, whenever any of these holds. A process that has left its group is outside this: | the engine | the test suite | |
+| R-STATE-6 | A process that has left its process group is outside this rule. Rigger ends every process still in a process group it created, whenever any of these holds: | the engine | the test suite | |
 | R-STATE-7 | — the command Rigger ran in that group returns; | the engine | the test suite | |
 | R-STATE-8 | — that command runs past its time; | the engine | the test suite | |
-| R-STATE-9 | — Rigger itself exits, unless it is killed outright: ended by a signal no process can catch, a hardware fault, an abort or a fatal runtime error. | the engine | the test suite | |
-| R-STATE-10 | If Rigger is itself killed outright, its next start ends what remains of each dispatch whose process group it recorded. | the engine | the test suite | |
-| R-STATE-11 | A start that cannot tell whether a recorded process group is still the one Rigger recorded ends nothing in it, starts no work, and names the group. A later start ends the group once it can tell. | the engine | the test suite | |
+| R-STATE-9 | — Rigger itself exits, unless it is killed outright: ended by a signal that no process can catch or that Rigger cannot safely handle, by an abort, or by a fatal runtime error. | the engine | the test suite | |
+| R-STATE-10 | If Rigger is itself killed outright, its next start ends what remains of each dispatch whose process group it recorded, except as `R-STATE-11` allows. | the engine | the test suite | |
+| R-STATE-11 | A start that cannot read its record of process groups ends nothing, starts no work, and names the record. A start that cannot tell whether a recorded group is still the one Rigger recorded ends nothing in it, starts no work, and names the group. A later start ends such a group only once it confirms the group is still Rigger's. | the engine | the test suite | |
 | R-STATE-12 | Rigger records every process it had to end by force. Where it cannot read which processes a group held, it records the group it ended in their place. | the engine | the event record, by the kill events it holds | |
-| R-STATE-13 | Where Rigger ends without having settled which repository it serves, it reports each process it ended by force on standard error instead of recording it, and writes nothing under its target. | the engine | the test suite | |
+| R-STATE-13 | Where Rigger ends without having settled which repository it serves, it reports each process it ended by force on standard error instead of recording it, and writes nothing under its target. | the engine | standard error, by the forced ends a Rigger that never settled its repository reports there | |
 | R-STATE-14 | A command's result is its exit code and what reached its output until Rigger stopped reading that output. | the engine | the test suite | |
 | R-STATE-15 | A command that returns on its own gives its result's exit code, and no process that outlives it changes that code. | the engine | the test suite | |
-| R-STATE-16 | A command that Rigger ended at its time, or that a signal ended, has a result that never reads as success, whatever it exited with. | the engine | the test suite | |
+| R-STATE-16 | A command that Rigger ended at its time has a result that never reads as success, whatever it exited with. The same holds for a command whose ending Rigger saw was by a signal. | the engine | the test suite | |
 
 ## R-FAIL — infrastructure failure
 
