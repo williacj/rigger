@@ -29,9 +29,18 @@ no test covers this branch; the PR says so.
 **Node reports a spawn failure two ways.** Measured with Node 26.5.0 on macOS 27.0, a `cwd` that is
 a file, a link loop and an executable of garbage bytes each throw synchronously (`ENOTDIR`,
 `ELOOP`, `ENOEXEC`). A missing command, a missing `cwd`, a command that is not executable and an
-unenterable `cwd` each fail after the spawn returns, as an `error` event (`ENOENT`, `EACCES`). The
-adapter awaits Node's `spawn` event inside one `try`, so both kinds become one `NOT_STARTED` failure
-naming the command.
+unenterable `cwd` each fail after the spawn returns, as an `error` event (`ENOENT`, `EACCES`), and
+the child Node returned has no pid. The adapter catches the throw, and reads a child with no pid
+as the second kind and awaits its error. So both kinds become one `NOT_STARTED` failure naming the
+command.
+
+**The spawn stays synchronous because of #339.** A first cut awaited Node's `spawn` event before
+going on. #339 (M2-05a) merged meanwhile, and it hands L1 the group through `onGroup` before the
+call first yields, so that nothing but one synchronous step falls between the spawn and L1's
+entry. An await there would have widened that window. The spawn therefore returns its child
+synchronously, and only a child with no pid is awaited, because it has no group to hand over.
+#339's `dispatch` called the adapter with no timeout, which the adapter now refuses. So it takes a
+`timeout` and passes it through, and its tests pass one of their own.
 
 **Node names the command, not the directory, for a missing `cwd`.** Ruling 1 P3 recalled this; the
 first test measured it (`spawn <command> ENOENT`). So the adapter asks the file system before the

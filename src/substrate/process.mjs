@@ -264,12 +264,11 @@ function record(emitter, events) {
 }
 
 /**
- * The failure for a call whose `unrecorded` events the sink refused, carrying its `result`, and
- * saying so where the `timeout` ended `command`.
+ * The failure for a call whose `unrecorded` events the sink refused, carrying its `result`, its
+ * message opening with `ending` where that says how the command ended.
  */
-function refused(unrecorded, result, { command, timeout }) {
+function refused(unrecorded, result, ending = '') {
   const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
-  const ending = result.timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '';
   const error = new Error(`${ending}the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
   return Object.assign(error, { code: EVENT_REFUSED, unrecorded, result });
 }
@@ -293,8 +292,14 @@ function refused(unrecorded, result, { command, timeout }) {
  * A refused event never stops a kill, because every kill is done before any is recorded. Every
  * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
  * failure naming each unrecorded event and carrying the result.
+ *
+ * `onGroup`, where the caller gives one, is handed the group's id in the step that creates the
+ * group, before the call first yields (`ARCHITECTURE.md`, "Failure model"). L1 records a
+ * dispatch's group there. A command that never started has no group, and `onGroup` is not called.
+ * Where `onGroup` throws, L0 ends and records the group, and the call rejects with what it threw,
+ * or, where the sink refused a kill event, with the `EVENT_REFUSED` failure, caused by it.
  */
-export async function runCommand({ command, args, cwd, env, timeout, emitter, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -302,8 +307,22 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
-  const child = await started(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
+  if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
+  try {
+    onGroup?.(child.pid);
+  } catch (refusal) {
+    // A group the caller could not take runs no further: it is ended, and recorded, as a
+    // survivor would be, before the caller hears why.
+    // Nothing reads the output of a command that runs no further, so its pipes are let go.
+    const unrecorded = record(emitter, await contain(child.pid, { ps, readTimeout }, 'survivor.killed'));
+    child.stdout.destroy();
+    child.stderr.destroy();
+    if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
+    throw refusal;
+  }
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
   const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
@@ -324,20 +343,17 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   const [stdout, stderr] = await output;
   const result = { exit, timedOut, stdout, stderr };
   const unrecorded = record(emitter, events);
-  if (unrecorded.length > 0) throw refused(unrecorded, result, { command, timeout });
+  if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '');
   return result;
 }
 
 /**
- * The child `spawning` makes to run `command`, once it has started. Where it never does, a
- * `NOT_STARTED` failure naming the command and why, whether the spawn threw or failed after it
- * returned: Node does each for a different cause.
+ * The child `spawning` makes to run `command`. Where the spawn throws, which Node does for some
+ * of the causes of a command that never starts, a `NOT_STARTED` failure naming the command and why.
  */
-async function started(command, spawning) {
+function spawned(command, spawning) {
   try {
-    const child = spawning();
-    await once(child, 'spawn');
-    return child;
+    return spawning();
   } catch (error) {
     throw notStarted(command, error.message);
   }
