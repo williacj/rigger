@@ -114,7 +114,17 @@ reports no gap of its own; the register carries the reason.
 | R-STATE-2 | `test/restart.test.mjs` given an unclaimed Coding card and an unclaimed Review card, with freshness injected as "not fresh", a fresh engine dispatches both again<br>`test/restart.test.mjs` given a run stopped while card X's dispatch is unfinished, a second engine with nothing carried from the first dispatches X again, handed only what the board holds for X<br>`test/restart.test.mjs` given the same stopped run, the write record shows no move of X out of the coding column between the restart and the return of X's new dispatch<br>`test/restart.test.mjs` given the same stopped run, once the restarted run drains, no card that was on the board before the stop remains in the coding column |
 | R-STATE-3 | **gap** |
 | R-STATE-4 | **gap** |
-| R-STATE-5 | **gap** |
+| R-STATE-6 | **gap** |
+| R-STATE-7 | **gap** |
+| R-STATE-8 | **gap** |
+| R-STATE-9 | **gap** |
+| R-STATE-10 | **gap** |
+| R-STATE-11 | **gap** |
+| R-STATE-12 | **gap** |
+| R-STATE-13 | **gap** |
+| R-STATE-14 | **gap** |
+| R-STATE-15 | **gap** |
+| R-STATE-16 | **gap** |
 | R-FAIL-1 | **gap** |
 | R-FAIL-2 | **gap** |
 | R-FAIL-3 | **gap** |
