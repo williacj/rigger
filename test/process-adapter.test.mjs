@@ -875,3 +875,29 @@ test('given a command that finishes inside its timeout, the result reports no ti
   assert.equal(result.timedOut, false);
   assert.equal(result.exit, 3);
 });
+
+test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const payload = bytes(300_001, 23);
+  writeFileSync(join(directory, 'payload'), payload);
+
+  const result = await adapt(directory, outliving(directory, `/bin/cat "$here/payload"\n${leave(TAIL, 'child')}`));
+
+  ready(directory);
+  assert.ok(result.stdout.equals(payload), 'standard output holds every byte of the command\'s payload');
+});
+
+test('given a child that writes to standard output and standard error and outlives the timeout with its command, the result holds every byte of each in its own stream', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const out = bytes(200_003, 29);
+  const err = bytes(150_007, 31);
+  writeFileSync(join(directory, 'out'), out);
+  writeFileSync(join(directory, 'err'), err);
+  fixture(directory, 'child', `/bin/cat "$here/out"\n/bin/cat "$here/err" >&2\n: > "$here/written"\nexec ${TAIL}`);
+
+  const result = await adapt(directory, outliving(directory, `${leave('"$here/child"', 'child')}\nwhile [ ! -f "$here/written" ]; do :; done`));
+
+  ready(directory);
+  assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');
+  assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
+});
