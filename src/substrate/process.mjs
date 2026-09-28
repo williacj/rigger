@@ -41,6 +41,12 @@ export const OUTPUT_BOUND = 1_000;
  */
 export const EVENT_REFUSED = 'EVENT_REFUSED';
 
+/**
+ * The `code` of the failure a call rejects with when its command never started, so its caller
+ * tells it from a refused event without reading the message.
+ */
+export const NOT_STARTED = 'NOT_STARTED';
+
 /** Every chunk `stream` carries, as one buffer, once the stream has closed. */
 async function drained(stream) {
   const chunks = [];
@@ -287,7 +293,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
-  const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = await started(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
@@ -312,6 +318,24 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   if (unrecorded.length > 0) throw refused(unrecorded, result, { command, timeout });
   return result;
 }
+
+/**
+ * The child `spawning` makes to run `command`, once it has started. Where it never does, a
+ * `NOT_STARTED` failure naming the command and why, whether the spawn threw or failed after it
+ * returned: Node does each for a different cause.
+ */
+async function started(command, spawning) {
+  try {
+    const child = spawning();
+    await once(child, 'spawn');
+    return child;
+  } catch (error) {
+    throw notStarted(command, error.message);
+  }
+}
+
+/** The failure for a call whose `command` never started, saying `why`. */
+const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
 
 /** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
 async function outlasts(promise, bound) {

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, PS, runCommand } from '../src/substrate/process.mjs';
 
 /**
  * A scratch directory for one test, torn down with every process that names it.
@@ -953,4 +953,17 @@ test('given a sink that refuses every append, a command outliving its timeout re
   assert.equal(error.result?.timedOut, true);
   // Not merely `timeout`, which each event's name already holds.
   assert.ok(error.message.includes(`the timeout of ${OUTLIVED} ms ended`), `the failure's message does not say the timeout ended the command: ${error.message}`);
+});
+
+/** Fails the test unless `error` is a failure to start that names `what`. */
+function unstarted(error, what) {
+  assert.equal(error.code, NOT_STARTED, `the failure's code is ${error.code}: ${error.message}`);
+  assert.ok(error.message.includes(what), `the failure's message does not name ${what}: ${error.message}`);
+}
+
+test('a command that does not exist rejects as a failure to start, naming the command', async (t) => {
+  const directory = scratch(t);
+  const command = join(directory, 'absent');
+
+  unstarted(await rejection(directory, { command }), command);
 });
