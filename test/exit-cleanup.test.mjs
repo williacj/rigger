@@ -36,6 +36,9 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  *   dispatch-end event is appended.
  * - `exits`: whether each command started straight through the adapter writes the exit code the
  *   cleanup hands its step to `exit.<label>`.
+ * - `exitOnReap`: whether the caller calls process.exit(0) in the turn Node reaps its first command.
+ * - `exitOnSettle`: whether the caller calls process.exit(0) as the first of its calls settles, in
+ *   the turn it settles.
  * - `ps`, a fixture's name, and `readTimeout`: handed to the adapter for every command, where given.
  * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
  *   read of the process table does not answer, so that group is stopped when the caller ends.
@@ -52,7 +55,7 @@ const CALLER = [
   `import { atExit, runCommand } from ${moduleAt('../src/substrate/process.mjs')};`,
   `import { readGroups } from ${moduleAt('../src/execution/groups.mjs')};`,
   "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
-  "import { spawnSync } from 'node:child_process';",
+  "import { ChildProcess, spawnSync } from 'node:child_process';",
   "import { join } from 'node:path';",
   'const directory = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
@@ -79,13 +82,19 @@ const CALLER = [
   "  const started = options.dispatch?.includes(label)",
   "    ? dispatch({ id: `d-${label}`, card: label + 6, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, exit) => writeFileSync(join(directory, `exit.${label}`), String(exit))) });",
-  '  started.catch(() => {}).finally(() => { settled += 1; });',
+  "  started.catch(() => {}).finally(() => { settled += 1; if (options.exitOnSettle) process.exit(0); });",
   '}',
   'async function start(label) {',
   '  begin(label);',
   "  while (!existsSync(join(directory, `child.${label}`))) await turn();",
   '}',
   'if (options.before) eval(options.before);',
+  // The caller calls process.exit(0) as Node emits the first command's exit, which is the turn in
+  // which Node reaps it, before anything awaiting that exit has run.
+  'if (options.exitOnReap) {',
+  '  const emit = ChildProcess.prototype.emit;',
+  "  ChildProcess.prototype.emit = function (event, ...rest) { const emitted = emit.call(this, event, ...rest); if (event === 'exit' && this.pid === Number(readFileSync(join(directory, 'group.1'), 'utf8'))) process.exit(0); return emitted; };",
+  '}',
   'if (options.groups) {',
   '  for (const label of [1, 2]) begin(label);',
   "  while (!existsSync(join(directory, 'child.1')) || !existsSync(join(directory, 'child.2'))) await turn();",
@@ -135,6 +144,25 @@ function fixtures(directory) {
     'exec /bin/ps "$@"',
   ].join('\n'));
   fixture(directory, 'ps-never', 'exec /usr/bin/tail -f "$here/ps-hold"');
+  // `exiting` is a command alone in its group, which exits 3 once the caller writes `release`. It
+  // records its own pid as the group and as the child, so a caller starts it as it starts `command`.
+  fixture(directory, 'exiting', [
+    'echo $$ > "$here/group.$1"',
+    'echo $$ > "$here/child.$1"',
+    'while [ ! -f "$here/release" ]; do :; done',
+    'exit 3',
+  ].join('\n'));
+  // `escaping` is `exiting` with a process beside it that leaves the group at once and holds the
+  // command's output open until killed.
+  const holder = 'setpgrp(0, 0) or die "leaving: $!"; open my $ready, ">", "$ARGV[0]/escaped" or die; close $ready; exec "/usr/bin/tail", "-f", "$ARGV[0]/hold";';
+  fixture(directory, 'escaping', [
+    `/usr/bin/perl -e '${holder}' "$here" &`,
+    'while [ ! -f "$here/escaped" ]; do :; done',
+    'echo $$ > "$here/group.$1"',
+    'echo $$ > "$here/child.$1"',
+    'while [ ! -f "$here/release" ]; do :; done',
+    'exit 3',
+  ].join('\n'));
   // `joining` is `command` with a joiner beside its child: a process that leaves the group at once,
   // waits for the child to die, and then puts a process of its own into the group, which runs until
   // killed. `ps-join` holds the first read of group 1 made for anything but a census, which is
@@ -701,9 +729,8 @@ test('given a dispatch still running when the caller receives SIGTERM, and a lis
   assertEndedOnce(directory, streamOf(directory), 'd-1');
 });
 
-test('given a sink that refuses every append, after the caller receives SIGTERM while a dispatch runs, a line on standard error names the unrecorded dispatch end, the dispatch and its card', ENDS_WITHIN, async (t) => {
-  // A sink refusing from the first append would refuse the dispatch's start, and nothing would
-  // run. So the stream takes no append from the moment the dispatch is running.
+test('given a sink that accepts the dispatch\'s start and refuses every append after it, after the caller receives SIGTERM while the dispatch runs, a line on standard error names the unrecorded dispatch end, the dispatch and its card', ENDS_WITHIN, async (t) => {
+  // The stream takes no append from the moment the dispatch is running.
   const refuse = (directory) => chmodSync(streamPath(join(directory, 'state')), 0o444);
 
   const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1] }, { signal: 'SIGTERM', inspect: refuse });
@@ -739,4 +766,102 @@ test('given two dispatches still running when the caller receives SIGTERM, the s
   assert.deepEqual({ status, signal }, { status: null, signal: 'SIGTERM' }, stderr);
   await assertNoneAlive(directory);
   for (const id of ['d-1', 'd-2']) assertEndedOnce(directory, streamOf(directory), id);
+});
+
+// A dispatch whose command has exited on its own while L1's call has not settled (#370).
+
+/** Dispatch `id`'s dispatch-end events in `events`. */
+const endsOf = (events, id) => events.filter(({ event, dispatch }) => event === 'dispatch.end' && dispatch === id);
+
+test('given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
+  // The caller waits, synchronously so that Node reaps nothing, until the command is a zombie.
+  const after = [
+    "writeFileSync(join(directory, 'release'), '');",
+    "const leader = readFileSync(join(directory, 'group.1'), 'utf8').trim();",
+    "while (!spawnSync('/bin/ps', ['-o', 'stat=', '-p', leader], { encoding: 'utf8' }).stdout.startsWith('Z'));",
+    'process.exit(0);',
+  ].join('\n');
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'exiting' }, after });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  assert.deepEqual(endsOf(streamOf(directory), 'd-1').map(({ exit }) => exit), [3]);
+  assert.deepEqual(JSON.parse(read(directory, 'record-at-end.d-1')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+  assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+});
+
+test('given a dispatch whose command exits 3 and is reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
+  const after = "writeFileSync(join(directory, 'release'), '');";
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'exiting' }, exitOnReap: true, after });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  assert.deepEqual(endsOf(streamOf(directory), 'd-1').map(({ exit }) => exit), [3]);
+  assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+});
+
+test('given a dispatch whose command exits 0 leaving its child in the group, reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 0 and follows the child\'s kill', ENDS_WITHIN, async (t) => {
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'leaving' }, exitOnReap: true });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  const events = streamOf(directory);
+  const ends = endsOf(events, 'd-1');
+  assert.deepEqual(ends.map(({ exit }) => exit), [0]);
+  const child = Number(read(directory, 'child.1'));
+  const kill = events.findIndex(({ event, dispatch, pid }) => event === 'survivor.killed' && dispatch === 'd-1' && pid === child);
+  assert.ok(kill !== -1 && kill < events.indexOf(ends[0]), 'the child\'s kill was not recorded before the end');
+});
+
+test('given a dispatch whose command has exited 3 while a process outside its group holds its output open, after the caller receives SIGTERM its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
+  // Once Node has reaped the command, the caller notes whether its call is still unsettled, and
+  // raises SIGTERM in that turn.
+  const after = [
+    "writeFileSync(join(directory, 'release'), '');",
+    '(async () => {',
+    "  const leader = Number(readFileSync(join(directory, 'group.1'), 'utf8'));",
+    '  const gone = () => { try { process.kill(leader, 0); return false; } catch { return true; } };',
+    '  while (!gone()) await turn();',
+    "  if (settled === 0) writeFileSync(join(directory, 'unsettled'), '');",
+    "  process.kill(process.pid, 'SIGTERM');",
+    '})();',
+  ].join('\n');
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'escaping' }, after });
+
+  assert.deepEqual({ status, signal }, { status: null, signal: 'SIGTERM' }, stderr);
+  assert.ok(existsSync(join(directory, 'unsettled')), 'the call had settled when the caller was signalled, so this proves nothing');
+  const events = streamOf(directory);
+  assert.equal(events.some(({ event }) => event === 'output.held'), false, 'the call recorded its hold on the output, so it settled before the caller ended');
+  await assertNoneAlive(directory);
+  assert.deepEqual(endsOf(events, 'd-1').map(({ exit }) => exit), [3]);
+  assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+});
+
+test('given a dispatch whose command exits 3, when the caller calls process.exit(0) in the turn the dispatch settles, the stream holds its one dispatch end, carrying 3', ENDS_WITHIN, async (t) => {
+  const after = "writeFileSync(join(directory, 'release'), '');";
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, exitOnSettle: true, after });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  assert.deepEqual(endsOf(streamOf(directory), 'd-1').map(({ exit }) => exit), [3]);
+});
+
+test('given a record that refuses the entry\'s removal, after the caller receives SIGTERM while a dispatch runs, its one dispatch end says the entry was kept and why', ENDS_WITHIN, async (t) => {
+  // The state directory takes no new file from the moment the dispatch is running, so the record
+  // cannot be rewritten, and the stream, which exists, still takes appends.
+  const refuse = (directory) => chmodSync(join(directory, 'state'), 0o555);
+
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1] }, { signal: 'SIGTERM', inspect: refuse });
+
+  assert.deepEqual({ status, signal }, { status: null, signal: 'SIGTERM' }, stderr);
+  await assertNoneAlive(directory);
+  const ends = endsOf(streamOf(directory), 'd-1');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  const group = read(directory, 'group.1');
+  assert.match(ends[0].kept ?? '', new RegExp(`kept the entry for group ${group}: .*EACCES`), JSON.stringify(ends[0]));
+  assert.equal(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1').length, 1, 'the record did not keep the entry, so this proves nothing');
 });

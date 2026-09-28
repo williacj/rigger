@@ -28,8 +28,11 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * exactly one end, which carries the exit code and the duration where the command ran, and why it
  * did not start where it never did.
  *
- * On Rigger's own exit, the order is L0's exit cleanup's: L0 kills the group and records each kill;
- * L1 removes the entry and appends `dispatch.end`, carrying the exit code L0 hands it. The sink's
+ * On Rigger's own exit before L1 has recorded the end, whether the command is still running or has
+ * exited while the call is in flight, the order is L0's exit cleanup's: L0 kills what is left of
+ * the group and records each kill; L1 removes the entry and appends `dispatch.end`, carrying the
+ * exit code L0 hands it, which is the command's own where it had exited. Where the record refuses
+ * the removal, the end still goes, saying as `kept` which entry was kept and why. The sink's
  * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
  * naming the event, the dispatch and its card. A process kept running past its ending has the call
  * settle as before, and records nothing more of the dispatch.
@@ -68,7 +71,8 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   let recorded;
   let result;
   let failure;
-  let endedAtExit = false;
+  // Whether L1 has recorded the dispatch's end, or is about to in the step it is taking.
+  let ended = false;
   try {
     // The record is shown writable before anything starts, by writing it back as it stands, so a
     // dispatch whose group could not be recorded runs no command.
@@ -102,23 +106,24 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         recorded = group;
       },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with the
-      // command's exit code, to remove its entry and record the dispatch's end. No caller is left
-      // to hear of a refused end, so L0 writes this refusal to standard error.
+      // command's exit code, to remove its entry and record the dispatch's end, which says why the
+      // entry was kept where the record refused its removal. No caller is left to hear of a
+      // refused end, so L0 writes this refusal to standard error. L0 can hand over a dispatch
+      // whose end L1 has already recorded, which is left as it is.
       onExit: (group, exit) => {
-        endedAtExit = true;
-        let removal;
+        if (ended) return;
+        ended = true;
+        const fields = { exit, ms: Math.round(clock() - began) };
         try {
           removeGroup(directory, group);
         } catch (cause) {
-          removal = cause;
+          fields.kept = keptEntry(directory, group, cause);
         }
-        const fields = { exit, ms: Math.round(clock() - began) };
         try {
           events.emit('dispatch.end', fields);
         } catch (cause) {
-          throw alongside(removal, refused(id, card, [{ event: 'dispatch.end', ...fields, cause }]));
+          throw refused(id, card, [{ event: 'dispatch.end', ...fields, cause }]);
         }
-        if (removal !== undefined) throw removal;
       },
     });
   } catch (thrown) {
@@ -127,10 +132,11 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   }
   // The exit cleanup has ended the dispatch, and a process kept running past its ending records
   // nothing more of it.
-  if (endedAtExit) {
+  if (ended) {
     if (failure !== undefined) throw failure;
     return result;
   }
+  ended = true;
   // L0 settles, or rejects with `EVENT_REFUSED`, only once it has emptied the group, so the entry
   // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
   // later start settles it. A removal the record refuses after a refused event rides on the
@@ -140,7 +146,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     try {
       removeGroup(directory, recorded);
     } catch (recordFailure) {
-      const kept = `the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+      const kept = keptEntry(directory, recorded, recordFailure);
       if (failure === undefined) {
         failure = Object.assign(new Error(`${named(id, card)} ran ${command}, which exited ${result.exit}, and ${kept}`), { code: RECORD_REFUSED, result, recordFailure });
       } else {
@@ -186,6 +192,9 @@ function alongside(failure, refusal) {
   refusal.cause = failure;
   return refusal;
 }
+
+/** What L1 says of the record in `directory` keeping `group`'s entry, its removal refused by `failure`. */
+const keptEntry = (directory, group, failure) => `the record of process groups in ${directory} kept the entry for group ${group}: ${failure.message}`;
 
 /** Dispatch `id` as a failure names it, with its card where it has one. */
 const named = (id, card) => `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
