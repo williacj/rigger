@@ -138,5 +138,16 @@ export function outliving(directory, body) {
   return { command: '/bin/bash', args: [script], timeout: OUTLIVED };
 }
 
+/**
+ * An `L0` emitter for a call whose command leaves nothing behind, as the fake `gh` leaves nothing.
+ * It refuses every event, so a kill L0 makes anyway rejects the call as an unrecorded kill, naming
+ * the process, and the test fails on it rather than passing over it.
+ */
+export const UNKILLED = {
+  emit(event, fields) {
+    throw new Error(`this test's command leaves no process behind, and L0 recorded ${event} ${JSON.stringify(fields)}`);
+  },
+};
+
 /** Fails the test where the timeout ended an `outliving` command before it was ready. */
 export const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);

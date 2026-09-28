@@ -13,10 +13,12 @@ import { CONFIG, PROVIDER_ASSETS, init, plan } from '../src/cli/init.mjs';
 import { validate } from '../src/config/validate.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { runCommand } from '../src/substrate/process.mjs';
 import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { cloneInto, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
+import { UNKILLED } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -312,10 +314,23 @@ function answeringEach(answers) {
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
     if (command === 'gh' && args[0] === 'api') return args[3].includes('fields(') ? STARTER_FIELDS() : UNSHARED_BOARD;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
+    // A failure is how L0's process adapter answers a command it could not start.
+    if (answers[command] instanceof Error) throw answers[command];
     return answers[command];
   };
   ask.asked = asked;
   return ask;
+}
+
+/**
+ * The failure L0's process adapter rejects with for a command that is not there, taken from the
+ * adapter asked to start one, which is how a `gh` that is not there answers the forge runners.
+ */
+async function notStarted() {
+  const call = runCommand({ command: 'rigger-no-such-command', args: ['auth', 'status'], cwd: tmpdir(), env: {}, timeout: 1_000, emitter: UNKILLED });
+  const failure = await call.then(() => null, (thrown) => thrown);
+  assert.ok(failure, 'this host ran a command that is not there, so this proves nothing');
+  return failure;
 }
 
 /** A git repository holding a config, which is what `doctor` expects to be pointed at. */
@@ -325,7 +340,7 @@ function checked(source) {
   return where;
 }
 
-test('the gh check answers what `gh auth status` answers, and asks it without the token', () => {
+test('the gh check answers what `gh auth status` answers, and asks it without the token', async () => {
   // `D16` rule 1: gh owns whether gh is authenticated, so the check asks it and carries no
   // reading of its own. The relation is asserted between the check and whatever `gh auth status`
   // answers in the same environment, rather than pinned to one answer.
@@ -345,7 +360,7 @@ test('the gh check answers what `gh auth status` answers, and asks it without th
     const env = { ...gitEnvironment(), PATH: gh.first() };
     const tool = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8', env });
 
-    const here = ghAuth({ ask: (command, args) => spawnSync(command, args, { encoding: 'utf8', env }) });
+    const here = await ghAuth({ ask: (command, args) => spawnSync(command, args, { encoding: 'utf8', env }) });
 
     assert.equal(here.ok, tool.status === 0, here.detail);
     assert.deepEqual(gh.calls(), ['auth status', 'auth status'], 'the check did not ask the gh the environment names');
@@ -353,14 +368,14 @@ test('the gh check answers what `gh auth status` answers, and asks it without th
 
   const authenticated = answering(RECORDED.ghIn);
   const not = answering(RECORDED.ghOut);
-  assert.equal(ghAuth({ ask: authenticated }).ok, true);
-  assert.equal(ghAuth({ ask: not }).ok, false);
+  assert.equal((await ghAuth({ ask: authenticated })).ok, true);
+  assert.equal((await ghAuth({ ask: not })).ok, false);
   assert.deepEqual(authenticated.asked, ['gh auth status']);
-  assert.ok(ghAuth({ ask: not }).detail.includes('not logged into any GitHub hosts'), 'the line says nothing a consumer could act on');
+  assert.ok((await ghAuth({ ask: not })).detail.includes('not logged into any GitHub hosts'), 'the line says nothing a consumer could act on');
   // One line, so the masked token line gh prints under the account never rides along into a
   // report a consumer pastes somewhere. The defect this catches is the whole of gh's output
   // carried as the detail, which reads as one line until the line it is carrying has several.
-  for (const said of [ghAuth({ ask: authenticated }), ghAuth({ ask: not })]) {
+  for (const said of [await ghAuth({ ask: authenticated }), await ghAuth({ ask: not })]) {
     assert.doesNotMatch(said.detail, /[\r\n]/, said.detail);
   }
 });
@@ -379,20 +394,23 @@ test('the gh check sends `gh auth status` through the forge read runner, and doc
   assert.match(source, /import \{[^}]*\breadRunner\b[^}]*\} from '\.\.\/substrate\/forge\/runners\.mjs'/);
 });
 
-test('an authority this host cannot run at all is reported as unasked, never as a pass', () => {
+test('an authority this host cannot run at all is reported as unasked, never as a pass', async () => {
   // A check that reports a green it did not measure is worse than one that says it could not
   // look. The defect this catches is the status read without the run: `spawnSync` answers a
   // command it could not start with a null status, and `null === 0` is false, so a check reading
   // `status === 0` calls a missing tool a failure and one reading `status !== 0` calls it a pass
   // — neither of which anybody measured.
   //
-  // Measured rather than reasoned: the runner is given the shape `spawnSync` really answers with
-  // when the command is not there, taken from a run below rather than written out.
+  // Measured rather than reasoned: each check is given what really answers a command that is not
+  // there, taken from a run below rather than written out. The agent CLI check spawns for itself,
+  // and is given `spawnSync`'s answer; the gh check sends through L0's process adapter, and is
+  // given the failure the adapter rejects with.
   const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
   assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
   assert.ok(missing.error, 'the run answered no error, so there is nothing to report');
+  const unstarted = await notStarted();
 
-  for (const said of [ghAuth({ ask: () => missing }), agentAuth({ ask: () => missing })]) {
+  for (const said of [await ghAuth({ ask: () => Promise.reject(unstarted) }), agentAuth({ ask: () => missing })]) {
     assert.equal(said.ok, null, said.detail);
     assert.match(said.detail, /could not be run|not there|no such/i, said.detail);
   }
@@ -662,7 +680,7 @@ test('a check that could not be asked does not count as passed, and the status s
   const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
   assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
 
-  const ran = await doctor(against(checked(starter()), { gh: missing, claude: missing }));
+  const ran = await doctor(against(checked(starter()), { gh: await notStarted(), claude: missing }));
 
   // Two could not be asked and the other two passed, so nothing here failed: whatever makes the
   // status non-zero can only be the two that were never asked.
@@ -882,7 +900,7 @@ test("when the board cannot be read, the board-sharing line fails and carries th
   process.env.PATH = path;
   let message;
   try {
-    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }).readOtherRepositories();
+    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }, { emitter: UNKILLED }).readOtherRepositories();
   } catch (error) {
     message = error.message;
   } finally {
@@ -995,7 +1013,7 @@ test("when the configured board cannot be read, the reachability line fails, car
   process.env.PATH = path;
   let message;
   try {
-    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }).readFieldTypes();
+    await readSide({ repo: STARTER_BOARD.repo, project: STARTER_BOARD.project, columns: {} }, { emitter: UNKILLED }).readFieldTypes();
   } catch (error) {
     message = error.message;
   } finally {

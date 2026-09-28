@@ -2,11 +2,7 @@
 // says so. It reads the board through L0, moves the card through L2, and records through L5.
 // `run` is the same verb with no claim limit, so what the two share is one function here.
 
-import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-
 import { validate } from '../config/validate.mjs';
-import { openSink } from '../observation/sink.mjs';
 import { claimOnly } from '../scheduling/loop.mjs';
 import { readSide } from '../substrate/forge/read.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
@@ -14,7 +10,7 @@ import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, sourceTreeGuard } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
-import { STATE } from './report.mjs';
+import { recording } from './recording.mjs';
 
 /**
  * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
@@ -26,17 +22,22 @@ const failuresIn = (failure) => (failure instanceof AggregateError ? failure.err
  * What a verb named `verb` that claims through L3's claim-only call prints, and the status it
  * exits with. `limit` is the claim limit handed to the call, or undefined for none, in which case
  * the call claims until the slots are full: L3 reads N from the config it is handed.
+ *
+ * It records through the sink `recording` opens, in the repository the guard names.
  */
-export async function claimVerb(verb, limit, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
+export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
+
+/** `claimVerb`'s work, recording through `sink` once `name` has named its state directory. */
+async function claiming(verb, limit, { sink, name }, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
   const { named, refusal } = sourceTreeGuard(verb, { target, packageRoot, ask });
   if (refusal) return refusal;
+  name(named);
   const { config, problem } = await consumerConfig(named);
   if (problem) return { text: `rigger ${verb}: ${problem}`, code: 1 };
   const invalid = validate(config);
   if (invalid.length > 0) return { text: `rigger ${verb}: \`${CONFIG}\`: ${invalid.join('; ')}`, code: 1 };
 
-  const board = readSide({ ...config.board, repo: config.repo }, { send });
-  const sink = openSink({ directory: join(named, STATE), run: randomUUID(), now: Date.now });
+  const board = readSide({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
   const l2 = columnChanges({ config, sink, send });
   // L3's claim-only call answers the cards it claimed and nothing about the rest, so every card
   // L2 refuses is seen here, through the next action this verb hands L3 (the reviewer's ruling

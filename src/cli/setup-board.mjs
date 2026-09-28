@@ -5,6 +5,7 @@ import { declaredLabels, sameLabel, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
 import { consumerConfig, sharedWith, sourceTreeGuard } from './doctor.mjs';
+import { recording } from './recording.mjs';
 
 /** The type GitHub names a single-select field by, which is the only type a priority field may be. */
 const SINGLE_SELECT = 'SINGLE_SELECT';
@@ -19,13 +20,14 @@ const shown = (name) => name.replace(/[\p{Cc}\u2028\u2029]/gu, (char) => `\\u${c
 /**
  * What the board holds that setup-board compares the config against: the names of its columns,
  * every field's name and type, the repository's labels, and what the forge adapter reports of
- * the other repositories whose items are on it. Read before anything is written.
+ * the other repositories whose items are on it. Read before anything is written, each read sent
+ * with the `L0` emitter `emitter`.
  */
-async function survey(board) {
-  const read = readSide(board);
+async function survey(board, emitter) {
+  const read = readSide(board, { emitter });
   return {
     others: await read.readOtherRepositories(),
-    columns: boardOf('setup-board', board).columns.options.map((option) => option.name),
+    columns: (await boardOf('setup-board', board, { emitter })).columns.options.map((option) => option.name),
     fields: await read.readFieldTypes(),
     labels: await read.readLabels(),
   };
@@ -61,10 +63,17 @@ function writesFor(config, held) {
   return { writes };
 }
 
-/** What the command prints for a `setup-board` run, and the status it exits with. */
-export async function setupBoard({ target = process.cwd() } = {}) {
+/**
+ * What the command prints for a `setup-board` run, and the status it exits with. Every read and
+ * write goes through L0 with an `L0` emitter on the sink `recording` opens.
+ */
+export const setupBoard = (options) => recording((opened) => settingUp(opened, options));
+
+/** `setupBoard`'s work, recording through `sink` once `name` has named its state directory. */
+async function settingUp({ sink, name }, { target = process.cwd() } = {}) {
   const { named, refusal } = sourceTreeGuard('setup-board', { target });
   if (refusal) return refusal;
+  name(named);
   const { config, problem } = await consumerConfig(named);
   if (problem) return { text: `rigger setup-board: ${problem}`, code: 1 };
   const refusals = validate(config);
@@ -72,15 +81,16 @@ export async function setupBoard({ target = process.cwd() } = {}) {
 
   const board = { repo: config.repo, ...config.board };
   const where = `board ${board.project}`;
+  const emitter = sink.emitter({ layer: 'L0' });
   let planned;
   try {
-    planned = writesFor(config, await survey(board));
+    planned = writesFor(config, await survey(board, emitter));
   } catch (error) {
     return { text: `rigger setup-board: ${shown(error.message)}, so nothing was written`, code: 1 };
   }
   if (planned.refusal) return { text: `rigger setup-board: ${planned.refusal}`, code: 1 };
 
-  const side = schemaWriteSide(board);
+  const side = schemaWriteSide(board, { emitter });
   const made = [];
   for (const { operation, args, line } of planned.writes) {
     try {
