@@ -177,7 +177,7 @@ for (const verb of ['once', 'run', 'plan', 'setup-board', 'doctor']) {
     running.stderr.on('data', (chunk) => (said += chunk));
     const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
 
-    await Promise.race([until(() => existsSync(join(directory, 'ready'))), ended]);
+    await Promise.race([until(() => existsSync(join(directory, 'ready')), t), ended]);
     assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said}`);
     running.kill('SIGTERM');
     const { code, signal } = await ended;

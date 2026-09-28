@@ -41,9 +41,9 @@ test('given no record in the state directory, the call kills nothing, reports no
  * one: its leader is no child of this process, so the system reaps it once it dies, as it does a
  * group whose engine was killed. The leader is a shell, which starts a `tail` that runs until
  * killed. Settles once the `tail` runs, on the group's id, which is its leader's pid, the
- * leader's start time, and the member's pid.
+ * leader's start time, and the member's pid, or rejects once the test `t` ends first.
  */
-async function startGroup(directory, name) {
+async function startGroup(t, directory, name) {
   if (!existsSync(join(directory, 'hold'))) writeFileSync(join(directory, 'hold'), '');
   const script = fixture(directory, name, [
     '/usr/bin/tail -f "$here/hold" &',
@@ -55,15 +55,18 @@ async function startGroup(directory, name) {
   // the process this spawned exits.
   const launcher = spawn('/usr/bin/perl', ['-e', 'exit if fork; setpgrp(0, 0); exec @ARGV or die', script], { stdio: 'ignore' });
   await once(launcher, 'exit');
-  await until(() => existsSync(`${script}.pids`));
+  await until(() => existsSync(`${script}.pids`), t);
   const [leader, member] = readFileSync(`${script}.pids`, 'utf8').trim().split(' ').map(Number);
   return { group: leader, leader, started: startOf(leader), member };
 }
 
-/** Ends `started`'s leader alone, and settles once it is gone, leaving its member in the group. */
-async function withoutLeader(started) {
+/**
+ * Ends `started`'s leader alone, and settles once it is gone, leaving its member in the group, or
+ * rejects once the test `t` ends first.
+ */
+async function withoutLeader(t, started) {
   process.kill(started.leader, 'SIGKILL');
-  await until(() => !alive(started.leader));
+  await until(() => !alive(started.leader), t);
   return started;
 }
 
@@ -72,7 +75,7 @@ const entryFor = ({ group, started }, extra = {}) => ({ group, started, dispatch
 
 test('given a recorded group whose leader is alive and whose start time matches the entry, the call kills every process in the group', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await startGroup(directory, 'group');
+  const started = await startGroup(t, directory, 'group');
   writeGroups(stateOf(directory), [entryFor(started)]);
 
   await killIn(directory);
@@ -91,7 +94,7 @@ const killsIn = (directory) => (existsSync(streamPath(stateOf(directory))) ? rea
 
 test('given a recorded group whose leader\'s start time matches, the stream records each kill by name and command line, under the entry\'s dispatch id and card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await startGroup(directory, 'group');
+  const started = await startGroup(t, directory, 'group');
   writeGroups(stateOf(directory), [entryFor(started, { dispatch: 'd-7f3a', card: 77 })]);
 
   await killIn(directory);
@@ -106,7 +109,7 @@ test('given a recorded group whose leader\'s start time matches, the stream reco
 
 test('given a recorded group id whose live leader\'s start time differs from the entry\'s, the call leaves every process of that group alive', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await startGroup(directory, 'group');
+  const started = await startGroup(t, directory, 'group');
   // The entry names a leader that started a second before this one: an earlier group given the
   // same id, as a dead engine's entry would name once its group ended and the id was given again.
   writeGroups(stateOf(directory), [entryFor(started, { started: started.started - 1 })]);
@@ -121,7 +124,7 @@ test('given a recorded group whose leader is dead and every live member of which
   const directory = scratch(t);
   // What a dead engine leaves when its dispatch's leader exits while it is down: the entry names
   // the leader, and the leader's child runs on in the group.
-  const started = await withoutLeader(await startGroup(directory, 'group'));
+  const started = await withoutLeader(t, await startGroup(t, directory, 'group'));
   writeGroups(stateOf(directory), [entryFor(started)]);
 
   await killIn(directory);
@@ -131,7 +134,7 @@ test('given a recorded group whose leader is dead and every live member of which
 
 test('given a recorded group whose leader is dead and a live member of which started before the entry\'s leader, the call leaves every member alive', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await withoutLeader(await startGroup(directory, 'group'));
+  const started = await withoutLeader(t, await startGroup(t, directory, 'group'));
   // The entry names a leader that started a second after the member did, so the member cannot
   // descend from it.
   writeGroups(stateOf(directory), [entryFor(started, { started: startOf(started.member) + 1 })]);
@@ -146,7 +149,7 @@ test('the wrong kill the leaderless rule admits: given a fabricated entry naming
   // Rigger never started this group: the test did, and made its leader exit. The entry stands in
   // for one a dead engine wrote for an earlier group given the same id, whose leader started a
   // minute before this group's. Every member here started after that, so the rule kills them.
-  const foreign = await withoutLeader(await startGroup(directory, 'foreign'));
+  const foreign = await withoutLeader(t, await startGroup(t, directory, 'foreign'));
   writeGroups(stateOf(directory), [entryFor(foreign, { started: foreign.started - 60, dispatch: 'd-fabricated' })]);
 
   await killIn(directory);
@@ -166,21 +169,22 @@ async function reapedPid() {
  * exits, and Perl, outside that group, never reaps it. Perl writes the fork's pid unbuffered, or a
  * pipe would hold it until Perl exits. Perl carries `directory` in its command
  * line, so the teardown ends it, and the system then reaps the zombie. Settles once `ps` reads the
- * fork as a zombie leading its own group, on the group's id.
+ * fork as a zombie leading its own group, on the group's id, or rejects once the test `t` ends
+ * first.
  */
-async function zombieGroup(directory) {
+async function zombieGroup(t, directory) {
   const parent = spawn('/usr/bin/perl', ['-e', '$| = 1; my $p = fork(); if ($p == 0) { setpgrp(0, 0); exit 0 } print "$p\\n"; <STDIN>;', directory], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] });
   let printed = '';
   parent.stdout.on('data', (chunk) => { printed += chunk; });
-  await until(() => printed.endsWith('\n'));
+  await until(() => printed.endsWith('\n'), t);
   const group = Number(printed);
-  await until(() => /^Z\S*\s+(\d+)$/.exec(spawnSync('/bin/ps', ['-o', 'stat=,pgid=', '-p', String(group)], { encoding: 'utf8' }).stdout.trim())?.[1] === String(group));
+  await until(() => /^Z\S*\s+(\d+)$/.exec(spawnSync('/bin/ps', ['-o', 'stat=,pgid=', '-p', String(group)], { encoding: 'utf8' }).stdout.trim())?.[1] === String(group), t);
   return group;
 }
 
 test('given a recorded group that holds only an unreaped zombie, the call settles, records no kill, and clears its entry', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const group = await zombieGroup(directory);
+  const group = await zombieGroup(t, directory);
   writeGroups(stateOf(directory), [{ group, started: startOf(group), dispatch: 'd-zombie', card: 1412 }]);
 
   await killIn(directory);
@@ -203,9 +207,10 @@ function psRowOf(pid) {
  * makes the group. The older member joins it and runs `tail` on a file nothing writes to, and the
  * leader exits once it has joined. Perl never reaps either. Every process carries `directory` in
  * its command line, so the teardown ends them. Settles once `ps` reads the leader as a zombie
- * leading the group and the older member in it, on the group's id and the member's pid.
+ * leading the group and the older member in it, on the group's id and the member's pid, or rejects
+ * once the test `t` ends first.
  */
-async function zombieLedGroup(directory) {
+async function zombieLedGroup(t, directory) {
   writeFileSync(join(directory, 'hold'), '');
   const program = [
     '$| = 1;',
@@ -228,15 +233,15 @@ async function zombieLedGroup(directory) {
   const parent = spawn('/usr/bin/perl', ['-e', program, directory], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] });
   let printed = '';
   parent.stdout.on('data', (chunk) => { printed += chunk; });
-  await until(() => printed.endsWith('\n'));
+  await until(() => printed.endsWith('\n'), t);
   const [group, member] = printed.trim().split(' ').map(Number);
-  await until(() => psRowOf(group)?.state.startsWith('Z') && psRowOf(group)?.group === group && psRowOf(member)?.group === group && !psRowOf(member)?.state.startsWith('Z'));
+  await until(() => psRowOf(group)?.state.startsWith('Z') && psRowOf(group)?.group === group && psRowOf(member)?.group === group && !psRowOf(member)?.state.startsWith('Z'), t);
   return { group, member };
 }
 
 test('given a recorded group whose leader is an unreaped zombie and a live member of which started before the entry\'s leader, the call leaves the member alive and records no kill', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const { group, member } = await zombieLedGroup(directory);
+  const { group, member } = await zombieLedGroup(t, directory);
   // The entry names the zombie leader's own start, so only its being dead tells the case apart.
   writeGroups(stateOf(directory), [{ group, started: startOf(group), dispatch: 'd-zombie-led', card: 1412 }]);
   assert.ok(startOf(member) < startOf(group), 'the member did not start before the leader');
@@ -252,7 +257,7 @@ test('given a recorded group whose leader is an unreaped zombie and a live membe
 
 test('given a recorded group with no live process, the call kills nothing and records no kill', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const bystander = await startGroup(directory, 'bystander');
+  const bystander = await startGroup(t, directory, 'bystander');
   const group = await reapedPid();
   writeGroups(stateOf(directory), [{ group, started: bystander.started, dispatch: 'd-1', card: 1412 }]);
 
@@ -264,10 +269,10 @@ test('given a recorded group with no live process, the call kills nothing and re
 
 test('after the call returns, the record holds no entry whose group it confirmed dead or left alone', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const killed = await startGroup(directory, 'killed');
-  const leaderless = await withoutLeader(await startGroup(directory, 'leaderless'));
-  const mismatched = await startGroup(directory, 'mismatched');
-  const older = await withoutLeader(await startGroup(directory, 'older'));
+  const killed = await startGroup(t, directory, 'killed');
+  const leaderless = await withoutLeader(t, await startGroup(t, directory, 'leaderless'));
+  const mismatched = await startGroup(t, directory, 'mismatched');
+  const older = await withoutLeader(t, await startGroup(t, directory, 'older'));
   const empty = await reapedPid();
   writeGroups(stateOf(directory), [
     entryFor(killed),
@@ -308,7 +313,7 @@ test('given a leftover partial record beside a record holding no entry, or besid
 
 test('given a leftover partial record beside a record holding an entry, the call kills the entry\'s group, clears its entry, and leaves no partial record', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await startGroup(directory, 'group');
+  const started = await startGroup(t, directory, 'group');
   writeGroups(stateOf(directory), [entryFor(started)]);
   leavePartial(directory);
 
@@ -345,7 +350,7 @@ for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
   test(`given a leftover partial record the call cannot remove, ${unremovable}, beside a record holding an entry, the call still kills the entry's group, and records why the partial record stayed`, SETTLES_WITHIN, async (t) => {
     const directory = scratch(t);
     const state = stateOf(directory);
-    const started = await startGroup(directory, 'group');
+    const started = await startGroup(t, directory, 'group');
     writeGroups(state, [entryFor(started)]);
     writeFileSync(streamPath(state), '');
     leave(state, t);
@@ -396,7 +401,7 @@ test('given a record whose content cannot be read as entries, the call kills not
   ];
   for (const content of contents) {
     const directory = scratch(t);
-    const started = await startGroup(directory, 'group');
+    const started = await startGroup(t, directory, 'group');
     // A readable entry naming the live group follows the unreadable content wherever it can, so a
     // call that read past the fault would kill it.
     const state = stateOf(directory);
@@ -420,7 +425,7 @@ const silentPs = (directory) => fixture(directory, 'ps', 'exec /usr/bin/tail -f 
 
 test('given a recorded group whose start-time read never answers, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const started = await startGroup(directory, 'group');
+  const started = await startGroup(t, directory, 'group');
   const entry = entryFor(started, { dispatch: 'd-unanswered', card: 31 });
   writeGroups(stateOf(directory), [entry]);
 
@@ -456,16 +461,16 @@ function assertNamesKills(failure, named) {
 }
 
 /** Two groups started outside Rigger in `directory`, both recorded in its state directory. */
-async function twoRecorded(directory) {
-  const one = await startGroup(directory, 'one');
-  const other = await startGroup(directory, 'other');
+async function twoRecorded(t, directory) {
+  const one = await startGroup(t, directory, 'one');
+  const other = await startGroup(t, directory, 'other');
   writeGroups(stateOf(directory), [entryFor(one, { dispatch: 'd-one', card: 11 }), entryFor(other, { dispatch: 'd-other', card: 22 })]);
   return { pids: [one.leader, one.member, other.leader, other.member], named: [[one, 'd-one', 11], [other, 'd-other', 22]] };
 }
 
 test('given a sink that refuses every append and two recorded groups, every process of both is dead, the record holds neither entry, and the call rejects naming every unrecorded kill with its dispatch id and card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const { pids, named } = await twoRecorded(directory);
+  const { pids, named } = await twoRecorded(t, directory);
 
   // The record, in the state directory, still takes writes.
   const failure = await failureOf(killRecordedGroups({ directory: stateOf(directory), sink: refusingSink(directory) }));
@@ -477,7 +482,7 @@ test('given a sink that refuses every append and two recorded groups, every proc
 
 test('given a sink that refuses every append and a record that refuses its rewrite, the call still rejects naming every unrecorded kill, with the record\'s failure on it', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  const { pids, named } = await twoRecorded(directory);
+  const { pids, named } = await twoRecorded(t, directory);
   const state = stateOf(directory);
   // The state directory refuses new entries, so the record can be read but not rewritten.
   chmodSync(state, 0o555);

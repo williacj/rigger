@@ -73,9 +73,23 @@ export function startOf(pid) {
   return seconds;
 }
 
-/** Settles once `condition` holds, checked once per turn of the event loop. */
-export async function until(condition) {
-  while (!condition()) await new Promise((resolve) => setImmediate(resolve));
+/**
+ * One turn of the event loop, for a wait inside the test `t`. It throws once `t` has ended, passed,
+ * failed or timed out, so a wait whose condition never holds ends with its test rather than
+ * holding the test file's process open.
+ */
+export async function turn({ signal }) {
+  if (signal.aborted) throw new Error('the test ended before the condition this wait was on held', { cause: signal.reason });
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Settles once `condition` holds, checked once per turn of the event loop, and rejects once the
+ * test `t` has ended without it. `t` is read before `condition` is, so a call that names no test
+ * fails even where the condition already holds.
+ */
+export async function until(condition, { signal }) {
+  while (!condition()) await turn({ signal });
 }
 
 /** Whether a process `pid` names is alive: signal 0 reaches it. */
