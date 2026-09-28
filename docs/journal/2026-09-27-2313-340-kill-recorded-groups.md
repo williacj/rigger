@@ -62,3 +62,9 @@ process group a dead engine recorded, once L0 has confirmed it is the group reco
   the defect #339's judges found as N4 (Codex's judge, non-blocking here). The rewrite's failure
   now rides on the rejection as `recordFailure`, and a test holds the state directory read-only
   under a refusing sink.
+- **Round 2's stricter reader made `dispatch` able to poison the record.** `dispatch` still wrote
+  whatever id and card it was given, so a card of `null`, `'1412'` or `0` wrote an entry the
+  reader then refused, stopping every later dispatch and start (the engineer judge's N5). The
+  reader and `dispatch` now share one check, `holdsDispatch`, and `dispatch` refuses before it
+  spawns. A test gives five such calls, and then shows a good dispatch still recorded in the same
+  state directory.

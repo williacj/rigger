@@ -340,6 +340,31 @@ test('a call to L1\'s function with no dispatch id starts no process, and fails 
   }
 });
 
+test('a call to L1\'s function with an id or card its record cannot hold starts no process, fails naming it, and leaves the record taking the next dispatch', SETTLES_WITHIN, async (t) => {
+  // A card is an issue number, where there is one, and an id is a string: anything else the
+  // record would refuse on its next read, and so refuse every later dispatch and start.
+  const given = [
+    ['a null card', { id: 'd-1', card: null }, 'null'],
+    ['a card that is a string', { id: 'd-1', card: '1412' }, '"1412"'],
+    ['a card of 0', { id: 'd-1', card: 0 }, '0'],
+    ['a card that is an object', { id: 'd-1', card: { unexpected: true } }, '{"unexpected":true}'],
+    ['an id that is a number', { id: 42, card: 1412 }, '42'],
+  ];
+  for (const [what, options, named] of given) {
+    const directory = scratch(t);
+
+    await assert.rejects(dispatchIn(directory, { ...options, command: startingCommand(directory) }), (failure) => {
+      assert.ok(failure.message.includes(named), `given ${what}, the failure does not name ${named}: ${failure.message}`);
+      return true;
+    }, what);
+
+    assertNeverRan(directory);
+    await whileHeld(directory, { id: 'd-next', card: 1412 }, (group) => {
+      assert.deepEqual(readInAnotherProcess(stateOf(directory)).map((entry) => entry.group), [group], what);
+    });
+  }
+});
+
 /**
  * A module a Node process loads first, with `--import`, that stops that process outright part-way
  * through a write into `state`: `at` is `bytes`, to stop once half of a file's bytes are written,

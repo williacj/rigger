@@ -2,7 +2,7 @@
 // L0's process adapter, recording the dispatch's process group while the command runs. And L1's
 // kill of recorded groups, which on a start ends what a dead engine's dispatches left.
 
-import { addGroup, readGroups, removeGroup, writeGroups } from './groups.mjs';
+import { addGroup, holdsDispatch, readGroups, removeGroup, writeGroups } from './groups.mjs';
 import { EVENT_REFUSED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
 /**
@@ -22,6 +22,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
+  if (!holdsDispatch(id, card)) throw new Error(`L1's record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`);
   // The record is shown writable before anything starts, by writing it back as it stands, so a
   // dispatch whose group could not be recorded runs no command.
   const entries = readGroups(directory);

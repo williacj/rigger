@@ -36,16 +36,23 @@ export function readGroups(directory) {
 }
 
 /**
- * Whether `entry` names a group a dispatch can hold, the start of its leader, its dispatch, and
- * its card, an issue number, where it has one.
- * No group Rigger creates has an id of 1 or less, and L0 signals a group by its id negated, so
- * 1, 0 or a negative id would reach launchd, the caller's own group, or every process.
+ * Whether `entry` names a group a dispatch can hold, the start of its leader, and a dispatch the
+ * record can hold. No group Rigger creates has an id of 1 or less, and L0 signals a group by its
+ * id negated, so 1, 0 or a negative id would reach launchd, the caller's own group, or every
+ * process.
  */
 const isEntry = (entry) => typeof entry === 'object' && entry !== null
   && Number.isSafeInteger(entry.group) && entry.group > 1
   && Number.isSafeInteger(entry.started)
-  && typeof entry.dispatch === 'string' && entry.dispatch !== ''
-  && (entry.card === undefined || (Number.isSafeInteger(entry.card) && entry.card > 0));
+  && holdsDispatch(entry.dispatch, entry.card);
+
+/**
+ * Whether the record can hold dispatch `id` of `card`: an id is a string that is not empty, and a
+ * card is an issue number, where there is one. L1 asks before it starts a dispatch, because an
+ * entry the record would refuse on its next read would refuse every later dispatch and start.
+ */
+export const holdsDispatch = (id, card) => typeof id === 'string' && id !== ''
+  && (card === undefined || (Number.isSafeInteger(card) && card > 0));
 
 /**
  * Replaces the record in `directory` with `entries`.
