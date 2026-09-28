@@ -104,8 +104,9 @@ function signal(group, name) {
  * execs in between is named by one image and described by the other: the engineer judge on #354
  * measured that in 16 of 3,000 direct reads, and 34 of 1,500 calls to this adapter, before the
  * group was stopped. So the census reads the states, then the names, then the command lines,
- * then the states again, each in a `ps` run of its own. It keeps them only when both state reads
- * find every member stopped, or a zombie, and all four reads find the same processes. Otherwise
+ * then the executables' names unpadded, then the states again, each in a `ps` run of its own. It
+ * keeps them only when both state reads find every member stopped, or a zombie, and all five
+ * reads find the same processes. Otherwise
  * it stops the group again and reads again: a member not yet stopped is one the signal has not
  * reached, one caught mid-exec (state `?`), or a fork the signal missed. A zombie cannot exec
  * either, and is left out, because it is already dead.
@@ -122,11 +123,15 @@ function signal(group, name) {
  *
  * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a cut can fall
  *   inside a character and leave bytes that are not UTF-8 (the engineer judge on #354 saw
- *   `日本語テール` recorded as `日本語テー` and U+FFFD). It is padded with spaces, so a name's own
- *   trailing spaces are lost. It prints control characters raw, a newline included, so a name
+ *   `日本語テール` recorded as `日本語テー` and U+FFFD). It is padded with spaces to 16 columns, so
+ *   a name's own trailing spaces cannot be told from the padding. It prints control characters raw, a newline included, so a name
  *   `x`, newline, `<pid> evil` read in the group's table named that other pid's process `evil`
  *   (the engineer judge on #354). It names what runs, not what was asked for: a script run by
  *   `/bin/sh` is named `bash`.
+ * - `-c` makes `command` the executable's name, unpadded and uncut (`日本語テール` whole), with
+ *   control characters escaped and a backslash not, so `a\012b` and `a`, newline, `b` print
+ *   alike. So it is read for the spaces a name ends in alone. Where a name is longer than 16 bytes,
+ *   the cut can end in spaces the whole name does not, and those are lost.
  * - `stat`'s first character is the process's state: `T` stopped, `Z` a zombie, `?` caught
  *   mid-exec.
  * - `comm` is argv[0], so `exec -a <anything>` names the process `<anything>`. It is cut to 16
@@ -153,19 +158,21 @@ function signal(group, name) {
  */
 async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
-  const read = (args) => run(ps, args, deadline - Date.now(), timeout);
-  const column = async (name) => rowsOf(await read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
+  const read = (args, encoding) => run(ps, args, deadline - Date.now(), timeout, encoding);
+  const column = async (name, flags = []) => rowsOf(await read([...flags, '-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   for (;;) {
     signal(group, 'SIGSTOP');
     const before = await column('stat');
     if (!stopped(before)) continue;
     const names = await namesOf([...before.keys()], read);
     const commands = await column('command');
+    // `-c` makes the command column the executable's name, unpadded, which keeps its trailing spaces.
+    const executables = await column('command', ['-c']);
     const after = await column('stat');
-    if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
+    if (!stopped(after) || ![before, names, commands, executables].every((each) => samePids(each, after))) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
-      .map(([pid]) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
+      .map(([pid]) => ({ pid, name: named(names.get(pid), executables.get(pid)), cmd: commands.get(pid) }));
   }
 }
 
@@ -176,17 +183,35 @@ const stopped = (states) => [...states.values()].every((state) => state.startsWi
 const samePids = (one, other) => one.size === other.size && [...one.keys()].every((pid) => other.has(pid));
 
 /**
- * Each of `pids`' names, read in a `ps` run of its own, so the whole of that run's output is that
- * one process's name, whatever bytes it holds. A process no longer there is left out.
+ * What `ucomm` prints for each of `pids`, as bytes, read in a `ps` run of its own, so the whole of
+ * that run's output is that one process's name, whatever bytes it holds, and `ps`'s padding. A
+ * process no longer there is left out.
  */
 async function namesOf(pids, read) {
   const names = new Map();
   for (const pid of pids) {
-    const printed = await read(['-p', String(pid), '-o', 'ucomm=']);
-    // `ps` ends the name with its padding and a newline, which are not the name's own.
-    if (printed !== '') names.set(pid, printed.replace(/\n$/, '').trimEnd());
+    const printed = await read(['-p', String(pid), '-o', 'ucomm='], 'buffer');
+    if (printed.length > 0) names.set(pid, printed);
   }
   return names;
+}
+
+/** The longest name `ucomm` prints, in bytes: the kernel's cut of the executable's name. */
+const NAME_BYTES = 16;
+
+/**
+ * The name `ucomm` printed, with the trailing spaces that are the name's own and none of `ps`'s.
+ *
+ * `ps` ends a name with a newline, after padding it with spaces, so the spaces a name ends in
+ * cannot be told from the padding. The executable's name as `-c` prints it has no padding, so the
+ * spaces it ends in are the name's own. That name is not cut, so where it is longer than the cut,
+ * the cut holds only as many of them as fit.
+ */
+function named(printed, executable) {
+  let end = printed.length - 1;
+  while (end > 0 && printed[end - 1] === 0x20) end -= 1;
+  const own = Math.min(executable.length - executable.replace(/ +$/, '').length, NAME_BYTES - end);
+  return Buffer.concat([printed.subarray(0, end), Buffer.alloc(own, ' ')]).toString('utf8');
 }
 
 /** Each line of a read of one column, by the pid it begins with. */
@@ -207,12 +232,12 @@ function rowsOf(printed) {
  * What one run of `ps`, at the path `ps` names, prints given `args`, or nothing where no process
  * matches. It is given up on after `remaining` milliseconds of the census's `timeout`.
  */
-function run(ps, args, remaining, timeout) {
+function run(ps, args, remaining, timeout, encoding = 'utf8') {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(new Error(`the census found the group not all stopped within ${timeout} ms`));
-    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
+    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding }, (error, stdout) => {
       if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
-      if (error && !(error.code === 1 && stdout === '')) return reject(error);
+      if (error && !(error.code === 1 && stdout.length === 0)) return reject(error);
       resolve(stdout);
     });
   });

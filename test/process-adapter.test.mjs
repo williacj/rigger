@@ -799,3 +799,44 @@ test('given a sink that refuses every append, the failure\'s code tells it from 
   assert.equal(error.code, EVENT_REFUSED);
   assert.notEqual(unstarted.code, EVENT_REFUSED, 'a command that never started reads as a refused event');
 });
+
+test('a survivor whose executable\'s name ends in a newline is recorded by that name, the newline included', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', leaveNamed(`"e"$'\\n'`, 'survivor', 'e'));
+
+  const { events } = await recorded(directory, { command });
+
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 'e\n' },
+  ]);
+});
+
+test('a survivor whose executable\'s name ends in a space is recorded by that name, the space included', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', leaveNamed('"s "', 'survivor', 's'));
+
+  const { events } = await recorded(directory, { command });
+
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 's ' },
+  ]);
+});
+
+test('two survivors, one whose executable\'s name ends in a newline and one with no trailing whitespace, are each recorded by their own name, byte for byte', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  waiter(directory, 'waiter');
+  const command = fixture(directory, 'command', [
+    leave(TAIL, 'tail'),
+    leaveNamed(`"e"$'\\n'`, 'newline', 'e'),
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const byPid = (a, b) => a.pid - b.pid;
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name: Buffer.from(name).toString('hex') })).sort(byPid), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')), name: Buffer.from('tail').toString('hex') },
+    { event: 'survivor.killed', pid: Number(read(directory, 'newline.pid')), name: Buffer.from('e\n').toString('hex') },
+  ].sort(byPid));
+});
