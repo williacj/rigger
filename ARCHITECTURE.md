@@ -295,7 +295,8 @@ this containment. Where one holds the command's output open once the group is em
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
 the group's processes. L1 then records the dispatch's end. It records one end for every dispatch
 whose start it recorded, and a command that never started is included. Each end carries the exit
-code or why the command did not start. L3 frees the dispatch's slot only once L1 hands back the
+code or why the command did not start. An end recorded as Rigger exits may instead say why the
+command's exit code could not be read. L3 frees the dispatch's slot only once L1 hands back the
 dispatch's outcome.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start

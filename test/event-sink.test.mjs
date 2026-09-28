@@ -3,14 +3,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { chmodSync, mkdtempSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { productionFiles } from '../scripts/package-budget.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
+import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
+import { scratch, undrained } from './process-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
@@ -395,4 +398,116 @@ test('what an unnamed sink held reaches standard error whole at exit, past a ful
     eventsIn(stderr).map((event) => event.index),
     Array.from({ length: count }, (unused, index) => index),
   );
+});
+
+/**
+ * Runs `body` in a child whose standard error is a FIFO, and answers how it ended, what it wrote
+ * to standard output, and what it wrote to standard error. Where `touched` is set, the child first
+ * writes nothing to `process.stderr`, as every verb that prints does; otherwise it leaves the
+ * descriptor as it inherited it. Nothing reads the FIFO until the child has written `drain` to
+ * standard output, if it ever does. The script lives in a scratch directory, so the child is ended
+ * at the test's teardown, whether it passed or failed.
+ */
+async function stuckChild(t, body, { touched = true } = {}) {
+  const directory = scratch(t);
+  const script = join(directory, 'child.mjs');
+  writeFileSync(script, [
+    `import { openSink } from ${JSON.stringify(sinkModule)};`,
+    "import { existsSync } from 'node:fs';",
+    touched ? "process.stderr.write('');" : '',
+    body,
+  ].join('\n'));
+  const { reader, writer } = undrained(t, directory);
+  const child = spawn(process.execPath, [script], { cwd: directory, stdio: ['ignore', 'pipe', writer] });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  let closed = false;
+  const ended = once(child, 'close').finally(() => { closed = true; });
+  const read = [];
+  const chunk = Buffer.alloc(65_536);
+  const take = () => {
+    for (;;) {
+      try {
+        const count = readSync(reader, chunk);
+        if (count === 0) return;
+        read.push(Buffer.from(chunk.subarray(0, count)));
+      } catch (error) {
+        if (error.code === 'EAGAIN') return;
+        throw error;
+      }
+    }
+  };
+  // Once the child says `drain`, the test reads the FIFO on every turn until the child has ended,
+  // and once more after, for what was left in the pipe. It says `draining` only once its first
+  // read has emptied the pipe, so the child's next write finds room.
+  while (!closed) {
+    if (stdout.includes('drain\n')) {
+      take();
+      writeFileSync(join(directory, 'draining'), '');
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  if (stdout.includes('drain\n')) take();
+  const [status] = await ended;
+  return { status, stdout, stderr: Buffer.concat(read).toString() };
+}
+
+/** Lines that open an unnamed sink and give it 2,000 events, some 200,000 bytes, past a full pipe. */
+const holdingMany = [
+  `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+  "const { emit } = sink.emitter({ layer: 'L0', card: 1412 });",
+  "for (let index = 0; index < 2000; index += 1) emit('survivor.killed', { index, command: 'x'.repeat(100) });",
+].join('\n');
+
+/** What the child writes to standard output once it has done `step`: how many milliseconds it took. */
+const timed = (step) => ['const began = performance.now();', step, "process.stdout.write(`${performance.now() - began}\\n`);"].join('\n');
+
+/** The milliseconds a `timed` step took, as the child wrote them. */
+const tookIn = (stdout) => Number(stdout.split('\n')[0]);
+
+for (const touched of [true, false]) {
+  const which = touched ? 'the process has written to' : 'the process never touched';
+
+  test(`given a standard error ${which} that is never drained, a sink ended while it holds more than the pipe holds returns within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+    const { status, stdout } = await stuckChild(t, [holdingMany, timed('sink.end();')].join('\n'), { touched });
+
+    assert.equal(status, 0);
+    const took = tookIn(stdout);
+    assert.ok(took >= UNDRAINED_BOUND / 2, `the end took ${took} ms, so the pipe never held it and this proves nothing`);
+    assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
+  });
+
+  test(`given a standard error ${which} that is never drained, a sink ended while it holds more than the pipe holds, then given an event, returns from both within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+    const { status, stdout } = await stuckChild(t, [
+      holdingMany,
+      timed("sink.end();\nemit('survivor.killed', { name: 'late' });"),
+    ].join('\n'), { touched });
+
+    assert.equal(status, 0);
+    const took = tookIn(stdout);
+    assert.ok(took >= UNDRAINED_BOUND / 2, `the end and the event took ${took} ms, so the pipe never held them and this proves nothing`);
+    assert.ok(took <= UNDRAINED_BOUND, `the end and the event took ${took} ms`);
+  });
+}
+
+test('a reader that drains again after a write gave up on it gets every byte of a later write', { timeout: 30_000 }, async (t) => {
+  // The first sink's end gives up on the undrained FIFO. The test then drains it, and a second
+  // sink, holding as much, is ended once the test is reading.
+  const { status, stdout, stderr } = await stuckChild(t, [
+    holdingMany,
+    timed('sink.end();'),
+    `const second = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+    "const late = second.emitter({ layer: 'L0', card: 1412 });",
+    "for (let index = 0; index < 2000; index += 1) late.emit('survivor.killed', { second: index, command: 'x'.repeat(100) });",
+    "process.stdout.write('drain\\n');",
+    "while (!existsSync('draining')) await new Promise((resolve) => setImmediate(resolve));",
+    'second.end();',
+  ].join('\n'));
+
+  assert.equal(status, 0);
+  assert.ok(tookIn(stdout) >= UNDRAINED_BOUND / 2, 'the first end did not wait on the pipe, so it never gave up and this proves nothing');
+  // The first end's output stops wherever it gave up, which can be inside a line, so the second
+  // sink's events are found by their own field rather than line by line.
+  const seconds = [...stderr.matchAll(/"second":(\d+),/g)].map(([, index]) => Number(index));
+  assert.deepEqual(seconds, Array.from({ length: 2000 }, (unused, index) => index));
 });
