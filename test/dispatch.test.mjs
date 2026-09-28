@@ -455,6 +455,7 @@ function refusingEvery(directory) {
   return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
 }
 
+// proves R-RECORD-9
 test('given a sink that refuses every append, L1\'s function starts no process, and rejects naming the unrecorded start event', async (t) => {
   const directory = scratch(t);
 
@@ -547,6 +548,7 @@ test('given a sink that accepts L1\'s events and refuses the L0 kill event of a 
   assert.equal(endsOf(directory, 'd-kill').length, 1, JSON.stringify(endsOf(directory, 'd-kill')));
 });
 
+// proves R-RECORD-9
 test('given a sink that accepts L1\'s events and refuses the L0 kill event of a dispatch leaving a child alive, the call rejects as a refused event, naming the unrecorded kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
@@ -562,6 +564,7 @@ test('given a sink that accepts L1\'s events and refuses the L0 kill event of a 
 /** Whether any process of the dispatch whose command wrote its group to `$here/group` is alive. */
 const groupAlive = (directory) => alive(-Number(read(directory, 'group')));
 
+// proves R-RECORD-9
 test('given a sink that refuses only L1\'s timeout event of a dispatch outliving its timeout with a child, no process of its group is alive when the call settles, and it rejects as a refused event naming the timeout event', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && /timeout/.test(event));
@@ -577,6 +580,7 @@ test('given a sink that refuses only L1\'s timeout event of a dispatch outliving
   assert.ok(failure.message.includes(named[0]), `the failure's message does not name ${named[0]}: ${failure.message}`);
 });
 
+// proves R-RECORD-9
 test('given a sink that accepts the start event and refuses the end event, the caller receives a refused event naming the dispatch, its card and the end, and no process of the group is alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && event === 'dispatch.end');
