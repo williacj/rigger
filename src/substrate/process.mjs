@@ -220,13 +220,13 @@ function run(ps, args, remaining, timeout) {
 }
 
 /**
- * Ends what is left of `group` once its command has exited, in the order that keeps each name:
- * the census, which stops the group and reads it while its processes still exist; the kill; the
- * confirmation that the group is empty; and only then the `L0` events to record, one per process
- * killed, which it hands back. A census that fails still kills the group, and hands back the kill
- * of the group with why its processes went unnamed.
+ * Ends what is left of `group`, once its command has exited or at its timeout, in the order that
+ * keeps each name: the census, which stops the group and reads it while its processes still
+ * exist; the kill; the confirmation that the group is empty; and only then the `L0` events to
+ * record, one `killed` event per process, which it hands back. A census that fails still kills the
+ * group, and hands back the kill of the group with why its processes went unnamed.
  */
-async function contain(group, { ps, readTimeout }) {
+async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
   let survivors;
   let unnamed;
@@ -237,7 +237,7 @@ async function contain(group, { ps, readTimeout }) {
   }
   await ended(group);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return survivors.map((survivor) => ['survivor.killed', survivor]);
+  return survivors.map((survivor) => [killed, survivor]);
 }
 
 /**
@@ -287,7 +287,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const events = expired ? await contain(child.pid, { ps, readTimeout }) : [];
+  const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
@@ -295,7 +295,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
   // 128 and the signal's number, which is never 0.
   const exit = signal === null ? code : 128 + constants.signals[signal];
-  events.push(...(await contain(child.pid, { ps, readTimeout })));
+  events.push(...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')));
   if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();

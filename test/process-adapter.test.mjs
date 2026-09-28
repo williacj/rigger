@@ -910,3 +910,22 @@ test('given a command that outlives its timeout and exits 0 on SIGTERM, the resu
   ready(directory);
   assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
 });
+
+/**
+ * The `L0` kill events a timeout makes of an `outliving` command in `directory` that left a `TAIL`
+ * as `child`, by pid. Each name and command line is read off the fixture, not asked of `ps`.
+ */
+const timeoutKills = (directory) => [
+  { layer: 'L0', event: 'timeout.killed', pid: Number(read(directory, 'command.pid')), name: 'bash', cmd: `/bin/bash ${directory}/command` },
+  { layer: 'L0', event: 'timeout.killed', pid: Number(read(directory, 'child.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+].sort((a, b) => a.pid - b.pid);
+
+test('given a command and its child outliving its timeout, the stream holds an L0 kill event for each, by process name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { events } = await recorded(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  const kills = events.map(({ layer, event, pid, name, cmd }) => ({ layer, event, pid, name, cmd })).sort((a, b) => a.pid - b.pid);
+  assert.deepEqual(kills, timeoutKills(directory));
+});
