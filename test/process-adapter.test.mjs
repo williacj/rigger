@@ -465,15 +465,17 @@ test('a process that joins the group after the group is killed is dead when the 
  * becomes `tail`, and a `ps` stand-in that splits one read around that exec.
  *
  * One run of `ps` reads a process's name from the process table, and its arguments a moment later
- * (the engineer judge on #354). The stand-in makes that moment as wide as it can be: it reads
- * every column but the command line, tells the survivor to go, waits until the survivor runs
- * `tail` or is stopped, then reads the command lines and joins the two row by row. `before` is
- * shell run first, on the stand-in's first call alone.
+ * (the engineer judge on #354). On a read that carries the command line, the stand-in makes that
+ * moment as wide as it can be: it reads every other column, tells the survivor to go, waits until
+ * the survivor runs `tail` or is stopped, then reads the command lines and joins the two row by
+ * row. Any other read goes to `ps` as it is. `before` is shell run first, on the stand-in's first
+ * call alone.
  */
 function reExecuting(directory, before = '') {
   fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/go" ]; do :; done\nexec ${TAIL}`);
   const ps = fixture(directory, 'ps', [
     `if /bin/mkdir "$here/called" 2>/dev/null; then ${before || ':'}; fi`,
+    'case "$5" in *,command=) ;; *) exec /bin/ps "$@" ;; esac',
     '/bin/ps "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
     ': > "$here/go"',
     'survivor=$(/bin/cat "$here/survivor.pid")',
@@ -486,7 +488,7 @@ function reExecuting(directory, before = '') {
   return { command, ps };
 }
 
-test('a survivor that re-executes inside the census\'s one read of the process table is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
+test('a survivor told to re-execute inside a read of the process table is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
   const { events } = await recorded(directory, reExecuting(directory));
@@ -498,12 +500,109 @@ test('a survivor that re-executes inside the census\'s one read of the process t
 
 test('a survivor not yet stopped when the process table is read is read again once it is', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The first read finds the survivor running, because the stand-in resumes the group before it,
-  // so the survivor re-executes inside that read. The next read finds it stopped, as `tail`.
+  // The first read finds the survivor running, because the stand-in resumes the group before it.
+  // A census that went on from that read would reach the command line with the survivor free to
+  // re-execute. One that stops the group again first reaches it with the survivor stopped.
   const { command, ps } = reExecuting(directory, 'kill -s CONT -- "-$3"');
 
   const { events } = await recorded(directory, { command, ps });
 
+  assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
+    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
+  ]);
+});
+
+/**
+ * A program at `$here/<name>` that waits until it is killed, compiled for the test. A copy of a
+ * system binary under a new name is killed by the kernel on launch, and a link runs under its
+ * target's name, so a name of the test's choosing needs a binary of its own (the engineer judge
+ * on #354).
+ */
+function waiter(directory, name) {
+  writeFileSync(join(directory, 'waiter.c'), '#include <unistd.h>\nint main(void) { for (;;) pause(); }\n');
+  const built = spawnSync('/usr/bin/cc', ['-o', join(directory, name), join(directory, 'waiter.c')], { encoding: 'utf8' });
+  assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
+}
+
+test('a survivor is recorded by its own name and command line whatever its executable\'s name and argv[0]', SETTLES_WITHIN, async (t) => {
+  // A name of wide characters is padded by `ps` to fewer characters than a narrow one, and an
+  // argv[0] can start with a capital, a space, or anything else.
+  const name = '日本語日本';
+  for (const argv0 of ['Tx', 'Ts y', '  lead', 'tx']) {
+    const directory = scratch(t);
+    waiter(directory, name);
+    const command = fixture(directory, 'command', [
+      `/bin/bash -c 'exec -a "$1" "$0/${name}" "$0"' "$here" '${argv0}' &`,
+      'echo $! > "$here/survivor.pid"',
+      // Until the waiter runs, as neither the shell that forked it nor the one that execs it.
+      'while /bin/ps -o ucomm= -p $! | /usr/bin/grep -qE "^(sh|bash) *$"; do :; done',
+    ].join('\n'));
+
+    const { events } = await recorded(directory, { command });
+
+    assert.deepEqual(events.map(({ event, pid, name: recordedName, cmd }) => ({ event, pid, name: recordedName, cmd })), [
+      { event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name, cmd: `${argv0} ${directory}` },
+    ], `argv[0] ${JSON.stringify(argv0)}`);
+  }
+});
+
+test('a survivor whose state reads as ? is stopped and read again, not left unnamed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // `ps` prints the state `?` for a process caught mid-exec (the engineer judge on #354). This
+  // stand-in's first answer shows the survivor that way, in place of its stopped state.
+  const ps = fixture(directory, 'ps', [
+    'if /bin/mkdir "$here/called" 2>/dev/null; then',
+    `  /bin/ps "$@" | /usr/bin/sed -E 's/(^ *[0-9]+ .*) T( |$)/\\1 ?\\2/'`,
+    'else',
+    '  exec /bin/ps "$@"',
+    'fi',
+  ].join('\n'));
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.equal(existsSync(join(directory, 'called')), true, 'the census never read the table');
+  assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
+    { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+  ]);
+});
+
+test('a zombie in the group is left out of the census, and only the living are recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The parent's child exits at once, and the parent never reaps it, so the group holds a zombie.
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'parent'), [
+    'my $here = $ARGV[0];',
+    'my $child = fork();',
+    'exit 0 if $child == 0;',
+    'open(my $f, ">", "$here/zombie.pid"); print $f $child; close $f;',
+    'select(undef, undef, undef, undef);',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [
+    '/usr/bin/perl "$here/parent" "$here" &',
+    'echo $! > "$here/parent.pid"',
+    'until [ -s "$here/zombie.pid" ] && /bin/ps -o stat= -p "$(/bin/cat "$here/zombie.pid")" | /usr/bin/grep -q "^Z"; do :; done',
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'parent.pid')) },
+  ]);
+});
+
+test('a survivor missing from one of the census\'s reads is read again, not left unnamed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The stand-in's first read of names finds nothing, as `ps` does when no process matches.
+  const ps = fixture(directory, 'ps', [
+    'case "$5" in *,ucomm=) /bin/mkdir "$here/names-read" 2>/dev/null && exit 1 ;; esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.equal(existsSync(join(directory, 'names-read')), true, 'the census never read the names');
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
     { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
   ]);
