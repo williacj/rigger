@@ -242,7 +242,8 @@ function signal(group, name) {
  *   as many columns as are needed.
  * - `-g` lists the processes whose group is `group`. A process that leaves the group before the
  *   read is not listed, and one that joins it after the read is killed unnamed.
- * - `ps` exits 1, printing nothing, when no process matches.
+ * - `ps` exits 1, printing nothing, when no process matches, and writes to standard error when a
+ *   read fails (`run`).
  */
 async function census(ps, group, timeout) {
   const deadline = Date.now() + timeout;
@@ -306,13 +307,28 @@ function rowsOf(printed) {
 
 /**
  * What one run of `ps`, at the path `ps` names, prints given `args`, or nothing where no process
- * matches. It is given up on after `remaining` milliseconds of the census's `timeout`.
+ * matches. It is given up on after `remaining` milliseconds of the census's `timeout`. A run that
+ * writes anything to standard error has failed, whatever its exit code.
+ *
+ * How `ps` reports that no process matched, against a read that failed (`D16` rule 3), measured
+ * with `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28: each of the adapter's five
+ * forms of read, given a group or pid that holds no process, exits 1 and writes nothing to either
+ * stream. Given a group `x`, a group `999999` or an unknown keyword, it exits 1 and writes why to
+ * standard error. The source of adv_cmds-237, the latest Apple publishes, agrees: `ps` exits 1
+ * with nothing written only once it kept no process, and every failure it reports is written to
+ * standard error, one of them, a failed read of the kernel's table, with exit 0 and nothing on
+ * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
+ * matched.
+ *
+ * What `ps` cannot show is that the kernel handed it every process there is, so the kill does not
+ * take a survivor as ended because a read left it out (`killedOf`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(new Error(`the census found the group not all stopped within ${timeout} ms`));
-    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
+    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout, stderr) => {
       if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
+      if (stderr !== '') return reject(new Error(`the process-table read failed: ${stderr.trim()}`));
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
       resolve(stdout);
     });
@@ -367,6 +383,12 @@ async function contain(group, { ps, readTimeout }, killed) {
  * from L0's kill. A read that fails, or a group still not ended at `timeout`, fails the whole,
  * and the group is killed unnamed.
  *
+ * A survivor a read leaves out is gone only where signal 0 no longer reaches it. A read that failed
+ * can leave out a live one, even one that exits 1 and prints nothing, which `ps` reports only when
+ * the kernel handed it no process (`run`). So such a survivor stays to be read again, and a table
+ * that goes on leaving it out holds the kill to `timeout`, where the group is killed unnamed. So
+ * does a survivor's pid the system has handed on to another process meanwhile.
+ *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
@@ -398,6 +420,7 @@ async function killedOf(survivors, group, ps, timeout) {
     for (const [pid, survivor] of pending) {
       const row = table.get(pid);
       if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
       if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
       pending.delete(pid);
       moved = true;
