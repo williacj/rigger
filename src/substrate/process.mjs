@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import { accessSync, constants as files, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
+import { inspect } from 'node:util';
 
 import { writeWhole } from './standard-error.mjs';
 
@@ -886,9 +887,10 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
-  if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
-    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a positive finite number of milliseconds, so it did not start ${command}`);
+    // The type is named because a string, a bigint or a boxed number prints as the number it holds.
+    const type = timeout === null ? 'null' : typeof timeout;
+    throw new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
@@ -916,11 +918,14 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  const killedAtTimeout = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
   const timedOut = expired && signal !== null;
+  // A command that exited on its own did so before the containment stopped its group, because a
+  // stopped process cannot exit, so every process that containment killed outlived the command.
+  const events = timedOut ? killedAtTimeout : killedAtTimeout.map(([event, fields]) => [event === 'timeout.killed' ? 'survivor.killed' : event, fields]);
   // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
   // 128 and the signal's number, which is never 0.
   const exit = signal === null ? code : 128 + constants.signals[signal];
@@ -1103,6 +1108,27 @@ function unusable(cwd) {
   }
 }
 
+/**
+ * `value` as text for a refusal, never blank, which no value can make throw. It is the first of
+ * these that prints something: its own conversion; Node's `inspect`; and `inspect` ignoring the
+ * value's own hook for it, which prints what an object holds. A conversion can throw, as a
+ * Symbol's does in a template literal and a null-prototype object's does anywhere, or print
+ * nothing, as `[]` and `''` do, and a value's own hook can do either. Where every one fails, the
+ * refusal says so; no value tried reached that.
+ */
+function shown(value) {
+  const ways = [() => String(value), () => inspect(value, { breakLength: Infinity }), () => inspect(value, { breakLength: Infinity, customInspect: false })];
+  for (const way of ways) {
+    try {
+      const text = way();
+      if (text.trim() !== '') return text;
+    } catch {
+      // The next way is tried.
+    }
+  }
+  return 'that cannot be printed';
+}
+
 /** The failure for a call whose `command` never started, saying `why`. */
 const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
 
@@ -1110,12 +1136,17 @@ const notStarted = (command, why) => Object.assign(new Error(`the process adapte
  * Calls `done` once `delay` milliseconds have passed, and hands back what cancels that. A delay
  * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
  * `schedule` and `cancel` are Node's timers unless a test gives its own.
+ *
+ * No timer holds the process open, so one left armed never keeps the caller from exiting. What the
+ * delay races holds the process open itself where it must: a running command's child handle, and
+ * the pipes it writes to.
  */
 export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
   let timer;
   const arm = (left) => {
     const step = Math.min(left, TIMER_MAX);
     timer = schedule(() => (left > step ? arm(left - step) : done()), step);
+    timer.unref?.();
   };
   arm(delay);
   return () => cancel(timer);

@@ -1,7 +1,7 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
 // may import, to the config keys, card facts and processes its layer may touch, and to whether it
 // may hold L3's dispatching entry point or L1's dispatching function, and to running no code it
-// builds at run time.
+// builds at run time or runs in a worker.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1462,4 +1462,27 @@ test('the code-generation rule: a module importing node:vm or vm fails, statical
     "export const go = async (code) => (await import('node:' + 'vm')).runInThisContext(code);",
   ];
   for (const source of imports) assertBreaks({ 'src/scheduling/build.mjs': source }, 'src/scheduling/build.mjs', 'the code-generation rule');
+});
+
+/*
+ * A worker runs code the rules never read, so the code-generation rule refuses node:worker_threads
+ * too. `new Worker(code, { eval: true })` runs a string as a module, and `new Worker(path)` runs a
+ * file outside src/'s import graph, which is all rules 7, 8 and 9 read. Either can reach
+ * `node:child_process`, L3's dispatching entry point or L1's dispatching function past all three.
+ */
+
+test('the code-generation rule: a module importing node:worker_threads or worker_threads fails, statically or by dynamic import()', () => {
+  const imports = [
+    "import { Worker } from 'node:worker_threads';\nexport const go = (code) => new Worker(code, { eval: true });",
+    "import { Worker } from 'worker_threads';\nexport const go = (path) => new Worker(path);",
+    "import threads from 'node:worker_threads';\nexport const go = (path) => new threads.Worker(path);",
+    "import * as threads from 'worker_threads';\nexport const go = (code) => new threads.Worker(code, { eval: true });",
+    "import 'node:worker_threads';",
+    "export { Worker } from 'node:worker_threads';",
+    "export * from 'worker_threads';",
+    "export const go = async (code) => new (await import('node:worker_threads')).Worker(code, { eval: true });",
+    "export const go = async (path) => new (await import('worker_threads')).Worker(path);",
+    "export const go = async (path) => new (await import('node:' + 'worker_threads')).Worker(path);",
+  ];
+  for (const source of imports) assertBreaks({ 'src/execution/build.mjs': source }, 'src/execution/build.mjs', 'the code-generation rule');
 });

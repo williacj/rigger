@@ -1,6 +1,7 @@
 // ABOUTME: Parses every module under src/ and reports each boundary it crosses: the forge adapter's
 // sides a directory may not import, the facts a layer may not touch, what may spawn, who may hold
-// L3's dispatching entry point or L1's dispatching function, and any code built at run time.
+// L3's dispatching entry point or L1's dispatching function, and any code built at run time or
+// run in a worker.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
@@ -96,11 +97,24 @@ const LOADER_MODULES = ['node:module', 'module'];
  */
 const GENERATORS = ['eval', 'Function', 'constructor', 'getOwnPropertyDescriptors', 'getOwnPropertyNames', 'ownKeys'];
 
-/** The built-in that compiles and runs a string as code, refused however a module imports it. */
-const GENERATOR_MODULES = ['node:vm', 'vm'];
-
 /** Why the code-generation rule refuses what it names. */
 const UNSEEN = ', which runs code built at run time or reaches what does, and what that code imports is out of rules 7, 8 and 9\'s sight';
+
+/** Why the code-generation rule refuses a worker's module. */
+const UNREAD = ', which runs code from a string or from a file that rules 7, 8 and 9 never read, since they read only src/\'s import graph';
+
+/**
+ * The built-ins that run code the rules never read, each refused however a module imports it, with
+ * why. `node:vm` compiles and runs a string. `node:worker_threads` runs a string as a module, with
+ * `eval: true`, or a file outside src/'s import graph, with a path. The limit on keys the source
+ * does not fix, beside `GENERATORS`, holds for these too.
+ */
+const GENERATOR_MODULES = new Map([
+  ['node:vm', UNSEEN],
+  ['vm', UNSEEN],
+  ['node:worker_threads', UNREAD],
+  ['worker_threads', UNREAD],
+]);
 
 /**
  * A module this test cannot read as an ES module: a `.cjs` module, whose wrapper hands it
@@ -1347,8 +1361,8 @@ export function boundaryReport(tree) {
           // Falls through to the refusal below, which names what could not be resolved.
         }
       }
-      if (GENERATOR_MODULES.includes(call.specifier)) {
-        report(file, call.line, 'the code-generation rule', `\`import(${call.argument})\` loads \`${call.specifier}\`${UNSEEN}`);
+      if (GENERATOR_MODULES.has(call.specifier)) {
+        report(file, call.line, 'the code-generation rule', `\`import(${call.argument})\` loads \`${call.specifier}\`${GENERATOR_MODULES.get(call.specifier)}`);
         continue;
       }
       if (file === CONFIG_LOAD.file && call.argument === CONFIG_LOAD.argument) {
@@ -1415,12 +1429,13 @@ export function boundaryReport(tree) {
       if (LOADER_MODULES.includes(entry.from)) report(file, entry.line, 'the dynamic-import rule', `it imports \`${entry.from}\`, whose loaders bind modules this test cannot follow`);
     }
 
-    // Code built at run time imports and names what it likes, out of rules 7, 8 and 9's sight.
+    // Code built at run time or run in a worker imports and names what it likes, out of rules 7, 8
+    // and 9's sight.
     for (const { value, line, key } of [...module.names, ...module.strings]) {
       if (GENERATORS.includes(value) && !key) report(file, line, 'the code-generation rule', `it names \`${value}\`${UNSEEN}`);
     }
     for (const entry of loaded) {
-      if (GENERATOR_MODULES.includes(entry.from)) report(file, entry.line, 'the code-generation rule', `it imports \`${entry.from}\`${UNSEEN}`);
+      if (GENERATOR_MODULES.has(entry.from)) report(file, entry.line, 'the code-generation rule', `it imports \`${entry.from}\`${GENERATOR_MODULES.get(entry.from)}`);
     }
 
     // Who may spawn a process, and who may name the forge's command.
