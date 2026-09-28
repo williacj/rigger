@@ -27,9 +27,9 @@ export const readRunner = (args, options) => {
  */
 const recordingSends = (runner) => (args, options = {}) => {
   const { send } = options;
-  const recorded = send && ((command, sent) => {
+  const recorded = send && ((command, sent, call) => {
     record(sent);
-    return send(command, sent);
+    return send(command, sent, call);
   });
   return runner(args, { ...options, send: recorded });
 };

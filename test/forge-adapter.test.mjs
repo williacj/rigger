@@ -69,9 +69,9 @@ function forge(write = () => ok({})) {
 }
 
 /** Whether `runner` admits `args`, asked with a forge that answers its reads and records nothing sent on. */
-function admits(runner, args) {
+async function admits(runner, args) {
   try {
-    runner(args.slice(1), { send: forge() });
+    await runner(args.slice(1), { send: forge() });
     return true;
   } catch {
     return false;
@@ -90,9 +90,9 @@ test('moving a card issues exactly one write, through the item-write runner, nam
   assert.match(documentOf(write.slice(1)), /itemId: "PVTI_lADOBzomGc4Bkn7fzgd"/);
   assert.match(documentOf(write.slice(1)), /singleSelectOptionId: "98236657"/);
   // It is the item side's: the item-write runner admits it, and neither other runner does.
-  assert.ok(admits(itemWriteRunner, write));
-  assert.ok(!admits(schemaWriteRunner, write));
-  assert.ok(!admits(readRunner, write));
+  assert.ok(await admits(itemWriteRunner, write));
+  assert.ok(!(await admits(schemaWriteRunner, write)));
+  assert.ok(!(await admits(readRunner, write)));
   // And it went through that runner, whose own read of the columns field comes just before it.
   assert.match(documentOf(send.sent.at(-2).slice(1)), /field\(name: "Status"\)/);
 });
@@ -120,9 +120,9 @@ test('creating a single-select field issues exactly one write, through the schem
   const at = options.map((option) => document.indexOf(`name: "${option}"`));
   assert.ok(at.every((index) => index > 0), document);
   assert.deepEqual([...at].sort((a, b) => a - b), at, `the options are not in the order given: ${document}`);
-  assert.ok(admits(schemaWriteRunner, writes[0]));
-  assert.ok(!admits(itemWriteRunner, writes[0]));
-  assert.ok(!admits(readRunner, writes[0]));
+  assert.ok(await admits(schemaWriteRunner, writes[0]));
+  assert.ok(!(await admits(itemWriteRunner, writes[0])));
+  assert.ok(!(await admits(readRunner, writes[0])));
 });
 
 test('creating a label issues exactly one write, through the schema-write runner, naming the label', async () => {
@@ -136,9 +136,9 @@ test('creating a label issues exactly one write, through the schema-write runner
   assert.match(document, /createLabel/);
   assert.match(document, /repositoryId: "R_kgDOTcdlSg"/);
   assert.match(document, /name: "type:change"/);
-  assert.ok(admits(schemaWriteRunner, writes[0]));
-  assert.ok(!admits(itemWriteRunner, writes[0]));
-  assert.ok(!admits(readRunner, writes[0]));
+  assert.ok(await admits(schemaWriteRunner, writes[0]));
+  assert.ok(!(await admits(itemWriteRunner, writes[0])));
+  assert.ok(!(await admits(readRunner, writes[0])));
 });
 
 test('adding a column issues exactly one write, through the schema-write runner, sending every held option with its id and the new one without', async () => {
@@ -159,9 +159,9 @@ test('adding a column issues exactly one write, through the schema-write runner,
       + '{name: "Owner", color: GRAY, description: ""}'
       + ']}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }',
   );
-  assert.ok(admits(schemaWriteRunner, writes[0]));
-  assert.ok(!admits(itemWriteRunner, writes[0]));
-  assert.ok(!admits(readRunner, writes[0]));
+  assert.ok(await admits(schemaWriteRunner, writes[0]));
+  assert.ok(!(await admits(itemWriteRunner, writes[0])));
+  assert.ok(!(await admits(readRunner, writes[0])));
   // And it went through that runner, whose own read of the field's options comes just before it.
   assert.match(documentOf(send.sent.at(-2).slice(1)), /field: node\(id: "PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc"\)/);
 });

@@ -102,9 +102,11 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     },
   };
 
-  // Every request is recorded as it arrives, before it is answered or refused.
+  // Every request is recorded as it arrives, before it is answered or refused, with the arguments
+  // the board reads. The rest are the adapter's own, as the `L0` emitter L2 hands a move is, and
+  // hold functions no record could clone.
   const operations = Object.fromEntries(Object.entries(answering).map(([operation, answer]) => [operation, (...args) => {
-    requests.push(structuredClone({ operation, args }));
+    requests.push(structuredClone({ operation, args: args.slice(0, answer.length) }));
     return answer(...args);
   }]));
 
