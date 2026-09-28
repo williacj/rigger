@@ -37,6 +37,11 @@ dispatch's process group in the state directory while it runs and removes it aft
   emptied the group, so a refused kill event left an entry naming an empty group. Both judges
   found it. The entry is now removed on that rejection as well, and the refusal still reaches the
   caller.
+- **Round 2's fix could hide the refusal it was handling.** The entry's removal ran before the
+  rethrow, so a record that also refused writes replaced `EVENT_REFUSED` with its own `EACCES`
+  (the engineer judge's N4). The refusal now reaches the caller, and carries the removal's failure
+  as `recordFailure`. Keeping the entry on any other rejection had no test either (N5). A test now
+  stands in a `spawn` whose child reports `error` after it has a pid.
 - **Item 7's test still passed by a race after its first fix.** Without the writable check, L0
   killed the spawned command inside the failed hand-off before its first action, so neither
   `pgrep` nor the file saw it (the engineer judge's N1). The test now also reads the stream, where

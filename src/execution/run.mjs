@@ -13,7 +13,9 @@ import { EVENT_REFUSED, runCommand } from '../substrate/process.mjs';
  * While the command runs, the record in `directory` holds an entry naming its process group, the
  * dispatch and the card (`ARCHITECTURE.md`, "Failure model"). The entry is removed once L0 has
  * emptied the group, which it has done when it settles, or rejects naming a refused event. Any
- * other rejection leaves the entry it wrote, for a later start to settle.
+ * other rejection leaves the entry it wrote, for a later start to settle. Where the record
+ * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
+ * record's failure as `recordFailure`.
  */
 export async function dispatch({ id, card, directory, sink, command, args, cwd, env }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
@@ -58,7 +60,16 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     // L0 rejects with `EVENT_REFUSED` only once it has emptied the group, so that entry goes too,
     // and the refusal still reaches the caller. Any other rejection leaves the entry, because
     // L0 has not said the group is empty, and a later start settles it.
-    if (failure.code === EVENT_REFUSED && recorded !== undefined) removeGroup(directory, recorded);
+    // A removal the record refuses rides on the refusal rather than replacing it, so the caller
+    // still learns which events went unrecorded.
+    if (failure.code === EVENT_REFUSED && recorded !== undefined) {
+      try {
+        removeGroup(directory, recorded);
+      } catch (recordFailure) {
+        failure.message += `\nand the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
+        failure.recordFailure = recordFailure;
+      }
+    }
     throw failure;
   }
   // L0 settles only once the group is empty, so nothing is left in it to end.

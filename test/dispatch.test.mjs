@@ -3,10 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import childProcess, { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs, { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join, relative } from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { dispatch } from '../src/execution/run.mjs';
@@ -126,14 +128,73 @@ test('once a dispatch whose kill event the sink refused has settled, its group h
   assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group), []);
 });
 
+test('given a sink that refuses the kill event and a record that refuses the removal, the caller still receives the refusal, with the result and the removal\'s failure on it', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const state = stateOf(directory);
+  writeFileSync(join(directory, 'hold'), '');
+  // Once running, and so once its entry is written, the command makes the stream and the state
+  // directory refuse writes, then leaves a `tail` alive in its group for L0 to kill.
+  const command = fixture(directory, 'command', [
+    ': > "$here/.rigger/events.jsonl"',
+    '/bin/chmod 444 "$here/.rigger/events.jsonl"',
+    '/bin/chmod 555 "$here/.rigger"',
+    'echo $$ > "$here/group"',
+    '/usr/bin/tail -f "$here/hold" &',
+    'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
+    'exit 4',
+  ].join('\n'));
+  t.after(() => chmodSync(state, 0o755));
+
+  const failure = await dispatchIn(directory, { id: 'd-1', card: 1412, command }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  assert.deepEqual(failure.unrecorded.map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }]);
+  assert.equal(failure.result?.exit, 4);
+  assert.equal(failure.recordFailure?.code, 'EACCES', 'the removal\'s failure is not carried on the refusal');
+  assert.ok(failure.message.includes(state), `the refusal does not say the record in ${state} kept its entry: ${failure.message}`);
+});
+
+/**
+ * Has `node:child_process`'s `spawn` hand back, until the test ends, a child that has a pid and
+ * then reports `error`, as Node's `ChildProcess` does when something fails after the spawn.
+ * `syncBuiltinESMExports` carries the change to L0's adapter, which imports `spawn` by name.
+ */
+function failingAfterSpawn(t, pid, error) {
+  const { spawn } = childProcess;
+  childProcess.spawn = () => {
+    const child = new EventEmitter();
+    Object.assign(child, { pid, stdout: new PassThrough(), stderr: new PassThrough() });
+    setImmediate(() => child.emit('error', error));
+    return child;
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    childProcess.spawn = spawn;
+    syncBuiltinESMExports();
+  });
+}
+
+test('given a dispatch L0 rejects for any reason but a refused event, the record keeps its entry for a later start to settle', async (t) => {
+  const directory = scratch(t);
+  // A pid no process holds: the entry is only read, and nothing is signalled.
+  const pid = 999_999_999;
+  const error = new Error('the child failed after its spawn');
+  failingAfterSpawn(t, pid, error);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: '/usr/bin/true' }), (thrown) => thrown === error);
+
+  assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group: pid, dispatch: 'd-1', card: 1412 }]);
+});
+
 /** A command whose first action writes `$here/started`. */
 const startingCommand = (directory) => fixture(directory, 'command', ': > "$here/started"');
 
 /**
- * Asserts that the command `startingCommand` wrote into `directory` never ran. Node's `spawn`
- * returns only once the child runs the command, so a command started before this is either still
- * running, with the directory in its command line, or has written `$here/started`. The two are
- * read in that order, so a command that ends between them is caught by the second.
+ * Asserts that the command `startingCommand` wrote into `directory` has not run its first action
+ * and is not running: `pgrep` finds nothing with the directory in its command line, and there is
+ * no `$here/started`. The two are read in that order, so a command that ends between them is
+ * caught by the second. A command killed before its first action passes both, so a test that must
+ * show no process was started at all also reads what L0 recorded.
  */
 function assertNeverRan(directory) {
   assert.deepEqual(running(directory), [], 'the command is running');
