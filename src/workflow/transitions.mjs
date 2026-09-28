@@ -14,8 +14,9 @@ const CHANGES = {
 
 /**
  * L2's column changes on the board `config` names, each recorded through `sink`. `items` is the
- * forge adapter's item-write side for that board, and a test passes the fake board's operations
- * in its place, or `send` in place of the runners' spawn.
+ * forge adapter's item-write side for that board, whose move L2 hands an `L0` emitter it opens
+ * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
+ * the runners' spawn.
  */
 export function columnChanges({ config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }) }) {
   const { columns } = config.board;
