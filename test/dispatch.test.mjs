@@ -36,11 +36,17 @@ const holdingCommand = (directory) => fixture(directory, 'command', [
   'while [ ! -f "$here/release" ]; do :; done',
 ].join('\n'));
 
+/**
+ * A timeout no command in this file reaches, under `SETTLES_WITHIN`, so a command that hangs is
+ * ended by L0 and fails its test rather than holding the suite.
+ */
+const UNREACHED = 15_000;
+
 /** Starts a dispatch of `command` through L1's function, with the state directory in `directory`. */
 function dispatchIn(directory, options) {
   const state = stateOf(directory);
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  return dispatch({ directory: state, sink, args: [], cwd: directory, env: {}, ...options });
+  return dispatch({ directory: state, sink, args: [], cwd: directory, env: {}, timeout: UNREACHED, ...options });
 }
 
 /**
@@ -242,7 +248,7 @@ test('a command run through L0\'s adapter and not through L1\'s function leaves 
   const directory = scratch(t);
   const state = stateOf(directory);
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  const adapter = (_, options) => runCommand({ args: [], cwd: directory, env: {}, emitter: sink.emitter({ layer: 'L0' }), ...options });
+  const adapter = (_, options) => runCommand({ args: [], cwd: directory, env: {}, timeout: UNREACHED, emitter: sink.emitter({ layer: 'L0' }), ...options });
 
   await whileHeld(directory, {}, () => {
     assert.deepEqual(readInAnotherProcess(state), [], 'the record held an entry while the command ran');

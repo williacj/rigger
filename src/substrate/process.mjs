@@ -1,9 +1,12 @@
-// ABOUTME: L0's process adapter: it runs one command in a process group of its own, and once the
-// command exits, kills what is left of that group, records each process it killed, and stops reading
-// output a process outside the group holds open. On the process's own exit it kills every group it holds.
+// ABOUTME: L0's process adapter: it runs one command in a process group of its own, ends the group at
+// the command's timeout, and once the command exits, kills what is left of that group, records each
+// process it killed, and stops reading output a process outside the group holds open. On the
+// process's own exit it kills every group it holds.
 
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { accessSync, constants as files, statSync } from 'node:fs';
+import { constants } from 'node:os';
 import { setImmediate as turn } from 'node:timers/promises';
 
 import { writeWhole } from './standard-error.mjs';
@@ -178,6 +181,21 @@ function attempt(step) {
     }
   }
 }
+
+/**
+ * The largest delay, in milliseconds, one of Node's timers keeps. Node owns this fact and exports
+ * no name for it. Past it, Node warns with a `TimeoutOverflowWarning` and sets the delay to 1 ms,
+ * which would end at once a command given more time than that, so a longer delay is kept over
+ * several timers (`whenElapsed`). This copy is tied to Node by a test that asks Node's timer
+ * (`D16` rule 2).
+ */
+export const TIMER_MAX = 2 ** 31 - 1;
+
+/**
+ * The `code` of the failure a call rejects with when its command never started, so its caller
+ * tells it from a refused event without reading the message.
+ */
+export const NOT_STARTED = 'NOT_STARTED';
 
 /** Every chunk `stream` carries, as one buffer, once the stream has closed. */
 async function drained(stream) {
@@ -407,13 +425,13 @@ function runNow(ps, args, remaining, timeout) {
 }
 
 /**
- * Ends what is left of `group` once its command has exited, in the order that keeps each name:
- * the census, which stops the group and reads it while its processes still exist; the kill; the
- * confirmation that the group is empty; and only then the `L0` events to record, one per process
- * killed, which it hands back. A census that fails still kills the group, and hands back the kill
- * of the group with why its processes went unnamed.
+ * Ends what is left of `group`, once its command has exited or at its timeout, in the order that
+ * keeps each name: the census, which stops the group and reads it while its processes still
+ * exist; the kill; the confirmation that the group is empty; and only then the `L0` events to
+ * record, one `killed` event per process, which it hands back. A census that fails still kills the
+ * group, and hands back the kill of the group with why its processes went unnamed.
  */
-async function contain(group, { ps, readTimeout }) {
+async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
   let survivors;
   let unnamed;
@@ -423,7 +441,7 @@ async function contain(group, { ps, readTimeout }) {
     unnamed = error.message;
   }
   await ended(group);
-  return killsOf(group, survivors, unnamed);
+  return killsOf(group, survivors, unnamed, killed);
 }
 
 /**
@@ -445,7 +463,7 @@ function containNow(group, { ps, readTimeout }) {
   } catch {
     // The kill was sent on every look, and nothing is left to wait on.
   }
-  return killsOf(group, survivors, unnamed);
+  return killsOf(group, survivors, unnamed, 'survivor.killed');
 }
 
 /**
@@ -463,10 +481,13 @@ function* emptied(group) {
   }
 }
 
-/** The `L0` events for a group killed after a census found `survivors`, or failed as `unnamed`. */
-function killsOf(group, survivors, unnamed) {
+/**
+ * The `L0` events for a group killed after a census found `survivors`, each a `killed` event, or
+ * failed as `unnamed`.
+ */
+function killsOf(group, survivors, unnamed, killed) {
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return survivors.map((survivor) => ['survivor.killed', survivor]);
+  return survivors.map((survivor) => [killed, survivor]);
 }
 
 /**
@@ -485,22 +506,31 @@ function record(emitter, events) {
   return unrecorded;
 }
 
-/** The failure for a call whose `unrecorded` events the sink refused, carrying its `result`. */
-function refused(unrecorded, result) {
+/**
+ * The failure for a call whose `unrecorded` events the sink refused, carrying its `result`, its
+ * message opening with `ending` where that says how the command ended.
+ */
+function refused(unrecorded, result, ending = '') {
   const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
-  const error = new Error(`the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
+  const error = new Error(`${ending}the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
   return Object.assign(error, { code: EVENT_REFUSED, unrecorded, result });
 }
 
 /**
- * Runs `command` with `args` in `cwd` under exactly `env`, in a process group of its own, and
- * settles on its exit code and the bytes it wrote to standard output and standard error.
+ * Runs `command` with `args` in `cwd` under exactly `env`, in a process group of its own, for at
+ * most `timeout` milliseconds, and settles on its exit code, whether the timeout ended it, and the
+ * bytes it wrote to standard output and standard error.
  *
- * The order is fixed: the command exits; L0 kills what is left of its group and confirms it is
+ * The order is fixed: the command exits, or at its timeout L0 kills its whole group, the command
+ * with it, and confirms the group is empty; L0 kills what is left of its group and confirms it is
  * empty; L0 reads both pipes until they close, or until `outputBound` milliseconds have passed,
  * where a process outside the group holds one open; L0 records each kill, and any such hold; the
  * call settles. So the output is everything the group wrote until that kill, and neither a
  * survivor nor a process that left the group holds the call open.
+ *
+ * A command the timeout or any signal ended has a non-zero exit code, so it never reads as
+ * returned. A command that never started has no result: the call rejects with a `NOT_STARTED`
+ * failure naming what failed.
  *
  * A refused event never stops a kill, because every kill is done before any is recorded. Every
  * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
@@ -516,55 +546,132 @@ function refused(unrecorded, result) {
  * exits meanwhile, L0's exit cleanup kills and records it, and then hands the group to `onExit`,
  * where the caller gives one: a synchronous step, which is how L1 removes a dispatch's entry.
  */
-export async function runCommand({ command, args, cwd, env, emitter, onGroup, onExit, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
-  const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  // A group the exit cleanup took is one it has ended and recorded, so the call records it again
-  // only where it still held it.
-  const empty = async () => {
-    const events = await contain(child.pid, { ps, readTimeout });
-    return groups.delete(child.pid) ? events : [];
-  };
-  if (child.pid !== undefined) {
-    install();
-    groups.set(child.pid, { emitter, ps, readTimeout, onExit });
-    try {
-      onGroup?.(child.pid);
-    } catch (refusal) {
-      // A group the caller could not take runs no further: it is ended, and recorded, as a
-      // survivor would be, before the caller hears why.
-      // Nothing reads the output of a command that runs no further, so its pipes are let go.
-      const unrecorded = record(emitter, await empty());
-      child.stdout.destroy();
-      child.stderr.destroy();
-      if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
-      throw refusal;
-    }
+  if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
-  const [exit] = await once(child, 'exit');
-  const events = await empty();
-  if (await heldPast(output, outputBound)) {
+  const unfit = unusable(cwd);
+  if (unfit !== undefined) throw notStarted(command, unfit);
+  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
+  if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
+  const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
+  install();
+  groups.set(child.pid, { emitter, ps, readTimeout, onExit });
+  // A group the exit cleanup took is one it has ended and recorded, so the call records a kill
+  // of it only where it still held it once the group was empty.
+  const held = () => groups.delete(child.pid);
+  try {
+    onGroup?.(child.pid);
+  } catch (refusal) {
+    // A group the caller could not take runs no further: it is ended, and recorded, as a
+    // survivor would be, before the caller hears why.
+    // Nothing reads the output of a command that runs no further, so its pipes are let go.
+    const kills = await contain(child.pid, { ps, readTimeout }, 'survivor.killed');
+    const unrecorded = record(emitter, held() ? kills : []);
+    child.stdout.destroy();
+    child.stderr.destroy();
+    if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
+    throw refusal;
+  }
+  const exited = once(child, 'exit');
+  const expired = await outlasts(exited, timeout);
+  const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  const [code, signal] = await exited;
+  // The timeout ended the command only where the kill did. One that exited on its own between the
+  // timer and the kill ended itself, with its own exit code.
+  const timedOut = expired && signal !== null;
+  // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
+  // 128 and the signal's number, which is never 0.
+  const exit = signal === null ? code : 128 + constants.signals[signal];
+  events.push(...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')));
+  if (!held()) events.splice(0);
+  if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();
     child.stderr.destroy();
     events.push(['output.held', { group: child.pid, bound: outputBound }]);
   }
   const [stdout, stderr] = await output;
-  const result = { exit, stdout, stderr };
+  const result = { exit, timedOut, stdout, stderr };
   const unrecorded = record(emitter, events);
-  if (unrecorded.length > 0) throw refused(unrecorded, result);
+  if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '');
   return result;
 }
 
-/** Whether `output` is still unread once `bound` milliseconds have passed. */
-async function heldPast(output, bound) {
+/**
+ * The child `spawning` makes to run `command`. Where the spawn throws, which Node does for some
+ * of the causes of a command that never starts, a `NOT_STARTED` failure naming the command and why.
+ */
+function spawned(command, spawning) {
+  try {
+    return spawning();
+  } catch (error) {
+    throw notStarted(command, error.message);
+  }
+}
+
+/**
+ * Why `cwd` cannot be a command's working directory, or nothing where it can. The file system
+ * decides, and is asked before the spawn because Node reports a missing `cwd` as
+ * `spawn <command> ENOENT`, naming the command and not the directory.
+ *
+ * Where this answer can differ from what the spawn would have found, measured with Node 26.5.0
+ * on macOS 27.0 (26A428) on 2026-09-27, spawning `/bin/pwd` detached with both outputs piped:
+ *
+ * - The check and the spawn read the directory at two moments, so one removed or replaced between
+ *   them passes the check and fails the spawn. That spawn then reports what Node reports, which
+ *   for a missing directory is `spawn /bin/pwd ENOENT`, naming the command alone. The call still
+ *   rejects as a failure to start.
+ * - Every `cwd` the spawn reads as unset, the check refuses, while the spawn runs the command in
+ *   the caller's own working directory. This covers the whole class the spawn so reads, as far as
+ *   it was measured: `undefined` and `null` (`ERR_INVALID_ARG_TYPE` from the check), and `''` and
+ *   an empty `Buffer` (`ENOENT`). For each, `/bin/pwd` exited 0 and printed the caller's
+ *   directory. Of the other values tried, `false`, `0`, `NaN`, `[]` and `{}` made the spawn
+ *   throw `ERR_INVALID_ARG_TYPE` too, and `' '` failed it with `ENOENT`, so for those the two
+ *   agree.
+ * - Elsewhere the two agreed: a missing directory and a dangling link (`ENOENT` from both), a file
+ *   (not a directory here, `ENOTDIR` from the spawn), a link loop (`ELOOP` from both), a
+ *   directory of mode 000 or 444 (`EACCES` from both), and one of mode 111, which both accept.
+ */
+function unusable(cwd) {
+  try {
+    if (!statSync(cwd).isDirectory()) return `its working directory ${cwd} is not a directory`;
+    accessSync(cwd, files.X_OK);
+    return undefined;
+  } catch (error) {
+    return `its working directory ${cwd} cannot be used: ${error.message}`;
+  }
+}
+
+/** The failure for a call whose `command` never started, saying `why`. */
+const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
+
+/**
+ * Calls `done` once `delay` milliseconds have passed, and hands back what cancels that. A delay
+ * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
+ * `schedule` and `cancel` are Node's timers unless a test gives its own.
+ */
+export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
   let timer;
-  const passed = new Promise((resolve) => { timer = setTimeout(resolve, bound, true); });
-  const held = await Promise.race([output.then(() => false), passed]);
-  clearTimeout(timer);
-  return held;
+  const arm = (left) => {
+    const step = Math.min(left, TIMER_MAX);
+    timer = schedule(() => (left > step ? arm(left - step) : done()), step);
+  };
+  arm(delay);
+  return () => cancel(timer);
+}
+
+/** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
+async function outlasts(promise, bound) {
+  let stop;
+  const passed = new Promise((resolve) => { stop = whenElapsed(bound, () => resolve(true)); });
+  const outlasted = await Promise.race([promise.then(() => false), passed]);
+  stop();
+  return outlasted;
 }

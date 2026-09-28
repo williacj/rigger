@@ -61,7 +61,7 @@ const CALLER = [
   'function begin(label) {',
   "  const command = join(directory, label === 1 && options.stopped ? 'leaving' : options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
-  "  const call = { command, args, cwd: directory, env: {}, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
+  "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
   "  const started = label === 1 && options.dispatch",
   "    ? dispatch({ id: 'd-1', card: 7, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }) });",

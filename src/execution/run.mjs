@@ -5,8 +5,8 @@ import { addGroup, readGroups, removeGroup, writeGroups } from './groups.mjs';
 import { EVENT_REFUSED, runCommand } from '../substrate/process.mjs';
 
 /**
- * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, and settles on L0's
- * result for it. `card` is the dispatch's card, where it has one. `directory` is the state
+ * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
+ * milliseconds, and settles on L0's result for it. `card` is the dispatch's card, where it has one. `directory` is the state
  * directory of the repository the dispatch serves, and `sink` is L5's, through which L0 records
  * what it kills under this dispatch and its card.
  *
@@ -18,7 +18,7 @@ import { EVENT_REFUSED, runCommand } from '../substrate/process.mjs';
  * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
  * record's failure as `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, env }) {
+export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -38,6 +38,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
       args,
       cwd,
       env,
+      timeout,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
       onGroup: (group) => {
         // The window this leaves open. L0 spawns, then hands the group over in the same step, and
