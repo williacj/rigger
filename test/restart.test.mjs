@@ -127,10 +127,11 @@ const filesUnder = (directory, root = directory) => readdirSync(directory, { wit
 
 /**
  * What `R-STATE-4` permits the state directory to hold, by file: the record, which is L5's event
- * stream. Whether admission is open and the process groups to kill are the other two, and no code
- * writes either yet, so no file stands for them.
+ * stream, and the processes Rigger must still clean up, which is L1's record of each dispatch's
+ * process group. Whether admission is open is the third, and no code writes it yet, so no file
+ * stands for it.
  */
-const PERMITTED = ['events.jsonl'];
+const PERMITTED = ['events.jsonl', 'groups.json'];
 
 // proves R-STATE-1
 test('after a run, every file under the state directory is one R-STATE-4 permits, and the directory holds the run\'s event stream', async () => {

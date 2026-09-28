@@ -298,6 +298,29 @@ test('a call with no L0 emitter starts no process, and fails naming the missing 
   }
 });
 
+test('the caller\'s onGroup is handed the command\'s process group before the call first yields', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', reportGroup('group'));
+  let handed;
+
+  const settled = adapt(directory, { command, onGroup: (group) => { handed = group; } });
+  const beforeYielding = handed;
+  await settled;
+
+  assert.equal(beforeYielding, Number(read(directory, 'group')));
+});
+
+test('given an onGroup that throws, the call rejects with what it threw, and no process of the command\'s group is alive', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  const refusal = new Error('the group could not be recorded');
+  let handed;
+
+  await assert.rejects(adapt(directory, { command, onGroup: (group) => { handed = group; throw refusal; } }), (thrown) => thrown === refusal);
+
+  assert.equal(alive(-handed), false, 'a process of the command\'s group is alive');
+});
+
 test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
   assert.ok(isAbsolute(PS), `${PS} is not an absolute path`);
   assert.equal(basename(PS), 'ps');

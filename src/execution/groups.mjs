@@ -21,10 +21,20 @@ export function readGroups(directory) {
   return JSON.parse(text);
 }
 
-/** Replaces the record in `directory` with `entries`. */
+/**
+ * Replaces the record in `directory` with `entries`.
+ *
+ * The whole record is written beside it and renamed over it, so a reader finds it as it was
+ * before the write or as it is after, never part of one: a rename within one directory replaces
+ * the name in one step (POSIX `rename`). A writer stopped before the rename leaves the partial
+ * file beside the record, and the next write replaces it. Nothing is flushed to the disk, as in
+ * L5's stream: what this buys is surviving the engine's death, not the machine's.
+ */
 export function writeGroups(directory, entries) {
   mkdirSync(directory, { recursive: true });
-  writeFileSync(recordPath(directory), JSON.stringify(entries));
+  const partial = `${recordPath(directory)}.partial`;
+  writeFileSync(partial, JSON.stringify(entries));
+  renameSync(partial, recordPath(directory));
 }
 
 /** Adds `entry` to the record in `directory`. */

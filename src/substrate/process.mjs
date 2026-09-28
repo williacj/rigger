@@ -238,7 +238,17 @@ export async function runCommand({ command, args, cwd, env, emitter, onGroup, ps
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  if (child.pid !== undefined) onGroup?.(child.pid);
+  if (child.pid !== undefined) {
+    try {
+      onGroup?.(child.pid);
+    } catch (refusal) {
+      // A group the caller could not take runs no further: it is ended, and recorded, as a
+      // survivor would be, before the caller hears why.
+      await contain(child.pid, { emitter, ps, readTimeout });
+      await output;
+      throw refusal;
+    }
+  }
   const [exit] = await once(child, 'exit');
   await contain(child.pid, { emitter, ps, readTimeout });
   const [stdout, stderr] = await output;
