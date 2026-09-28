@@ -1,5 +1,5 @@
-// ABOUTME: Tests L1's dispatching function in its minimal form: it writes each dispatch's process
-// group to the record in the state directory while the dispatch runs, and removes it after.
+// ABOUTME: Tests L1's dispatching function: its result, the dispatch's start, timeout and one end it
+// records, the refusals it reports, and the process group it records while the dispatch runs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -507,4 +507,180 @@ test('given a dispatch that outlives its timeout, the stream holds an L1 event r
   ready(directory);
   const timeouts = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L1' && each.dispatch === 'd-late' && /timeout/.test(each.event));
   assert.deepEqual(timeouts.map(({ card, timeout }) => ({ card, timeout })), [{ card: 1412, timeout: OUTLIVED }]);
+});
+
+test('given a dispatch that outlives its timeout, the stream holds one dispatch-end event under its id, carrying a non-zero integer exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The command exits 0 on the SIGTERM a timeout could send, so only the timeout makes it non-zero.
+  await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, `trap 'exit 0' TERM\n${leave(TAIL, 'child')}`) });
+
+  ready(directory);
+  const ends = endsOf(directory, 'd-late');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.ok(Number.isInteger(ends[0].exit) && ends[0].exit !== 0, `the end's exit code is ${ends[0].exit}`);
+});
+
+test('given a state directory whose event stream exists and which refuses new entries, the dispatch\'s one dispatch-end event names that state directory and carries no exit code', async (t) => {
+  const directory = scratch(t);
+  const state = refusingNewEntries(t, directory);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }));
+
+  const ends = endsOf(directory, 'd-1');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.equal('exit' in ends[0], false, `the end carries an exit code: ${JSON.stringify(ends[0])}`);
+  // The directory itself, and not only a file in it, as the file system's own error would.
+  const text = JSON.stringify(ends[0]);
+  const quoted = JSON.stringify(state).slice(1, -1);
+  assert.ok(text.split(quoted).slice(1).some((after) => !after.startsWith('/')), `the end does not name ${state}: ${text}`);
+});
+
+/** A command that leaves a `tail` alive in its group, writing its pid to `$here/survivor.pid`, and exits 0. */
+const leavingTail = (directory) => fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\nexit 0`);
+
+test('given a sink that accepts L1\'s events and refuses the L0 kill event of a dispatch leaving a child alive, the stream holds exactly one dispatch-end event for it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-kill', card: 1412, command: leavingTail(directory), sink }));
+
+  assert.equal(endsOf(directory, 'd-kill').length, 1, JSON.stringify(endsOf(directory, 'd-kill')));
+});
+
+test('given a sink that accepts L1\'s events and refuses the L0 kill event of a dispatch leaving a child alive, the call rejects as a refused event, naming the unrecorded kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-kill', card: 1412, command: leavingTail(directory), sink }), (failure) => {
+    assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+    assert.ok(failure.message.includes('survivor.killed'), `the failure does not name the kill: ${failure.message}`);
+    assert.ok(failure.message.includes(`"pid":${read(directory, 'survivor.pid')}`), `the failure does not name the killed child: ${failure.message}`);
+    return true;
+  });
+});
+
+/** Whether any process of the dispatch whose command wrote its group to `$here/group` is alive. */
+const groupAlive = (directory) => alive(-Number(read(directory, 'group')));
+
+test('given a sink that refuses only L1\'s timeout event of a dispatch outliving its timeout with a child, no process of its group is alive when the call settles, and it rejects as a refused event naming the timeout event', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && /timeout/.test(event));
+
+  const failure = await dispatchIn(directory, { id: 'd-late', card: 1412, sink, ...outliving(directory, leave(TAIL, 'child')) }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  ready(directory);
+  assert.equal(alive(-Number(read(directory, 'command.pid'))), false, 'a process of the dispatch\'s group is alive');
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  const named = (failure.unrecorded ?? []).map(({ event }) => event);
+  assert.equal(named.length, 1, `the unrecorded events are ${named}`);
+  assert.match(named[0], /timeout/);
+  assert.ok(failure.message.includes(named[0]), `the failure's message does not name ${named[0]}: ${failure.message}`);
+});
+
+test('given a sink that accepts the start event and refuses the end event, the caller receives a refused event naming the dispatch, its card and the end, and no process of the group is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const sink = refusingSome(stateOf(directory), (layer, event) => layer === 'L1' && event === 'dispatch.end');
+
+  const failure = await dispatchIn(directory, { id: 'd-unended', card: 1412, command: leavingTail(directory), sink }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
+
+  assert.equal(groupAlive(directory), false, 'a process of the dispatch\'s group is alive');
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  for (const name of ['d-unended', '1412', 'dispatch.end']) assert.ok(failure.message.includes(name), `the failure does not name ${name}: ${failure.message}`);
+});
+
+test('given a command, a cwd, an env, a timeout and a dispatch id, L1\'s function settles with an integer exit code and the captured output as bytes', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'printf "to standard output"\nprintf "to standard error" >&2\nexit 5');
+
+  const result = await dispatch({ id: 'd-1', directory: stateOf(directory), sink: openSink({ directory: stateOf(directory), run: 'r-test', now: () => 0 }), command, args: [], cwd: directory, env: {}, timeout: UNREACHED });
+
+  assert.equal(result.exit, 5);
+  assert.ok(Buffer.isBuffer(result.stdout) && result.stdout.equals(Buffer.from('to standard output')), `standard output is ${result.stdout}`);
+  assert.ok(Buffer.isBuffer(result.stderr) && result.stderr.equals(Buffer.from('to standard error')), `standard error is ${result.stderr}`);
+});
+
+test('given a command writing a payload to each stream and a child writing a third to standard output before the command exits and stays alive, L1\'s result holds every byte of each in the stream it was written to', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const [first, second, third] = [bytes(200_003, 7), bytes(150_007, 13), bytes(100_019, 37)];
+  writeFileSync(join(directory, 'first'), first);
+  writeFileSync(join(directory, 'second'), second);
+  writeFileSync(join(directory, 'third'), third);
+  fixture(directory, 'child', `/bin/cat "$here/third"\n: > "$here/written"\nexec ${TAIL}`);
+  const command = fixture(directory, 'command', [
+    '/bin/cat "$here/first"',
+    '/bin/cat "$here/second" >&2',
+    leave('"$here/child"', 'survivor'),
+    'while [ ! -f "$here/written" ]; do :; done',
+    'exit 0',
+  ].join('\n'));
+
+  const result = await dispatchIn(directory, { id: 'd-1', card: 1412, command });
+
+  assert.ok(result.stdout.equals(Buffer.concat([first, third])), 'standard output holds every byte of the command\'s payload, then the child\'s');
+  assert.ok(result.stderr.equals(second), 'standard error holds every byte of the command\'s payload to it');
+});
+
+test('given a dispatch whose command writes a payload and then outlives its timeout, L1\'s result holds every byte of it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const payload = bytes(300_001, 23);
+  writeFileSync(join(directory, 'payload'), payload);
+
+  const result = await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, `/bin/cat "$here/payload"\n${leave(TAIL, 'child')}`) });
+
+  ready(directory);
+  assert.ok(result.stdout.equals(payload), 'standard output holds every byte of the command\'s payload');
+});
+
+test('given a dispatch whose child writes a payload to each stream and outlives its timeout with it, L1\'s result holds every byte of each in the stream it was written to', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const out = bytes(200_003, 29);
+  const err = bytes(150_007, 31);
+  writeFileSync(join(directory, 'out'), out);
+  writeFileSync(join(directory, 'err'), err);
+  // The command blocks opening a FIFO until the child has written both and opens it, as in the
+  // adapter's own test of this case, and runs the child under `/bin/sh` by name (see `OUTLIVED`).
+  fixture(directory, 'child', `/bin/cat "$here/out"\n/bin/cat "$here/err" >&2\n: > "$here/written"\nexec ${TAIL}`);
+  const body = ['/usr/bin/mkfifo "$here/written"', '/bin/sh "$here/child" &', 'read -r _ < "$here/written"'].join('\n');
+
+  const result = await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, body) });
+
+  ready(directory);
+  assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');
+  assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
+});
+
+test('given an env that sets a variable, the dispatch\'s command sees exactly the value given', async (t) => {
+  const directory = scratch(t);
+  // Spaces, a newline, a quote and a byte outside ASCII: none of them may be split, trimmed or changed.
+  const value = ' two  words\nand a "quote" ü ';
+  const command = fixture(directory, 'command', 'printf "%s" "$RIGGER_TEST_VALUE"');
+
+  const result = await dispatchIn(directory, { id: 'd-1', card: 1412, command, env: { RIGGER_TEST_VALUE: value } });
+
+  assert.equal(result.stdout.toString('utf8'), value);
+});
+
+test('every L0 event a dispatch\'s processes give rise to carries its dispatch id, and its card where it has one', SETTLES_WITHIN, async (t) => {
+  for (const card of [1412, undefined]) {
+    const directory = holding(t);
+
+    await dispatchIn(directory, { id: 'd-l0', card, command: leavingTail(directory) });
+
+    const l0 = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L0');
+    assert.ok(l0.length > 0, 'no L0 event was recorded, so the test proves nothing');
+    assert.deepEqual(l0.map((each) => ({ dispatch: each.dispatch, card: each.card, hasCard: 'card' in each })), l0.map(() => ({ dispatch: 'd-l0', card, hasCard: card !== undefined })));
+  }
+});
+
+test('given a dispatch whose command leaves a child alive and exits 0, its dispatch-end event follows every event recording that child\'s kill, and it settles only once that child is dead', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await dispatchIn(directory, { id: 'd-after', card: 1412, command: leavingTail(directory) });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false, 'the child is alive');
+  const events = eventsIn(stateOf(directory));
+  const kills = events.flatMap((each, index) => (each.layer === 'L0' && each.pid === Number(read(directory, 'survivor.pid')) ? [index] : []));
+  const end = events.findIndex((each) => each.event === 'dispatch.end' && each.dispatch === 'd-after');
+  assert.ok(kills.length > 0, `the child's kill was not recorded: ${JSON.stringify(events)}`);
+  assert.ok(end >= 0 && kills.every((index) => index < end), `the end does not follow every kill: ${JSON.stringify(events)}`);
 });

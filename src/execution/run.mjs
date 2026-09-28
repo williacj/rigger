@@ -1,14 +1,31 @@
-// ABOUTME: L1's dispatching function, in its minimal form: it runs one dispatch's command through
-// L0's process adapter, recording the dispatch's process group while the command runs.
+// ABOUTME: L1's dispatching function: it records a dispatch's start, runs its command through L0's
+// process adapter while recording the command's process group, and records the dispatch's end.
 
 import { addGroup, readGroups, removeGroup, writeGroups } from './groups.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
 
 /**
  * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
- * milliseconds, and settles on L0's result for it. `card` is the dispatch's card, where it has one. `directory` is the state
- * directory of the repository the dispatch serves, and `sink` is L5's, through which L0 records
- * what it kills under this dispatch and its card.
+ * milliseconds, and settles on L0's result for it: the exit code `exit`, whether the timeout
+ * ended it, and the output as bytes, `stdout` and `stderr`. `card` is the dispatch's card, where
+ * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
+ * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
+ * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
+ * test gives one.
+ *
+ * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
+ * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
+ * what is left of its group, and settles; L1 removes the entry, appends `dispatch.timeout` where
+ * the timeout ended the command, then `dispatch.end`, and settles. Every start L1 records gets
+ * exactly one end, which carries the exit code and the duration where the command ran, and why it
+ * did not start where it never did.
+ *
+ * A refused start starts nothing, and the call rejects with an `EVENT_REFUSED` failure naming it.
+ * A command that never started rejects with a `NOT_STARTED` failure, a state directory whose
+ * record cannot be written included. Where the sink refuses the timeout or the end, every append is
+ * still tried, and the call rejects with an `EVENT_REFUSED` failure naming the dispatch, its card
+ * and each unrecorded event, carrying the result where the command ran. L0's own refusal takes
+ * those events onto it; any other failure becomes the refusal's `cause`.
  *
  * While the command runs, the record in `directory` holds an entry naming its process group, the
  * dispatch and the card (`ARCHITECTURE.md`, "Failure model"). The entry is removed once L0 has
@@ -51,8 +68,8 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         // this writes the entry before anything else runs. So between the spawn and the write
         // there is one synchronous step, and no await. An engine killed by SIGKILL inside it leaves
         // a group that no entry names, and no later start ends it. The dispatch's start event,
-        // which L1 appends before the spawn once #347 (M2-08) lands, still shows that dispatch, as
-        // a start with no end and no kill.
+        // which L1 appended before the spawn, still shows that dispatch, as a start with no end
+        // and no kill.
         // The window is left open, not closed by holding the spawn until the write (the owner,
         // round 4, and the architect's ruling 3, §6, on #332). Either of two findings reverses
         // that: a production incident, in which an unpaired start's processes outlive a restart;
