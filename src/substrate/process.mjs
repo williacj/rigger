@@ -372,7 +372,7 @@ async function contain(group, { ps, readTimeout }, killed) {
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
  * back. No pause spends time the deadline cannot spare: the rounds still to come are at least one
  * more than the depth of the live tree, each costs about what a round has cost so far, and a pause
- * takes no more than its share of what is left over twice that, so the pace tightens as the
+ * takes no more than its share of what is left over three times that, so the pace tightens as the
  * deadline nears, and a kill that reading alone could finish in time is not pushed past it.
  */
 async function killedOf(survivors, group, ps, timeout) {
@@ -408,7 +408,7 @@ async function killedOf(survivors, group, ps, timeout) {
     const elapsed = performance.now() - began;
     const paced = moved ? (ROUND_SHARE * (user + system)) / 1000 - elapsed : longer(wait);
     const left = depthOf(living) + 1;
-    const spare = deadline - Date.now() - 2 * left * ((elapsed - paused) / rounds);
+    const spare = deadline - Date.now() - 3 * left * ((elapsed - paused) / rounds);
     wait = Math.max(0, Math.min(paced, spare / left));
   }
   return killed;
