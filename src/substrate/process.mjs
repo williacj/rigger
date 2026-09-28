@@ -364,16 +364,22 @@ async function contain(group, { ps, readTimeout }, killed) {
  * counted as killed. How a process ended is in the table only as its zombie's `xstat`, which `ps`
  * shows until the parent reaps it and never after. A parent the group does not hold is not
  * stopped, so it can reap before any read, and the table then holds nothing to tell that exit
- * from L0's kill. A read that fails, or a group
- * still not ended at `timeout`, fails the whole, and the group is killed unnamed.
+ * from L0's kill. A read that fails, or a group still not ended at `timeout`, fails the whole,
+ * and the group is killed unnamed.
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
- * back. No pause spends time the deadline cannot spare: the rounds still to come are at least one
- * more than the depth of the live tree, each costs about what a round has cost so far, and a pause
- * takes no more than its share of what is left over three times that, so the pace tightens as the
- * deadline nears, and a kill that reading alone could finish in time is not pushed past it.
+ * back. That pacing is what holds the kill's processor time under a tenth of its wall-clock time,
+ * and it holds only while the deadline leaves room.
+ *
+ * Room is the time left before the deadline after holding back, for each round still to come,
+ * three times what a round has cost on average so far. The rounds still to come are taken as one
+ * more than the depth of the live tree. Each pause is capped at its share of that room, so the pace
+ * tightens as the deadline nears. Where no room is left the cap is zero, and the rounds run back to
+ * back, over the tenth. Close to the deadline, naming the group's processes takes precedence over
+ * that bound, so a kill that reading alone could finish in time is not pushed past the deadline and
+ * killed unnamed.
  */
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
