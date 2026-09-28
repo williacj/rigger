@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -160,6 +160,34 @@ async function reapedPid() {
   await once(ended, 'exit');
   return ended.pid;
 }
+
+/**
+ * A process group whose one member is a zombie: Perl forks, the fork makes a group of its own and
+ * exits, and Perl, outside that group, never reaps it. Perl writes the fork's pid unbuffered, or a
+ * pipe would hold it until Perl exits. Perl carries `directory` in its command
+ * line, so the teardown ends it, and the system then reaps the zombie. Settles once `ps` reads the
+ * fork as a zombie leading its own group, on the group's id.
+ */
+async function zombieGroup(directory) {
+  const parent = spawn('/usr/bin/perl', ['-e', '$| = 1; my $p = fork(); if ($p == 0) { setpgrp(0, 0); exit 0 } print "$p\\n"; <STDIN>;', directory], { env: {}, stdio: ['pipe', 'pipe', 'ignore'] });
+  let printed = '';
+  parent.stdout.on('data', (chunk) => { printed += chunk; });
+  await until(() => printed.endsWith('\n'));
+  const group = Number(printed);
+  await until(() => /^Z\S*\s+(\d+)$/.exec(spawnSync('/bin/ps', ['-o', 'stat=,pgid=', '-p', String(group)], { encoding: 'utf8' }).stdout.trim())?.[1] === String(group));
+  return group;
+}
+
+test('given a recorded group that holds only an unreaped zombie, the call settles, records no kill, and clears its entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const group = await zombieGroup(directory);
+  writeGroups(stateOf(directory), [{ group, started: startOf(group), dispatch: 'd-zombie', card: 1412 }]);
+
+  await killIn(directory);
+
+  assert.deepEqual(killsIn(directory), []);
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+});
 
 test('given a recorded group with no live process, the call kills nothing and records no kill', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);

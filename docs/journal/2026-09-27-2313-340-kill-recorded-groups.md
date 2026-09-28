@@ -68,3 +68,11 @@ process group a dead engine recorded, once L0 has confirmed it is the group reco
   reader and `dispatch` now share one check, `holdsDispatch`, and `dispatch` refuses before it
   spawns. A test gives five such calls, and then shows a good dispatch still recorded in the same
   state directory.
+- **A recorded group holding only a zombie never settled (Codex's judge, item 9).** The census
+  leaves a zombie out, and L0's wait for an empty group polled for ever. #363 bounded that wait
+  with `UNREAPED_BOUND`, and once main carried it here a test records a group whose one member is
+  a zombie its parent outside the group never reaps: the call settles in about that bound, records
+  no kill and clears the entry. Taking the bound out of `ended()` has the test time out.
+- **Perl buffers what it prints into a pipe.** The zombie fixture's first draft never saw the
+  fork's pid, because Perl held it until it exited, and the fixture's wait spun past the test's
+  bound. It sets `$|` now.
