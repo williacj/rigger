@@ -1,6 +1,6 @@
 // ABOUTME: Parses every module under src/ and reports each boundary it crosses: the forge adapter's
-// sides a directory may not import, the facts a layer may not touch, what may spawn, and who may
-// hold L3's dispatching entry point or L1's dispatching function.
+// sides a directory may not import, the facts a layer may not touch, what may spawn, who may hold
+// L3's dispatching entry point or L1's dispatching function, and any code built at run time.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
@@ -76,6 +76,31 @@ const LOADERS = ['createRequire', 'getBuiltinModule', 'require', 'mainModule'];
 
 /** The built-in whose exports reach `require` by routes no name or string shows. */
 const LOADER_MODULES = ['node:module', 'module'];
+
+/**
+ * What runs code a module builds from a string, refused wherever a module names one, as a name or
+ * as a string. Code built at run time escapes rules 7, 8 and 9: they read what a module imports and
+ * names, and such code imports and names what it likes out of their sight. `eval` is refused
+ * however it is called, directly, indirectly or as a property of the global object; `Function`
+ * with or without `new`; and `constructor`, through which every function reaches the `Function`
+ * constructor, or an async or generator function its own kind of it, with no other name spelled;
+ * and the enumerators of an object's own properties, which reach a prototype's `constructor` with
+ * no key spelled at all. A name that only keys an object or a class member reads nothing and
+ * passes, so a class may declare its constructor.
+ *
+ * The limit: a property read whose key the source does not fix is outside this rule, as it is
+ * outside the loaders', and is a review finding. A key built by joining strings is one, so
+ * `globalThis[['ev','al'].join('')](code)` passes. The rule does not refuse every such read,
+ * because the judges on PR #381 counted 44 of them in 10 modules under src/, and refusing them all
+ * would fail the source tree at this head.
+ */
+const GENERATORS = ['eval', 'Function', 'constructor', 'getOwnPropertyDescriptors', 'getOwnPropertyNames', 'ownKeys'];
+
+/** The built-in that compiles and runs a string as code, refused however a module imports it. */
+const GENERATOR_MODULES = ['node:vm', 'vm'];
+
+/** Why the code-generation rule refuses what it names. */
+const UNSEEN = ', which runs code built at run time or reaches what does, and what that code imports is out of rules 7, 8 and 9\'s sight';
 
 /**
  * A module this test cannot read as an ES module: a `.cjs` module, whose wrapper hands it
@@ -1322,6 +1347,10 @@ export function boundaryReport(tree) {
           // Falls through to the refusal below, which names what could not be resolved.
         }
       }
+      if (GENERATOR_MODULES.includes(call.specifier)) {
+        report(file, call.line, 'the code-generation rule', `\`import(${call.argument})\` loads \`${call.specifier}\`${UNSEEN}`);
+        continue;
+      }
       if (file === CONFIG_LOAD.file && call.argument === CONFIG_LOAD.argument) {
         exempt.push({ file, line: call.line });
         continue;
@@ -1384,6 +1413,14 @@ export function boundaryReport(tree) {
     const loaded = [...module.imports, ...[...module.exported.values()].filter((held) => held.from !== undefined), ...module.stars];
     for (const entry of loaded) {
       if (LOADER_MODULES.includes(entry.from)) report(file, entry.line, 'the dynamic-import rule', `it imports \`${entry.from}\`, whose loaders bind modules this test cannot follow`);
+    }
+
+    // Code built at run time imports and names what it likes, out of rules 7, 8 and 9's sight.
+    for (const { value, line, key } of [...module.names, ...module.strings]) {
+      if (GENERATORS.includes(value) && !key) report(file, line, 'the code-generation rule', `it names \`${value}\`${UNSEEN}`);
+    }
+    for (const entry of loaded) {
+      if (GENERATOR_MODULES.includes(entry.from)) report(file, entry.line, 'the code-generation rule', `it imports \`${entry.from}\`${UNSEEN}`);
     }
 
     // Who may spawn a process, and who may name the forge's command.
