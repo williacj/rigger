@@ -59,9 +59,18 @@ function shell(directory, script, options = {}) {
   return adapt(directory, { command: '/bin/sh', args: ['-c', script, directory], ...options });
 }
 
-/** Runs a command through the adapter in `directory`, under an empty env and an `L0` emitter over it. */
+/**
+ * A timeout no command in this file reaches unless its test means it to, so a command that hangs
+ * fails its test here rather than holding the suite. It is under `SETTLES_WITHIN`.
+ */
+const UNREACHED = 15_000;
+
+/**
+ * Runs a command through the adapter in `directory`, under an empty env, an `L0` emitter over it,
+ * and a timeout it does not reach.
+ */
 function adapt(directory, options) {
-  return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, ...options });
+  return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, timeout: UNREACHED, ...options });
 }
 
 test('a command that exits 0 has exit code 0 in the result', async (t) => {
@@ -361,7 +370,7 @@ test('a caller whose PATH holds no ps still has a surviving child killed and rec
     `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
     `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
     `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
-    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }) });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: ${UNREACHED}, emitter: sink.emitter({ layer: 'L0' }) });`,
   ].join('\n'));
 
   const run = spawn(process.execPath, [caller], { env: { PATH: path }, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -708,7 +717,7 @@ test('a caller whose call settled past a process holding its output can exit whi
     `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
     `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
     `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
-    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: ${UNREACHED}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
   ].join('\n'));
 
   const run = spawn(process.execPath, [caller], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -798,4 +807,15 @@ test('given a sink that refuses every append, the failure\'s code tells it from 
 
   assert.equal(error.code, EVENT_REFUSED);
   assert.notEqual(unstarted.code, EVENT_REFUSED, 'a command that never started reads as a refused event');
+});
+
+test('a call with no timeout starts no process, and fails naming the missing timeout', async (t) => {
+  for (const [what, timeout] of [['undefined', undefined], ['null', null]]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), /timeout/, what);
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
+  }
 });
