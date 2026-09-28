@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,16 +33,27 @@ function l0(directory) {
   return { state, emitter: sink.emitter({ layer: 'L0' }) };
 }
 
-/** Runs `script` under `/bin/sh` through the adapter, with an `L0` emitter over `directory`. */
+/**
+ * A shell script named `name` in `directory`, executable, whose body reads that directory as
+ * `$here`. Its path, and so the directory, is in the command line of the shell running it.
+ */
+function fixture(directory, name, body) {
+  const path = join(directory, name);
+  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${body}\n`, { mode: 0o755 });
+  return path;
+}
+
+/**
+ * Runs `script` under `/bin/sh` through the adapter, with an `L0` emitter over `directory`. The
+ * script reads the directory as `$0`, which also puts it in the command line the teardown finds.
+ */
 function shell(directory, script, options = {}) {
-  return runCommand({
-    command: '/bin/sh',
-    args: ['-c', script, directory],
-    cwd: directory,
-    env: {},
-    emitter: l0(directory).emitter,
-    ...options,
-  });
+  return adapt(directory, { command: '/bin/sh', args: ['-c', script, directory], ...options });
+}
+
+/** Runs a command through the adapter in `directory`, under an empty env and an `L0` emitter over it. */
+function adapt(directory, options) {
+  return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, ...options });
 }
 
 test('a command that exits 0 has exit code 0 in the result', async (t) => {
@@ -66,12 +77,9 @@ const bytes = (length, step) => Buffer.from(Array.from({ length }, (_, i) => (i 
 
 /** A Node script, run by this Node, that writes `length` of `bytes(length, step)` to `stream`. */
 function writing(directory, stream, length, step) {
-  return runCommand({
+  return adapt(directory, {
     command: process.execPath,
     args: ['-e', `process.${stream}.write(Buffer.from(Array.from({ length: ${length} }, (_, i) => (i * ${step}) % 256)))`, directory],
-    cwd: directory,
-    env: {},
-    emitter: l0(directory).emitter,
   });
 }
 
@@ -97,4 +105,74 @@ test('the result carries, as bytes and apart from standard output, every byte a 
   assert.ok(Buffer.isBuffer(result.stderr), 'standard error is carried as bytes');
   assert.ok(result.stderr.equals(written), 'standard error holds every byte written, unchanged');
   assert.equal(result.stdout.length, 0, 'nothing written to standard error reaches standard output');
+});
+
+test('a command that prints its working directory prints the cwd the adapter was given', async (t) => {
+  const directory = scratch(t);
+  const given = join(directory, 'elsewhere');
+  mkdirSync(given);
+
+  const result = await shell(directory, '/bin/pwd', { cwd: given });
+
+  assert.equal(result.stdout.toString(), `${given}\n`);
+});
+
+test('a variable in the caller\'s own environment and absent from the env given is absent from the command\'s', async (t) => {
+  const directory = scratch(t);
+  process.env.RIGGER_CALLER_ONLY = 'the caller holds this';
+  t.after(() => delete process.env.RIGGER_CALLER_ONLY);
+
+  const result = await shell(directory, '/usr/bin/env', { env: { RIGGER_GIVEN: 'given' } });
+
+  const names = result.stdout.toString().split('\n').map((line) => line.split('=')[0]);
+  assert.ok(names.includes('RIGGER_GIVEN'), 'the command ran under the env given');
+  assert.ok(!names.includes('RIGGER_CALLER_ONLY'), 'the caller\'s own variable reached the command');
+});
+
+test('a variable the env given sets has exactly the value given in the command\'s environment', async (t) => {
+  const directory = scratch(t);
+  const value = ' two  spaces, a = sign,\na newline and ü ';
+
+  const result = await shell(directory, 'printf %s "$RIGGER_GIVEN"', { env: { RIGGER_GIVEN: value } });
+
+  assert.equal(result.stdout.toString(), value);
+});
+
+/** The process group id `ps` reads for `pid`. */
+const groupOf = (pid) => spawnSync('/bin/ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
+
+/**
+ * A line of a fixture that writes, as `ps` reads it, the process group of the shell running it to
+ * `$here/<file>`, renamed into place so a reader never sees half of it.
+ */
+const reportGroup = (file) => `/bin/ps -o pgid= -p $$ > "$here/${file}.tmp" && /bin/mv "$here/${file}.tmp" "$here/${file}"`;
+
+/** What a fixture wrote to `name` in `directory`, trimmed. */
+const read = (directory, name) => readFileSync(join(directory, name), 'utf8').trim();
+
+test('every process a command starts that stays in its group reports one process group id, not the caller\'s', async (t) => {
+  const directory = scratch(t);
+  fixture(directory, 'grandchild', reportGroup('grandchild'));
+  fixture(directory, 'child', `${reportGroup('child')}\n"$here/grandchild"`);
+  const command = fixture(directory, 'command', `${reportGroup('command')}\n"$here/child"`);
+
+  const result = await adapt(directory, { command });
+
+  assert.equal(result.stderr.toString(), '');
+  assert.match(read(directory, 'command'), /^\d+$/);
+  assert.equal(read(directory, 'child'), read(directory, 'command'), 'the command\'s child reports the command\'s group');
+  assert.equal(read(directory, 'grandchild'), read(directory, 'command'), 'the command\'s grandchild reports the command\'s group');
+  assert.notEqual(read(directory, 'command'), groupOf(process.pid), 'the command runs in the caller\'s own group');
+});
+
+test('two commands running at once through the adapter report different process group ids', async (t) => {
+  const directory = scratch(t);
+  // Each writes its own group, then waits until the other has written, so both are alive at once.
+  const meet = fixture(directory, 'meet', `${reportGroup('$1')}\nwhile [ ! -f "$here/$2" ]; do :; done`);
+
+  await Promise.all([adapt(directory, { command: meet, args: ['one', 'two'] }), adapt(directory, { command: meet, args: ['two', 'one'] })]);
+
+  assert.match(read(directory, 'one'), /^\d+$/);
+  assert.match(read(directory, 'two'), /^\d+$/);
+  assert.notEqual(read(directory, 'one'), read(directory, 'two'));
 });
