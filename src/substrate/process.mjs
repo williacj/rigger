@@ -382,11 +382,14 @@ async function contain(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
-  // Asked of the kernel in the turn that sends the kill, so a survivor that exited on its own
-  // after the census's last read, and was reaped, is not recorded as killed. One not yet reaped
-  // still answers, because signal 0 reaches a zombie (measured with Node 26.5.0 on macOS 27.0 on
-  // 2026-09-27), and is recorded as killed.
-  const killed = survivors?.filter(({ pid }) => answers(pid));
+  // A survivor that exited on its own after the census's last read is not one L0 killed. A read
+  // of states just before the kill finds it a zombie, or gone, and signal 0, asked in the turn
+  // that sends the kill, finds it reaped since. Signal 0 alone would not do: it reaches a zombie
+  // (measured with Node 26.5.0 on macOS 27.0 on 2026-09-27). Where the read fails, only signal 0
+  // is asked, so a survivor left unreaped then is recorded as killed.
+  const states = survivors === undefined ? undefined : await statesOf(group, ps, readTimeout).catch(() => undefined);
+  const present = (pid) => states === undefined || (states.get(pid)?.startsWith('Z') === false);
+  const killed = survivors?.filter(({ pid }) => present(pid) && answers(pid));
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   return killed.map((survivor) => ['survivor.killed', survivor]);

@@ -1027,3 +1027,47 @@ test('a survivor whose argv[0] differs from its executable\'s name in its traili
   const byPid = new Map(events.map(({ pid, name }) => [pid, name]));
   assert.deepEqual(runs.map((_, n) => byPid.get(Number(read(directory, `run${n}.pid`)))), runs.map(([name]) => name));
 });
+
+test('a survivor the census named that exits on its own before the kill, and is left unreaped, is not recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The keeper forks the quitter, which exits once told to go, and never reaps it. The keeper is
+  // in the group, so the census stops it too, and the quitter stays a zombie until the kill. The
+  // stand-in tells the quitter to go, and resumes it, inside the census's last read of states,
+  // which it answers as the table stood before, once the quitter is a zombie.
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'keeper'), [
+    'my $here = $ARGV[0];',
+    'my $quitter = fork();',
+    'if ($quitter == 0) { 1 until -e "$here/go"; exit 0; }',
+    'open(my $f, ">", "$here/quitter.pid.tmp"); print $f $quitter; close $f;',
+    'rename("$here/quitter.pid.tmp", "$here/quitter.pid");',
+    'select(undef, undef, undef, undef);',
+  ].join('\n'));
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
+    'case "$*" in *stat=*)',
+    '  if [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null; then',
+    '    table=$(/bin/ps "$@")',
+    '    quitter=$(/bin/cat "$here/quitter.pid")',
+    '    : > "$here/go"',
+    '    kill -s CONT "$quitter"',
+    '    until /bin/ps -o stat= -p "$quitter" | /usr/bin/grep -q "^Z"; do :; done',
+    '    printf "%s\\n" "$table"',
+    '    exit 0',
+    '  fi ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [
+    '/usr/bin/perl "$here/keeper" "$here" &',
+    'echo $! > "$here/keeper.pid"',
+    'while [ ! -f "$here/quitter.pid" ]; do :; done',
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'keeper.pid')) },
+  ]);
+});
