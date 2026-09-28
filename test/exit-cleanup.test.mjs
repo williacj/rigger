@@ -83,7 +83,7 @@ const CALLER = [
   "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
   "  const started = options.dispatch?.includes(label)",
   "    ? dispatch({ id: `d-${label}`, card: label + 6, directory: state, sink, ...call })",
-  "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, exit) => writeFileSync(join(directory, `exit.${label}`), String(exit))) });",
+  "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, ending) => writeFileSync(join(directory, `exit.${label}`), JSON.stringify(ending))) });",
   "  started.catch(() => {}).finally(() => { settled += 1; if (options.exitOnSettle) process.exit(0); });",
   '}',
   'async function start(label) {',
@@ -155,6 +155,35 @@ function fixtures(directory) {
   // `exiting` is a command alone in its group, which exits 3 once the caller writes `release`. It
   // records its own pid as the group and as the child, so a caller starts it as it starts `command`.
   fixture(directory, 'exiting', [
+    'echo $$ > "$here/group.$1"',
+    'echo $$ > "$here/child.$1"',
+    'while [ ! -f "$here/release" ]; do :; done',
+    'exit 3',
+  ].join('\n'));
+  // Stand-ins for `ps` that answer every read as `ps` does, but the one read of a group's states
+  // and wait statuses the exit cleanup makes as its kill's last look, which `ps-status-fails`
+  // fails and `ps-status-hangs` never answers. `ps-log` answers every read as `ps` does and
+  // writes each one's arguments to `ps.log`.
+  const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) ${answer} ;; esac\nexec /bin/ps "$@"`;
+  fixture(directory, 'ps-status-fails', statusRead('echo "ps: the test refuses this read" >&2; exit 2'));
+  fixture(directory, 'ps-status-hangs', statusRead('exec /usr/bin/tail -f "$here/ps-hold"'));
+  fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec /bin/ps "$@"');
+  // `zombied` starts a process that leaves the group, holds the command's output open until
+  // killed, and parents a child it never reaps, which joins the group and exits there. So the
+  // group holds that zombie until the process is killed. `zombied` exits 3 once the caller writes
+  // `release`.
+  const parent = [
+    'setpgrp(0, 0) or die "leaving: $!";',
+    'open my $pid, ">", "$ARGV[0]/parent.pid" or die; print $pid $$; close $pid;',
+    'my $child = fork // die "fork: $!";',
+    'if (!$child) { setpgrp(0, $ARGV[1]) or die "joining: $!"; open my $joined, ">", "$ARGV[0]/joined" or die; close $joined; exit 0; }',
+    '1 until -e "$ARGV[0]/joined";',
+    'open my $ready, ">", "$ARGV[0]/zombie.ready" or die; close $ready;',
+    'exec "/usr/bin/tail", "-f", "$ARGV[0]/hold";',
+  ].join(' ');
+  fixture(directory, 'zombied', [
+    `/usr/bin/perl -e '${parent}' "$here" $$ &`,
+    'while [ ! -f "$here/zombie.ready" ]; do :; done',
     'echo $$ > "$here/group.$1"',
     'echo $$ > "$here/child.$1"',
     'while [ ! -f "$here/release" ]; do :; done',
@@ -768,7 +797,7 @@ test('the cleanup hands each command\'s step the exit code of its command: its o
 
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
-  assert.deepEqual([read(directory, 'exit.1'), read(directory, 'exit.2')], ['0', String(128 + constants.signals.SIGKILL)]);
+  assert.deepEqual([1, 2].map((label) => JSON.parse(read(directory, `exit.${label}`))), [{ exit: 0 }, { exit: 128 + constants.signals.SIGKILL }]);
 });
 
 test('given two dispatches still running when the caller receives SIGTERM, the stream holds one dispatch end for each', ENDS_WITHIN, async (t) => {
@@ -784,22 +813,58 @@ test('given two dispatches still running when the caller receives SIGTERM, the s
 /** Dispatch `id`'s dispatch-end events in `events`. */
 const endsOf = (events, id) => events.filter(({ event, dispatch }) => event === 'dispatch.end' && dispatch === id);
 
-test('given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
-  // The caller waits, synchronously so that Node reaps nothing, until the command is a zombie.
-  const after = [
-    "writeFileSync(join(directory, 'release'), '');",
-    "const leader = readFileSync(join(directory, 'group.1'), 'utf8').trim();",
-    "while (!spawnSync('/bin/ps', ['-o', 'stat=', '-p', leader], { encoding: 'utf8' }).stdout.startsWith('Z'));",
-    'process.exit(0);',
-  ].join('\n');
+/**
+ * The caller's code that releases its first command, waits until that command is a zombie,
+ * synchronously so that Node reaps nothing, and then calls process.exit(0).
+ */
+const EXIT_UNREAPED = [
+  "writeFileSync(join(directory, 'release'), '');",
+  "const leader = readFileSync(join(directory, 'group.1'), 'utf8').trim();",
+  "while (!spawnSync('/bin/ps', ['-o', 'stat=', '-p', leader], { encoding: 'utf8' }).stdout.startsWith('Z'));",
+  'process.exit(0);',
+].join('\n');
 
-  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'exiting' }, after });
+test('given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'exiting' }, after: EXIT_UNREAPED });
 
   assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
   await assertNoneAlive(directory);
   assert.deepEqual(endsOf(streamOf(directory), 'd-1').map(({ exit }) => exit), [3]);
   assert.deepEqual(JSON.parse(read(directory, 'record-at-end.d-1')).filter(({ dispatch }) => dispatch === 'd-1'), []);
   assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
+});
+
+for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses this read/], ['ps-status-hangs', 'does not answer', /timed out/]]) {
+  test(`given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), where the cleanup's read of its status ${how}, its one dispatch end carries no exit code and says why`, ENDS_WITHIN, async (t) => {
+    const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, ps, readTimeout: 300, after: EXIT_UNREAPED });
+
+    assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+    await assertNoneAlive(directory);
+    assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
+    const ends = endsOf(streamOf(directory), 'd-1');
+    assert.equal(ends.length, 1, JSON.stringify(ends));
+    assert.equal('exit' in ends[0], false, JSON.stringify(ends[0]));
+    assert.match(ends[0].unread ?? '', /could not read the command's status/, JSON.stringify(ends[0]));
+    assert.match(ends[0].unread, why);
+  });
+}
+
+test('the cleanup reads nothing of a group the call has already ended, though a zombie keeps it in being', ENDS_WITHIN, async (t) => {
+  // The command leaves a zombie in its group, which the call ends once the bound on unreaped
+  // members passes, and a process outside it holding the output. The caller is signalled as the
+  // adapter starts waiting on that output.
+  const after = "writeFileSync(join(directory, 'release'), '');";
+
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'zombied' }, ps: 'ps-log', exits: true, signalInOutputWait: true, after });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  const group = read(directory, 'group.1');
+  const reads = read(directory, 'ps.log').split('\n').filter((line) => line.includes(`-g ${group} `));
+  assert.ok(reads.length > 0, 'the call read nothing of the group, so this proves nothing');
+  assert.deepEqual(reads.filter((line) => line.includes('xstat=') && !line.includes('ppid=')), [], 'the cleanup took its last look at the group');
+  assert.deepEqual(JSON.parse(read(directory, 'exit.1')), { exit: 3 });
+  process.kill(Number(read(directory, 'parent.pid')), 'SIGKILL');
+  await assertNoneAlive(directory);
 });
 
 test('given a dispatch whose command exits 3 and is reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
@@ -854,7 +919,7 @@ test('the cleanup hands a call\'s step the command\'s exit code where the caller
 
   assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
   await assertNoneAlive(directory);
-  assert.equal(read(directory, 'exit.1'), '3');
+  assert.deepEqual(JSON.parse(read(directory, 'exit.1')), { exit: 3 });
 });
 
 test('given a dispatch whose command exits 3, when the caller calls process.exit(0) in the turn the dispatch settles, the stream holds its one dispatch end, carrying 3', ENDS_WITHIN, async (t) => {

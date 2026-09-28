@@ -195,8 +195,8 @@ function onSignal(name) {
  * has not emptied, it takes the census, kills the group and confirms it; and only then records
  * each kill, the call's own unrecorded kills first, and writes to standard error every kill the
  * sink refused, since no caller is left to report it to. It then takes each caller's step for its
- * group, handing it the command's exit code, which is L1's removal of the group's entry and its
- * record of the dispatch's end; and last the steps handed to `atExit`. A failure in any of these is
+ * group, handing it how the command ended (`endingOf`), which is L1's removal of the group's
+ * entry and its record of the dispatch's end; and last the steps handed to `atExit`. A failure in any of these is
  * written to standard error and never stops the rest, nor changes how the process ends.
  *
  * It ends only the calls in flight when it runs, and lets each go, so a process that a signal
@@ -213,26 +213,27 @@ function cleanup() {
   }
   const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
-  for (const [group, { onExit, child }, { leader }] of ended) attempt(() => onExit?.(group, exitOf(child, leader)));
+  for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, endingOf(child, look)));
   for (const step of steps) attempt(step);
 }
 
 /**
- * The exit code of the command `child` ran, as the exit cleanup finds it. Where Node has reaped the
- * command, Node says how it ended. Otherwise the command is a zombie, since Node reaps no child
- * while the cleanup runs, and `leader` is the wait status `ps` read for it as `xstat`: its own exit
- * where it had exited, or the cleanup's kill. Where `ps` could not read it, the cleanup's kill ended
- * the command, because the kill was sent.
+ * How the command `child` ran ended, as the exit cleanup finds it: `{ exit }`, its exit code, or
+ * `{ unread }`, why its status could not be read. Where Node has reaped the command, Node says how
+ * it ended. Otherwise the command is a zombie, since Node reaps no child while the cleanup runs,
+ * and `leader` is the wait status `ps` read for it as `xstat` on the kill's last look: its own
+ * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer,
+ * `unread` says why, and nothing tells the command's own exit from the kill.
  */
-function exitOf(child, leader) {
-  if (child.exitCode !== null) return child.exitCode;
-  if (child.signalCode !== null) return signalled(child.signalCode);
-  if (leader === undefined) return signalled('SIGKILL');
+function endingOf(child, { leader, unread }) {
+  if (child.exitCode !== null) return { exit: child.exitCode };
+  if (child.signalCode !== null) return { exit: signalled(child.signalCode) };
+  if (leader === undefined) return { unread: `the exit cleanup could not read the command's status: ${unread}` };
   // `ps` prints the wait status in hexadecimal. Its low seven bits are the signal that ended the
   // process, where one did, and the byte above them its exit code (wait(2): WTERMSIG, WEXITSTATUS).
   const status = Number.parseInt(leader, 16);
   const ending = status & 0x7f;
-  return ending === 0 ? (status >> 8) & 0xff : 128 + ending;
+  return { exit: ending === 0 ? (status >> 8) & 0xff : 128 + ending };
 }
 
 /**
@@ -696,12 +697,15 @@ function containNow(group, { ps, readTimeout }) {
     unnamed = error.message;
   }
   let leader;
+  let unread;
   try {
     leader = readingNow(emptied(group), ps, readTimeout);
-  } catch {
+    if (leader === undefined) unread = 'the process table did not list it';
+  } catch (error) {
     // The kill was sent on every look, and nothing is left to wait on.
+    unread = error.message;
   }
-  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader };
+  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader, unread };
 }
 
 /**
@@ -908,9 +912,10 @@ function refused(unrecorded, result, ending = '') {
  *
  * L0 holds the call from the step that creates the group until a turn after the call settles. Where
  * the process exits meanwhile, L0's exit cleanup kills the group where the call has not emptied
- * it, records every kill, and then hands the group and the command's exit code to `onExit`, where
- * the caller gives one: a synchronous step, which is how L1 removes a dispatch's entry and records
- * its end. The step can come after the call has settled, in the turn it settled, and must then do
+ * it, records every kill, and then hands the group and how the command ended to `onExit`, where
+ * the caller gives one: `{ exit }`, its exit code, or `{ unread }`, why it could not be read.
+ * `onExit` is a synchronous step, which is how L1 removes a dispatch's entry and records its end.
+ * The step can come after the call has settled, in the turn it settled, and must then do
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */

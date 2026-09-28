@@ -19,7 +19,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
  * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
  * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
- * test gives one.
+ * test gives one. `ps` and `readTimeout` stand in for L0's own where the caller gives them.
  *
  * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
  * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
@@ -31,8 +31,9 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * On Rigger's own exit before L1 has recorded the end, whether the command is still running or has
  * exited while the call is in flight, the order is L0's exit cleanup's: L0 kills what is left of
  * the group and records each kill; L1 removes the entry and appends `dispatch.end`, carrying the
- * exit code L0 hands it, which is the command's own where it had exited. Where the record refuses
- * the removal, the end still goes, saying as `kept` which entry was kept and why. The sink's
+ * exit code L0 hands it, which is the command's own where it had exited. Where L0 could not read
+ * the command's status, the end carries no exit code, and says as `unread` why. Where the record
+ * refuses the removal, the end still goes, saying as `kept` which entry was kept and why. The sink's
  * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
  * naming the event, the dispatch and its card. A process kept running past its ending has the call
  * settle as before, and records nothing more of the dispatch.
@@ -54,7 +55,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, ps, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -87,6 +88,8 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
       cwd,
       env,
       timeout,
+      ps,
+      readTimeout,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
       onGroup: (group, started) => {
         // The window this leaves open. L0 spawns, then hands the group over in the same step, and
@@ -105,15 +108,16 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         addGroup(directory, { group, started, dispatch: id, card });
         recorded = group;
       },
-      // On Rigger's own exit, L0 kills and records the group, and then hands it here with the
-      // command's exit code, to remove its entry and record the dispatch's end, which says why the
-      // entry was kept where the record refused its removal. No caller is left to hear of a
+      // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
+      // command ended, its exit code or why its status could not be read, to remove its entry and
+      // record the dispatch's end, which says why the entry was kept where the record refused its
+      // removal. No caller is left to hear of a
       // refused end, so L0 writes this refusal to standard error. L0 can hand over a dispatch
       // whose end L1 has already recorded, which is left as it is.
-      onExit: (group, exit) => {
+      onExit: (group, ending) => {
         if (ended) return;
         ended = true;
-        const fields = { exit, ms: Math.round(clock() - began) };
+        const fields = { ...ending, ms: Math.round(clock() - began) };
         try {
           removeGroup(directory, group);
         } catch (cause) {
