@@ -19,8 +19,8 @@ cites it, and the citation is where the binding text lives; a conflict resolves 
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting (`ARCHITECTURE.md`, Extension points).
 3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
-   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-5`). A repeated host fault closes
-   admission rather than stopping cards (`R-FAIL-3`); L3 owns that hold.
+   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-6`, `R-STATE-12`). A repeated
+   host fault closes admission rather than stopping cards (`R-FAIL-3`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
@@ -248,8 +248,9 @@ This is the budgeted module.
 Exit:
 
 - A tree with a lingering grandchild whose parent exits 0 yields result 0, and the grandchild is
-  dead and named in the log (`R-STATE-5`).
-- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling.
+  dead and named in the log (`R-STATE-6`, `R-STATE-7`, `R-STATE-12`, `R-STATE-15`).
+- SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling
+  (`R-STATE-10`).
 
 **M3. Worktrees and provisioning.**
 
