@@ -20,12 +20,15 @@ import { PS, runCommand } from '../src/substrate/process.mjs';
  */
 function scratch(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
-  t.after(() => {
-    const pattern = directory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    spawnSync('/usr/bin/pkill', ['-KILL', '-f', pattern]);
-  });
+  t.after(() => spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]));
   return directory;
 }
+
+/** `text` as a pattern `pgrep` and `pkill` match only as written. */
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The pid of every process whose command line holds `text`. */
+const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
 function l0(directory) {
@@ -193,8 +196,16 @@ function alive(pid) {
  * The lines of a fixture that start `program` in the background, holding the command's standard
  * output and standard error, and write its pid to `$here/<name>.pid`. `program` runs until it is
  * killed, and names the scratch directory in its command line.
+ *
+ * The lines then wait until the background process runs the executable `image`, as `ps` reads
+ * it, or has ended. Until then it can still be the shell that forked it, and a census taken then
+ * names the shell.
  */
-const leave = (program, name) => `${program} &\necho $! > "$here/${name}.pid"`;
+const leave = (program, name, image = 'tail') => [
+  `${program} &`,
+  `echo $! > "$here/${name}.pid"`,
+  `while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx '${image} *'; do :; done`,
+].join('\n');
 
 /** A survivor that runs until killed: `tail` following a file nothing writes to. */
 const TAIL = '/usr/bin/tail -f "$here/hold"';
@@ -286,7 +297,7 @@ test('two children left alive when their command exits are recorded as one kill 
   const command = fixture(directory, 'command', [
     '/usr/bin/mkfifo "$here/fifo"',
     leave(TAIL, 'tail'),
-    leave('/bin/cat "$here/fifo"', 'cat'),
+    leave('/bin/cat "$here/fifo"', 'cat', 'cat'),
   ].join('\n'));
 
   const { events } = await recorded(directory, { command });
@@ -358,8 +369,10 @@ test('a caller whose PATH holds no ps still has a surviving child killed and rec
 
 test('given a process-table read that never answers, the call settles with no process of the group alive, and records the group\'s kill and the timeout', async (t) => {
   const directory = holding(t);
-  // The stand-in `exec`s its wait, so the process the adapter times out and kills is the wait.
-  const ps = fixture(directory, 'ps', `echo $$ > "$here/ps.pid"\nexec ${TAIL}`);
+  // The stand-in `exec`s its wait, so the process the adapter times out and kills is the wait. It
+  // may be killed before it runs a line, so it is looked for by its command line, not a pid file.
+  writeFileSync(join(directory, 'ps-hold'), '');
+  const ps = fixture(directory, 'ps', 'exec /usr/bin/tail -f "$here/ps-hold"');
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}`);
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 200 });
@@ -367,7 +380,7 @@ test('given a process-table read that never answers, the call settles with no pr
   const group = Number(read(directory, 'group'));
   assert.equal(alive(-group), false, 'a process of the command\'s group is alive');
   assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
-  assert.equal(alive(Number(read(directory, 'ps.pid'))), false, 'the stand-in for ps is alive');
+  assert.deepEqual(running(`${directory}/ps`), [], 'the stand-in for ps is alive');
   assert.deepEqual(events.map(({ layer, event, group: killed }) => ({ layer, event, group: killed })), [{ layer: 'L0', event: 'group.killed', group }]);
   assert.match(events[0].census, /process-table read timed out/);
 });
