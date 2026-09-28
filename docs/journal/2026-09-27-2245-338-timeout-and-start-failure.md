@@ -23,8 +23,14 @@ can read. 128 plus the signal's number is what a shell reports, and it is never 
 **`timedOut` is true only where the kill ended the command.** Between the timer firing and the
 census stopping the group, the command can exit on its own. It then has its own exit code, which
 can be 0, and reporting it as timed out would pair "the timeout ended it" with success. So the
-result says the timeout ended it only where the exit shows a signal. No test forces that race, so
-no test covers this branch; the PR says so.
+result says the timeout ended it only where the exit shows a signal. The engineer judge on #364
+forced that race by blocking Node's loop past the timer. The test does the same on a condition:
+it holds the thread until the command is a zombie Node has not reaped. When the loop resumes, Node
+runs the due timer before it reaps the command.
+
+**No `cwd` at all is the check's other difference from the spawn.** Like an empty string, it
+fails the check, while Node's spawn runs the command in the caller's own directory. Both judges
+on #364 found it missing from the note, and the note now records it, measured.
 
 **Node reports a spawn failure two ways.** Measured with Node 26.5.0 on macOS 27.0, a `cwd` that is
 a file, a link loop and an executable of garbage bytes each throw synchronously (`ENOTDIR`,

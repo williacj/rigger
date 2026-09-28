@@ -874,6 +874,23 @@ test('given a command that finishes inside its timeout, the result reports no ti
   assert.equal(result.exit, 3);
 });
 
+test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit 0');
+
+  // The timer is armed before the call first yields. Holding this thread until the command is a
+  // zombie, which Node has not reaped because its loop cannot run, leaves the timer and the exit
+  // both due when the loop resumes, and Node runs due timers before it reaps.
+  const call = adapt(directory, { command, timeout: 1 });
+  const zombie = () => existsSync(join(directory, 'command.pid'))
+    && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
+  while (!zombie());
+  const result = await call;
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+});
+
 test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const payload = bytes(300_001, 23);
@@ -988,6 +1005,16 @@ test('a working directory that is a file rejects as a failure to start, naming i
   const directory = scratch(t);
   const cwd = join(directory, 'a-file');
   writeFileSync(cwd, '');
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});
+
+test('a working directory that is an executable file rejects as a failure to start, naming it', async (t) => {
+  const directory = scratch(t);
+  // Executable, so asking only whether it can be entered would let it through.
+  const cwd = join(directory, 'an-executable');
+  writeFileSync(cwd, '', { mode: 0o755 });
 
   unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
   neverRan(directory);
