@@ -35,7 +35,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
  *   read of the process table does not answer, so that group is stopped when the caller ends.
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
- * - `listens`: whether the caller has a `SIGTERM` listener of its own, which exits 3.
+ * - `listens`: whether the caller has a `SIGTERM` listener of its own, which says `heard`, runs on
+ *   until the test writes `go`, and then exits 3.
  */
 const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
@@ -49,7 +50,13 @@ const CALLER = [
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
   'atExit(sink.end);',
-  "if (options.listens) process.on('SIGTERM', () => process.exit(3));",
+  "if (options.listens) process.on('SIGTERM', async () => {",
+  // It says so a turn later, once every other listener for the signal has run.
+  '  await turn();',
+  "  process.stdout.write('heard\\n');",
+  "  while (!existsSync(join(directory, 'go'))) await turn();",
+  '  process.exit(3);',
+  '});',
   // Touching process.stderr is what every verb that prints does, and it leaves the descriptor
   // non-blocking, where a single write to a full pipe comes back short.
   "process.stderr.write('');",
@@ -68,7 +75,7 @@ const CALLER = [
   '  if (options.stopped) {',
   "    const child = readFileSync(join(directory, 'child.1'), 'utf8').trim();",
   "    const state = () => spawnSync('/bin/ps', ['-o', 'stat=', '-p', child], { encoding: 'utf8' }).stdout;",
-  "    while (!existsSync(join(directory, 'ps-once')) || !state().startsWith('T')) await turn();",
+  "    while (!existsSync(join(directory, 'ps-asked')) || !state().startsWith('T')) await turn();",
   '  }',
   '}',
   "process.stdout.write('ready\\n');",
@@ -91,9 +98,11 @@ const CALLER = [
 function fixtures(directory) {
   writeFileSync(join(directory, 'hold'), '');
   writeFileSync(join(directory, 'ps-hold'), '');
-  // The child's pid is written only once it is `tail`, so a census never finds it mid-exec.
+  // The child's pid is written only once it is `tail`, so a census never finds it mid-exec. It
+  // ignores SIGTERM, which it inherits across the exec, so only a kill no process can ignore ends
+  // it: on this host SIGTERM ends a stopped process as it ends a running one.
   const child = [
-    '/usr/bin/tail -f "$here/hold" &',
+    "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
     'echo $! > "$here/child.$1.tmp"',
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
@@ -101,7 +110,7 @@ function fixtures(directory) {
   fixture(directory, 'command', `echo $$ > "$here/group.$1"\n${child}\nwait`);
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
-    'if [ ! -f "$here/ps-once" ]; then : > "$here/ps-once"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
+    'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
     'exec /bin/ps "$@"',
   ].join('\n'));
   fixture(directory, 'ps-never', 'exec /usr/bin/tail -f "$here/ps-hold"');
@@ -110,9 +119,10 @@ function fixtures(directory) {
 /**
  * Runs the caller in a scratch directory under `options`, sends it `signal` once it is ready,
  * where one is given, and answers how it ended and what it left. `inspect`, where given, is handed
- * the directory once the caller is ready and before it ends, and what it answers is `seen`.
+ * the directory once the caller is ready and before it ends, and what it answers is `seen`. So is
+ * `whileHeard`, once a caller that listens has heard the signal, and what it answers is `heard`.
  */
-async function endCaller(t, options, { signal, refusing = false, inspect } = {}) {
+async function endCaller(t, options, { signal, refusing = false, inspect, whileHeard } = {}) {
   const directory = scratch(t);
   fixtures(directory);
   if (refusing) {
@@ -137,10 +147,15 @@ async function endCaller(t, options, { signal, refusing = false, inspect } = {})
   // What the process table says of each process, read while the caller still holds them.
   const processes = options.groups ? described(directory) : [];
   const seen = inspect?.(directory);
+  let heard;
   if (signal !== undefined) process.kill(run.pid, signal);
-  else writeFileSync(join(directory, 'go'), '');
+  if (whileHeard !== undefined) {
+    while (!stdout.includes('heard\n')) await new Promise((resolve) => setImmediate(resolve));
+    heard = whileHeard(directory);
+  }
+  if (signal === undefined || whileHeard !== undefined) writeFileSync(join(directory, 'go'), '');
   const [status, killedBy] = await ended;
-  return { directory, processes, seen, status, signal: killedBy, stderr };
+  return { directory, processes, seen, heard, status, signal: killedBy, stderr };
 }
 
 /** The pids a caller's two commands recorded: each group's leader and its `tail`. */
@@ -228,9 +243,11 @@ for (const ending of ['exit 0', 'exit 1']) {
   });
 }
 
-test('a caller holding two groups with a SIGTERM listener of its own ends as that listener has it, and leaves no process of either alive', ENDS_WITHIN, async (t) => {
-  const { directory, processes, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, listens: true }, { signal: 'SIGTERM' });
+test('a caller holding two groups whose own SIGTERM listener keeps it running leaves both groups running, and at the exit it makes, none', ENDS_WITHIN, async (t) => {
+  const everyAlive = (directory) => processesOf(directory).every(({ pid }) => alive(pid));
+  const { directory, processes, heard, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, listens: true }, { signal: 'SIGTERM', whileHeard: everyAlive });
 
+  assert.equal(heard, true, 'a process of the caller\'s groups died when the caller\'s own listener kept it running');
   assert.deepEqual({ status, signal }, { status: 3, signal: null }, stderr);
   await assertNoneAlive(directory);
   assert.deepEqual(kills(streamOf(directory)), byPid(processes));
