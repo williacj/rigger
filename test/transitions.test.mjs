@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -142,18 +142,20 @@ test('a move the board refuses writes no transition event, and is reported namin
   assert.throws(events, /ENOENT/, 'the event stream was written');
 });
 
-// The sink below refuses the way the judge's probe on PR #273 made it refuse: its state directory
-// is removed after it opened, so the real sink's append throws ENOENT.
+// The sink below refuses because its state directory refuses writes after it opened, so the real
+// sink's append throws EACCES. Removing the directory would not make it refuse, because the sink
+// makes its directory at its first write.
+const refuseWrites = (directory) => chmodSync(directory, 0o555);
 
 test('a move the board takes and the sink will not record is reported, naming the card, both columns and the sink\'s error', async () => {
   const { fake, l2, directory } = world();
   const [card] = await itemsOf(fake);
-  rmSync(directory, { recursive: true });
+  refuseWrites(directory);
 
   await assert.rejects(l2.claimed(card), (error) => {
     assert.match(error.message, /card #12/);
     assert.match(error.message, /from ready to coding/);
-    assert.match(error.message, /ENOENT/);
+    assert.match(error.message, /EACCES/);
     return true;
   });
 
@@ -170,10 +172,10 @@ for (const [name, settler] of [
   test(`while the sink still refuses, a card whose claim went unrecorded moves to review on a zero exit, settled by ${name}`, async () => {
     const w = world();
     const [card] = await itemsOf(w.fake);
-    rmSync(w.directory, { recursive: true });
-    await assert.rejects(w.l2.claimed(card), /ENOENT/);
+    refuseWrites(w.directory);
+    await assert.rejects(w.l2.claimed(card), /EACCES/);
 
-    await assert.rejects(settler(w).settled(card, RETURNED), /card #12 moved from coding to review.*ENOENT/);
+    await assert.rejects(settler(w).settled(card, RETURNED), /card #12 moved from coding to review.*EACCES/);
 
     const [moved] = await itemsOf(w.fake);
     assert.equal(moved.column, 'Review');
@@ -185,9 +187,9 @@ test('once the sink accepts again, no transition event for the refused move is e
   // A late event carries the time it was written, not the time of the move (R-RECORD-7).
   const { fake, l2, directory, events } = world();
   const [card] = await itemsOf(fake);
-  rmSync(directory, { recursive: true });
-  await assert.rejects(l2.claimed(card), /ENOENT/);
-  mkdirSync(directory);
+  refuseWrites(directory);
+  await assert.rejects(l2.claimed(card), /EACCES/);
+  chmodSync(directory, 0o755);
 
   await l2.settled(card, RETURNED);
 

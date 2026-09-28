@@ -137,8 +137,9 @@ and inherits exactly the permissions you gave them. Scope those permissions with
 settings.
 
 **Agents run as you.** A maker or judge runs with your user's access to the machine and to the
-repository. Rigger contains every process it starts and kills the whole tree on exit, but it
-cannot make an agent more restricted than the account it runs under.
+repository. Rigger contains only the process groups it creates, and ends every process left in
+them unless Rigger itself is killed outright. A process that leaves its group is outside that
+containment. Rigger cannot make an agent more restricted than the account it runs under.
 
 **Telemetry is yours.** See [Telemetry](#telemetry).
 
