@@ -901,3 +901,12 @@ test('given a child that writes to standard output and standard error and outliv
   assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');
   assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
 });
+
+test('given a command that outlives its timeout and exits 0 on SIGTERM, the result has a non-zero integer exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // `wait` returns at once on a signal the shell traps, so SIGTERM would end the command with 0.
+  const result = await adapt(directory, outliving(directory, `trap 'exit 0' TERM\n${leave(TAIL, 'child')}`));
+
+  ready(directory);
+  assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
+});
