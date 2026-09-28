@@ -4,7 +4,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { setImmediate as turn } from 'node:timers/promises';
+import { setTimeout as pause } from 'node:timers/promises';
 
 /**
  * The process-table tool, by absolute path, so it is found whatever `PATH` the caller runs under:
@@ -33,6 +33,29 @@ export const READ_TIMEOUT = 5_000;
  * costs a command whose output a detached process holds one second.
  */
 export const OUTPUT_BOUND = 1_000;
+
+/**
+ * How long L0 goes on killing a group that holds nothing but zombies before it settles. A zombie
+ * cannot run, but it keeps its group in being, so a process can still join the group, and L0 kills
+ * any that does within the bound. A zombie whose parent never reaps it is left behind once the
+ * bound passes. A judgment, not a measurement. Its premise is a measurement: over 30 calls of this
+ * adapter, 10 each of the three tests in `test/process-adapter.test.mjs` whose group holds a zombie
+ * that is reaped (the forkers, the process that joins after the kill, and the zombie left out of
+ * the census), 12 read only zombies before the group was empty, and each was empty 2 to 5 ms
+ * later, with Node 26.5.0 on macOS 27.0 on 2026-09-27. One second is 200 times that, room for a
+ * loaded host, and costs a group whose zombie is never reaped one second.
+ */
+export const UNREAPED_BOUND = 1_000;
+
+/**
+ * The longest L0 pauses between two looks at a group it is waiting on. The pause starts at one
+ * millisecond and doubles up to this, so a wait costs next to no processor time however long it
+ * lasts. A judgment, not a measurement.
+ */
+const LONGEST_PAUSE = 50;
+
+/** The pause after `wait`, doubling it up to `LONGEST_PAUSE`. */
+const longer = (wait) => Math.min(Math.max(1, 2 * wait), LONGEST_PAUSE);
 
 /**
  * The `code` of the failure a call rejects with when the sink refused an event it had to record,
@@ -67,21 +90,39 @@ function occupied(group) {
 }
 
 /**
- * Kills every process left in `group` and settles once the group is empty. The wait is on that
- * condition, checked once per turn of the event loop, so nothing else in Rigger stops meanwhile.
+ * Kills every process left in `group` and settles once the group is empty, or once it has held
+ * nothing but zombies for `UNREAPED_BOUND`. The wait is on that condition, looked at after each
+ * pause, so nothing else in Rigger stops meanwhile.
  *
- * The kill is sent again on every turn, because a process can be in the group without having
+ * The kill is sent again on every look, because a process can be in the group without having
  * received it. One forked while the kernel delivers a group kill can miss it and run on: the
  * engineer judge on #354 saw that in 9 of 12 runs of a survivor forking in a loop, macOS 27.0,
  * 2026-09-27, where the group was running at the kill. A census that stopped the group leaves
  * nothing forking, but one that failed may not have. And a process outside the group can join it
  * after the kill while a zombie keeps it in being.
  */
-async function ended(group) {
-  for (;;) {
+async function ended(group, ps, readTimeout) {
+  let unreapedSince;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL');
     if (!occupied(group)) return;
-    await turn();
+    if (wait > 0 && await zombiesOnly(group, ps, readTimeout)) {
+      unreapedSince ??= Date.now();
+      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return;
+    } else {
+      unreapedSince = undefined;
+    }
+  }
+}
+
+/** Whether a read of `group`'s states finds nothing but zombies. A read that fails finds no answer. */
+async function zombiesOnly(group, ps, timeout) {
+  try {
+    const states = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], timeout, timeout));
+    return [...states.values()].every((state) => state.startsWith('Z'));
+  } catch {
+    return false;
   }
 }
 
@@ -259,7 +300,7 @@ async function contain(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
-  await ended(group);
+  await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   return survivors.map((survivor) => ['survivor.killed', survivor]);
 }

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
@@ -839,4 +839,84 @@ test('two survivors, one whose executable\'s name ends in a newline and one with
     { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')), name: Buffer.from('tail').toString('hex') },
     { event: 'survivor.killed', pid: Number(read(directory, 'newline.pid')), name: Buffer.from('e\n').toString('hex') },
   ].sort(byPid));
+});
+
+/**
+ * A command whose group holds, when it exits, a `tail` it left alive and a zombie whose parent is
+ * outside the group and never reaps it. The parent leaves the group, forks a child that joins the
+ * group and exits, then becomes a `tail` of its own, which never reaps it. The zombie's pid is in
+ * `$here/zombie.pid`, the group's in `$here/group`, and the `tail`'s in `$here/tail.pid`. The
+ * command runs `more`, shell, last.
+ */
+function unreaped(directory, more = '') {
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'parent'), [
+    'my ($here, $group) = @ARGV;',
+    'setpgrp(0, 0) or die "leave: $!";',
+    'my $child = fork();',
+    'if ($child == 0) { setpgrp(0, $group) or die "join: $!"; exit 0; }',
+    'open(my $f, ">", "$here/zombie.pid.tmp"); print $f $child; close $f;',
+    'rename("$here/zombie.pid.tmp", "$here/zombie.pid");',
+    'exec "/usr/bin/tail", "-f", "$here/hold";',
+  ].join('\n'));
+  // Its output goes to /dev/null and a file, so it holds neither of the command's pipes.
+  return fixture(directory, 'command', [
+    'echo $$ > "$here/group"',
+    leave(TAIL, 'tail'),
+    '/usr/bin/perl "$here/parent" "$here" $$ >/dev/null 2>"$here/parent.err" &',
+    'until [ -f "$here/zombie.pid" ] && /bin/ps -o stat=,pgid= -p "$(/bin/cat "$here/zombie.pid")" | /usr/bin/grep -q "^Z.* $$\\$"; do :; done',
+    more,
+  ].join('\n'));
+}
+
+/** The first character of the state `ps` reads for each process in `group`. */
+const statesIn = (group) => spawnSync('/bin/ps', ['-g', String(group), '-o', 'stat='], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map((state) => state[0]);
+
+test('a group holding a zombie that its parent outside the group never reaps settles, with no live process of the group left and no kill of the zombie recorded', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = unreaped(directory);
+
+  const { events } = await recorded(directory, { command });
+
+  const zombie = Number(read(directory, 'zombie.pid'));
+  assert.equal(spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(zombie)], { encoding: 'utf8' }).stdout[0], 'Z', 'the zombie was reaped, so the test proves nothing');
+  assert.deepEqual(statesIn(Number(read(directory, 'group'))), ['Z'], 'a process of the command\'s group other than the zombie is left');
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')) },
+  ]);
+});
+
+/** When the file `name` in `directory` was last written, in milliseconds on `Date.now()`'s clock. */
+const writtenAt = (directory, name) => statSync(join(directory, name)).mtimeMs;
+
+/**
+ * The line of a fixture that starts a watcher outside the command's group, so no kill of the group
+ * reaches it, which waits until the process whose pid is in `$here/<name>.pid` has ended and then
+ * writes `$here/<name>.ended`. That file is written no earlier than the process ended. The watcher
+ * polls, but in a process of its own, so its processor time is not the caller's. The lines wait
+ * until it has left the group.
+ */
+const watchEnd = (name) => [
+  `/usr/bin/perl -e 'my ($here, $pid) = @ARGV; setpgrp(0, 0) or die "leave: $!"; open(my $w, ">", "$here/watching") or die "watching: $!"; close $w; 1 while kill 0, $pid; open(my $f, ">", "$here/${name}.ended") or die "ended: $!"; close $f' "$here" "$(/bin/cat "$here/${name}.pid")" >/dev/null 2>"$here/watcher.err" &`,
+  // Until it has left the group, or the kill would end it too.
+  'while [ ! -f "$here/watching" ]; do :; done',
+].join('\n');
+
+test('while the call waits for a killed group to empty, it uses less than half that wait\'s time of the processor', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The group never empties, because of the zombie, so the call waits until it gives up on it.
+  const command = unreaped(directory, watchEnd('tail'));
+  const used = process.cpuUsage();
+
+  await recorded(directory, { command });
+
+  const settled = Date.now();
+  const { user, system } = process.cpuUsage(used);
+  // The wait began at the kill, and the `tail` ended at it, so it lasted at least this long.
+  const waited = settled - writtenAt(directory, 'tail.ended');
+  // The processor time over the whole call is no less than over the wait alone.
+  const cpu = (user + system) / 1000;
+  t.diagnostic(`${cpu} ms of the processor over a wait of at least ${waited} ms`);
+  assert.ok(waited > 0, `the wait lasted ${waited} ms`);
+  assert.ok(cpu < waited / 2, `the call used ${cpu} ms of the processor over a wait of at least ${waited} ms`);
 });
