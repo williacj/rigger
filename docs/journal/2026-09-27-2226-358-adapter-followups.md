@@ -29,6 +29,18 @@ live members children first, one round at a time, with each parent alive and sto
 read has seen how its children ended. Where a read fails, the survivors go unnamed, as they do
 when the census fails.
 
+**A kill that finds nothing is not a kill.** Round 4 counted a survivor as sent the kill before
+`process.kill` answered, so one reaped by a parent outside the group between the read and the
+kill was counted as killed (Codex on #363). Only a kill that reached the process counts now. The
+test for it first kept a `tail` in the group beside the quitter, and the `tail` vanished before
+L0's kill: once the quitter, whose parent was outside the group, exited, the stopped group was
+orphaned, and the kernel sends such a group `SIGHUP` and `SIGCONT`. The test leaves the quitter
+alone in the group; the adapter records nothing for a member `SIGHUP` ends that way.
+
+**The kill's rounds need a pause too.** Round 4's kill read the table back to back, one round per
+level of a chain of parents and children, and used 13.6 to 14.8% of a core over a chain 400 deep
+(the engineer on #363). Rounds that move are now `ROUND_PAUSE`, 5 ms, apart.
+
 **A read that fails must not hold the wait.** The first round counted a failed read of states as
 finding a live member, so a zombie never reaped and a `ps` that failed or hung kept the call
 waiting for ever (both judges on #363). Now only a read that finds a member that is not a zombie

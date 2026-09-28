@@ -1127,3 +1127,123 @@ test('a survivor the census named that exits on its own inside the read of state
     { event: 'survivor.killed', pid: Number(read(directory, 'keeper.pid')) },
   ]);
 });
+
+test('a survivor the census named that exits on its own before the kill, and whose parent outside the group reaps it at once, is not recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The parent leaves the command's group and forks the quitter, which joins it, exits once told
+  // to go, and is reaped by the parent at once. The stand-in reads the table the kill's first round
+  // asks for, then tells the quitter to go, resumes it, and answers with that table once the
+  // quitter is gone, so the kill is sent to a pid that has already been reaped.
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'parent'), [
+    'my ($here, $group) = @ARGV;',
+    'setpgrp(0, 0) or die "leave: $!";',
+    'my $quitter = fork();',
+    'if ($quitter == 0) { setpgrp(0, $group) or die "join: $!"; 1 until -e "$here/go"; exit 0; }',
+    'open(my $f, ">", "$here/quitter.pid.tmp"); print $f $quitter; close $f;',
+    'rename("$here/quitter.pid.tmp", "$here/quitter.pid");',
+    'waitpid($quitter, 0);',
+    'exec "/usr/bin/tail", "-f", "$here/hold";',
+  ].join('\n'));
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
+    'case "$*" in *ppid=*) [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
+    '  table=$(/bin/ps "$@")',
+    '  quitter=$(/bin/cat "$here/quitter.pid")',
+    '  : > "$here/go"',
+    '  kill -s CONT "$quitter"',
+    '  while kill -0 "$quitter" 2>/dev/null; do :; done',
+    '  printf "%s\\n" "$table"',
+    '  exit 0',
+    '} ;; esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  // The quitter is the group's one member once the command exits. With another member stopped
+  // there, the quitter's exit would leave the group orphaned, and the kernel would end that member
+  // with `SIGHUP`.
+  const command = fixture(directory, 'command', [
+    '/usr/bin/perl "$here/parent" "$here" $$ >/dev/null 2>"$here/parent.err" &',
+    'until [ -f "$here/quitter.pid" ] && /bin/ps -o pgid= -p "$(/bin/cat "$here/quitter.pid")" | /usr/bin/grep -q "^ *$$\\$"; do :; done',
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), []);
+});
+
+/** Compiles the C `source` to the executable `$here/<name>`, and hands back its path. */
+function compiled(directory, name, source) {
+  const path = join(directory, name);
+  writeFileSync(`${path}.c`, source.join('\n'));
+  const built = spawnSync('/usr/bin/cc', ['-o', path, `${path}.c`], { encoding: 'utf8' });
+  assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
+  return path;
+}
+
+test('while the call kills a group that takes many rounds, it uses less than a tenth of that kill\'s time of the processor', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // A chain of processes, each the parent of the next, all in the group, so the kill takes a round
+  // for each. Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter
+  // to it.
+  writeFileSync(join(directory, 'chain'), [
+    'my ($here, $n) = @ARGV;',
+    'for my $i (1 .. $n) { my $c = fork(); if ($c) { select(undef, undef, undef, undef); } }',
+    'open(my $r, ">", "$here/ready"); close $r;',
+    'select(undef, undef, undef, undef);',
+  ].join('\n'));
+  const command = fixture(directory, 'command', '/usr/bin/perl "$here/chain" "$here" 120 &\nwhile [ ! -f "$here/ready" ]; do :; done');
+  // The stand-in `exec`s `ps`, so that a read costs what a read of `ps` costs, near enough. On
+  // the kill's first read it marks `rounds` and waits for `measure`, so the test can start its
+  // measure there, after the census.
+  const ps = compiled(directory, 'ps', [
+    '#include <fcntl.h>',
+    '#include <stdio.h>',
+    '#include <string.h>',
+    '#include <sys/stat.h>',
+    '#include <unistd.h>',
+    'int main(int argc, char **argv) {',
+    '  char here[4096], path[4608];',
+    '  snprintf(here, sizeof here, "%s", argv[0]);',
+    '  *strrchr(here, \'/\') = 0;',
+    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "ppid=")) {',
+    '    snprintf(path, sizeof path, "%s/rounds", here);',
+    '    if (mkdir(path, 0700) == 0) {',
+    '      snprintf(path, sizeof path, "%s/measure", here);',
+    '      while (access(path, F_OK) != 0) {}',
+    '    }',
+    '  }',
+    '  execv("/bin/ps", argv);',
+    '  return 127;',
+    '}',
+  ]);
+  let sample;
+  const started = (async () => {
+    while (!existsSync(join(directory, 'rounds'))) await new Promise(setImmediate);
+    sample = { cpu: process.cpuUsage(), at: performance.now() };
+    writeFileSync(join(directory, 'measure'), '');
+  })();
+
+  const { events } = await recorded(directory, { command, ps });
+
+  const settled = performance.now();
+  await started;
+  const { user, system } = process.cpuUsage(sample.cpu);
+  const cpu = (user + system) / 1000;
+  const killing = settled - sample.at;
+  assert.equal(events.filter(({ event }) => event === 'survivor.killed').length, 121, 'the kill did not name every member of the chain');
+  t.diagnostic(`${cpu} ms of the processor over a kill of ${killing} ms`);
+  assert.ok(cpu < killing / 10, `the call used ${cpu} ms of the processor over a kill of ${killing} ms`);
+});
+
+test('a kill whose read of the table never answers records the group\'s kill with a reason that names the kill, not the census', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The stand-in answers every read of the census, and none of the kill's, which ask for `ppid`.
+  const ps = fixture(directory, 'ps', 'case "$*" in *ppid=*) exec /usr/bin/tail -f "$here/hold" ;; esac\nexec /bin/ps "$@"');
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 300 });
+
+  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+  assert.match(events[0].census, /^the kill /);
+});

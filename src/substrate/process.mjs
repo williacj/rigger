@@ -54,6 +54,16 @@ export const UNREAPED_BOUND = 1_000;
  */
 const LONGEST_PAUSE = 50;
 
+/**
+ * The pause between two rounds of a kill where the first saw a survivor end or sent the kill, so
+ * that a group killed in many rounds, a chain of parents and children, is not read back to back.
+ * A round where nothing moved pauses as a wait does. A judgment, not a measurement. Its premise is
+ * a measurement: over a chain 120 deep read back to back, a round took about 3.5 ms and 0.55 ms of
+ * the processor, with Node 26.5.0 on macOS 27.0 on 2026-09-28, so 5 ms holds a round under a tenth
+ * of the processor, and a chain of about 600 fits `READ_TIMEOUT`.
+ */
+const ROUND_PAUSE = 5;
+
 /** The pause after `wait`, doubling it up to `LONGEST_PAUSE`. */
 const longer = (wait) => Math.min(Math.max(1, 2 * wait), LONGEST_PAUSE);
 
@@ -301,7 +311,10 @@ async function contain(group, { ps, readTimeout }) {
   let killed;
   let unnamed;
   try {
-    killed = await killedOf(await census(ps, group, readTimeout), group, ps, readTimeout);
+    const survivors = await census(ps, group, readTimeout);
+    killed = await killedOf(survivors, group, ps, readTimeout).catch((error) => {
+      throw new Error(`the kill could not read how every survivor ended: ${error.message}`);
+    });
   } catch (error) {
     unnamed = error.message;
   }
@@ -320,31 +333,40 @@ async function contain(group, { ps, readTimeout }) {
  * each survivor sent the kill since the round before, by that status, and sends the kill to each
  * live member none of whose children is live. Its parent is then alive, and stopped, until a later
  * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
- * before L0 sent it the kill exited on its own; one gone after it is counted as killed, because a
- * parent the group does not hold may reap it at once. A read that fails, or a group still not
- * ended at `timeout`, fails the whole, and the group is killed unnamed.
+ * before L0 sent it the kill exited on its own, and so does one the kill found gone (`ESRCH`),
+ * reaped at once by a parent the group does not hold. One gone after the kill reached it is
+ * counted as killed, because such a parent may reap it at once. A read that fails, or a group
+ * still not ended at `timeout`, fails the whole, and the group is killed unnamed.
+ *
+ * Rounds that see a survivor end, or send the kill, are `ROUND_PAUSE` apart, and those that see
+ * nothing move pause as a wait does, so a group killed in many rounds is not read back to back.
  */
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
   const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
   const sent = new Set();
   const killed = [];
-  while (pending.size > 0) {
+  for (let wait = 0; pending.size > 0; ) {
+    if (wait > 0) await pause(wait);
     const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`not every survivor had ended within ${timeout} ms`);
     const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
+    let moved = false;
     for (const [pid, survivor] of pending) {
       const row = table.get(pid);
       if (row !== undefined && !row.state.startsWith('Z')) continue;
       if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
       pending.delete(pid);
+      moved = true;
     }
     const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
     const parents = new Set(living.map(([, row]) => row.parent));
     for (const [pid] of living) {
-      if (parents.has(pid) || sent.has(pid)) continue;
+      if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
       sent.add(pid);
-      end(pid);
+      moved = true;
     }
+    wait = moved ? ROUND_PAUSE : longer(wait);
   }
   return killed;
 }
@@ -360,12 +382,14 @@ function tableOf(printed) {
   return rows;
 }
 
-/** Sends `SIGKILL` to the process `pid`, and to none where it has gone. */
+/** Sends `SIGKILL` to the process `pid`, and whether it was there to send to. */
 function end(pid) {
   try {
     process.kill(pid, 'SIGKILL');
+    return true;
   } catch (error) {
     if (error.code !== 'ESRCH') throw error;
+    return false;
   }
 }
 
