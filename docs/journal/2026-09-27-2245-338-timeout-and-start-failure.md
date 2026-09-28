@@ -31,6 +31,14 @@ timeout can end it, and the suite runs with `--test-timeout=0`. So the wait carr
 its own. The engineer judge's mutation, which rejects before the command runs when `timeout` is
 1, then reds the test after 5 seconds rather than hanging the suite.
 
+**A timeout is kept only up to the largest delay Node's timer keeps.** Past 2^31−1 ms, Node warns
+with a `TimeoutOverflowWarning` and sets the delay to 1 ms. So a command given such a timeout was
+ended almost at once and reported as timed out, although it would have finished in its time (Codex
+on #364, round 3). The adapter now refuses, before anything starts, any timeout that is not a
+number from 1 to that maximum, naming the value. That covers 0, negative numbers, `NaN` and
+`Infinity` too. Node exports no name for the maximum, so `TIMER_MAX` is a copy. A test asks a Node
+process of its own whether its timer warns at `TIMER_MAX` and at one past it (`D16` rule 2).
+
 **The check refuses every `cwd` the spawn reads as unset.** Node's spawn runs the command in the
 caller's own directory for `undefined`, `null`, `''` and an empty `Buffer`, and the check refuses
 all four. The judges on #364 found these one value at a time, first `undefined` and then `null`.

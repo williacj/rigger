@@ -43,6 +43,15 @@ export const OUTPUT_BOUND = 1_000;
 export const EVENT_REFUSED = 'EVENT_REFUSED';
 
 /**
+ * The largest timeout, in milliseconds, the adapter keeps: the largest delay Node's timer keeps.
+ * Node owns this fact and exports no name for it. Past it, Node warns with a
+ * `TimeoutOverflowWarning` and sets the delay to 1 ms, which would end at once a command given
+ * more time than that. So this copy is tied to Node by a test that asks Node's timer (`D16`
+ * rule 2).
+ */
+export const TIMER_MAX = 2 ** 31 - 1;
+
+/**
  * The `code` of the failure a call rejects with when its command never started, so its caller
  * tells it from a refused event without reading the message.
  */
@@ -305,6 +314,10 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
+  // NaN fails every comparison and Infinity the bound, so neither passes as written.
+  if (typeof timeout !== 'number' || !(timeout > 0 && timeout <= TIMER_MAX)) {
+    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a number of milliseconds from 1 to ${TIMER_MAX}, so it did not start ${command}`);
+  }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));

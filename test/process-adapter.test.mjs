@@ -10,7 +10,7 @@ import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, 
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { EVENT_REFUSED, NOT_STARTED, PS, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand } from '../src/substrate/process.mjs';
 import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
@@ -810,6 +810,44 @@ test('a call with no timeout starts no process, and fails naming the missing tim
     await assert.rejects(adapt(directory, { command, timeout }), /timeout/, what);
 
     assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
+  }
+});
+
+/**
+ * Whether Node's own timer cuts `delay` short. Node warns with a `TimeoutOverflowWarning` when a
+ * delay does not fit its timer and sets it to 1 ms, so a Node process of its own is asked.
+ */
+function overflows(delay) {
+  const asked = spawnSync(process.execPath, ['-e', `setTimeout(() => {}, ${delay}).unref()`], { encoding: 'utf8' });
+  assert.equal(asked.status, 0, asked.stderr);
+  return asked.stderr.includes('TimeoutOverflowWarning');
+}
+
+test('the largest timeout the adapter keeps is the largest delay Node\'s timer keeps', () => {
+  assert.equal(overflows(TIMER_MAX), false, `Node's timer cuts ${TIMER_MAX} ms short`);
+  assert.equal(overflows(TIMER_MAX + 1), true, `Node's timer keeps ${TIMER_MAX + 1} ms`);
+});
+
+test('a command given the largest timeout Node keeps runs to its own exit, with no timeout reported', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 0', { timeout: TIMER_MAX });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+});
+
+test('a timeout Node\'s timer cannot keep starts no process, and the failure names it', async (t) => {
+  for (const timeout of [TIMER_MAX + 1, 0, -1, NaN, Infinity]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), (error) => {
+      assert.ok(error.message.includes(`timeout ${timeout} `), `the failure does not name the timeout ${timeout}: ${error.message}`);
+      return true;
+    });
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given the timeout ${timeout}`);
   }
 });
 
