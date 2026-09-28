@@ -1423,11 +1423,20 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
   }
 });
 
+/**
+ * An object with `toString` and a hook for `util.inspect`, each doing `does`. The hook is not
+ * enumerable, so an `inspect` that ignores it prints only `toString`: Node 20 and Node 26 print an
+ * enumerable symbol key differently, and a hidden one alike.
+ */
+function hooked(does) {
+  return Object.defineProperty({ toString() { return does(); } }, Symbol.for('nodejs.util.inspect.custom'), { value: does });
+}
+
 /** An object whose `toString` and whose hook for `util.inspect` each throw. */
-const throwing = { toString() { throw new Error('no toString'); }, [Symbol.for('nodejs.util.inspect.custom')]() { throw new Error('no inspect'); } };
+const throwing = hooked(() => { throw new Error('no conversion'); });
 
 /** An object whose `toString` and whose hook for `util.inspect` each print nothing. */
-const blank = { toString() { return ''; }, [Symbol.for('nodejs.util.inspect.custom')]() { return ''; } };
+const blank = hooked(() => '');
 
 test('the refusal of an invalid timeout names the value and its type', async (t) => {
   for (const [timeout, named] of [
@@ -1443,8 +1452,8 @@ test('the refusal of an invalid timeout names the value and its type', async (t)
     ['', 'the timeout \'\' (of type string)'],
     // Each of these prints nothing, or throws, however it is asked to print itself, so the refusal
     // must print what the object holds.
-    [throwing, 'the timeout { toString: [Function: toString], Symbol(nodejs.util.inspect.custom): [Function: [nodejs.util.inspect.custom]] } (of type object)'],
-    [blank, 'the timeout { toString: [Function: toString], Symbol(nodejs.util.inspect.custom): [Function: [nodejs.util.inspect.custom]] } (of type object)'],
+    [throwing, 'the timeout { toString: [Function: toString] } (of type object)'],
+    [blank, 'the timeout { toString: [Function: toString] } (of type object)'],
   ]) {
     const directory = scratch(t);
     const command = fixture(directory, 'command', ': > "$here/started"');
