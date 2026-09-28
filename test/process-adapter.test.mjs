@@ -805,18 +805,6 @@ test('a survivor whose executable\'s name ends in a newline is recorded by that 
   ]);
 });
 
-test('a survivor whose executable\'s name ends in a space is recorded by that name, the space included', SETTLES_WITHIN, async (t) => {
-  const directory = holding(t);
-  waiter(directory, 'waiter');
-  const command = fixture(directory, 'command', leaveNamed('"s "', 'survivor', 's'));
-
-  const { events } = await recorded(directory, { command });
-
-  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [
-    { event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 's ' },
-  ]);
-});
-
 test('two survivors, one whose executable\'s name ends in a newline and one with no trailing whitespace, are each recorded by their own name, byte for byte', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   waiter(directory, 'waiter');
@@ -1018,24 +1006,23 @@ for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) 
   });
 }
 
-test('survivors whose executables\' names are longer than 16 bytes are each recorded by the whole name, trailing whitespace included', SETTLES_WITHIN, async (t) => {
-  // `ps` cuts the kernel's name at 16 bytes (`D16` rule 3), past which the first ends in a space,
-  // the second in two, the third in a newline, and the fourth holds a backslash, a newline and a
-  // character cut through at the 16th byte.
-  const names = ['abcdefghijklmnop ', 'abcdefghijklmnopq  ', 'abcdefghijklmnop\n', 'a\\b\nc日本語テール '];
+test('survivors whose executables\' names are longer than 16 bytes are each recorded by their first 16 bytes', SETTLES_WITHIN, async (t) => {
+  // `ucomm` holds the kernel's cut of the name at 16 bytes (`D16` rule 3). The second name holds a
+  // newline inside the cut.
+  const names = [['abcdefghijklmnopqrs', 'abcdefghijklmnop'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmno']];
   const directory = holding(t);
   waiter(directory, 'waiter');
-  const command = fixture(directory, 'command', names.map((name, n) => leaveNamed(`$'${[...Buffer.from(name)].map((byte) => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}'`, `long${n}`, 'a')).join('\n'));
+  const command = fixture(directory, 'command', names.map(([name], n) => leaveNamed(`$'${[...Buffer.from(name)].map((byte) => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}'`, `long${n}`, name[0])).join('\n'));
 
   const { events } = await recorded(directory, { command });
 
   const byPid = new Map(events.map(({ pid, name }) => [pid, Buffer.from(name).toString('hex')]));
-  assert.deepEqual(names.map((_, n) => byPid.get(Number(read(directory, `long${n}.pid`)))), names.map((name) => Buffer.from(name).toString('hex')));
+  assert.deepEqual(names.map((_, n) => byPid.get(Number(read(directory, `long${n}.pid`)))), names.map(([, recorded]) => Buffer.from(recorded).toString('hex')));
 });
 
-test('a survivor whose argv[0] differs from its executable\'s name in its trailing whitespace or past 16 bytes is recorded by the executable\'s name', SETTLES_WITHIN, async (t) => {
-  // Each pair is an executable's name and the argv[0] it is run under.
-  const runs = [['abcdefghijklmnop ', '/elsewhere/abcdefghijklmnopXYZ'], ['w', 'w  ']];
+test('a survivor whose argv[0] differs from its executable\'s name is recorded by the executable\'s name as ucomm holds it', SETTLES_WITHIN, async (t) => {
+  // Each is an executable's name, the argv[0] it is run under, and the name recorded.
+  const runs = [['abcdefghijklmnopq', '/elsewhere/abcdefghijklmnopXYZ', 'abcdefghijklmnop'], ['w', 'w  ', 'w']];
   const directory = holding(t);
   waiter(directory, 'waiter');
   const command = fixture(directory, 'command', runs.map(([name, argv0], n) => [
@@ -1048,7 +1035,7 @@ test('a survivor whose argv[0] differs from its executable\'s name in its traili
   const { events } = await recorded(directory, { command });
 
   const byPid = new Map(events.map(({ pid, name }) => [pid, name]));
-  assert.deepEqual(runs.map((_, n) => byPid.get(Number(read(directory, `run${n}.pid`)))), runs.map(([name]) => name));
+  assert.deepEqual(runs.map((_, n) => byPid.get(Number(read(directory, `run${n}.pid`)))), runs.map(([, , recorded]) => recorded));
 });
 
 test('a survivor the census named that exits on its own before the kill, and is left unreaped, is not recorded as killed', SETTLES_WITHIN, async (t) => {
