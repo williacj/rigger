@@ -37,7 +37,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
  * - `before` and `after`: code of the test's own, which the caller runs before it starts its first
  *   group and once its groups are up. It can call `start(label)`, which starts a command as the
- *   caller starts its own, and settles once its child is up; and `turn()`, which settles a turn
+ *   caller starts its own, and settles once its child is up; `settled`, how many of its calls to
+ *   the adapter have settled; and `turn()`, which settles a turn
  *   of the event loop later.
  */
 const CALLER = [
@@ -56,6 +57,7 @@ const CALLER = [
   // non-blocking, where a single write to a full pipe comes back short.
   "process.stderr.write('');",
   'const turn = () => new Promise((resolve) => setImmediate(resolve));',
+  'let settled = 0;',
   'function begin(label) {',
   "  const command = join(directory, label === 1 && options.stopped ? 'leaving' : options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
@@ -63,7 +65,7 @@ const CALLER = [
   "  const started = label === 1 && options.dispatch",
   "    ? dispatch({ id: 'd-1', card: 7, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }) });",
-  '  started.catch(() => {});',
+  '  started.catch(() => {}).finally(() => { settled += 1; });',
   '}',
   'async function start(label) {',
   '  begin(label);',
@@ -180,18 +182,20 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
       if (stdout.includes('ready\n')) resolve();
     });
   });
-  const ended = once(run, 'close');
+  let closed = false;
+  const ended = once(run, 'close').finally(() => { closed = true; });
   await Promise.race([ready, ended]);
   // What the process table says of each process, read while the caller still holds them.
   const processes = options.groups ? described(directory) : [];
   const seen = inspect?.(directory);
   let heard;
   if (signal !== undefined) process.kill(run.pid, signal);
+  // A caller that ends without saying `heard` ends the wait, and the test then reads how it ended.
   if (whileHeard !== undefined) {
-    while (!stdout.includes('heard\n')) await new Promise((resolve) => setImmediate(resolve));
+    while (!stdout.includes('heard\n') && !closed) await new Promise((resolve) => setImmediate(resolve));
     heard = whileHeard(directory);
   }
-  if (again !== undefined) process.kill(run.pid, again);
+  if (again !== undefined && !closed) process.kill(run.pid, again);
   else if (signal === undefined || whileHeard !== undefined) writeFileSync(join(directory, 'go'), '');
   const [status, killedBy] = await ended;
   return { directory, processes, seen, heard, status, signal: killedBy, stderr };
@@ -576,6 +580,21 @@ test('given a census that has one group stopped when the caller receives SIGTERM
   assert.equal(signal, 'SIGTERM', `status ${status}: ${stderr}`);
   await assertNoneAlive(directory);
   assert.deepEqual(running(`${directory}/ps-hold`), [], 'the census\'s read of the process table is alive');
+});
+
+test('a caller kept running past SIGTERM, whose census the cleanup cut short, records each process of that group once, and no kill of the group whole', ENDS_WITHIN, async (t) => {
+  // The listener says `heard` once both calls to the adapter have settled, so the call whose
+  // census read the cleanup killed has done all it will before the caller exits.
+  const after = "process.on('SIGTERM', async () => { while (settled < 2) await turn(); process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });";
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, stopped: true, ps: 'ps-once', after }, { signal: 'SIGTERM', whileHeard: () => true });
+
+  assert.deepEqual({ status, signal }, { status: 3, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  const events = streamOf(directory);
+  assert.deepEqual(events.filter(({ event }) => event === 'group.killed'), []);
+  const pids = kills(events).map(({ pid }) => pid);
+  assert.deepEqual(pids, [...new Set(pids)], 'a process was recorded as killed twice');
+  assert.ok(pids.includes(Number(read(directory, 'child.1'))), 'the stopped group\'s child was not recorded as killed');
 });
 
 // The confirmation of the exit kill.
