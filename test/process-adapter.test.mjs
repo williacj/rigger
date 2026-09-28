@@ -1,16 +1,16 @@
 // ABOUTME: Tests L0's process adapter: a command's exit code, output, working directory and
 // environment, the process group it runs in, the survivors it kills and records, output held open
-// past the group, and a sink that refuses the record.
+// past the group, a sink that refuses the record, the timeout, and a command that never started.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
@@ -28,9 +28,18 @@ function shell(directory, script, options = {}) {
   return adapt(directory, { command: '/bin/sh', args: ['-c', script, directory], ...options });
 }
 
-/** Runs a command through the adapter in `directory`, under an empty env and an `L0` emitter over it. */
+/**
+ * A timeout no command in this file reaches unless its test means it to, so a command that hangs
+ * fails its test here rather than holding the suite. It is under `SETTLES_WITHIN`.
+ */
+const UNREACHED = 15_000;
+
+/**
+ * Runs a command through the adapter in `directory`, under an empty env, an `L0` emitter over it,
+ * and a timeout it does not reach.
+ */
 function adapt(directory, options) {
-  return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, ...options });
+  return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, timeout: UNREACHED, ...options });
 }
 
 test('a command that exits 0 has exit code 0 in the result', async (t) => {
@@ -354,7 +363,7 @@ test('a caller whose PATH holds no ps still has a surviving child killed and rec
     `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
     `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
     `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
-    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }) });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: ${UNREACHED}, emitter: sink.emitter({ layer: 'L0' }) });`,
   ].join('\n'));
 
   const run = spawn(process.execPath, [caller], { env: { PATH: path }, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -701,7 +710,7 @@ test('a caller whose call settled past a process holding its output can exit whi
     `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
     `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
     `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
-    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: ${UNREACHED}, emitter: sink.emitter({ layer: 'L0' }), outputBound: 100 });`,
   ].join('\n'));
 
   const run = spawn(process.execPath, [caller], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -791,4 +800,351 @@ test('given a sink that refuses every append, the failure\'s code tells it from 
 
   assert.equal(error.code, EVENT_REFUSED);
   assert.notEqual(unstarted.code, EVENT_REFUSED, 'a command that never started reads as a refused event');
+});
+
+test('a call with no timeout starts no process, and fails naming the missing timeout', async (t) => {
+  for (const [what, timeout] of [['undefined', undefined], ['null', null]]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), /timeout/, what);
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
+  }
+});
+
+/**
+ * Whether Node's own timer cuts `delay` short. Node warns with a `TimeoutOverflowWarning` when a
+ * delay does not fit its timer and sets it to 1 ms, so a Node process of its own is asked.
+ */
+function overflows(delay) {
+  const asked = spawnSync(process.execPath, ['-e', `setTimeout(() => {}, ${delay}).unref()`], { encoding: 'utf8' });
+  assert.equal(asked.status, 0, asked.stderr);
+  return asked.stderr.includes('TimeoutOverflowWarning');
+}
+
+test('the largest timeout the adapter keeps is the largest delay Node\'s timer keeps', () => {
+  assert.equal(overflows(TIMER_MAX), false, `Node's timer cuts ${TIMER_MAX} ms short`);
+  assert.equal(overflows(TIMER_MAX + 1), true, `Node's timer keeps ${TIMER_MAX + 1} ms`);
+});
+
+test('a command given the largest timeout Node keeps runs to its own exit, with no timeout reported', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 0', { timeout: TIMER_MAX });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+});
+
+test('a command that exits at once under a timeout past the largest delay one Node timer keeps returns its own exit code, with no timeout reported', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 3', { timeout: 2 ** 31 });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
+});
+
+/**
+ * A scheduler standing in for Node's timers, which runs nothing until the test says so: it keeps
+ * each timer armed, with its delay, and cancels one by forgetting it.
+ */
+function heldTimers() {
+  const armed = new Set();
+  return {
+    armed,
+    schedule: (run, delay) => { const timer = { run, delay }; armed.add(timer); return timer; },
+    cancel: (timer) => armed.delete(timer),
+    /** Fires the one armed timer and hands back its delay. */
+    fire() {
+      assert.equal(armed.size, 1, `${armed.size} timers are armed`);
+      const [timer] = armed;
+      armed.delete(timer);
+      timer.run();
+      return timer.delay;
+    },
+  };
+}
+
+test('a delay past the largest one Node timer keeps elapses over timers each within it, adding up to the delay exactly', () => {
+  const timers = heldTimers();
+  const total = 2 * TIMER_MAX + 5;
+  let done = false;
+
+  whenElapsed(total, () => { done = true; }, timers);
+
+  const delays = [];
+  while (!done) delays.push(timers.fire());
+  assert.deepEqual(delays, [TIMER_MAX, TIMER_MAX, 5]);
+  assert.equal(timers.armed.size, 0);
+});
+
+test('a delay cancelled partway through its timers never elapses', () => {
+  const timers = heldTimers();
+  let done = false;
+
+  const cancel = whenElapsed(TIMER_MAX + 1, () => { done = true; }, timers);
+  timers.fire();
+  cancel();
+
+  assert.equal(timers.armed.size, 0, 'a timer is still armed');
+  assert.equal(done, false);
+});
+
+test('a timeout that is not a positive finite number of milliseconds starts no process, and the failure names it', async (t) => {
+  for (const timeout of [0, -1, NaN, Infinity, '300']) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), (error) => {
+      assert.ok(error.message.includes(`timeout ${timeout} `), `the failure does not name the timeout ${timeout}: ${error.message}`);
+      return true;
+    });
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given the timeout ${timeout}`);
+  }
+});
+
+test('a command ended by a signal it does not handle has a non-zero integer exit code in the result', async (t) => {
+  const directory = scratch(t);
+  // The shell sends itself `SIGTERM`, which a non-interactive shell with no trap does not handle.
+  const result = await shell(directory, 'kill -TERM $$');
+
+  assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
+});
+
+/**
+ * The timeout each test of a command outliving it passes. A judgment: it is the time the fixture
+ * has to be ready before the timeout ends it, and `ready` fails the test where it was not. Its
+ * premise is a measurement: over 40 calls of this adapter each, with Node 26.5.0 on macOS 27.0 on
+ * 2026-09-27 and nothing else running, the fixture writing 300,001 bytes was ready 6.7 to 10.5 ms
+ * after the call, and the one whose child writes to both streams 10.8 to 13.8 ms after it. The
+ * second fixture took 51 to 1,481 ms while it exec'd its child's freshly written script, so it
+ * runs that script under `/bin/sh` by name.
+ */
+const OUTLIVED = 1_000;
+
+/**
+ * A command that runs `body`, which starts at least one child, then writes its pid to
+ * `$here/command.pid`, marks `$here/ready`, and waits on its children, which run until killed. It
+ * is run by `/bin/bash` by name, so the process the adapter starts is `bash` from its first line.
+ */
+function outliving(directory, body) {
+  const script = fixture(directory, 'command', [body, 'echo $$ > "$here/command.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+  return { command: '/bin/bash', args: [script], timeout: OUTLIVED };
+}
+
+/** Fails the test where the timeout ended an `outliving` command before it was ready. */
+const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
+
+test('given a command and its child outliving its timeout, no process of the group is alive when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await adapt(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  assert.equal(alive(Number(read(directory, 'command.pid'))), false, 'the command is alive');
+  assert.equal(alive(Number(read(directory, 'child.pid'))), false, 'the child is alive');
+  assert.equal(alive(-Number(read(directory, 'command.pid'))), false, 'a process of the command\'s group is alive');
+});
+
+test('given a command outliving its timeout, the result says the timeout ended it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const result = await adapt(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  assert.equal(result.timedOut, true);
+});
+
+test('given a command that finishes inside its timeout, the result reports no timeout and carries the command\'s own exit code', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 3', { timeout: OUTLIVED });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
+});
+
+test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit 0');
+
+  // The timer is armed before the call first yields. Holding this thread until the command is a
+  // zombie, which Node has not reaped because its loop cannot run, leaves the timer and the exit
+  // both due when the loop resumes, and Node runs due timers before it reaps.
+  const call = adapt(directory, { command, timeout: 1 });
+  const zombie = () => existsSync(join(directory, 'command.pid'))
+    && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
+  // The wait holds the thread, so no test timeout can end it: it carries its own deadline, and a
+  // command that never runs fails the test rather than holding the suite. The deadline is a
+  // judgment: the command, which only writes its pid and exits, has nothing to wait for.
+  const deadline = Date.now() + 5_000;
+  while (!zombie() && Date.now() < deadline);
+  if (!zombie()) {
+    const outcome = await call.then((result) => JSON.stringify(result), (error) => error.message);
+    assert.fail(`the command was not a zombie within 5,000 ms, so the race was not set up; the call settled with: ${outcome}`);
+  }
+  const result = await call;
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+});
+
+test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const payload = bytes(300_001, 23);
+  writeFileSync(join(directory, 'payload'), payload);
+
+  const result = await adapt(directory, outliving(directory, `/bin/cat "$here/payload"\n${leave(TAIL, 'child')}`));
+
+  ready(directory);
+  assert.ok(result.stdout.equals(payload), 'standard output holds every byte of the command\'s payload');
+});
+
+test('given a child that writes to standard output and standard error and outlives the timeout with its command, the result holds every byte of each in its own stream', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const out = bytes(200_003, 29);
+  const err = bytes(150_007, 31);
+  writeFileSync(join(directory, 'out'), out);
+  writeFileSync(join(directory, 'err'), err);
+  // The command blocks opening a FIFO until the child has written both and opens it, so it waits
+  // without taking the CPU the child's writes need. The child runs under `/bin/sh` by name,
+  // because exec'ing a script just written took from 50 ms to over a second (see `OUTLIVED`).
+  fixture(directory, 'child', `/bin/cat "$here/out"\n/bin/cat "$here/err" >&2\n: > "$here/written"\nexec ${TAIL}`);
+  const body = ['/usr/bin/mkfifo "$here/written"', '/bin/sh "$here/child" &', 'read -r _ < "$here/written"'].join('\n');
+
+  const result = await adapt(directory, outliving(directory, body));
+
+  ready(directory);
+  assert.ok(result.stdout.equals(out), 'standard output holds every byte of the child\'s payload to it');
+  assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
+});
+
+test('given a command that outlives its timeout and exits 0 on SIGTERM, the result has a non-zero integer exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // `wait` returns at once on a signal the shell traps, so SIGTERM would end the command with 0.
+  const result = await adapt(directory, outliving(directory, `trap 'exit 0' TERM\n${leave(TAIL, 'child')}`));
+
+  ready(directory);
+  assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
+});
+
+/**
+ * The `L0` kill events a timeout makes of an `outliving` command in `directory` that left a `TAIL`
+ * as `child`, by pid. Each name and command line is read off the fixture, not asked of `ps`.
+ */
+const timeoutKills = (directory) => [
+  { layer: 'L0', event: 'timeout.killed', pid: Number(read(directory, 'command.pid')), name: 'bash', cmd: `/bin/bash ${directory}/command` },
+  { layer: 'L0', event: 'timeout.killed', pid: Number(read(directory, 'child.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+].sort((a, b) => a.pid - b.pid);
+
+test('given a command and its child outliving its timeout, the stream holds an L0 kill event for each, by process name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { events } = await recorded(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  const kills = events.map(({ layer, event, pid, name, cmd }) => ({ layer, event, pid, name, cmd })).sort((a, b) => a.pid - b.pid);
+  assert.deepEqual(kills, timeoutKills(directory));
+});
+
+test('given a sink that refuses every append, a command and its child outliving its timeout are dead when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await assert.rejects(adapt(directory, { ...outliving(directory, leave(TAIL, 'child')), emitter: refusing(directory) }));
+
+  ready(directory);
+  assert.equal(alive(Number(read(directory, 'command.pid'))), false, 'the command is alive');
+  assert.equal(alive(Number(read(directory, 'child.pid'))), false, 'the child is alive');
+});
+
+test('given a sink that refuses every append, a command outliving its timeout rejects naming each unrecorded kill, with its exit code, saying the timeout ended it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const error = await rejection(directory, { ...outliving(directory, leave(TAIL, 'child')), emitter: refusing(directory) });
+
+  ready(directory);
+  const unrecorded = (error.unrecorded ?? []).map(({ event, pid, name, cmd }) => ({ layer: 'L0', event, pid, name, cmd })).sort((a, b) => a.pid - b.pid);
+  assert.deepEqual(unrecorded, timeoutKills(directory));
+  for (const { cmd } of timeoutKills(directory)) assert.ok(error.message.includes(cmd), `the failure's message does not give ${cmd}: ${error.message}`);
+  assert.ok(Number.isInteger(error.result?.exit) && error.result.exit !== 0, `the exit code is ${error.result?.exit}`);
+  assert.equal(error.result?.timedOut, true);
+  // Not merely `timeout`, which each event's name already holds.
+  assert.ok(error.message.includes(`the timeout of ${OUTLIVED} ms ended`), `the failure's message does not say the timeout ended the command: ${error.message}`);
+});
+
+/** Fails the test unless `error` is a failure to start that names `what`. */
+function unstarted(error, what) {
+  assert.equal(error.code, NOT_STARTED, `the failure's code is ${error.code}: ${error.message}`);
+  assert.ok(error.message.includes(what), `the failure's message does not name ${what}: ${error.message}`);
+}
+
+test('a command that does not exist rejects as a failure to start, naming the command', async (t) => {
+  const directory = scratch(t);
+  const command = join(directory, 'absent');
+
+  unstarted(await rejection(directory, { command }), command);
+});
+
+/** A command whose first action writes `$here/started`. */
+const starting = (directory) => fixture(directory, 'command', ': > "$here/started"');
+
+/** Fails the test where the command's first action ran. */
+const neverRan = (directory) => assert.equal(existsSync(join(directory, 'started')), false, 'the command\'s first action ran');
+
+test('a working directory that does not exist rejects as a failure to start, naming the directory, and the command never runs', async (t) => {
+  const directory = scratch(t);
+  const cwd = join(directory, 'absent');
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});
+
+test('a working directory that is a file rejects as a failure to start, naming it, and the command never runs', async (t) => {
+  const directory = scratch(t);
+  const cwd = join(directory, 'a-file');
+  writeFileSync(cwd, '');
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});
+
+test('a working directory that is an executable file rejects as a failure to start, naming it', async (t) => {
+  const directory = scratch(t);
+  // Executable, so asking only whether it can be entered would let it through.
+  const cwd = join(directory, 'an-executable');
+  writeFileSync(cwd, '', { mode: 0o755 });
+
+  unstarted(await rejection(directory, { command: starting(directory), cwd }), cwd);
+  neverRan(directory);
+});
+
+test('a command that is not executable rejects as a failure to start, naming it, and never runs', async (t) => {
+  const directory = scratch(t);
+  const command = starting(directory);
+  chmodSync(command, 0o644);
+
+  unstarted(await rejection(directory, { command }), command);
+  neverRan(directory);
+});
+
+test('an executable no system loader can run rejects as a failure to start, naming it', async (t) => {
+  const directory = scratch(t);
+  // Node throws this failure from the spawn itself, where the others arrive after it returns.
+  const command = join(directory, 'garbage');
+  writeFileSync(command, 'not a program', { mode: 0o755 });
+
+  unstarted(await rejection(directory, { command }), command);
+});
+
+test('a command that never started and a refused event reject with codes that tell them apart', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const never = await rejection(directory, { command: join(directory, 'absent') });
+  const refusal = await rejection(directory, { command: leavingTwo(directory), emitter: refusing(directory) });
+
+  assert.equal(never.code, NOT_STARTED);
+  assert.equal(refusal.code, EVENT_REFUSED);
 });
