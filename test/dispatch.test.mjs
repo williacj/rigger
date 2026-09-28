@@ -12,8 +12,8 @@ import { PassThrough } from 'node:stream';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { dispatch } from '../src/execution/run.mjs';
-import { EVENT_REFUSED, runCommand } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
@@ -41,6 +41,25 @@ const holdingCommand = (directory) => fixture(directory, 'command', [
  * ended by L0 and fails its test rather than holding the suite.
  */
 const UNREACHED = 15_000;
+
+/**
+ * A sink over the state directory `state` that refuses each event `refuses` picks by its layer and
+ * name, throwing as a sink whose append the disk refuses does, and appends every other.
+ */
+function refusingSome(state, refuses) {
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+  return {
+    emitter(envelope) {
+      const emitter = sink.emitter(envelope);
+      return {
+        emit(event, fields) {
+          if (refuses(envelope.layer, event)) throw new Error(`the test's sink refuses ${envelope.layer} ${event}`);
+          emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+}
 
 /** Starts a dispatch of `command` through L1's function, with the state directory in `directory`. */
 function dispatchIn(directory, options) {
@@ -117,15 +136,14 @@ test('once a dispatch has settled and its group holds no live process, the recor
 test('once a dispatch whose kill event the sink refused has settled, its group holds no live process, the record no longer holds that group, and the caller hears the refusal', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   writeFileSync(join(directory, 'hold'), '');
-  // The command leaves a `tail` alive in its group, so L0 kills it and records the kill, which a
-  // sink under a regular file refuses. The record stays in the state directory, which takes writes.
+  // The command leaves a `tail` alive in its group, so L0 kills it and records the kill, which the
+  // sink refuses. The record stays in the state directory, which takes writes.
   const command = fixture(directory, 'command', [
     'echo $$ > "$here/group"',
     '/usr/bin/tail -f "$here/hold" &',
     'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
   ].join('\n'));
-  writeFileSync(join(directory, 'blocked'), '');
-  const sink = openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+  const sink = refusingSome(stateOf(directory), (layer) => layer === 'L0');
 
   await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command, sink }), (failure) => failure.code === EVENT_REFUSED);
 
@@ -154,7 +172,8 @@ test('given a sink that refuses the kill event and a record that refuses the rem
   const failure = await dispatchIn(directory, { id: 'd-1', card: 1412, command }).then(() => assert.fail('the dispatch settled without rejecting'), (error) => error);
 
   assert.equal(failure.code, EVENT_REFUSED, failure.stack);
-  assert.deepEqual(failure.unrecorded.map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }]);
+  // The stream refuses L1's end as well, so it is among the unrecorded events.
+  assert.deepEqual(failure.unrecorded.map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }, { event: 'dispatch.end', name: undefined }]);
   assert.equal(failure.result?.exit, 4);
   assert.equal(failure.recordFailure?.code, 'EACCES', 'the removal\'s failure is not carried on the refusal');
   assert.ok(failure.message.includes(state), `the refusal does not say the record in ${state} kept its entry: ${failure.message}`);
@@ -229,7 +248,7 @@ test('given a state directory whose event stream exists and which refuses new en
   assertNeverRan(directory);
   // A command spawned and then killed before its first action leaves neither trace above, so the
   // stream is read too: L0 records every process it kills, and the stream still takes appends.
-  assert.deepEqual(readEvents(state), [], 'L0 killed a process of the dispatch');
+  assert.deepEqual(readEvents(state).filter((event) => event.layer === 'L0'), [], 'L0 killed a process of the dispatch');
 });
 
 test('given a state directory whose event stream exists and which refuses new entries, the caller\'s failure names the state directory', async (t) => {
@@ -411,4 +430,81 @@ test('a reader finds the record as it was before a write or as it is after it, n
     const found = readInAnotherProcess(state);
     assert.ok([JSON.stringify(earlier), JSON.stringify(later)].includes(JSON.stringify(found)), `stopped at ${at}, the reader found ${JSON.stringify(found)}`);
   }
+});
+
+/** Every event in the state directory `state`, or none where nothing has been recorded there. */
+const eventsIn = (state) => (existsSync(streamPath(state)) ? readEvents(state) : []);
+
+test('the stream holds an L1 dispatch-start event carrying the id L1 was handed, ahead of every L0 event carrying that id', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  await dispatchIn(directory, { id: 'd-start', card: 1412, command });
+
+  const events = eventsIn(stateOf(directory));
+  const start = events.findIndex((each) => each.layer === 'L1' && each.event === 'dispatch.start' && each.dispatch === 'd-start');
+  const l0 = events.flatMap((each, index) => (each.layer === 'L0' && each.dispatch === 'd-start' ? [index] : []));
+  assert.ok(start >= 0, `no L1 dispatch-start event carries d-start: ${JSON.stringify(events)}`);
+  assert.ok(l0.length > 0, 'the survivor\'s kill was not recorded under L0, so the order proves nothing');
+  assert.ok(l0.every((index) => index > start), `an L0 event comes before the start: ${JSON.stringify(events)}`);
+});
+
+/** A sink whose every append is refused, because its state directory would sit under a regular file. */
+function refusingEvery(directory) {
+  writeFileSync(join(directory, 'blocked'), '');
+  return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+}
+
+test('given a sink that refuses every append, L1\'s function starts no process, and rejects naming the unrecorded start event', async (t) => {
+  const directory = scratch(t);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory), sink: refusingEvery(directory) }), (failure) => {
+    assert.ok(failure.message.includes('dispatch.start'), `the failure does not name the start event: ${failure.message}`);
+    return true;
+  });
+
+  assertNeverRan(directory);
+});
+
+/** The dispatch-end events in the stream in `directory`'s state directory carrying dispatch `id`. */
+const endsOf = (directory, id) => eventsIn(stateOf(directory)).filter((each) => each.event === 'dispatch.end' && each.dispatch === id);
+
+/** A clock that reads each of `readings` in turn, in milliseconds, and the last one after that. */
+const clockReading = (...readings) => () => (readings.length > 1 ? readings.shift() : readings[0]);
+
+test('given a dispatch whose command returned on its own, the stream holds one L1 dispatch-end event under its id, carrying its exit code and its duration', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', 'exit 3');
+
+  await dispatchIn(directory, { id: 'd-returned', card: 1412, command, clock: clockReading(1_000, 1_734) });
+
+  assert.deepEqual(endsOf(directory, 'd-returned').map(({ layer, card, exit, ms }) => ({ layer, card, exit, ms })), [{ layer: 'L1', card: 1412, exit: 3, ms: 734 }]);
+});
+
+test('given a dispatch whose command cannot start, the stream holds one dispatch-end event under its id, which carries no exit code and names the missing command', async (t) => {
+  const directory = scratch(t);
+  const missing = join(directory, 'no-such-command');
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-missing', card: 1412, command: missing }));
+
+  const ends = endsOf(directory, 'd-missing');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.equal('exit' in ends[0], false, `the end carries an exit code: ${JSON.stringify(ends[0])}`);
+  assert.ok(JSON.stringify(ends[0]).includes(JSON.stringify(missing).slice(1, -1)), `the end does not name ${missing}: ${JSON.stringify(ends[0])}`);
+});
+
+test('given a dispatch whose command cannot start, the caller can tell the rejection is a failure to start without reading its message', async (t) => {
+  const directory = scratch(t);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-missing', card: 1412, command: join(directory, 'no-such-command') }), (failure) => failure.code === NOT_STARTED);
+});
+
+test('given a dispatch that outlives its timeout, the stream holds an L1 event recording the timeout under its id', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await dispatchIn(directory, { id: 'd-late', card: 1412, ...outliving(directory, leave(TAIL, 'child')) });
+
+  ready(directory);
+  const timeouts = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L1' && each.dispatch === 'd-late' && /timeout/.test(each.event));
+  assert.deepEqual(timeouts.map(({ card, timeout }) => ({ card, timeout })), [{ card: 1412, timeout: OUTLIVED }]);
 });

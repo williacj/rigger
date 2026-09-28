@@ -2,7 +2,7 @@
 // L0's process adapter, recording the dispatch's process group while the command runs.
 
 import { addGroup, readGroups, removeGroup, writeGroups } from './groups.mjs';
-import { EVENT_REFUSED, runCommand } from '../substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
 
 /**
  * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
@@ -17,22 +17,29 @@ import { EVENT_REFUSED, runCommand } from '../substrate/process.mjs';
  * refuses the removal after a refused event, the refusal still reaches the caller, carrying the
  * record's failure as `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout }) {
+export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
-  // The record is shown writable before anything starts, by writing it back as it stands, so a
-  // dispatch whose group could not be recorded runs no command.
-  const entries = readGroups(directory);
+  const events = sink.emitter({ layer: 'L1', card, dispatch: id });
+  const began = clock();
   try {
-    writeGroups(directory, entries);
+    events.emit('dispatch.start', { command });
   } catch (cause) {
-    throw new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause });
+    throw refused(id, card, [{ event: 'dispatch.start', command, cause }]);
   }
   let recorded;
-  let settled;
+  let result;
+  let failure;
   try {
-    settled = await runCommand({
+    // The record is shown writable before anything starts, by writing it back as it stands, so a
+    // dispatch whose group could not be recorded runs no command.
+    try {
+      writeGroups(directory, readGroups(directory));
+    } catch (cause) {
+      throw Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED });
+    }
+    result = await runCommand({
       command,
       args,
       cwd,
@@ -57,23 +64,70 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         recorded = group;
       },
     });
-  } catch (failure) {
-    // L0 rejects with `EVENT_REFUSED` only once it has emptied the group, so that entry goes too,
-    // and the refusal still reaches the caller. Any other rejection leaves the entry, because
-    // L0 has not said the group is empty, and a later start settles it.
-    // A removal the record refuses rides on the refusal rather than replacing it, so the caller
-    // still learns which events went unrecorded.
-    if (failure.code === EVENT_REFUSED && recorded !== undefined) {
-      try {
-        removeGroup(directory, recorded);
-      } catch (recordFailure) {
+  } catch (thrown) {
+    failure = thrown;
+    result = thrown.result;
+  }
+  // L0 settles, or rejects with `EVENT_REFUSED`, only once it has emptied the group, so the entry
+  // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
+  // later start settles it. A removal the record refuses after a refused event rides on the
+  // refusal rather than replacing it, so the caller still learns which events went unrecorded.
+  if (recorded !== undefined && (failure === undefined || failure.code === EVENT_REFUSED)) {
+    try {
+      removeGroup(directory, recorded);
+    } catch (recordFailure) {
+      if (failure === undefined) failure = recordFailure;
+      else {
         failure.message += `\nand the record of process groups in ${directory} kept the entry for group ${recorded}: ${recordFailure.message}`;
         failure.recordFailure = recordFailure;
       }
     }
-    throw failure;
   }
-  // L0 settles only once the group is empty, so nothing is left in it to end.
-  if (recorded !== undefined) removeGroup(directory, recorded);
-  return settled;
+  // Every append is tried whatever became of those before it, so a refused timeout event still
+  // leaves the dispatch its end.
+  const unrecorded = [];
+  const record = (event, fields) => {
+    try {
+      events.emit(event, fields);
+    } catch (cause) {
+      unrecorded.push({ event, ...fields, cause });
+    }
+  };
+  if (result?.timedOut) record('dispatch.timeout', { timeout });
+  // One end for every start L1 recorded, carrying the exit code where the command ran, or why it
+  // did not start (the architect's ruling 2, §4, on #332).
+  const ms = Math.round(clock() - began);
+  record('dispatch.end', result === undefined ? { reason: failure.message, ms } : { exit: result.exit, ms });
+  if (unrecorded.length > 0) failure = alongside(failure, refused(id, card, unrecorded, result));
+  if (failure !== undefined) throw failure;
+  return result;
+}
+
+/**
+ * `refusal`, L1's failure for its unrecorded events, carried alongside the `failure` the dispatch
+ * already had, where it had one. L0's own refusal takes L1's unrecorded events onto it, so the
+ * caller reads every unrecorded event in one place. Any other failure becomes the refusal's cause,
+ * and its message leads the refusal's.
+ */
+function alongside(failure, refusal) {
+  if (failure === undefined) return refusal;
+  if (failure.code === EVENT_REFUSED) {
+    failure.message += `\n${refusal.message}`;
+    failure.unrecorded.push(...refusal.unrecorded);
+    return failure;
+  }
+  refusal.message = `${failure.message}\nand ${refusal.message}`;
+  refusal.cause = failure;
+  return refusal;
+}
+
+/**
+ * The failure for dispatch `id`, of `card` where it has one, whose `unrecorded` L1 events the sink
+ * refused, each with its fields and why, carrying the dispatch's `result` where its command ran. Its
+ * `code` tells the caller it from a command that never started without reading the message.
+ */
+function refused(id, card, unrecorded, result) {
+  const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
+  const under = `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+  return Object.assign(new Error(`the sink refused ${unrecorded.length} L1 event(s) of ${under}, so they went unrecorded:\n${lines.join('\n')}`), { code: EVENT_REFUSED, unrecorded, result });
 }
