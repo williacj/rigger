@@ -1018,11 +1018,33 @@ function startOf(ps, pid, timeout) {
  * The start time of each live process in `group`, by its pid, read as `startOf` reads one. A
  * zombie is left out: it has exited, though `ps` still lists it, with its start time, until its
  * parent reaps it. So a leader that has exited reads as dead whether or not it has been reaped.
+ *
+ * A read that lists no process is kept only where signal 0 no longer reaches the group, because a
+ * read that failed can list nothing, even one that exits 1 and prints nothing (`run`), and the
+ * leaderless rule would take that empty table as a group to kill (`recorded`). While the group
+ * still answers, it reads again, since a member that is exiting answers signal 0 and may not be
+ * listed (`occupied`), and where `timeout` passes first it fails, so nothing in the group is
+ * killed.
+ *
+ * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
+ * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
+ * with this read's arguments and `PS_ENV`: a group whose one process had exited and been reaped
+ * exited 1 and wrote nothing to either stream; a group `x` exited 1 and wrote `ps: Invalid process
+ * group: x` to standard error; a live group exited 0 and printed its row. So a read that failed
+ * and wrote nothing, as the stand-in for `ps` in `test/kill-recorded.test.mjs` does, gives the
+ * same answer as an empty group, and only signal 0 tells the two apart.
  */
 async function startsIn(ps, group, timeout) {
-  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], timeout, timeout));
-  const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
-  return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  const deadline = Date.now() + timeout;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`the reads of the group's start times listed no process for ${timeout} ms while signal 0 still reached it`);
+    const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+    if (rows.size === 0 && occupied(group)) continue;
+    const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
+    return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

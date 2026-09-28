@@ -260,6 +260,7 @@ test('given a recorded group with no live process, the call kills nothing and re
 
   assert.equal(alive(bystander.member), true, 'a process no entry names was killed');
   assert.deepEqual(killsIn(directory), []);
+  assert.deepEqual(readGroups(stateOf(directory)), []);
 });
 
 test('after the call returns, the record holds no entry whose group it confirmed dead or left alone', SETTLES_WITHIN, async (t) => {
@@ -432,6 +433,35 @@ test('given a recorded group whose start-time read never answers, the call kills
   assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });
+
+/**
+ * Stand-ins for `ps`, by how the start-time read fails, each the body of a script whose arguments
+ * are the read's: the group's id is the third. The first is how `ps` reports that no process
+ * matched, whatever it is asked. The partial table is the real read's first row alone.
+ */
+const FAILING_READS = {
+  'exits 1 and prints nothing': 'exit 1',
+  'exits 2 and prints nothing': 'exit 2',
+  'prints part of the table and exits 1': '/bin/ps "$@" | /usr/bin/head -n 1; exit 1',
+  'prints a start time that cannot be parsed': 'echo "$3 Ss  the day before yesterday"',
+};
+
+for (const [how, body] of Object.entries(FAILING_READS)) {
+  test(`given a recorded group with a live member whose start-time read ${how}, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
+    const directory = scratch(t);
+    const started = await startGroup(directory, 'group');
+    const entry = entryFor(started, { dispatch: 'd-unread', card: 32 });
+    writeGroups(stateOf(directory), [entry]);
+
+    await assert.rejects(killIn(directory, { ps: fixture(directory, 'ps', body), readTimeout: 300 }), (failure) => {
+      for (const named of [`group ${started.group}`, 'd-unread', '#32']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+      return true;
+    });
+
+    assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+    assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+  });
+}
 
 /** A sink whose stream lies under a regular file in `directory`, so it refuses every append. */
 function refusingSink(directory) {
