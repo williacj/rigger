@@ -21,6 +21,12 @@ import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../su
  * exactly one end, which carries the exit code and the duration where the command ran, and why it
  * did not start where it never did.
  *
+ * On Rigger's own exit, the order is L0's exit cleanup's: L0 kills the group and records each kill;
+ * L1 removes the entry and appends `dispatch.end`, carrying the exit code L0 hands it. The sink's
+ * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
+ * naming the event, the dispatch and its card. A process kept running past its ending has the call
+ * settle as before, and records nothing more of the dispatch.
+ *
  * A refused start starts nothing, and the call rejects with an `EVENT_REFUSED` failure naming it.
  * A command that never started rejects with a `NOT_STARTED` failure, a state directory whose
  * record cannot be written included. Where the sink refuses the timeout or the end, every append is
@@ -53,6 +59,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   let recorded;
   let result;
   let failure;
+  let endedAtExit = false;
   try {
     // The record is shown writable before anything starts, by writing it back as it stands, so a
     // dispatch whose group could not be recorded runs no command.
@@ -85,12 +92,35 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         addGroup(directory, { group, started, dispatch: id, card });
         recorded = group;
       },
-      // On Rigger's own exit, L0 kills the group, and then hands it here to remove its entry.
-      onExit: (group) => removeGroup(directory, group),
+      // On Rigger's own exit, L0 kills and records the group, and then hands it here with the
+      // command's exit code, to remove its entry and record the dispatch's end. No caller is left
+      // to hear of a refused end, so L0 writes this refusal to standard error.
+      onExit: (group, exit) => {
+        endedAtExit = true;
+        let removal;
+        try {
+          removeGroup(directory, group);
+        } catch (cause) {
+          removal = cause;
+        }
+        const fields = { exit, ms: Math.round(clock() - began) };
+        try {
+          events.emit('dispatch.end', fields);
+        } catch (cause) {
+          throw alongside(removal, refused(id, card, [{ event: 'dispatch.end', ...fields, cause }]));
+        }
+        if (removal !== undefined) throw removal;
+      },
     });
   } catch (thrown) {
     failure = thrown;
     result = thrown.result;
+  }
+  // The exit cleanup has ended the dispatch, and a process kept running past its ending records
+  // nothing more of it.
+  if (endedAtExit) {
+    if (failure !== undefined) throw failure;
+    return result;
   }
   // L0 settles, or rejects with `EVENT_REFUSED`, only once it has emptied the group, so the entry
   // goes. Any other rejection leaves the entry, because L0 has not said the group is empty, and a
@@ -147,12 +177,13 @@ function alongside(failure, refusal) {
 
 /**
  * The failure for dispatch `id`, of `card` where it has one, whose `unrecorded` L1 events the sink
- * refused, each with its fields and why, carrying the dispatch's `result` where its command ran. Its
- * `code` tells the caller it from a command that never started without reading the message.
+ * refused, each on a line of its own naming the dispatch and card, its fields and why, carrying the
+ * dispatch's `result` where its command ran. Its `code` tells the caller it from a command that
+ * never started without reading the message.
  */
 function refused(id, card, unrecorded, result) {
-  const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
   const under = `dispatch ${id}${card === undefined ? '' : `, card #${card}`}`;
+  const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} of ${under} ${JSON.stringify(fields)}: ${cause.message}`);
   return Object.assign(new Error(`the sink refused ${unrecorded.length} L1 event(s) of ${under}, so they went unrecorded:\n${lines.join('\n')}`), { code: EVENT_REFUSED, unrecorded, result });
 }
 
