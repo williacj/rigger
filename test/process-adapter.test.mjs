@@ -827,3 +827,51 @@ test('a command ended by a signal it does not handle has a non-zero integer exit
 
   assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
 });
+
+/**
+ * The timeout each test of a command outliving it passes. A judgment: it is the time the fixture
+ * has to be ready before the timeout ends it, and `ready` fails the test where it was not.
+ */
+const OUTLIVED = 1_000;
+
+/**
+ * A command that runs `body`, which starts at least one child, then writes its pid to
+ * `$here/command.pid`, marks `$here/ready`, and waits on its children, which run until killed. It
+ * is run by `/bin/bash` by name, so the process the adapter starts is `bash` from its first line.
+ */
+function outliving(directory, body) {
+  const script = fixture(directory, 'command', [body, 'echo $$ > "$here/command.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+  return { command: '/bin/bash', args: [script], timeout: OUTLIVED };
+}
+
+/** Fails the test where the timeout ended an `outliving` command before it was ready. */
+const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
+
+test('given a command and its child outliving its timeout, no process of the group is alive when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await adapt(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  assert.equal(alive(Number(read(directory, 'command.pid'))), false, 'the command is alive');
+  assert.equal(alive(Number(read(directory, 'child.pid'))), false, 'the child is alive');
+  assert.equal(alive(-Number(read(directory, 'command.pid'))), false, 'a process of the command\'s group is alive');
+});
+
+test('given a command outliving its timeout, the result says the timeout ended it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const result = await adapt(directory, outliving(directory, leave(TAIL, 'child')));
+
+  ready(directory);
+  assert.equal(result.timedOut, true);
+});
+
+test('given a command that finishes inside its timeout, the result reports no timeout and carries the command\'s own exit code', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 3', { timeout: OUTLIVED });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
+});

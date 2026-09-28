@@ -285,29 +285,35 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const [code, signal] = await once(child, 'exit');
+  const exited = once(child, 'exit');
+  const expired = await outlasts(exited, timeout);
+  const events = expired ? await contain(child.pid, { ps, readTimeout }) : [];
+  const [code, signal] = await exited;
+  // The timeout ended the command only where the kill did. One that exited on its own between the
+  // timer and the kill ended itself, with its own exit code.
+  const timedOut = expired && signal !== null;
   // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
   // 128 and the signal's number, which is never 0.
   const exit = signal === null ? code : 128 + constants.signals[signal];
-  const events = await contain(child.pid, { ps, readTimeout });
-  if (await heldPast(output, outputBound)) {
+  events.push(...(await contain(child.pid, { ps, readTimeout })));
+  if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();
     child.stderr.destroy();
     events.push(['output.held', { group: child.pid, bound: outputBound }]);
   }
   const [stdout, stderr] = await output;
-  const result = { exit, stdout, stderr };
+  const result = { exit, timedOut, stdout, stderr };
   const unrecorded = record(emitter, events);
   if (unrecorded.length > 0) throw refused(unrecorded, result);
   return result;
 }
 
-/** Whether `output` is still unread once `bound` milliseconds have passed. */
-async function heldPast(output, bound) {
+/** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
+async function outlasts(promise, bound) {
   let timer;
   const passed = new Promise((resolve) => { timer = setTimeout(resolve, bound, true); });
-  const held = await Promise.race([output.then(() => false), passed]);
+  const outlasted = await Promise.race([promise.then(() => false), passed]);
   clearTimeout(timer);
-  return held;
+  return outlasted;
 }
