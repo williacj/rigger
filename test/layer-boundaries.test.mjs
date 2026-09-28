@@ -192,7 +192,7 @@ test('rule 4: a module under src/cli/ naming concurrency fails, and passing the 
   assert.deepEqual(messages({ 'src/cli/run.mjs': 'export const run = (config, start) => start(config);' }), []);
 });
 
-test('rule 7: node:child_process is imported only by the runners module, doctor.mjs and init.mjs', () => {
+test('rule 7: node:child_process is imported only by the runners module, the process adapter, doctor.mjs and init.mjs', () => {
   assertBreaks({ 'src/workflow/spawn.mjs': 'import { spawnSync } from "node:child_process";' }, 'src/workflow/spawn.mjs', 'rule 7');
   assertBreaks({ 'src/cli/spawn.mjs': "import { spawnSync } from 'child_process';" }, 'src/cli/spawn.mjs', 'rule 7');
   assertBreaks({ 'src/cli/spawn.mjs': 'export { spawnSync } from "node:child_process";' }, 'src/cli/spawn.mjs', 'rule 7');
@@ -200,6 +200,7 @@ test('rule 7: node:child_process is imported only by the runners module, doctor.
   assert.deepEqual(messages({
     'src/cli/doctor.mjs': allowed,
     'src/cli/init.mjs': allowed,
+    'src/substrate/process.mjs': allowed,
     'src/substrate/forge/runners.mjs': `${allowed}\n${ADAPTER['src/substrate/forge/runners.mjs']}`,
   }), []);
 });

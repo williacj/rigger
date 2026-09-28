@@ -50,8 +50,11 @@ const NAMES = [
  */
 const ENTRY = { file: 'src/scheduling/loop.mjs', exported: 'loop' };
 
-/** The modules that may import `node:child_process`: the runners, and two local tool probes. */
-const SPAWNERS = [RUNNERS, 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
+/**
+ * The modules that may import `node:child_process`: the runners, L0's process adapter, and two
+ * local tool probes.
+ */
+const SPAWNERS = [RUNNERS, 'src/substrate/process.mjs', 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
 const CHILD_PROCESS = ['node:child_process', 'child_process'];
 
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
@@ -1374,7 +1377,7 @@ export function boundaryReport(tree) {
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
-        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the forge runners, doctor.mjs and init.mjs may`);
+        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the forge runners, the process adapter, doctor.mjs and init.mjs may`);
       }
     }
     if (file !== RUNNERS) {
