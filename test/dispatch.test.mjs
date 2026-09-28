@@ -158,9 +158,13 @@ test('given a sink that refuses the kill event and a record that refuses the rem
   const directory = scratch(t);
   const state = stateOf(directory);
   writeFileSync(join(directory, 'hold'), '');
-  // Once running, and so once its entry is written, the command makes the stream and the state
-  // directory refuse writes, then leaves a `tail` alive in its group for L0 to kill.
+  // The command runs before its entry is written: L0 spawns it, reads its leader's start time, and
+  // only then does L1 write the entry. So the command first waits until the record names its
+  // group, and only then makes the stream and the state directory refuse writes, then leaves a
+  // `tail` alive in its group for L0 to kill. The record is replaced by a rename, so no read of it
+  // finds a partial write.
   const command = fixture(directory, 'command', [
+    'until /usr/bin/grep -q "\\"group\\":$$," "$here/.rigger/groups.json"; do :; done',
     ': > "$here/.rigger/events.jsonl"',
     '/bin/chmod 444 "$here/.rigger/events.jsonl"',
     '/bin/chmod 555 "$here/.rigger"',
