@@ -10,7 +10,7 @@ import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, 
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
@@ -837,8 +837,63 @@ test('a command given the largest timeout Node keeps runs to its own exit, with 
   assert.equal(result.exit, 0);
 });
 
-test('a timeout Node\'s timer cannot keep starts no process, and the failure names it', async (t) => {
-  for (const timeout of [TIMER_MAX + 1, 0, -1, NaN, Infinity]) {
+test('a command that exits at once under a timeout past the largest delay one Node timer keeps returns its own exit code, with no timeout reported', async (t) => {
+  const directory = scratch(t);
+
+  const result = await shell(directory, 'exit 3', { timeout: 2 ** 31 });
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
+});
+
+/**
+ * A scheduler standing in for Node's timers, which runs nothing until the test says so: it keeps
+ * each timer armed, with its delay, and cancels one by forgetting it.
+ */
+function heldTimers() {
+  const armed = new Set();
+  return {
+    armed,
+    schedule: (run, delay) => { const timer = { run, delay }; armed.add(timer); return timer; },
+    cancel: (timer) => armed.delete(timer),
+    /** Fires the one armed timer and hands back its delay. */
+    fire() {
+      assert.equal(armed.size, 1, `${armed.size} timers are armed`);
+      const [timer] = armed;
+      armed.delete(timer);
+      timer.run();
+      return timer.delay;
+    },
+  };
+}
+
+test('a delay past the largest one Node timer keeps elapses over timers each within it, adding up to the delay exactly', () => {
+  const timers = heldTimers();
+  const total = 2 * TIMER_MAX + 5;
+  let done = false;
+
+  whenElapsed(total, () => { done = true; }, timers);
+
+  const delays = [];
+  while (!done) delays.push(timers.fire());
+  assert.deepEqual(delays, [TIMER_MAX, TIMER_MAX, 5]);
+  assert.equal(timers.armed.size, 0);
+});
+
+test('a delay cancelled partway through its timers never elapses', () => {
+  const timers = heldTimers();
+  let done = false;
+
+  const cancel = whenElapsed(TIMER_MAX + 1, () => { done = true; }, timers);
+  timers.fire();
+  cancel();
+
+  assert.equal(timers.armed.size, 0, 'a timer is still armed');
+  assert.equal(done, false);
+});
+
+test('a timeout that is not a positive finite number of milliseconds starts no process, and the failure names it', async (t) => {
+  for (const timeout of [0, -1, NaN, Infinity, '300']) {
     const directory = scratch(t);
     const command = fixture(directory, 'command', ': > "$here/started"');
 

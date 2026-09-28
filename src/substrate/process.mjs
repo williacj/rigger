@@ -43,11 +43,11 @@ export const OUTPUT_BOUND = 1_000;
 export const EVENT_REFUSED = 'EVENT_REFUSED';
 
 /**
- * The largest timeout, in milliseconds, the adapter keeps: the largest delay Node's timer keeps.
- * Node owns this fact and exports no name for it. Past it, Node warns with a
- * `TimeoutOverflowWarning` and sets the delay to 1 ms, which would end at once a command given
- * more time than that. So this copy is tied to Node by a test that asks Node's timer (`D16`
- * rule 2).
+ * The largest delay, in milliseconds, one of Node's timers keeps. Node owns this fact and exports
+ * no name for it. Past it, Node warns with a `TimeoutOverflowWarning` and sets the delay to 1 ms,
+ * which would end at once a command given more time than that, so a longer delay is kept over
+ * several timers (`whenElapsed`). This copy is tied to Node by a test that asks Node's timer
+ * (`D16` rule 2).
  */
 export const TIMER_MAX = 2 ** 31 - 1;
 
@@ -314,9 +314,8 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
-  // NaN fails every comparison and Infinity the bound, so neither passes as written.
-  if (typeof timeout !== 'number' || !(timeout > 0 && timeout <= TIMER_MAX)) {
-    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a number of milliseconds from 1 to ${TIMER_MAX}, so it did not start ${command}`);
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
@@ -408,11 +407,26 @@ function unusable(cwd) {
 /** The failure for a call whose `command` never started, saying `why`. */
 const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
 
+/**
+ * Calls `done` once `delay` milliseconds have passed, and hands back what cancels that. A delay
+ * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
+ * `schedule` and `cancel` are Node's timers unless a test gives its own.
+ */
+export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
+  let timer;
+  const arm = (left) => {
+    const step = Math.min(left, TIMER_MAX);
+    timer = schedule(() => (left > step ? arm(left - step) : done()), step);
+  };
+  arm(delay);
+  return () => cancel(timer);
+}
+
 /** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
 async function outlasts(promise, bound) {
-  let timer;
-  const passed = new Promise((resolve) => { timer = setTimeout(resolve, bound, true); });
+  let stop;
+  const passed = new Promise((resolve) => { stop = whenElapsed(bound, () => resolve(true)); });
   const outlasted = await Promise.race([promise.then(() => false), passed]);
-  clearTimeout(timer);
+  stop();
   return outlasted;
 }

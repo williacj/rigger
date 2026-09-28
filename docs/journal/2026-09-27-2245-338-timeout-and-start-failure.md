@@ -31,13 +31,24 @@ timeout can end it, and the suite runs with `--test-timeout=0`. So the wait carr
 its own. The engineer judge's mutation, which rejects before the command runs when `timeout` is
 1, then reds the test after 5 seconds rather than hanging the suite.
 
-**A timeout is kept only up to the largest delay Node's timer keeps.** Past 2^31−1 ms, Node warns
-with a `TimeoutOverflowWarning` and sets the delay to 1 ms. So a command given such a timeout was
-ended almost at once and reported as timed out, although it would have finished in its time (Codex
-on #364, round 3). The adapter now refuses, before anything starts, any timeout that is not a
-number from 1 to that maximum, naming the value. That covers 0, negative numbers, `NaN` and
-`Infinity` too. Node exports no name for the maximum, so `TIMER_MAX` is a copy. A test asks a Node
-process of its own whether its timer warns at `TIMER_MAX` and at one past it (`D16` rule 2).
+**A timeout longer than one of Node's timers is kept over a chain of them.** Past 2^31−1 ms,
+Node warns with a `TimeoutOverflowWarning` and sets the delay to 1 ms. So a command given such a
+timeout was ended almost at once and reported as timed out, although it would have finished in its
+time (Codex on #364, round 3). Round 4 refused such a timeout, and Codex ruled that a command
+which would finish inside it then gets no result (round 4). So `whenElapsed` now keeps any positive
+finite delay by re-arming a timer of at most `TIMER_MAX` until the whole delay has passed. The
+adapter still refuses 0, negative numbers, `NaN`, `Infinity` and anything that is not a number.
+
+**The chain is tested with timers that run only when told.** A test hands `whenElapsed` a scheduler
+that fires one armed timer at a time. So a delay of twice `TIMER_MAX` plus 5 ms is seen to elapse
+over timers of `TIMER_MAX`, `TIMER_MAX` and 5 ms, with nothing slept. Node exports no name for the
+maximum, so `TIMER_MAX` is a copy. A test asks a Node process of its own whether its timer warns at
+`TIMER_MAX` and at one past it (`D16` rule 2).
+
+**A cancel that does nothing holds the test file open.** A guarded mutation that made the
+cancel a no-op redded the cancel test, and the file never exited: the test running a command at
+`TIMER_MAX` left a 24-day timer armed. So a regression there shows as a hung file as well as a red
+test.
 
 **The check refuses every `cwd` the spawn reads as unset.** Node's spawn runs the command in the
 caller's own directory for `undefined`, `null`, `''` and an empty `Buffer`, and the check refuses
