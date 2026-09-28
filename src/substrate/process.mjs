@@ -286,28 +286,27 @@ function run(ps, args, remaining, timeout) {
 
 /**
  * Ends what is left of `group` once its command has exited, in the order that keeps each name:
- * the census, which stops the group and reads it while its processes still exist; the kill; the
- * confirmation that the group is empty; and only then the `L0` events to record, one per process
- * killed, which it hands back. A census that fails still kills the group, and hands back the kill
- * of the group with why its processes went unnamed.
+ * the census, which stops the group and reads it while its processes still exist; a read of
+ * states; the kill; the confirmation that the group is empty; and only then the `L0` events to
+ * record, one per process killed, which it hands back. A census or a read of states that fails
+ * still kills the group, and hands back the kill of the group with why its processes went unnamed.
  */
 async function contain(group, { ps, readTimeout }) {
   if (!occupied(group)) return [];
-  let survivors;
+  let killed;
   let unnamed;
   try {
-    survivors = await census(ps, group, readTimeout);
+    const survivors = await census(ps, group, readTimeout);
+    // A survivor that exited on its own after the census's last read is not one L0 killed. A
+    // read of states just before the kill finds it a zombie, or gone, and signal 0, asked in the
+    // turn that sends the kill, finds it reaped since. Signal 0 alone would not do: it reaches a
+    // zombie (measured with Node 26.5.0 on macOS 27.0 on 2026-09-27). So a read that fails leaves
+    // the survivors unnamed, as a census that fails does.
+    const states = await statesOf(group, ps, readTimeout);
+    killed = survivors.filter(({ pid }) => states.get(pid)?.startsWith('Z') === false && answers(pid));
   } catch (error) {
     unnamed = error.message;
   }
-  // A survivor that exited on its own after the census's last read is not one L0 killed. A read
-  // of states just before the kill finds it a zombie, or gone, and signal 0, asked in the turn
-  // that sends the kill, finds it reaped since. Signal 0 alone would not do: it reaches a zombie
-  // (measured with Node 26.5.0 on macOS 27.0 on 2026-09-27). Where the read fails, only signal 0
-  // is asked, so a survivor left unreaped then is recorded as killed.
-  const states = survivors === undefined ? undefined : await statesOf(group, ps, readTimeout).catch(() => undefined);
-  const present = (pid) => states === undefined || (states.get(pid)?.startsWith('Z') === false);
-  const killed = survivors?.filter(({ pid }) => present(pid) && answers(pid));
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
   return killed.map((survivor) => ['survivor.killed', survivor]);
