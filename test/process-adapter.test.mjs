@@ -1002,6 +1002,15 @@ test('a command that is not executable rejects as a failure to start, naming it,
   neverRan(directory);
 });
 
+test('an executable no system loader can run rejects as a failure to start, naming it', async (t) => {
+  const directory = scratch(t);
+  // Node throws this failure from the spawn itself, where the others arrive after it returns.
+  const command = join(directory, 'garbage');
+  writeFileSync(command, 'not a program', { mode: 0o755 });
+
+  unstarted(await rejection(directory, { command }), command);
+});
+
 test('a command that never started and a refused event reject with codes that tell them apart', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
