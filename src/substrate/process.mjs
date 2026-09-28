@@ -543,11 +543,14 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  const killedAtTimeout = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
   const timedOut = expired && signal !== null;
+  // A command that exited on its own did so before the containment stopped its group, because a
+  // stopped process cannot exit, so every process that containment killed outlived the command.
+  const events = timedOut ? killedAtTimeout : killedAtTimeout.map(([event, fields]) => [event === 'timeout.killed' ? 'survivor.killed' : event, fields]);
   // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
   // 128 and the signal's number, which is never 0.
   const exit = signal === null ? code : 128 + constants.signals[signal];

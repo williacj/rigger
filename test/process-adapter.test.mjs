@@ -1475,29 +1475,51 @@ test('given a command that finishes inside its timeout, the result reports no ti
   assert.equal(result.exit, 3);
 });
 
-test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
-  const directory = scratch(t);
-  const command = fixture(directory, 'command', 'echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit 0');
+/** The last lines of a command `asItsTimeoutFires` holds for: they write its pid, then exit `code`. */
+const pidThenExit = (code) => `echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit ${code}`;
 
-  // The timer is armed before the call first yields. Holding this thread until the command is a
-  // zombie, which Node has not reaped because its loop cannot run, leaves the timer and the exit
-  // both due when the loop resumes, and Node runs due timers before it reaps.
-  const call = adapt(directory, { command, timeout: 1 });
+/**
+ * What `call` settles on, where its command ends with `pidThenExit` and its timeout is 1 ms, once
+ * this thread has been held until that command is a zombie. The timer is armed before the call
+ * first yields. Holding this thread until the command is a zombie, which Node has not reaped
+ * because its loop cannot run, leaves the timer and the exit both due when the loop resumes, and
+ * Node runs due timers before it reaps.
+ */
+async function asItsTimeoutFires(directory, call) {
   const zombie = () => existsSync(join(directory, 'command.pid'))
     && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
   // The wait holds the thread, so no test timeout can end it: it carries its own deadline, and a
   // command that never runs fails the test rather than holding the suite. The deadline is a
-  // judgment: the command, which only writes its pid and exits, has nothing to wait for.
+  // judgment: the command has nothing to wait for but a survivor's start, where it leaves one.
   const deadline = Date.now() + 5_000;
   while (!zombie() && Date.now() < deadline);
   if (!zombie()) {
     const outcome = await call.then((result) => JSON.stringify(result), (error) => error.message);
     assert.fail(`the command was not a zombie within 5,000 ms, so the race was not set up; the call settled with: ${outcome}`);
   }
-  const result = await call;
+  return call;
+}
+
+test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', pidThenExit(0));
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, timeout: 1 }));
 
   assert.equal(result.timedOut, false);
   assert.equal(result.exit, 0);
+});
+
+test('given a command that exits 3 on its own as its timeout fires, the process killed after that exit is recorded as a survivor kill, and the result carries exit 3 with no timeout', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${leave(TAIL, 'survivor')}\n${pidThenExit(3)}`);
+  const { state, emitter } = l0(directory);
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, emitter, timeout: 1 }));
+
+  assert.deepEqual(eventsIn(state).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }]);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
 });
 
 test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
