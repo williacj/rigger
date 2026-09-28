@@ -6,49 +6,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
-
-/**
- * A scratch directory for one test, torn down with every process that names it.
- *
- * Every fixture process in this file carries the directory's path in its command line, so the
- * teardown finds each one by it, whether the test passed or failed, and whatever the adapter did.
- */
-function scratch(t) {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
-  // Until none is left, because a fixture that forks can start one while `pkill` is at work.
-  t.after(() => {
-    while (running(directory).length > 0) spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]);
-  });
-  return directory;
-}
-
-/** `text` as a pattern `pgrep` and `pkill` match only as written. */
-const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** The pid of every process whose command line holds `text`. */
-const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
 function l0(directory) {
   const state = join(directory, 'state');
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
   return { state, emitter: sink.emitter({ layer: 'L0' }) };
-}
-
-/**
- * A shell script named `name` in `directory`, executable, whose body reads that directory as
- * `$here`. Its path, and so the directory, is in the command line of the shell running it.
- */
-function fixture(directory, name, body) {
-  const path = join(directory, name);
-  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${body}\n`, { mode: 0o755 });
-  return path;
 }
 
 /**
@@ -155,9 +124,6 @@ const groupOf = (pid) => spawnSync('/bin/ps', ['-o', 'pgid=', '-p', String(pid)]
  */
 const reportGroup = (file) => `/bin/ps -o pgid= -p $$ > "$here/${file}.tmp" && /bin/mv "$here/${file}.tmp" "$here/${file}"`;
 
-/** What a fixture wrote to `name` in `directory`, trimmed. */
-const read = (directory, name) => readFileSync(join(directory, name), 'utf8').trim();
-
 test('every process a command starts that stays in its group reports one process group id, not the caller\'s', async (t) => {
   const directory = scratch(t);
   fixture(directory, 'grandchild', reportGroup('grandchild'));
@@ -184,17 +150,6 @@ test('two commands running at once through the adapter report different process 
   assert.match(read(directory, 'two'), /^\d+$/);
   assert.notEqual(read(directory, 'one'), read(directory, 'two'));
 });
-
-/** Whether a process `pid` names is alive: signal 0 reaches it. */
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH') return false;
-    throw error;
-  }
-}
 
 /**
  * The lines of a fixture that start `program` in the background, holding the command's standard
@@ -342,6 +297,44 @@ test('a call with no L0 emitter starts no process, and fails naming the missing 
 
     assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
   }
+});
+
+test('the caller\'s onGroup is handed the command\'s process group before the call first yields', async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', reportGroup('group'));
+  let handed;
+
+  const settled = adapt(directory, { command, onGroup: (group) => { handed = group; } });
+  const beforeYielding = handed;
+  await settled;
+
+  assert.equal(beforeYielding, Number(read(directory, 'group')));
+});
+
+test('given an onGroup that throws, the call rejects with what it threw, and no process of the command\'s group is alive', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  const refusal = new Error('the group could not be recorded');
+  let handed;
+
+  await assert.rejects(adapt(directory, { command, onGroup: (group) => { handed = group; throw refusal; } }), (thrown) => thrown === refusal);
+
+  assert.equal(alive(-handed), false, 'a process of the command\'s group is alive');
+});
+
+test('given an onGroup that throws and a sink that refuses every append, the call rejects naming the unrecorded kill, caused by what onGroup threw', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  const refusal = new Error('the group could not be recorded');
+  let handed;
+
+  const error = await rejection(directory, { command, emitter: refusing(directory), onGroup: (group) => { handed = group; throw refusal; } });
+
+  assert.equal(alive(-handed), false, 'a process of the command\'s group is alive');
+  assert.equal(error.code, EVENT_REFUSED);
+  assert.equal(error.cause, refusal);
+  // The kill can land before or after the shell execs `tail`, so the process is named by its pid.
+  assert.deepEqual(error.unrecorded.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: handed }]);
 });
 
 test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
