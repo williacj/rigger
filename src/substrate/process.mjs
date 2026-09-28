@@ -168,8 +168,9 @@ async function ended(group, ps, readTimeout) {
  * reaches it, and a read of its states finds such a member, or fails. A read that lists no process
  * while signal 0 still reaches the group is taken again, because a member that is exiting still
  * answers signal 0 (`occupied`) and may not be listed, until the group no longer answers or
- * `timeout` has passed, which counts as holding one. Only a read that found such a member says it
- * saw one.
+ * `timeout` has passed, which counts as holding one. Each read has `timeout` of its own, so one
+ * begun near that bound fails only where the read itself does. Only a read that found such a
+ * member says it saw one.
  *
  * One case is left unrecorded, and nothing but the process table can close it (`D16` rule 3): a
  * table that leaves a live member of the group out of every read, of the census, the kill and this
@@ -191,7 +192,7 @@ async function outlived(group, ps, timeout) {
     if (Date.now() >= deadline) return `the reads of the group before its kill listed no process for ${timeout} ms while signal 0 still reached it${unseen}`;
     let states;
     try {
-      states = [...(await statesOf(group, ps, deadline - Date.now())).values()];
+      states = [...(await statesOf(group, ps, timeout)).values()];
     } catch (error) {
       return `the read of the group before its kill failed while signal 0 still reached it${unseen}: ${error.message}`;
     }
