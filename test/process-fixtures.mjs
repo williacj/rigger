@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,16 @@ export function startOf(pid) {
 /** Settles once `condition` holds, checked once per turn of the event loop. */
 export async function until(condition) {
   while (!condition()) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** The pid of every child a fixture in `directory` left through `leave` as `child-<pid>`. */
+export const childrenIn = (directory) => readdirSync(directory).filter((name) => /^child-\d+\.pid$/.test(name)).map((name) => Number(read(directory, name)));
+
+/** Whether `pid` has gone within `within` ms, looked at once per turn of the event loop. */
+export async function gone(pid, within = 10_000) {
+  const deadline = Date.now() + within;
+  while (alive(pid) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  return !alive(pid);
 }
 
 /** Whether a process `pid` names is alive: signal 0 reaches it. */

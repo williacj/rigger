@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,7 +14,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
-import { alive, fixture, holding, leave, read, TAIL, until } from './process-fixtures.mjs';
+import { childrenIn, fixture, gone, holding, leave, TAIL, until } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -69,16 +69,6 @@ function fakeLeavingChild(directory, board, { on = '*', then = ':' } = {}) {
     'exit $status',
   ].join('\n'));
   return fake;
-}
-
-/** The pid of every child a stand-in in `directory` left. */
-const childrenIn = (directory) => readdirSync(directory).filter((name) => /^child-\d+\.pid$/.test(name)).map((name) => Number(read(directory, name)));
-
-/** Whether `pid` has gone within `within` ms, looked at once per turn of the event loop. */
-async function gone(pid, within = 10_000) {
-  const deadline = Date.now() + within;
-  while (alive(pid) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
-  return !alive(pid);
 }
 
 /** The environment the bin runs under: `directory` first on PATH, ahead of the refusing `gh`. */

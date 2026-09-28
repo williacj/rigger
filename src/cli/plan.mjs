@@ -6,7 +6,7 @@ import { pullOrder } from '../scheduling/pull-order.mjs';
 import { readSide } from '../substrate/forge/read.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, consumerConfig, sourceTreeGuard } from './doctor.mjs';
+import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
 /** One line per card: what the run does with it, its number, and the kind or the reason. */
@@ -20,11 +20,11 @@ export const refusalLine = ({ card, reason }) => `  refuse  #${card}  ${reason}`
  */
 export const plan = (options) => recording((opened) => planning(opened, options));
 
-/** `plan`'s work, recording through `sink` once `name` has named its state directory. */
-async function planning({ sink, name }, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
-  const { named, refusal } = sourceTreeGuard('plan', { target, packageRoot, ask });
+/** `plan`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
+async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
+  const { named, refusal } = await settled('plan', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
-  name(named);
+  const { sink } = opened;
   const { config, problem } = await consumerConfig(named);
   if (problem) return { text: `rigger plan: ${problem}`, code: 1 };
   const refusals = validate(config);

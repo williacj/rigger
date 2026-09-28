@@ -4,7 +4,7 @@
 import { declaredLabels, sameLabel, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
-import { consumerConfig, sharedWith, sourceTreeGuard } from './doctor.mjs';
+import { consumerConfig, settled, sharedWith } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
 /** The type GitHub names a single-select field by, which is the only type a priority field may be. */
@@ -69,11 +69,11 @@ function writesFor(config, held) {
  */
 export const setupBoard = (options) => recording((opened) => settingUp(opened, options));
 
-/** `setupBoard`'s work, recording through `sink` once `name` has named its state directory. */
-async function settingUp({ sink, name }, { target = process.cwd() } = {}) {
-  const { named, refusal } = sourceTreeGuard('setup-board', { target });
+/** `setupBoard`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
+async function settingUp(opened, { target = process.cwd() } = {}) {
+  const { named, refusal } = await settled('setup-board', opened, { target });
   if (refusal) return refusal;
-  name(named);
+  const { sink } = opened;
   const { config, problem } = await consumerConfig(named);
   if (problem) return { text: `rigger setup-board: ${problem}`, code: 1 };
   const refusals = validate(config);
