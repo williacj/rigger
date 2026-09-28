@@ -714,23 +714,24 @@ function unusable(cwd) {
 }
 
 /**
- * `value` as text for a refusal, which no value can make throw. Its own conversion is used where
- * that prints something; where it throws, as a Symbol's does in a template literal and a
- * null-prototype object's does anywhere, or prints nothing, as `[]` and `''` do, Node's `inspect`
- * is; and where that throws too, the refusal says so.
+ * `value` as text for a refusal, never blank, which no value can make throw. It is the first of
+ * these that prints something: its own conversion; Node's `inspect`; and `inspect` ignoring the
+ * value's own hook for it, which prints what an object holds. A conversion can throw, as a
+ * Symbol's does in a template literal and a null-prototype object's does anywhere, or print
+ * nothing, as `[]` and `''` do, and a value's own hook can do either. Where every one fails, the
+ * refusal says so; no value tried reached that.
  */
 function shown(value) {
-  try {
-    const text = String(value);
-    if (text.trim() !== '') return text;
-  } catch {
-    // Printed by `inspect` below.
+  const ways = [() => String(value), () => inspect(value, { breakLength: Infinity }), () => inspect(value, { breakLength: Infinity, customInspect: false })];
+  for (const way of ways) {
+    try {
+      const text = way();
+      if (text.trim() !== '') return text;
+    } catch {
+      // The next way is tried.
+    }
   }
-  try {
-    return inspect(value);
-  } catch {
-    return 'that cannot be printed';
-  }
+  return 'that cannot be printed';
 }
 
 /** The failure for a call whose `command` never started, saying `why`. */

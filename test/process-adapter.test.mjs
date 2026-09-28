@@ -1423,8 +1423,11 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
   }
 });
 
-/** A value whose every conversion to text throws: its `toString`, and the hook `util.inspect` calls. */
-const unprintable = { toString() { throw new Error('no toString'); }, [Symbol.for('nodejs.util.inspect.custom')]() { throw new Error('no inspect'); } };
+/** An object whose `toString` and whose hook for `util.inspect` each throw. */
+const throwing = { toString() { throw new Error('no toString'); }, [Symbol.for('nodejs.util.inspect.custom')]() { throw new Error('no inspect'); } };
+
+/** An object whose `toString` and whose hook for `util.inspect` each print nothing. */
+const blank = { toString() { return ''; }, [Symbol.for('nodejs.util.inspect.custom')]() { return ''; } };
 
 test('the refusal of an invalid timeout names the value and its type', async (t) => {
   for (const [timeout, named] of [
@@ -1438,7 +1441,10 @@ test('the refusal of an invalid timeout names the value and its type', async (t)
     // Each of these prints as nothing, so the refusal must print them so they show.
     [[], 'the timeout [] (of type object)'],
     ['', 'the timeout \'\' (of type string)'],
-    [unprintable, 'the timeout that cannot be printed (of type object)'],
+    // Each of these prints nothing, or throws, however it is asked to print itself, so the refusal
+    // must print what the object holds.
+    [throwing, 'the timeout { toString: [Function: toString], Symbol(nodejs.util.inspect.custom): [Function: [nodejs.util.inspect.custom]] } (of type object)'],
+    [blank, 'the timeout { toString: [Function: toString], Symbol(nodejs.util.inspect.custom): [Function: [nodejs.util.inspect.custom]] } (of type object)'],
   ]) {
     const directory = scratch(t);
     const command = fixture(directory, 'command', ': > "$here/started"');
