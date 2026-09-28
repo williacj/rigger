@@ -929,3 +929,28 @@ test('given a command and its child outliving its timeout, the stream holds an L
   const kills = events.map(({ layer, event, pid, name, cmd }) => ({ layer, event, pid, name, cmd })).sort((a, b) => a.pid - b.pid);
   assert.deepEqual(kills, timeoutKills(directory));
 });
+
+test('given a sink that refuses every append, a command and its child outliving its timeout are dead when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  await assert.rejects(adapt(directory, { ...outliving(directory, leave(TAIL, 'child')), emitter: refusing(directory) }));
+
+  ready(directory);
+  assert.equal(alive(Number(read(directory, 'command.pid'))), false, 'the command is alive');
+  assert.equal(alive(Number(read(directory, 'child.pid'))), false, 'the child is alive');
+});
+
+test('given a sink that refuses every append, a command outliving its timeout rejects naming each unrecorded kill, with its exit code, saying the timeout ended it', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const error = await rejection(directory, { ...outliving(directory, leave(TAIL, 'child')), emitter: refusing(directory) });
+
+  ready(directory);
+  const unrecorded = (error.unrecorded ?? []).map(({ event, pid, name, cmd }) => ({ layer: 'L0', event, pid, name, cmd })).sort((a, b) => a.pid - b.pid);
+  assert.deepEqual(unrecorded, timeoutKills(directory));
+  for (const { cmd } of timeoutKills(directory)) assert.ok(error.message.includes(cmd), `the failure's message does not give ${cmd}: ${error.message}`);
+  assert.ok(Number.isInteger(error.result?.exit) && error.result.exit !== 0, `the exit code is ${error.result?.exit}`);
+  assert.equal(error.result?.timedOut, true);
+  // Not merely `timeout`, which each event's name already holds.
+  assert.ok(error.message.includes(`the timeout of ${OUTLIVED} ms ended`), `the failure's message does not say the timeout ended the command: ${error.message}`);
+});

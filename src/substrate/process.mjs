@@ -256,10 +256,14 @@ function record(emitter, events) {
   return unrecorded;
 }
 
-/** The failure for a call whose `unrecorded` events the sink refused, carrying its `result`. */
-function refused(unrecorded, result) {
+/**
+ * The failure for a call whose `unrecorded` events the sink refused, carrying its `result`, and
+ * saying so where the `timeout` ended `command`.
+ */
+function refused(unrecorded, result, { command, timeout }) {
   const lines = unrecorded.map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause.message}`);
-  const error = new Error(`the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
+  const ending = result.timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '';
+  const error = new Error(`${ending}the sink refused ${unrecorded.length} L0 event(s), so they went unrecorded:\n${lines.join('\n')}`);
   return Object.assign(error, { code: EVENT_REFUSED, unrecorded, result });
 }
 
@@ -305,7 +309,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   const [stdout, stderr] = await output;
   const result = { exit, timedOut, stdout, stderr };
   const unrecorded = record(emitter, events);
-  if (unrecorded.length > 0) throw refused(unrecorded, result);
+  if (unrecorded.length > 0) throw refused(unrecorded, result, { command, timeout });
   return result;
 }
 
