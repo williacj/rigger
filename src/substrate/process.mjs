@@ -50,43 +50,61 @@ function occupied(group) {
  * Kills every process left in `group` and settles once the group is empty. The wait is on that
  * condition, checked once per turn of the event loop, so nothing else in Rigger stops meanwhile.
  *
- * The kill is sent again on every turn. A process forked while the kernel delivers a group kill
- * can join the group without receiving it, and then runs on: the engineer judge on #354 saw that
- * in 9 of 12 runs of a survivor forking in a loop, macOS 27.0, 2026-09-27.
+ * The kill is sent again on every turn, because a process can be in the group without having
+ * received it. One forked while the kernel delivers a group kill can miss it and run on: the
+ * engineer judge on #354 saw that in 9 of 12 runs of a survivor forking in a loop, macOS 27.0,
+ * 2026-09-27, where the group was running at the kill. A census that stopped the group leaves
+ * nothing forking, but one that failed may not have. And a process outside the group can join it
+ * after the kill while a zombie keeps it in being.
  */
 async function ended(group) {
   for (;;) {
-    try {
-      process.kill(-group, 'SIGKILL');
-    } catch (error) {
-      // `EPERM` is the answer `occupied` reads as members still exiting, so the next turn retries.
-      if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
-    }
+    signal(group, 'SIGKILL');
     if (!occupied(group)) return;
     await turn();
   }
 }
 
+/** Sends `name` to every process in `group`, and to none where the group has emptied. */
+function signal(group, name) {
+  try {
+    process.kill(-group, name);
+  } catch (error) {
+    // `EPERM` is the answer `occupied` reads as members still exiting, so a later turn retries.
+    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
+  }
+}
+
 /**
- * Every process in `group`: its pid, its name, which is the executable's name, and its command
- * line. Both come from one row of one `ps` run, read with `ps` at the path `ps` names and given
- * up on after `timeout` milliseconds, so a process that re-executes during the census is not
- * named by one image and described by another.
+ * Every live process in `group`, each with its pid, its name, which is the executable's name, and
+ * its command line, given up on `timeout` milliseconds after it starts.
+ *
+ * The group is stopped first, and the census is the first read of the process table in which
+ * every member is stopped. One `ps` run reads a process's name from the process table and its
+ * arguments a moment later, so a process that execs in between is named by one image and
+ * described by the other: the engineer judge on #354 measured that in 16 of 3,000 direct reads,
+ * and 34 of 1,500 calls to this adapter, before the group was stopped. A stopped process cannot
+ * exec, so a row read while it is stopped holds one image. A member that is not yet stopped is
+ * one the signal has not reached, or a fork the signal missed, so the group is stopped again and
+ * read again. A zombie cannot exec either, and is left out, because it is already dead.
  *
  * Where `ps`'s answer can differ from the process's own (`D16` rule 3), measured with `ps` from
  * adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
  *
- * - `ucomm` is the executable's name as the kernel holds it, cut to 16 characters, and padded to
- *   16 columns by display width, so a name of wide characters takes fewer than 16. The row is
- *   split on the padding, which holds while the command line does not start with a space. It
- *   names what runs, not what was asked for: a script run by `/bin/sh` is named `bash`.
- * - `comm`, argv[0], would name `exec -a <anything>` as `<anything>`. It is cut to 16 characters
- *   unless it is the last column, and `command` must be last to stay whole, so one row cannot
- *   hold both whole. Two runs could, and a process re-executing between them was then named by
- *   one image and described by the other (the engineer judge on #354, 2 events in 100 runs).
+ * - `ucomm` is the executable's name as the kernel holds it, cut to 16 bytes, so a cut can fall
+ *   inside a character and leave bytes that are not UTF-8 (the engineer judge on #354 saw
+ *   `日本語テール` recorded as `日本語テー` and U+FFFD). It is padded to 16 columns by display width,
+ *   so a name of wide characters takes fewer than 16 characters. The row is split on that padding,
+ *   so a name's own trailing spaces are lost, and the split holds while the state that follows
+ *   starts with a capital. It names what runs, not what was asked for: a script run by `/bin/sh`
+ *   is named `bash`.
+ * - `stat`'s first letter is the process's state: `T` stopped, `Z` a zombie.
+ * - `comm`, argv[0], would name `exec -a <anything>` as `<anything>`. It is cut to 16 (measured
+ *   with an ASCII name) unless it is the last column, and `command` must be last to stay whole,
+ *   so one row cannot hold both whole.
  * - `command` is the process's arguments joined by spaces, so arguments holding spaces cannot be
- *   told apart from more arguments. A process caught mid-exec can show `(name)` in its place, as
- *   the engineer judge on #354 saw `comm` do.
+ *   told apart from more arguments. A process caught mid-exec, or a zombie, shows `(name)` or
+ *   `<defunct>` in its place.
  * - Under no locale, `ps` writes each byte outside ASCII in `vis` form, so `ü` reads `M-CM-<`.
  *   Under `LC_ALL=C.UTF-8`, which `ps` is given here, UTF-8 text reads unchanged. So `ps` gets
  *   that locale and nothing else of the caller's environment.
@@ -101,27 +119,48 @@ async function ended(group) {
  *   read is not listed, and one that joins it after the read is killed unnamed.
  * - `ps` exits 1, printing nothing, when no process matches.
  */
-function census(ps, group, timeout) {
+async function census(ps, group, timeout) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    signal(group, 'SIGSTOP');
+    const rows = await table(ps, group, deadline - Date.now(), timeout);
+    if (rows.every(({ state }) => state === 'T' || state === 'Z')) {
+      return rows.filter(({ state }) => state === 'T').map(({ pid, name, cmd }) => ({ pid, name, cmd }));
+    }
+  }
+}
+
+/**
+ * One read of `group` from the process table, with `ps` at the path `ps` names, given up on after
+ * `remaining` milliseconds of the census's `timeout`: each row's pid, name, state and command line.
+ */
+function table(ps, group, remaining, timeout) {
   return new Promise((resolve, reject) => {
-    const args = ['-ww', '-g', String(group), '-o', 'pid=,ucomm=,command='];
-    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
-      if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
+    const timedOut = new Error(`the process-table read timed out after ${timeout} ms`);
+    if (remaining <= 0) return reject(timedOut);
+    const args = ['-ww', '-g', String(group), '-o', 'pid=,ucomm=,stat=,command='];
+    execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
+      if (error?.killed) return reject(timedOut);
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
-      const survivors = [];
-      for (const line of stdout.split('\n')) {
-        const row = /^\s*(\d+) (.{1,16}) +(\S.*)$/.exec(line);
-        if (row) survivors.push({ pid: Number(row[1]), name: row[2].trimEnd(), cmd: row[3] });
+      const rows = [];
+      for (const line of stdout.split('\n').filter(Boolean)) {
+        const row = /^\s*(\d+) (.{1,16}) +([A-Z])\S* +(\S.*)$/.exec(line);
+        // A row this cannot read is a process it cannot name, so the census fails rather than
+        // leave that process out of it.
+        if (!row) return reject(new Error(`the process table held a row the census cannot read: ${JSON.stringify(line)}`));
+        rows.push({ pid: Number(row[1]), name: row[2].trimEnd(), state: row[3], cmd: row[4] });
       }
-      resolve(survivors);
+      resolve(rows);
     });
   });
 }
 
 /**
  * Ends what is left of `group` once its command has exited, in the order that keeps each name:
- * the census, while the processes still exist; the kill; the confirmation that the group is
- * empty; and only then one `L0` event per process killed. A census that fails still kills the
- * group, and records the kill of the group with why its processes went unnamed.
+ * the census, which stops the group and reads it while its processes still exist; the kill; the
+ * confirmation that the group is empty; and only then one `L0` event per process killed. A
+ * census that fails still kills the group, and records the kill of the group with why its
+ * processes went unnamed.
  */
 async function contain(group, { emitter, ps, readTimeout }) {
   if (!occupied(group)) return;

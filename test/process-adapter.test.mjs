@@ -20,7 +20,10 @@ import { PS, runCommand } from '../src/substrate/process.mjs';
  */
 function scratch(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
-  t.after(() => spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]));
+  // Until none is left, because a fixture that forks can start one while `pkill` is at work.
+  t.after(() => {
+    while (running(directory).length > 0) spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]);
+  });
   return directory;
 }
 
@@ -418,30 +421,90 @@ test('survivors that keep forking while the group is killed are all dead when th
   assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
 });
 
-test('a survivor that re-executes while the census runs is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
+test('a process that joins the group after the group is killed is dead when the call settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The survivor runs `first` until the process table has been read once, then becomes `second`,
-  // which becomes `tail`.
-  fixture(directory, 'second', `: > "$here/re-executed"\nexec ${TAIL}`);
-  fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/read" ]; do :; done\nexec /bin/sh "$here/second"`);
-  // The real `ps`, with a hook between reads: the first read returns only once the survivor has
-  // re-executed, and any later read starts only after that, so two reads see two images.
-  const ps = fixture(directory, 'ps', [
-    'if /bin/mkdir "$here/first-read" 2>/dev/null; then',
-    '  /bin/ps "$@"',
-    '  : > "$here/read"',
-    '  while [ ! -f "$here/re-executed" ]; do :; done',
-    'else',
-    '  while [ ! -f "$here/re-executed" ]; do :; done',
-    '  exec /bin/ps "$@"',
-    'fi',
+  // The outsider leaves the command's group and starts a child in it. Once the kill has made that
+  // child a zombie, which keeps the group in being because the outsider has not reaped it, the
+  // outsider joins the group itself, then reaps the child. So the group has a live member that no
+  // kill sent before it joined could reach, every time.
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'outsider'), [
+    'my ($here, $group) = @ARGV;',
+    'setpgrp(0, 0) or die "leave: $!";',
+    'my $child = fork();',
+    'if ($child == 0) {',
+    '  setpgrp(0, $group) or die "join: $!";',
+    '  open(my $f, ">", "$here/joined"); close $f;',
+    '  exec "/usr/bin/tail", "-f", "$here/hold";',
+    '}',
+    'while (`/bin/ps -o stat= -p $child` !~ /^Z/) {}',
+    'setpgrp(0, $group) or die "rejoin: $!";',
+    'waitpid($child, 0);',
+    'exec "/usr/bin/tail", "-f", "$here/hold";',
   ].join('\n'));
-  // `first` runs under `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
-  const command = fixture(directory, 'command', `/bin/bash "$here/first" &\nwhile [ ! -f "$here/running" ]; do :; done`);
+  // Perl's own errors go to a file of their own, so a fixture that fails says why.
+  t.after(() => {
+    const failed = existsSync(join(directory, 'outsider.err')) ? readFileSync(join(directory, 'outsider.err'), 'utf8') : '';
+    if (failed !== '') t.diagnostic(`the outsider failed: ${failed}`);
+  });
+  // Its output goes to /dev/null and a file, so it holds neither of the command's pipes.
+  const command = fixture(directory, 'command', [
+    'echo $$ > "$here/group"',
+    '/usr/bin/perl "$here/outsider" "$here" $$ >/dev/null 2>"$here/outsider.err" &',
+    'while [ ! -f "$here/joined" ]; do :; done',
+    'exit 0',
+  ].join('\n'));
+
+  await adapt(directory, { command });
+
+  assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
+});
+
+/**
+ * A command leaving a survivor that runs `first` under `/bin/bash` until it is told to go, then
+ * becomes `tail`, and a `ps` stand-in that splits one read around that exec.
+ *
+ * One run of `ps` reads a process's name from the process table, and its arguments a moment later
+ * (the engineer judge on #354). The stand-in makes that moment as wide as it can be: it reads
+ * every column but the command line, tells the survivor to go, waits until the survivor runs
+ * `tail` or is stopped, then reads the command lines and joins the two row by row. `before` is
+ * shell run first, on the stand-in's first call alone.
+ */
+function reExecuting(directory, before = '') {
+  fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/go" ]; do :; done\nexec ${TAIL}`);
+  const ps = fixture(directory, 'ps', [
+    `if /bin/mkdir "$here/called" 2>/dev/null; then ${before || ':'}; fi`,
+    '/bin/ps "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
+    ': > "$here/go"',
+    'survivor=$(/bin/cat "$here/survivor.pid")',
+    'until /bin/ps -o ucomm= -p "$survivor" | /usr/bin/grep -q "^tail" || /bin/ps -o stat= -p "$survivor" | /usr/bin/grep -q "^T"; do :; done',
+    '/bin/ps "$1" "$2" "$3" -o command= > "$here/arguments"',
+    '/usr/bin/paste -d " " "$here/names" "$here/arguments"',
+  ].join('\n'));
+  // `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
+  const command = fixture(directory, 'command', `/bin/bash "$here/first" &\necho $! > "$here/survivor.pid"\nwhile [ ! -f "$here/running" ]; do :; done`);
+  return { command, ps };
+}
+
+test('a survivor that re-executes inside the census\'s one read of the process table is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { events } = await recorded(directory, reExecuting(directory));
+
+  assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
+    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
+  ]);
+});
+
+test('a survivor not yet stopped when the process table is read is read again once it is', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The first read finds the survivor running, because the stand-in resumes the group before it,
+  // so the survivor re-executes inside that read. The next read finds it stopped, as `tail`.
+  const { command, ps } = reExecuting(directory, 'kill -s CONT -- "-$3"');
 
   const { events } = await recorded(directory, { command, ps });
 
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
-    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
+    { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
   ]);
 });
