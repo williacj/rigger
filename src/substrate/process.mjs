@@ -163,6 +163,29 @@ async function ended(group, ps, readTimeout) {
   }
 }
 
+/**
+ * Whether `group` still holds a member that is not a zombie: signal 0 reaches it, and a read of its
+ * states finds such a member, or fails. A read that lists no process while signal 0 still reaches
+ * the group is taken again, because a member that is exiting still answers signal 0 (`occupied`)
+ * and may not be listed, until the group no longer answers or `timeout` has passed, which counts
+ * as holding one.
+ */
+async function outlived(group, ps, timeout) {
+  const deadline = Date.now() + timeout;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    if (!occupied(group)) return false;
+    if (Date.now() >= deadline) return true;
+    let states;
+    try {
+      states = [...(await statesOf(group, ps, deadline - Date.now())).values()];
+    } catch {
+      return true;
+    }
+    if (states.length > 0) return states.some((state) => !state.startsWith('Z'));
+  }
+}
+
 /** Whether a read of `group`'s states finds a member that is not a zombie. One that fails does not. */
 async function living(group, ps, timeout) {
   try {
@@ -253,7 +276,8 @@ function signal(group, name) {
  *   so this reads one group rather than the whole table, with `-ww`, which the manual says uses
  *   as many columns as are needed.
  * - `-g` lists the processes whose group is `group`. A process that leaves the group before the
- *   read is not listed, and one that joins it after the read is killed unnamed.
+ *   read is not listed, and one that joins it after the read is recorded only as the kill of the
+ *   group, where a later read finds it (`killedOf`, `contain`).
  * - `ps` exits 1, printing nothing, when no process matches, and writes to standard error when a
  *   read fails (`run`).
  */
@@ -360,6 +384,12 @@ function run(ps, args, remaining, timeout) {
  * and only then the `L0` events to record, one `killed` event per process the kill ended, which it
  * hands back. A census or a kill whose read fails still kills the group, and hands back the kill
  * of the group with why its processes went unnamed.
+ *
+ * A kill whose reads all left out a live member ends without having named it, and the group's
+ * kill then ends it. So before that kill the group is read once more, and where it still holds a
+ * member that is not a zombie, or signal 0 reaches it and the read lists nothing or fails, the
+ * kill of the group is handed back beside the processes the kill named. A process that joins the
+ * group after that read is ended by the group's kill unrecorded.
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
@@ -373,9 +403,12 @@ async function contain(group, { ps, readTimeout }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
+  const left = unnamed === undefined && (await outlived(group, ps, readTimeout));
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return dead.map((survivor) => [killed, survivor]);
+  const named = dead.map((survivor) => [killed, survivor]);
+  if (!left) return named;
+  return [...named, ['group.killed', { group, census: 'the group still held a live process the census and the kill had not named, which the kill of the group ended' }]];
 }
 
 /**

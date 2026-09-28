@@ -1398,6 +1398,30 @@ test('a census whose every read of the group lists only its zombie, while a surv
   }
 });
 
+test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
+  // second survivor's row from every read of both, and answers every other read as `ps` does.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*|*ppid=*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read was cut, so the test proves nothing');
+  assert.deepEqual(survivors.map(alive), [false, false]);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
+  }
+});
+
 test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
   const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
 
