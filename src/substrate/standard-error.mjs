@@ -21,6 +21,14 @@ export const UNDRAINED_BOUND = 1_000;
  */
 const PAUSE = 10;
 
+/**
+ * How much of `UNDRAINED_BOUND` a write keeps in hand for a host that ends a pause late, and for
+ * what its caller does next. A judgment, not a measurement. Its premise is a measurement: in CI's
+ * Node 20 job on 2026-09-28 (run 36478413721), a write that kept one pause in hand, 10 ms, still
+ * returned 30.7 ms past the bound. A tenth of the bound is three times that overrun.
+ */
+const SPARE = UNDRAINED_BOUND / 10;
+
 /** What a write pauses on: a cell nothing ever wakes, so each wait lasts its whole timeout. */
 const idle = new Int32Array(new SharedArrayBuffer(4));
 
@@ -45,9 +53,8 @@ let abandoned = false;
  * and `test/exit-cleanup.test.mjs` each write past 65,536 bytes at exit.
  *
  * There is nothing to wait on at exit, so a full pipe is waited on synchronously, a `PAUSE` at a
- * time. A pause is begun only where it and one more would end before the bound, so the write
- * returns within the bound even where the host ends its last pause late by up to a pause, and
- * what the caller does next has that pause too.
+ * time. A pause is begun only where it would end `SPARE` before the bound, so the write returns
+ * within the bound even where the host ends its last pause late by up to that.
  */
 export function writeWhole(text) {
   let rest = Buffer.from(text);
@@ -57,7 +64,7 @@ export function writeWhole(text) {
       rest = rest.subarray(writeSync(2, rest));
     } catch (error) {
       if (error.code !== 'EAGAIN') throw error;
-      if (abandoned || performance.now() + 2 * PAUSE > deadline) {
+      if (abandoned || performance.now() + PAUSE + SPARE > deadline) {
         abandoned = true;
         return;
       }
