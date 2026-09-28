@@ -65,7 +65,8 @@ const LONGEST_PAUSE = 50;
  * runners, where a fixed 5 ms pause did not hold it under a tenth. At twelve, the chain's kill,
  * measured from its first round to the call's settling, used 8.8 to 9.2%, because the settling
  * counts too. Twenty holds it near a twentieth, a margin under the tenth #358 asks for, and costs
- * a kill of many rounds twenty times its processor time.
+ * a kill of many rounds twenty times its processor time, less where its deadline could not
+ * afford that (`killedOf`).
  */
 const ROUND_SHARE = 20;
 
@@ -355,13 +356,24 @@ async function contain(group, { ps, readTimeout }, killed) {
  * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
  * before L0 sent it the kill exited on its own, and so does one the kill found gone (`ESRCH`),
  * reaped at once by a parent the group does not hold. One gone after the kill reached it is
- * counted as killed, because such a parent may reap it at once. A read that fails, or a group
+ * counted as killed, because such a parent may reap it at once.
+ *
+ * So one window is left open, and the process table cannot close it (`D16` rule 3, measured with
+ * `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27): a survivor that exits on its own
+ * as L0's kill reaches it, and whose parent outside the group reaps it before the next read, is
+ * counted as killed. How a process ended is in the table only as its zombie's `xstat`, which `ps`
+ * shows until the parent reaps it and never after. A parent the group does not hold is not
+ * stopped, so it can reap before any read, and the table then holds nothing to tell that exit
+ * from L0's kill. A read that fails, or a group
  * still not ended at `timeout`, fails the whole, and the group is killed unnamed.
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
- * back.
+ * back. No pause spends time the deadline cannot spare: the rounds still to come are at least one
+ * more than the depth of the live tree, each costs about what a round has cost so far, and a pause
+ * takes no more than its share of what is left over twice that, so the pace tightens as the
+ * deadline nears, and a kill that reading alone could finish in time is not pushed past it.
  */
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
@@ -369,8 +381,10 @@ async function killedOf(survivors, group, ps, timeout) {
   const sent = new Set();
   const killed = [];
   const [began, used] = [performance.now(), process.cpuUsage()];
+  let [rounds, paused] = [0, 0];
   for (let wait = 0; pending.size > 0; ) {
     if (wait > 0) await pause(wait);
+    paused += wait;
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`not every survivor had ended within ${timeout} ms`);
     const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
@@ -389,10 +403,27 @@ async function killedOf(survivors, group, ps, timeout) {
       sent.add(pid);
       moved = true;
     }
+    rounds += 1;
     const { user, system } = process.cpuUsage(used);
-    wait = moved ? Math.max(1, (ROUND_SHARE * (user + system)) / 1000 - (performance.now() - began)) : longer(wait);
+    const elapsed = performance.now() - began;
+    const paced = moved ? (ROUND_SHARE * (user + system)) / 1000 - elapsed : longer(wait);
+    const left = depthOf(living) + 1;
+    const spare = deadline - Date.now() - 2 * left * ((elapsed - paused) / rounds);
+    wait = Math.max(0, Math.min(paced, spare / left));
   }
   return killed;
+}
+
+/** The length of the longest line of parent and child among the `living` rows of a table. */
+function depthOf(living) {
+  const parents = new Map(living.map(([pid, row]) => [pid, row.parent]));
+  const depths = new Map();
+  const depth = (pid) => {
+    if (!parents.has(pid)) return 0;
+    if (!depths.has(pid)) depths.set(pid, 1 + depth(parents.get(pid)));
+    return depths.get(pid);
+  };
+  return [...parents.keys()].reduce((deepest, pid) => Math.max(deepest, depth(pid)), 0);
 }
 
 /** Each row of a read of `pid=,ppid=,stat=,xstat=`, by pid. */

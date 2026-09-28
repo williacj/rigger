@@ -1190,18 +1190,24 @@ function compiled(directory, name, source) {
   return path;
 }
 
-test('while the call kills a group that takes many rounds, it uses less than a tenth of that kill\'s time of the processor', SETTLES_WITHIN, async (t) => {
-  const directory = holding(t);
-  // A chain of processes, each the parent of the next, all in the group, so the kill takes a round
-  // for each. Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter
-  // to it.
+/**
+ * A command that leaves a chain of processes `depth` deep in its group, each the parent of the
+ * next, so the kill takes a round for each.
+ */
+function chain(directory, depth) {
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'chain'), [
     'my ($here, $n) = @ARGV;',
     'for my $i (1 .. $n) { my $c = fork(); if ($c) { select(undef, undef, undef, undef); } }',
     'open(my $r, ">", "$here/ready"); close $r;',
     'select(undef, undef, undef, undef);',
   ].join('\n'));
-  const command = fixture(directory, 'command', '/usr/bin/perl "$here/chain" "$here" 60 &\nwhile [ ! -f "$here/ready" ]; do :; done');
+  return fixture(directory, 'command', `/usr/bin/perl "$here/chain" "$here" ${depth} &\nwhile [ ! -f "$here/ready" ]; do :; done`);
+}
+
+test('while the call kills a group that takes many rounds, it uses less than a tenth of that kill\'s time of the processor', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = chain(directory, 60);
   // The stand-in `exec`s `ps`, so that a read costs what a read of `ps` costs, near enough. On
   // the kill's first read it marks `rounds` and waits for `measure`, so the test can start its
   // measure there, after the census.
@@ -1605,4 +1611,13 @@ test('a command that never started and a refused event reject with codes that te
 
   assert.equal(never.code, NOT_STARTED);
   assert.equal(refusal.code, EVENT_REFUSED);
+});
+
+test('a chain 600 deep is killed and named in full within the default read timeout', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { events } = await recorded(directory, { command: chain(directory, 600) });
+
+  assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
+  assert.equal(events.length, 601);
 });
