@@ -55,14 +55,17 @@ export const UNREAPED_BOUND = 1_000;
 const LONGEST_PAUSE = 50;
 
 /**
- * The pause between two rounds of a kill where the first saw a survivor end or sent the kill, so
- * that a group killed in many rounds, a chain of parents and children, is not read back to back.
- * A round where nothing moved pauses as a wait does. A judgment, not a measurement. Its premise is
- * a measurement: over a chain 120 deep read back to back, a round took about 3.5 ms and 0.55 ms of
- * the processor, with Node 26.5.0 on macOS 27.0 on 2026-09-28, so 5 ms holds a round under a tenth
- * of the processor, and a chain of about 600 fits `READ_TIMEOUT`.
+ * How many times the processor time a kill has used, since it began, the kill lets pass before
+ * its next round, where a round saw a survivor end or sent the kill: a group killed in many
+ * rounds, a chain of parents and children, would otherwise be read back to back. A judgment, not
+ * a measurement. Its premise is a measurement: a chain 120 deep read back to back used 13 to 15%
+ * of the processor on macOS 27.0 with Node 26.5.0 on 2026-09-28, and 11 to 13% on CI's macOS
+ * runners, where a fixed 5 ms pause did not hold it under a tenth. At twelve, the chain's kill,
+ * measured from its first round to the call's settling, used 8.8 to 9.2%, because the settling
+ * counts too. Twenty holds it near a twentieth, a margin under the tenth #358 asks for, and costs
+ * a kill of many rounds twenty times its processor time.
  */
-const ROUND_PAUSE = 5;
+const ROUND_SHARE = 20;
 
 /** The pause after `wait`, doubling it up to `LONGEST_PAUSE`. */
 const longer = (wait) => Math.min(Math.max(1, 2 * wait), LONGEST_PAUSE);
@@ -338,14 +341,17 @@ async function contain(group, { ps, readTimeout }) {
  * counted as killed, because such a parent may reap it at once. A read that fails, or a group
  * still not ended at `timeout`, fails the whole, and the group is killed unnamed.
  *
- * Rounds that see a survivor end, or send the kill, are `ROUND_PAUSE` apart, and those that see
- * nothing move pause as a wait does, so a group killed in many rounds is not read back to back.
+ * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
+ * times the processor time the kill has used has passed since it began, and after one that sees
+ * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
+ * back.
  */
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
   const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
   const sent = new Set();
   const killed = [];
+  const [began, used] = [performance.now(), process.cpuUsage()];
   for (let wait = 0; pending.size > 0; ) {
     if (wait > 0) await pause(wait);
     const remaining = deadline - Date.now();
@@ -366,7 +372,8 @@ async function killedOf(survivors, group, ps, timeout) {
       sent.add(pid);
       moved = true;
     }
-    wait = moved ? ROUND_PAUSE : longer(wait);
+    const { user, system } = process.cpuUsage(used);
+    wait = moved ? Math.max(1, (ROUND_SHARE * (user + system)) / 1000 - (performance.now() - began)) : longer(wait);
   }
   return killed;
 }
