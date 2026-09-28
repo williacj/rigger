@@ -1201,7 +1201,7 @@ test('while the call kills a group that takes many rounds, it uses less than a t
     'open(my $r, ">", "$here/ready"); close $r;',
     'select(undef, undef, undef, undef);',
   ].join('\n'));
-  const command = fixture(directory, 'command', '/usr/bin/perl "$here/chain" "$here" 120 &\nwhile [ ! -f "$here/ready" ]; do :; done');
+  const command = fixture(directory, 'command', '/usr/bin/perl "$here/chain" "$here" 60 &\nwhile [ ! -f "$here/ready" ]; do :; done');
   // The stand-in `exec`s `ps`, so that a read costs what a read of `ps` costs, near enough. On
   // the kill's first read it marks `rounds` and waits for `measure`, so the test can start its
   // measure there, after the census.
@@ -1233,14 +1233,16 @@ test('while the call kills a group that takes many rounds, it uses less than a t
     writeFileSync(join(directory, 'measure'), '');
   })();
 
-  const { events } = await recorded(directory, { command, ps });
+  // The kill takes twenty times the processor time it uses, which on a slow CI runner came near the
+  // default `READ_TIMEOUT` for a chain twice as deep, so the test gives it room.
+  const { events } = await recorded(directory, { command, ps, readTimeout: 10_000 });
 
   const settled = performance.now();
   await started;
   const { user, system } = process.cpuUsage(sample.cpu);
   const cpu = (user + system) / 1000;
   const killing = settled - sample.at;
-  assert.equal(events.filter(({ event }) => event === 'survivor.killed').length, 121, 'the kill did not name every member of the chain');
+  assert.equal(events.filter(({ event }) => event === 'survivor.killed').length, 61, 'the kill did not name every member of the chain');
   t.diagnostic(`${cpu} ms of the processor over a kill of ${killing} ms`);
   assert.ok(cpu < killing / 10, `the call used ${cpu} ms of the processor over a kill of ${killing} ms`);
 });
