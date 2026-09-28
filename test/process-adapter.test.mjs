@@ -1354,6 +1354,61 @@ test('a delay cancelled partway through its timers never elapses', () => {
   assert.equal(done, false);
 });
 
+/**
+ * Runs `body`, a module, in a Node process of its own, and hands back its exit status and what it
+ * wrote to standard error, or fails the test where that process has not exited within `within`
+ * milliseconds. The test's teardown kills the process, whether the test passes or fails.
+ */
+async function exitOf(t, body, within) {
+  const caller = spawn(process.execPath, ['--input-type=module', '-e', body], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => caller.kill('SIGKILL'));
+  let stderr = '';
+  caller.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = once(caller, 'exit').then(([status]) => ({ status, stderr }));
+  let stop;
+  const late = new Promise((resolve) => { stop = setTimeout(resolve, within, 'late'); });
+  const outcome = await Promise.race([exited, late]);
+  clearTimeout(stop);
+  assert.notEqual(outcome, 'late', `the process had not exited within ${within} ms`);
+  return outcome;
+}
+
+/**
+ * How long a Node process of its own has to exit once it has nothing left to do. A judgment: it
+ * covers Node's own start and a call that settles at once, on a loaded host, and is far under any
+ * timer of the adapter's the tests below leave armed.
+ */
+const EXITS_WITHIN = 10_000;
+
+const PROCESS_MODULE = JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href);
+
+test('a delay the adapter keeps, left armed, does not hold its process open', SETTLES_WITHIN, async (t) => {
+  const { status, stderr } = await exitOf(t, [
+    `import { TIMER_MAX, whenElapsed } from ${PROCESS_MODULE};`,
+    'whenElapsed(2 * TIMER_MAX, () => process.exit(7));',
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+});
+
+test('a caller whose call has settled exits at once, though the call\'s timeout and read deadline are longer than the test', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The command leaves a survivor, so the call reads the process table under its read deadline.
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  // The caller does nothing once the call has settled, so the one thing that could keep it from
+  // exiting is what the adapter holds.
+  const { status, stderr } = await exitOf(t, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { TIMER_MAX, runCommand } from ${PROCESS_MODULE};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: 2 * TIMER_MAX, readTimeout: TIMER_MAX, emitter: sink.emitter({ layer: 'L0' }) });`,
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event }) => event), ['survivor.killed'], 'the call read no survivor, so it proves nothing of its read deadline');
+});
+
 test('a timeout that is not a positive finite number of milliseconds starts no process, and the failure names it', async (t) => {
   for (const timeout of [0, -1, NaN, Infinity, '300']) {
     const directory = scratch(t);
