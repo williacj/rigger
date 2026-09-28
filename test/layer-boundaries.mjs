@@ -83,17 +83,19 @@ const LOADER_MODULES = ['node:module', 'module'];
  * names, and such code imports and names what it likes out of their sight. `eval` is refused
  * however it is called, directly, indirectly or as a property of the global object; `Function`
  * with or without `new`; and `constructor`, through which every function reaches the `Function`
- * constructor, or an async or generator function its own kind of it, with no other name spelled.
- * A name that only keys an object or a class member reads nothing and passes, so a class may
- * declare its constructor. A key the source does not fix is a review finding, as for the loaders.
+ * constructor, or an async or generator function its own kind of it, with no other name spelled;
+ * and the enumerators of an object's own properties, which reach a prototype's `constructor` with
+ * no key spelled at all. A name that only keys an object or a class member reads nothing and
+ * passes, so a class may declare its constructor. A key the source does not fix is a review
+ * finding, as it is for the loaders.
  */
-const GENERATORS = ['eval', 'Function', 'constructor'];
+const GENERATORS = ['eval', 'Function', 'constructor', 'getOwnPropertyDescriptors', 'getOwnPropertyNames', 'ownKeys'];
 
 /** The built-in that compiles and runs a string as code, refused however a module imports it. */
 const GENERATOR_MODULES = ['node:vm', 'vm'];
 
 /** Why the code-generation rule refuses what it names. */
-const UNSEEN = ', which runs code built at run time, and what that code imports is out of rules 7, 8 and 9\'s sight';
+const UNSEEN = ', which runs code built at run time or reaches what does, and what that code imports is out of rules 7, 8 and 9\'s sight';
 
 /**
  * A module this test cannot read as an ES module: a `.cjs` module, whose wrapper hands it

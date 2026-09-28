@@ -1432,6 +1432,10 @@ test('the code-generation rule: a module calling the Function constructor fails,
     "export const go = () => (function* () {})['constr' + 'uctor']('yield import(\"node:child_process\")')().next();",
     "const { constructor: build } = async () => {};\nexport const go = () => build('return import(\"node:child_process\")')();",
     "export const go = () => Reflect.construct(Object.getPrototypeOf(async () => {}).constructor, ['return 1']);",
+    // A prototype's own properties, enumerated, reach its constructor with no key spelled.
+    "export const go = () => Object.values(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(async () => {})))[0].value('return 1')();",
+    'export const go = (proto = Object.getPrototypeOf(async () => {})) => proto[Object.getOwnPropertyNames(proto)[0]](\'return 1\')();',
+    'export const go = (proto = Object.getPrototypeOf(async () => {})) => proto[Reflect.ownKeys(proto)[0]](\'return 1\')();',
   ];
   for (const source of calls) assertBreaks({ 'src/workflow/build.mjs': source }, 'src/workflow/build.mjs', 'the code-generation rule');
 });
