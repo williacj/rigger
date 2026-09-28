@@ -819,3 +819,11 @@ test('a call with no timeout starts no process, and fails naming the missing tim
     assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${what}`);
   }
 });
+
+test('a command ended by a signal it does not handle has a non-zero integer exit code in the result', async (t) => {
+  const directory = scratch(t);
+  // The shell sends itself `SIGTERM`, which a non-interactive shell with no trap does not handle.
+  const result = await shell(directory, 'kill -TERM $$');
+
+  assert.ok(Number.isInteger(result.exit) && result.exit !== 0, `the exit code is ${result.exit}`);
+});

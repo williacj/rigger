@@ -4,6 +4,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { constants } from 'node:os';
 import { setImmediate as turn } from 'node:timers/promises';
 
 /**
@@ -284,7 +285,10 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, ps
   if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const [exit] = await once(child, 'exit');
+  const [code, signal] = await once(child, 'exit');
+  // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
+  // 128 and the signal's number, which is never 0.
+  const exit = signal === null ? code : 128 + constants.signals[signal];
   const events = await contain(child.pid, { ps, readTimeout });
   if (await heldPast(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
