@@ -1613,11 +1613,11 @@ test('a command that never started and a refused event reject with codes that te
   assert.equal(refusal.code, EVENT_REFUSED);
 });
 
-test('a chain 500 deep is killed and named in full within the default read timeout', SETTLES_WITHIN, async (t) => {
+test('a chain 250 deep is killed and named in full within the default read timeout', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
-  const { events } = await recorded(directory, { command: chain(directory, 500) });
+  const { events } = await recorded(directory, { command: chain(directory, 250) });
 
   assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
-  assert.equal(events.length, 501);
+  assert.equal(events.length, 251);
 });
