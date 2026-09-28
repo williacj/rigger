@@ -1,6 +1,7 @@
 // ABOUTME: The one boundary test: holds each directory under src/ to the forge adapter's sides it
 // may import, to the config keys, card facts and processes its layer may touch, and to whether it
-// may hold L3's dispatching entry point or L1's dispatching function.
+// may hold L3's dispatching entry point or L1's dispatching function, and to running no code it
+// builds at run time.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1399,4 +1400,66 @@ test('rule 9: a tree whose run.mjs is absent, or exports no dispatch, is refused
     const tree = new Map(Object.entries({ ...ADAPTER, 'src/execution/run.mjs': source }));
     assert.throws(() => boundaryReport(tree), /src\/execution\/run\.mjs exports no `dispatch`, L1's dispatching function, so rule 9 could not fail/, source);
   }
+});
+
+/*
+ * The code-generation rule exists because code built at run time escapes rules 7, 8 and 9. Those
+ * rules read what a module imports and names. Code a module builds from a string and runs imports
+ * and names what it likes out of their sight, so one line of it could reach `node:child_process`,
+ * L3's dispatching entry point or L1's dispatching function past all three. So no module under
+ * src/ may run code it builds.
+ */
+
+test('the code-generation rule: a module calling eval fails, directly or indirectly', () => {
+  const calls = [
+    "export const go = () => eval(\"import('node:child_process')\");",
+    "export const go = () => (0, eval)(\"import('node:child_process')\");",
+    "export const go = () => globalThis.eval(\"import('node:child_process')\");",
+    "export const go = () => globalThis['ev' + 'al'](\"import('node:child_process')\");",
+    'const run = eval;\nexport const go = (code) => run(code);',
+  ];
+  for (const source of calls) assertBreaks({ 'src/cli/build.mjs': source }, 'src/cli/build.mjs', 'the code-generation rule');
+});
+
+test('the code-generation rule: a module calling the Function constructor fails, with or without new, or through a function\'s prototype', () => {
+  const calls = [
+    "export const go = () => new Function('return import(\"node:child_process\")')();",
+    "export const go = () => Function('return import(\"node:child_process\")')();",
+    "export const go = () => globalThis['Func' + 'tion']('return import(\"node:child_process\")')();",
+    "export const go = () => (() => {}).constructor('return import(\"node:child_process\")')();",
+    "export const go = () => (async () => {}).constructor('return import(\"node:child_process\")')();",
+    "export const go = () => Object.getPrototypeOf(async function () {}).constructor('return import(\"node:child_process\")')();",
+    "export const go = () => (function* () {})['constr' + 'uctor']('yield import(\"node:child_process\")')().next();",
+    "const { constructor: build } = async () => {};\nexport const go = () => build('return import(\"node:child_process\")')();",
+    "export const go = () => Reflect.construct(Object.getPrototypeOf(async () => {}).constructor, ['return 1']);",
+    // A prototype's own properties, enumerated, reach its constructor with no key spelled.
+    "export const go = () => Object.values(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(async () => {})))[0].value('return 1')();",
+    'export const go = (proto = Object.getPrototypeOf(async () => {})) => proto[Object.getOwnPropertyNames(proto)[0]](\'return 1\')();',
+    'export const go = (proto = Object.getPrototypeOf(async () => {})) => proto[Reflect.ownKeys(proto)[0]](\'return 1\')();',
+  ];
+  for (const source of calls) assertBreaks({ 'src/workflow/build.mjs': source }, 'src/workflow/build.mjs', 'the code-generation rule');
+});
+
+test('the code-generation rule bars no key: a class\'s own constructor and a key named eval, Function or constructor pass', () => {
+  const keys = [
+    'export class Card { constructor(id) { this.id = id; } }',
+    "export const options = { eval: false, Function: 'none', 'constructor': 1 };",
+    'export class Rules { static eval() { return 1; } Function = 1; }',
+  ];
+  for (const source of keys) assert.deepEqual(messages({ 'src/workflow/build.mjs': source }), [], source);
+});
+
+test('the code-generation rule: a module importing node:vm or vm fails, statically or by dynamic import()', () => {
+  const imports = [
+    "import { runInThisContext } from 'node:vm';\nexport const go = (code) => runInThisContext(code);",
+    "import vm from 'vm';\nexport const go = (code) => vm.runInThisContext(code);",
+    "import * as vm from 'node:vm';\nexport const go = (code) => new vm.Script(code).runInThisContext();",
+    "import 'node:vm';",
+    "export { runInThisContext } from 'node:vm';",
+    "export * from 'vm';",
+    "export const go = async (code) => (await import('node:vm')).runInThisContext(code);",
+    "export const go = async (code) => (await import('vm')).runInThisContext(code);",
+    "export const go = async (code) => (await import('node:' + 'vm')).runInThisContext(code);",
+  ];
+  for (const source of imports) assertBreaks({ 'src/scheduling/build.mjs': source }, 'src/scheduling/build.mjs', 'the code-generation rule');
 });

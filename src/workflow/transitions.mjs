@@ -56,12 +56,13 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
     /**
      * L3 hands over `card`'s dispatch `outcome` unread, as `Promise.allSettled` records it: a
      * dispatch that ran and recorded its events is fulfilled with L1's result, its exit code
-     * `exit` and its output `stdout` and `stderr`. The failure's `code` names two kinds of
-     * rejection: a command that never started (`NOT_STARTED`), and a refused event
-     * (`EVENT_REFUSED`), which may carry the result of a command that ran. L2 moves nothing on a
-     * rejection of any kind. For a fulfilled outcome the exit code alone decides, by
-     * the owner's ruling on #220: zero moves the card to review, whatever the output says, and
-     * anything else leaves it in coding.
+     * `exit` and its output `stdout` and `stderr`. The failure's `code` names three kinds of
+     * rejection: a command that never started (`NOT_STARTED`), a refused event
+     * (`EVENT_REFUSED`), which may carry the result of a command that ran, and a record that
+     * refused a removal after the command ran (`RECORD_REFUSED`), which carries its result. L2
+     * moves nothing on a rejection of any kind. For a fulfilled outcome the exit code alone
+     * decides, by the owner's ruling on #220: zero moves the card to review, whatever the output
+     * says, and anything else leaves it in coding.
      * A card L3 read in review, a redo, is there already: zero leaves it there, so L2 writes no
      * move and records no transition the board never received (`R-WORK-5`).
      */
