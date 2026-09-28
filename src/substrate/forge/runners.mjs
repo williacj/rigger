@@ -1,23 +1,36 @@
 // ABOUTME: The forge adapter's three runners, read, schema-write and item-write. Each admits one
 // operation of its own side and refuses everything else by name before anything is sent.
 
-import { spawnSync } from 'node:child_process';
-
 import { gitEnvironment } from '../git-environment.mjs';
+import { runCommand } from '../process.mjs';
 import { literal, parseDocument } from './graphql.mjs';
 
 /**
- * The one spawn every runner makes, and the only place the forge's command is named.
- *
- * One plain call that hands back an exit code and captured output. It carries no timeout, no
- * process group, no kill and no survivor handling: those are M2's, when this moves onto L0's
- * process adapter (the architect's ruling on #214, §5).
+ * How long L0 lets one forge call run before it kills the call's group, where the caller passes no
+ * other value (the architect's ruling 2, (g), on #332). A judgment, not a measurement. Its premise
+ * is GitHub's own limit: "If GitHub takes more than 10 seconds to process an API request, GitHub
+ * will terminate the request" (GitHub's GraphQL documentation, "Rate limits and query limits",
+ * "Timeouts", read on 2026-09-28). One call is one request, so a minute is six times that, room
+ * for a slow network and for `gh`'s own start, while a call that hangs holds its verb back by no
+ * more than a minute.
+ */
+export const FORGE_TIMEOUT = 60_000;
+
+/**
+ * The one spawn every runner makes, through L0's process adapter: `gh` runs in a process group of
+ * its own, the group is ended at `timeout`, and every process it leaves behind is killed and
+ * recorded through `emitter`. It hands back `gh`'s exit code as `status`, its output as text, and
+ * whether the timeout ended it. A command that never started, and a kill the sink refused, reject
+ * as the adapter rejects, each failure's `code` naming which.
  *
  * The environment is the one a git child is given, as `doctor` gave `gh auth status` before this
  * runner existed: `gh` reads the repository it runs in, and an inherited `GIT_DIR` would point it
  * at a repository nobody named.
  */
-const plainly = (command, args) => spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
+async function throughL0(command, args, { emitter, timeout }) {
+  const { exit, timedOut, stdout, stderr } = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
+  return { status: exit, timedOut, timeout, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
+}
 
 /** Every command a runner sends is this one (`R-SAFE-2`). */
 const FORGE = 'gh';
@@ -101,9 +114,12 @@ function queryOf(runner, args, rest) {
 /**
  * Sends a request that changes nothing on the forge, and refuses any other.
  *
- * `send` stands in for the spawn in tests, and is handed what the runner admitted.
+ * `emitter` is the `L0` emitter the call's kills are recorded through, and `timeout` how long the
+ * call may run, `FORGE_TIMEOUT` where it is not given. `send` stands in for the spawn in tests, and
+ * is handed what the runner admitted, with the emitter and the timeout. Every runner takes these
+ * three, and hands them on to any read it makes itself.
  */
-export function readRunner(args, { send = plainly } = {}) {
+export async function readRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const [subcommand, endpoint, ...rest] = args;
   if (subcommand === 'api' && endpoint === 'graphql') {
     const operation = operationsOf('read', queryOf('read', args, rest));
@@ -117,7 +133,7 @@ export function readRunner(args, { send = plainly } = {}) {
   } else if (!oneOf(args, READ_SUBCOMMANDS)) {
     refuse('read', `${spelled(args)}, which its read allowlist does not name`);
   }
-  return send(FORGE, args);
+  return send(FORGE, args, { emitter, timeout });
 }
 
 /**
@@ -245,11 +261,12 @@ function checkColours(field) {
 
 /**
  * The options a field holds, each `{ id, name, color, description }`, and the field's name, read
- * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
+ * through the read runner, sent as `via` says. A read that fails throws, naming what `gh` said, so
+ * no write follows.
  */
-function heldOptions(fieldId, send) {
+async function heldOptions(fieldId, via) {
   const query = `query { field: node(id: ${literal(fieldId)}) { ... on ProjectV2SingleSelectField { name options { id name color description } } } }`;
-  const said = readRunner(graphqlRequest(query), { send });
+  const said = await readRunner(graphqlRequest(query), via);
   if (said.status !== 0) {
     throw new Error(`the schema-write runner could not read the options of ${fieldId}, and sent no write: ${firstLine(said)}`);
   }
@@ -303,12 +320,12 @@ function optionsInput(field) {
  * its input is the field's ID and its options, and every option the field holds, as read now,
  * is sent with its `id`, name, colour and description. Way C, the same options with no `id`, gave
  * every option a new ID and cleared every item's column, so a held option sent without its `id`
- * is refused like one left out.
+ * is refused like one left out. The options are read as `via` says.
  */
-function checkOptionsWrite(field, send) {
+async function checkOptionsWrite(field, via) {
   const { fieldId, sent } = optionsInput(field);
   checkColours(field);
-  const held = heldOptions(fieldId, send);
+  const held = await heldOptions(fieldId, via);
   if (held.name !== COLUMNS) {
     refuse('schema-write', `${field.name} on ${held.name ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
   }
@@ -337,14 +354,14 @@ function checkOptionsWrite(field, send) {
  * Sends one write to the board's fields or the repository's labels, and refuses any other
  * request, including one on its allowlist whose arguments name a board item.
  */
-export function schemaWriteRunner(args, { send = plainly } = {}) {
+export async function schemaWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const field = mutationOf('schema-write', args);
   const items = argumentNames(field.arguments).filter((name) => ITEM_ARGUMENTS.has(name));
   if (items.length > 0) refuse('schema-write', `${field.name}, whose ${items.join(', ')} names a board item`);
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
-  if (field.name === OPTIONS_WRITE) checkOptionsWrite(field, send);
+  if (field.name === OPTIONS_WRITE) await checkOptionsWrite(field, { send, emitter, timeout });
   else checkColours(field);
-  return send(FORGE, args);
+  return send(FORGE, args, { emitter, timeout });
 }
 
 /** The operations the item-write runner admits in M1: the field-value write that moves a card. */
@@ -355,10 +372,11 @@ export const COLUMNS = 'Status';
 
 /**
  * The first line of what `gh` said, from its error stream first: a failed `gh api graphql` prints
- * the whole response as one line on stdout and its message on stderr.
+ * the whole response as one line on stdout and its message on stderr. A call the timeout ended is
+ * said to be that, whatever `gh` had printed by then.
  */
 export function firstLine(said) {
-  if (said.status === null) return `${FORGE} could not be run: ${said.error?.code ?? said.error?.message}`;
+  if (said.timedOut) return `${FORGE} ran past its timeout of ${said.timeout} ms, and L0 ended it`;
   const lines = `${said.stderr ?? ''}\n${said.stdout ?? ''}`.split('\n').map((line) => line.trim());
   return lines.find(Boolean) ?? `${FORGE} exited ${said.status} and said nothing`;
 }
@@ -382,11 +400,12 @@ function moveInput(field) {
 
 /**
  * Which field of `projectId` holds the columns, and what the field `fieldId` is called, read
- * through the read runner. A read that fails throws, naming what `gh` said, so no write follows.
+ * through the read runner, sent as `via` says. A read that fails throws, naming what `gh` said, so
+ * no write follows.
  */
-function columnsField(projectId, fieldId, send) {
+async function columnsField(projectId, fieldId, via) {
   const query = `query { project: node(id: ${literal(projectId)}) { ... on ProjectV2 { field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: ${literal(fieldId)}) { ... on ProjectV2FieldCommon { name } } }`;
-  const said = readRunner(graphqlRequest(query), { send });
+  const said = await readRunner(graphqlRequest(query), via);
   if (said.status !== 0) {
     throw new Error(`the item-write runner could not read which field holds the columns, and sent no write: ${firstLine(said)}`);
   }
@@ -399,13 +418,13 @@ function columnsField(projectId, fieldId, send) {
  * move: a field-value write setting an option of the field holding the columns, which the runner
  * reads off the board rather than taking from whoever sent the request.
  */
-export function itemWriteRunner(args, { send = plainly } = {}) {
+export async function itemWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const field = mutationOf('item-write', args);
   if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
   const { projectId, fieldId } = moveInput(field);
-  const columns = columnsField(projectId, fieldId, send);
+  const columns = await columnsField(projectId, fieldId, { send, emitter, timeout });
   if (columns.id !== fieldId) {
     refuse('item-write', `a field-value write on ${columns.target ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
   }
-  return send(FORGE, args);
+  return send(FORGE, args, { emitter, timeout });
 }

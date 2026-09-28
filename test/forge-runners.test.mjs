@@ -25,29 +25,29 @@ function recording(answer = () => ({ status: 0, stdout: '{}', stderr: '' })) {
   return send;
 }
 
-test('the read runner sends `gh auth status`, which its read allowlist names', () => {
+test('the read runner sends `gh auth status`, which its read allowlist names', async () => {
   const send = recording(() => ({ status: 0, stdout: 'Logged in', stderr: '' }));
 
-  const said = readRunner(['auth', 'status'], { send });
+  const said = await readRunner(['auth', 'status'], { send });
 
   assert.deepEqual(send.sent, [['gh', 'auth', 'status']]);
   assert.equal(said.stdout, 'Logged in');
 });
 
-test('the read runner refuses a subcommand its read allowlist does not name, naming it, and sends nothing', () => {
+test('the read runner refuses a subcommand its read allowlist does not name, naming it, and sends nothing', async () => {
   // The defect this catches is a read runner that admits any `gh` subcommand it does not
   // recognise as `api`, which sends `gh issue close` and `gh project item-archive` as reads.
   for (const args of [['issue', 'close', '12'], ['project', 'item-archive', '6'], ['auth', 'status', '--show-token']]) {
     const send = recording();
-    assert.throws(() => readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
+    await assert.rejects(readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
     assert.deepEqual(send.sent, [], args.join(' '));
   }
 });
 
-test('the read runner sends `gh api <path>` given an explicit GET and nothing else', () => {
+test('the read runner sends `gh api <path>` given an explicit GET and nothing else', async () => {
   for (const args of [['api', 'rate_limit', '-X', 'GET'], ['api', 'rate_limit', '--method', 'GET']]) {
     const send = recording();
-    readRunner(args, { send });
+    await readRunner(args, { send });
     assert.deepEqual(send.sent, [['gh', ...args]]);
   }
 });
@@ -106,7 +106,7 @@ function ghOn(path = '', skipping = null) {
   return null;
 }
 
-test('npm test puts its refusing gh first on the path every test inherits', () => {
+test('npm test puts its refusing gh first on the path every test inherits', async () => {
   // #276: a test that fails to pass its stand-in through, in its own process or in a child that
   // inherits its path, reaches the `gh` this path resolves. `npm test` puts one there that refuses
   // and records, and fails the run when it was called. The defect this catches is a suite run
@@ -178,7 +178,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
     const sent = await methodGhSends(args, inputs);
     let admitted = true;
     try {
-      readRunner(args, { send: recording() });
+      await readRunner(args, { send: recording() });
     } catch {
       admitted = false;
     }
@@ -188,14 +188,14 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
   }
 });
 
-test('the read runner refuses `gh api <path>` in any other form, naming it, and sends nothing', () => {
+test('the read runner refuses `gh api <path>` in any other form, naming it, and sends nothing', async () => {
   // The defect this catches is a runner that reads `gh api <path>` as a read because no method
   // was named: `gh` then chooses the method itself, and with a field or an input it chooses POST.
   // `-X GET -f` sends a GET, and is refused anyway, because the card admits no field at all. A
   // flag in the path slot takes the next word as its value, so `-X GET` there sets no method.
   for (const args of [...REFUSED_PATH_FORMS, ...FLAG_IN_PATH_SLOT]) {
     const send = recording();
-    assert.throws(() => readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
+    await assert.rejects(readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
     assert.deepEqual(send.sent, [], args.join(' '));
   }
 });
@@ -210,10 +210,10 @@ const graphql = (document) => ['api', 'graphql', '-f', `query=${document}`];
  * With no `answer`, nothing at all may be sent. With one, the runner may first read what it needs
  * to judge the request, and `answer` stands in for the forge answering those reads.
  */
-function refuses(runner, args, names, { answer } = {}) {
+async function refuses(runner, args, names, { answer } = {}) {
   const send = recording(answer);
-  assert.throws(
-    () => runner(args, { send }),
+  await assert.rejects(
+    runner(args, { send }),
     (error) => names.every((name) => error.message.includes(name)) || assert.fail(`${error.message} does not name ${names.join(', ')}`),
   );
   if (answer === undefined) assert.deepEqual(send.sent, [], 'a refused request sent something');
@@ -221,7 +221,7 @@ function refuses(runner, args, names, { answer } = {}) {
   return send;
 }
 
-test('the read runner sends a GraphQL query, whatever its strings and comments say', () => {
+test('the read runner sends a GraphQL query, whatever its strings and comments say', async () => {
   // The defect this catches is an operation type read off the text rather than the document: a
   // query whose string argument or comment says `mutation` is still a query.
   const documents = [
@@ -232,27 +232,27 @@ test('the read runner sends a GraphQL query, whatever its strings and comments s
   ];
   for (const document of documents) {
     const send = recording();
-    readRunner(graphql(document), { send });
+    await readRunner(graphql(document), { send });
     assert.deepEqual(send.sent, [['gh', ...graphql(document)]], document);
   }
 });
 
-test('the read runner sends a GraphQL query with its variables as fields', () => {
+test('the read runner sends a GraphQL query with its variables as fields', async () => {
   const args = [...graphql('query($n: Int!) { viewer { projectV2(number: $n) { id } } }'), '-F', 'n=6'];
   const send = recording();
-  readRunner(args, { send });
+  await readRunner(args, { send });
   assert.deepEqual(send.sent, [['gh', ...args]]);
 });
 
-test('the read runner refuses a GraphQL mutation that changes an item\'s title, naming it, and sends nothing', () => {
+test('the read runner refuses a GraphQL mutation that changes an item\'s title, naming it, and sends nothing', async () => {
   // Review C2's shape: a write that records nothing of itself. Here the read runner is what
   // refuses it, because it is not a query, whatever its caller calls it.
-  refuses(readRunner, graphql('mutation { updateProjectV2DraftIssue(input: {draftIssueId: "DI_1", title: "Renamed"}) { draftIssue { id } } }'), ['mutation', 'updateProjectV2DraftIssue']);
-  refuses(readRunner, graphql('mutation Retitle { updateIssue(input: {id: "I_1", title: "Renamed"}) { issue { id } } }'), ['mutation', 'Retitle']);
-  refuses(readRunner, graphql('subscription { issueUpdated { id } }'), ['subscription']);
+  await refuses(readRunner, graphql('mutation { updateProjectV2DraftIssue(input: {draftIssueId: "DI_1", title: "Renamed"}) { draftIssue { id } } }'), ['mutation', 'updateProjectV2DraftIssue']);
+  await refuses(readRunner, graphql('mutation Retitle { updateIssue(input: {id: "I_1", title: "Renamed"}) { issue { id } } }'), ['mutation', 'Retitle']);
+  await refuses(readRunner, graphql('subscription { issueUpdated { id } }'), ['subscription']);
 });
 
-test('the read runner refuses a GraphQL request carrying more than one operation, naming them, and sends nothing', () => {
+test('the read runner refuses a GraphQL request carrying more than one operation, naming them, and sends nothing', async () => {
   refuses(
     readRunner,
     graphql('query Items { viewer { login } } mutation Archive { archiveProjectV2Item(input: {projectId: "P", itemId: "I"}) { item { id } } }'),
@@ -260,15 +260,15 @@ test('the read runner refuses a GraphQL request carrying more than one operation
   );
 });
 
-test('the read runner refuses a GraphQL request whose document it cannot see or read, naming it, and sends nothing', () => {
+test('the read runner refuses a GraphQL request whose document it cannot see or read, naming it, and sends nothing', async () => {
   // A document read from a file, a second document, or one that does not parse is a request
   // whose operation the runner cannot name, so it cannot know it is a query.
-  refuses(readRunner, ['api', 'graphql', '-F', 'query=@write.graphql'], ['query=@write.graphql']);
-  refuses(readRunner, [...graphql('query { viewer { login } }'), '-f', 'query=mutation { x }'], ['query=']);
-  refuses(readRunner, graphql('query { viewer { login }'), ['query { viewer { login }']);
-  refuses(readRunner, ['api', 'graphql'], ['api graphql']);
-  refuses(readRunner, [...graphql('query { viewer { login } }'), '--input', 'body.json'], ['--input']);
-  refuses(readRunner, [...graphql('query { viewer { login } }'), '-X', 'GET'], ['-X']);
+  await refuses(readRunner, ['api', 'graphql', '-F', 'query=@write.graphql'], ['query=@write.graphql']);
+  await refuses(readRunner, [...graphql('query { viewer { login } }'), '-f', 'query=mutation { x }'], ['query=']);
+  await refuses(readRunner, graphql('query { viewer { login }'), ['query { viewer { login }']);
+  await refuses(readRunner, ['api', 'graphql'], ['api graphql']);
+  await refuses(readRunner, [...graphql('query { viewer { login } }'), '--input', 'body.json'], ['--input']);
+  await refuses(readRunner, [...graphql('query { viewer { login } }'), '-X', 'GET'], ['-X']);
 });
 
 /** Creating a single-select field, in the shape the schema-write side sends it. */
@@ -283,36 +283,36 @@ const CREATE_LABEL = 'mutation { createLabel(input: {repositoryId: "R_1", name: 
  */
 const SET_PRIORITY = 'mutation { updateProjectV2ItemFieldValue(input: {projectId: "PVT_1", itemId: "PVTI_1", fieldId: "PVTSSF_priority", value: {singleSelectOptionId: "p0"}}) { projectV2Item { id } } }';
 
-test('the schema-write runner sends creating a field and creating a label, which its allowlist holds', () => {
+test('the schema-write runner sends creating a field and creating a label, which its allowlist holds', async () => {
   for (const document of [CREATE_FIELD, CREATE_LABEL]) {
     const send = recording();
-    schemaWriteRunner(graphql(document), { send });
+    await schemaWriteRunner(graphql(document), { send });
     assert.deepEqual(send.sent, [['gh', ...graphql(document)]]);
   }
 });
 
-test('the schema-write runner refuses an operation its allowlist does not hold, naming it, and sends nothing', () => {
+test('the schema-write runner refuses an operation its allowlist does not hold, naming it, and sends nothing', async () => {
   // The allowlist is the two creations and way B's options write. Deleting a field, creating a
   // view and deleting the board are schema writes too, and none of them is admitted.
-  refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2Field(input: {fieldId: "PVTSSF_1"}) { clientMutationId } }'), ['deleteProjectV2Field']);
-  refuses(schemaWriteRunner, graphql('mutation { createProjectV2View(input: {projectId: "PVT_1", name: "Board", layout: BOARD_LAYOUT}) { clientMutationId } }'), ['createProjectV2View']);
-  refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2(input: {projectId: "PVT_1"}) { clientMutationId } }'), ['deleteProjectV2']);
+  await refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2Field(input: {fieldId: "PVTSSF_1"}) { clientMutationId } }'), ['deleteProjectV2Field']);
+  await refuses(schemaWriteRunner, graphql('mutation { createProjectV2View(input: {projectId: "PVT_1", name: "Board", layout: BOARD_LAYOUT}) { clientMutationId } }'), ['createProjectV2View']);
+  await refuses(schemaWriteRunner, graphql('mutation { deleteProjectV2(input: {projectId: "PVT_1"}) { clientMutationId } }'), ['deleteProjectV2']);
 });
 
-test('the schema-write runner refuses a field-value write that names a board item and sets Priority, and sends nothing', () => {
+test('the schema-write runner refuses a field-value write that names a board item and sets Priority, and sends nothing', async () => {
   // Review C1's shape. It names a board item, so it is not the schema side's however it is sent.
-  refuses(schemaWriteRunner, graphql(SET_PRIORITY), ['updateProjectV2ItemFieldValue', 'itemId']);
+  await refuses(schemaWriteRunner, graphql(SET_PRIORITY), ['updateProjectV2ItemFieldValue', 'itemId']);
 });
 
-test('the schema-write runner refuses an allowlisted operation whose arguments name a board item, decided by the name', () => {
+test('the schema-write runner refuses an allowlisted operation whose arguments name a board item, decided by the name', async () => {
   // The defect this catches is a board item recognised by its ID's prefix: GitHub's ID formats are
   // its own (`D16`), so an argument named for an item is what is read, whatever its value looks
   // like, and a value that looks like an item's ID names nothing when its argument does not.
   const naming = 'mutation { createProjectV2Field(input: {projectId: "PVT_1", itemId: "not-an-item-looking-id", dataType: SINGLE_SELECT, name: "Priority", singleSelectOptions: []}) { clientMutationId } }';
-  refuses(schemaWriteRunner, graphql(naming), ['createProjectV2Field', 'itemId']);
+  await refuses(schemaWriteRunner, graphql(naming), ['createProjectV2Field', 'itemId']);
   const looking = CREATE_LABEL.replace('"type:change"', '"PVTI_lADOBzomGc4Bkn7fzgd"');
   const send = recording();
-  schemaWriteRunner(graphql(looking), { send });
+  await schemaWriteRunner(graphql(looking), { send });
   assert.equal(send.sent.length, 1);
 });
 
@@ -370,10 +370,10 @@ const holdingOptions = (read = STATUS_READ) => (command, args) => (args.at(-1).s
   ? { status: 0, stdout: JSON.stringify(read), stderr: '' }
   : { status: 0, stdout: `{"data":{"updateProjectV2Field":{"projectV2Field":{"id":"${STATUS_ID}"}}}}`, stderr: '' });
 
-test('the schema-write runner sends way B, every held Status option with its id and a new one without, after reading the options', () => {
+test('the schema-write runner sends way B, every held Status option with its id and a new one without, after reading the options', async () => {
   const send = recording(holdingOptions());
 
-  schemaWriteRunner(graphql(WAY_B), { send });
+  await schemaWriteRunner(graphql(WAY_B), { send });
 
   // First its read of the options the field holds, through the read runner's own form, then the write.
   assert.equal(send.sent.length, 2, JSON.stringify(send.sent));
@@ -382,23 +382,23 @@ test('the schema-write runner sends way B, every held Status option with its id 
   assert.deepEqual(send.sent[1], ['gh', ...graphql(WAY_B)]);
 });
 
-test('the schema-write runner refuses way C, every held Status option sent without its id, naming the request and each option, and sends nothing', () => {
+test('the schema-write runner refuses way C, every held Status option sent without its id, naming the request and each option, and sends nothing', async () => {
   // Way C cleared every item's column on #212's throwaway board. The defect this catches is an
   // options write admitted by its operation's name alone.
-  const send = refuses(schemaWriteRunner, graphql(WAY_C), ['updateProjectV2Field', STATUS_ID, ...HELD.map(({ name, id }) => `${name} (${id})`)], { answer: holdingOptions() });
+  const send = await refuses(schemaWriteRunner, graphql(WAY_C), ['updateProjectV2Field', STATUS_ID, ...HELD.map(({ name, id }) => `${name} (${id})`)], { answer: holdingOptions() });
   assert.equal(send.sent.length, 1, 'more was sent than the read of the options the field holds');
 });
 
-test('the schema-write runner refuses an options write that leaves out one held Status option, naming it, and sends nothing', () => {
+test('the schema-write runner refuses an options write that leaves out one held Status option, naming it, and sends nothing', async () => {
   // `singleSelectOptions` overwrites the options the field holds, so one left out is one removed,
   // with the column of every item in it. Only `Blocked` is left out, so only it may be named.
   const document = optionsUpdate([...HELD.filter(({ name }) => name !== 'Blocked'), OWNER]);
-  const send = refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', STATUS_ID, 'Blocked (d8f7c21d)'], { answer: holdingOptions() });
+  const send = await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', STATUS_ID, 'Blocked (d8f7c21d)'], { answer: holdingOptions() });
   assert.equal(send.sent.length, 1);
-  assert.throws(() => schemaWriteRunner(graphql(document), { send: holdingOptions() }), (error) => !error.message.includes('Done'));
+  await assert.rejects(schemaWriteRunner(graphql(document), { send: holdingOptions() }), (error) => !error.message.includes('Done'));
 });
 
-test('the schema-write runner refuses a held Status option sent with its id but not its own name, colour and description', () => {
+test('the schema-write runner refuses a held Status option sent with its id but not its own name, colour and description', async () => {
   // Way B echoes each held option as the field holds it: GitHub requires a colour and a
   // description on every option sent, so one sent otherwise changes the option.
   const changed = [
@@ -408,20 +408,20 @@ test('the schema-write runner refuses a held Status option sent with its id but 
   ];
   for (const [what, option] of changed) {
     const document = optionsUpdate([...HELD.map((held) => (held.id === option.id ? option : held)), OWNER]);
-    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Ready (4a17efad)', what], { answer: holdingOptions() });
+    await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Ready (4a17efad)', what], { answer: holdingOptions() });
   }
   // With no colour or description at all.
   const bare = optionsUpdate([...HELD, OWNER]).replace(', color: BLUE, description: ""', '');
-  refuses(schemaWriteRunner, graphql(bare), ['updateProjectV2Field', 'color, description']);
+  await refuses(schemaWriteRunner, graphql(bare), ['updateProjectV2Field', 'color, description']);
 });
 
-test('the schema-write runner refuses a new option carrying an id the field does not hold, naming it', () => {
+test('the schema-write runner refuses a new option carrying an id the field does not hold, naming it', async () => {
   // A new option carries no id in way B. An id the field does not hold names no option of it.
   const document = optionsUpdate([...HELD, { ...OWNER, id: '0badf00d' }, { ...OWNER, name: 'Parked' }]);
-  refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Owner', '0badf00d'], { answer: holdingOptions() });
+  await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Owner', '0badf00d'], { answer: holdingOptions() });
 });
 
-test('the schema-write runner refuses a new option that is not a name, colour and description alone, naming it, and sends nothing', () => {
+test('the schema-write runner refuses a new option that is not a name, colour and description alone, naming it, and sends nothing', async () => {
   // Way B's new option carries a name, a colour and a description and no id (#212's report, "The
   // ways tried"). Anything short of those, or any of them as the wrong kind of value, is not way B.
   const refused = [
@@ -434,11 +434,11 @@ test('the schema-write runner refuses a new option that is not a name, colour an
     [WAY_B.replace('{name: "Owner", color: GRAY, description: ""}', '{name: "Owner", color: GRAY, description: null}'), 'description'],
   ];
   for (const [document, what] of refused) {
-    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+    await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
   }
 });
 
-test('the schema-write runner refuses a held option whose id, colour or description is written as the wrong kind of value', () => {
+test('the schema-write runner refuses a held option whose id, colour or description is written as the wrong kind of value', async () => {
   // A held option echoed back is way B only as the read gave it: its id and description strings, its colour an enum.
   const ready = '{id: "4a17efad", name: "Ready", color: BLUE, description: ""}';
   const refused = [
@@ -448,7 +448,7 @@ test('the schema-write runner refuses a held option whose id, colour or descript
   ];
   for (const [document, what] of refused) {
     assert.ok(document !== WAY_B, 'the replacement did not apply');
-    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+    await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
   }
 });
 
@@ -465,31 +465,31 @@ const ENUM_COLOURS = ['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK'
  */
 const NOT_COLOURS = ['null', '5', 'true', 'NOT_A_COLOUR', '"GRAY"', 'gray', 'Gray', 'GREY', 'BLACK'];
 
-test('the schema-write runner sends a field created with, or a column added in, each colour of the enum', () => {
+test('the schema-write runner sends a field created with, or a column added in, each colour of the enum', async () => {
   for (const colour of ENUM_COLOURS) {
     const create = CREATE_FIELD.replace('color: GRAY', `color: ${colour}`);
     const sentCreate = recording();
-    schemaWriteRunner(graphql(create), { send: sentCreate });
+    await schemaWriteRunner(graphql(create), { send: sentCreate });
     assert.deepEqual(sentCreate.sent, [['gh', ...graphql(create)]], colour);
 
     const add = optionsUpdate([...HELD, { ...OWNER, color: colour }]);
     const sentAdd = recording(holdingOptions());
-    schemaWriteRunner(graphql(add), { send: sentAdd });
+    await schemaWriteRunner(graphql(add), { send: sentAdd });
     assert.deepEqual(sentAdd.sent.at(-1), ['gh', ...graphql(add)], colour);
   }
 });
 
-test('the schema-write runner refuses a field created with an option whose colour is no value of the enum, naming it, and sends nothing', () => {
+test('the schema-write runner refuses a field created with an option whose colour is no value of the enum, naming it, and sends nothing', async () => {
   for (const colour of NOT_COLOURS) {
     const document = CREATE_FIELD.replace('color: GRAY', `color: ${colour}`);
     assert.notEqual(document, CREATE_FIELD, 'the replacement did not apply');
-    refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field', 'High', 'color']);
+    await refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field', 'High', 'color']);
   }
   // An option carrying no colour at all has none of the enum's either.
-  refuses(schemaWriteRunner, graphql(CREATE_FIELD.replace('color: GRAY, ', '')), ['createProjectV2Field', 'High', 'color']);
+  await refuses(schemaWriteRunner, graphql(CREATE_FIELD.replace('color: GRAY, ', '')), ['createProjectV2Field', 'High', 'color']);
 });
 
-test('the schema-write runner refuses a field created with its options written any way but one list of options each giving each field once, and sends nothing', () => {
+test('the schema-write runner refuses a field created with its options written any way but one list of options each giving each field once, and sends nothing', async () => {
   // Each carries NOT_A_COLOUR somewhere a check reading only the first list, or the first field,
   // would miss. GraphQL coerces a lone object given for a list to a list of one, so the first
   // shape does carry an option.
@@ -500,24 +500,24 @@ test('the schema-write runner refuses a field created with its options written a
   ];
   for (const document of refused) {
     assert.notEqual(document, CREATE_FIELD, 'the replacement did not apply');
-    refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field']);
+    await refuses(schemaWriteRunner, graphql(document), ['createProjectV2Field']);
   }
 });
 
-test('the schema-write runner refuses a column added with a colour that is no value of the enum, naming it, and sends nothing', () => {
+test('the schema-write runner refuses a column added with a colour that is no value of the enum, naming it, and sends nothing', async () => {
   for (const colour of NOT_COLOURS) {
     const document = optionsUpdate([...HELD, { ...OWNER, color: colour }]);
-    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'color']);
+    await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'color']);
   }
 });
 
-test('the schema-write runner refuses an options write that adds no option, and sends it nothing', () => {
+test('the schema-write runner refuses an options write that adds no option, and sends it nothing', async () => {
   // Way B adds an option. One sending back only what the field holds adds none, so it is not way B.
-  const send = refuses(schemaWriteRunner, graphql(optionsUpdate(HELD)), ['updateProjectV2Field', 'adds no option'], { answer: holdingOptions() });
+  const send = await refuses(schemaWriteRunner, graphql(optionsUpdate(HELD)), ['updateProjectV2Field', 'adds no option'], { answer: holdingOptions() });
   assert.ok(send.sent.length <= 1);
 });
 
-test('the schema-write runner refuses an options write whose input carries more than way B\'s field ID and options, naming what', () => {
+test('the schema-write runner refuses an options write whose input carries more than way B\'s field ID and options, naming what', async () => {
   // Way B's input is the field and its options. A `name` renames the field holding the columns,
   // and an option carrying a field way B does not send is not way B, so each is refused before
   // anything is read.
@@ -530,25 +530,25 @@ test('the schema-write runner refuses an options write whose input carries more 
     [WAY_B.replace('{fieldId:', '{clientMutationId: "x", fieldId:'), 'clientMutationId'],
   ];
   for (const [document, what] of refused) {
-    refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
+    await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', what]);
   }
 });
 
-test('the schema-write runner refuses an options write on any field but the one holding the columns, naming it', () => {
+test('the schema-write runner refuses an options write on any field but the one holding the columns, naming it', async () => {
   // Which field holds the columns is read from the board, because an ID says nothing about it.
   const priority = { data: { field: { name: 'Priority', options: [{ id: 'p1', name: 'High', color: 'RED', description: '' }] } } };
   const document = optionsUpdate([...priority.data.field.options, OWNER], { fieldId: 'PVTSSF_priority' });
-  const send = refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Priority', 'PVTSSF_priority'], { answer: holdingOptions(priority) });
+  const send = await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'Priority', 'PVTSSF_priority'], { answer: holdingOptions(priority) });
   assert.equal(send.sent.length, 1);
   // A field that is not single-select answers as an empty object, as gh answered for a text field.
-  refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'PVTSSF_priority'], { answer: holdingOptions({ data: { field: {} } }) });
+  await refuses(schemaWriteRunner, graphql(document), ['updateProjectV2Field', 'PVTSSF_priority'], { answer: holdingOptions({ data: { field: {} } }) });
 });
 
-test('the schema-write runner sends no options write when it cannot read the options the field holds', () => {
+test('the schema-write runner sends no options write when it cannot read the options the field holds', async () => {
   // Recorded from gh 2.99.0 on 2026-09-25, answering the options read over an ID that resolves to nothing.
   const failing = () => ({ status: 1, stdout: '{"data":{"field":null},"errors":[]}', stderr: "gh: Could not resolve to a node with the global id of 'PVTSSF_doesnotexist'\n" });
   const send = recording(failing);
-  assert.throws(() => schemaWriteRunner(graphql(WAY_B), { send }), /Could not resolve to a node/);
+  await assert.rejects(schemaWriteRunner(graphql(WAY_B), { send }), /Could not resolve to a node/);
   assert.equal(send.sent.length, 1);
 });
 
@@ -565,10 +565,10 @@ const holdingColumns = (target) => (command, args) => (args.at(-1).startsWith('q
   ? { status: 0, stdout: JSON.stringify({ data: { project: { field: { id: 'PVTSSF_status' } }, target: { name: target } } }), stderr: '' }
   : { status: 0, stdout: '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}', stderr: '' });
 
-test('the item-write runner sends the column move, a field-value write on the field holding the columns', () => {
+test('the item-write runner sends the column move, a field-value write on the field holding the columns', async () => {
   const send = recording(holdingColumns('Status'));
 
-  itemWriteRunner(graphql(MOVE), { send });
+  await itemWriteRunner(graphql(MOVE), { send });
 
   // First the read of which field holds the columns, through the read runner's own form, then the
   // write it admitted.
@@ -578,19 +578,19 @@ test('the item-write runner sends the column move, a field-value write on the fi
   assert.deepEqual(send.sent[1], ['gh', ...graphql(MOVE)]);
 });
 
-test('the item-write runner refuses a field-value write on any field but the one holding the columns, naming it', () => {
+test('the item-write runner refuses a field-value write on any field but the one holding the columns, naming it', async () => {
   // Review C1's other half: a field-value write is the item side's, and on this side it is the
   // column move and nothing else. Which field holds the columns is read from the board, because
   // an ID says nothing about which field it is.
-  const send = refuses(itemWriteRunner, graphql(SET_PRIORITY), ['Priority', 'PVTSSF_priority'], { answer: holdingColumns('Priority') });
+  const send = await refuses(itemWriteRunner, graphql(SET_PRIORITY), ['Priority', 'PVTSSF_priority'], { answer: holdingColumns('Priority') });
   assert.equal(send.sent.length, 1, 'more was sent than the read of which field holds the columns');
 });
 
-test('the item-write runner refuses a request that archives a board item, naming it, and sends nothing', () => {
-  refuses(itemWriteRunner, graphql('mutation { archiveProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { item { id } } }'), ['archiveProjectV2Item']);
+test('the item-write runner refuses a request that archives a board item, naming it, and sends nothing', async () => {
+  await refuses(itemWriteRunner, graphql('mutation { archiveProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { item { id } } }'), ['archiveProjectV2Item']);
 });
 
-test('the item-write runner refuses every operation but the column move, naming it, and sends nothing', () => {
+test('the item-write runner refuses every operation but the column move, naming it, and sends nothing', async () => {
   // In M1 its allowlist is the column move alone. Deleting, clearing and reordering all name a
   // board item, and none is a card's need yet; a schema write is not the item side's at all.
   const refused = [
@@ -602,34 +602,34 @@ test('the item-write runner refuses every operation but the column move, naming 
     ['deleteProjectV2Item', MOVE.replaceAll('updateProjectV2ItemFieldValue', 'deleteProjectV2Item')],
   ];
   for (const [operation, document] of refused) {
-    refuses(itemWriteRunner, graphql(document), [operation], { answer: holdingColumns('Status') });
+    await refuses(itemWriteRunner, graphql(document), [operation], { answer: holdingColumns('Status') });
   }
 });
 
-test('the item-write runner refuses a write on the columns field that sets anything but an option, naming it', () => {
+test('the item-write runner refuses a write on the columns field that sets anything but an option, naming it', async () => {
   for (const value of ['{text: "Review"}', '{singleSelectOptionId: "opt_review", text: "x"}']) {
-    refuses(itemWriteRunner, graphql(MOVE.replace('{singleSelectOptionId: "opt_review"}', value)), ['updateProjectV2ItemFieldValue', 'value']);
+    await refuses(itemWriteRunner, graphql(MOVE.replace('{singleSelectOptionId: "opt_review"}', value)), ['updateProjectV2ItemFieldValue', 'value']);
   }
-  refuses(itemWriteRunner, graphql(MOVE.replace('fieldId: "PVTSSF_status"', 'fieldId: "PVTSSF_status", fieldId: "PVTSSF_priority"')), ['fieldId']);
+  await refuses(itemWriteRunner, graphql(MOVE.replace('fieldId: "PVTSSF_status"', 'fieldId: "PVTSSF_status", fieldId: "PVTSSF_priority"')), ['fieldId']);
 });
 
-test('the item-write runner sends no write when it cannot read which field holds the columns', () => {
+test('the item-write runner sends no write when it cannot read which field holds the columns', async () => {
   // Recorded from gh 2.99.0 on 2026-09-25, answering a query over an ID that resolves to nothing.
   const failing = () => ({ status: 1, stdout: '{"data":{"project":null}}', stderr: "gh: Could not resolve to a node with the global id of 'PVT_1'\n" });
   const send = recording(failing);
-  assert.throws(() => itemWriteRunner(graphql(MOVE), { send }), /Could not resolve to a node/);
+  await assert.rejects(itemWriteRunner(graphql(MOVE), { send }), /Could not resolve to a node/);
   assert.equal(send.sent.length, 1);
 });
 
-test('a write runner refuses a request carrying more than one operation, naming them, and sends nothing', () => {
+test('a write runner refuses a request carrying more than one operation, naming them, and sends nothing', async () => {
   const two = 'mutation { createLabel(input: {repositoryId: "R_1", name: "a", color: "ededed"}) { label { id } } deleteProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { deletedItemId } }';
-  refuses(schemaWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
-  refuses(itemWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
+  await refuses(schemaWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
+  await refuses(itemWriteRunner, graphql(two), ['createLabel', 'deleteProjectV2Item']);
   const documents = `${CREATE_LABEL} ${CREATE_FIELD.replace('mutation {', 'mutation Second {')}`;
-  refuses(schemaWriteRunner, graphql(documents), ['createLabel', 'Second']);
+  await refuses(schemaWriteRunner, graphql(documents), ['createLabel', 'Second']);
 });
 
-test('a write runner refuses a request whose operation it cannot name from the document alone, and sends nothing', () => {
+test('a write runner refuses a request whose operation it cannot name from the document alone, and sends nothing', async () => {
   // A variable, a fragment at the root or a directive puts what the operation does somewhere the
   // document does not show, so the runner could not name what it would send. Any other form of
   // request is refused for the same reason.
@@ -643,7 +643,7 @@ test('a write runner refuses a request whose operation it cannot name from the d
     [['label', 'create', 'type:change'], ['label create type:change']],
   ];
   for (const [args, names] of refused) {
-    refuses(schemaWriteRunner, args, names);
-    refuses(itemWriteRunner, args, names);
+    await refuses(schemaWriteRunner, args, names);
+    await refuses(itemWriteRunner, args, names);
   }
 });

@@ -1,7 +1,7 @@
 // ABOUTME: The fake `gh`: an executable a test places first on `PATH`, answering the forge
 // adapter's commands from the fake board. Test-only, and never named from src/.
 
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createFakeBoard } from './fake-board.mjs';
@@ -317,8 +317,30 @@ async function boardOf(state) {
  * Answers the command this process was run with from the board held at `statePath`. What it
  * prints and its exit code are what `gh` would give; a command it does not model fails, printing
  * itself.
+ *
+ * L3 moves the cards it claims at once, so several fake `gh`s can run together over one board.
+ * Each holds the board's lock from its first read of the board to its last write, so no write is
+ * lost to another's. It waits for the lock by trying again until it is free, and never by a sleep.
  */
 export async function main(statePath) {
+  const lock = `${statePath}.lock`;
+  for (;;) {
+    try {
+      closeSync(openSync(lock, 'wx'));
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+  try {
+    await answering(statePath);
+  } finally {
+    rmSync(lock);
+  }
+}
+
+/** `main`'s answer, given while it holds the board's lock. */
+async function answering(statePath) {
   const args = process.argv.slice(2);
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   state.sent.push(args);

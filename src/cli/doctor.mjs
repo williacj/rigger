@@ -9,8 +9,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { COLUMNS, readRunner } from '../substrate/forge/runners.mjs';
+import { NOT_STARTED } from '../substrate/process.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
+import { recording } from './recording.mjs';
 
 /**
  * Runs a command and hands back what it answered, which is every authority this verb asks but the
@@ -236,13 +238,18 @@ const reason = (said) => said.error?.code ?? said.error?.message ?? 'it answered
  * runner's allowlist admits the request only without it.
  *
  * It is a forge read, so it goes through the forge adapter's read runner, which names the command
- * (the architect's ruling on #214, R214-B4). `ask` stands in for the runner's spawn in tests.
+ * (the architect's ruling on #214, R214-B4), with `emitter` for L0's kills. A `gh` L0 could not
+ * start is reported as unasked, and every other failure of the call is the call's own to report.
+ * `ask` stands in for the runner's spawn in tests.
  */
-export function ghAuth({ ask } = {}) {
+export async function ghAuth({ ask, emitter } = {}) {
   const name = 'gh authentication';
-  const said = readRunner(['auth', 'status'], { send: ask });
-  if (said.status === null) {
-    return { name, ok: null, detail: `\`gh auth status\` could not be run here: ${reason(said)}` };
+  let said;
+  try {
+    said = await readRunner(['auth', 'status'], { send: ask, emitter });
+  } catch (failure) {
+    if (failure.code !== NOT_STARTED) throw failure;
+    return { name, ok: null, detail: `\`gh auth status\` could not be run here: ${oneLine(failure.message)}` };
   }
   return { name, ok: said.status === 0, detail: `\`gh auth status\` exited ${said.status}: ${firstLine(said)}` };
 }
@@ -373,9 +380,10 @@ export function sharedWith(project, { repositories, unreadable }) {
 
 /**
  * The forge adapter's reads on the board `config` names, or on `board` where it is given, which
- * is that board narrowed to fewer columns. `send` stands in for the read runner's spawn in tests.
+ * is that board narrowed to fewer columns, each sent as `via` says: `send`, which stands in for the
+ * read runner's spawn in tests, and `emitter`, the `L0` emitter for L0's kills.
  */
-const readsOf = (config, send, board = config.board) => readSide({ repo: config.repo, ...board }, { send });
+const readsOf = (config, via, board = config.board) => readSide({ repo: config.repo, ...board }, via);
 
 /**
  * Whether the board the config names holds anything from outside the repository `repo` names,
@@ -388,7 +396,7 @@ const readsOf = (config, send, board = config.board) => readSide({ repo: config.
  * reading, so the check answers null, sends nothing, and `doctor` prints no line for it. `ask`
  * stands in for the read runner's spawn in tests.
  */
-export async function boardSharing({ target = process.cwd(), ask } = {}) {
+export async function boardSharing({ target = process.cwd(), ask, emitter } = {}) {
   const name = 'board sharing';
   const { config, problem } = await consumerConfig(target);
   if (problem) return null;
@@ -399,7 +407,7 @@ export async function boardSharing({ target = process.cwd(), ask } = {}) {
   }
   let held;
   try {
-    held = await readsOf(config, ask).readOtherRepositories();
+    held = await readsOf(config, { send: ask, emitter }).readOtherRepositories();
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
   }
@@ -412,10 +420,10 @@ export async function boardSharing({ target = process.cwd(), ask } = {}) {
  * answer: it finds the board by its owner and number, and a read it cannot make fails the line,
  * carrying the adapter's message, which names the board and the owner the request addressed.
  */
-async function reachability(config, send) {
+async function reachability(config, via) {
   const name = 'board reachability';
   try {
-    await readsOf(config, send).readFieldTypes();
+    await readsOf(config, via).readFieldTypes();
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
   }
@@ -428,12 +436,12 @@ async function reachability(config, send) {
  * column, so a line that fails carries the adapter's message, which names the column by key and
  * display name.
  */
-async function columns(config, send) {
+async function columns(config, via) {
   const lines = [];
   for (const [key, display] of Object.entries(config.board.columns)) {
     const name = `board column ${key}`;
     try {
-      await readsOf(config, send, { ...config.board, columns: { [key]: display } }).readColumns();
+      await readsOf(config, via, { ...config.board, columns: { [key]: display } }).readColumns();
       lines.push({ name, ok: true, detail: `${display} is an option of board ${config.board.project}'s columns` });
     } catch (threw) {
       lines.push({ name, ok: false, detail: wentWrong(threw) });
@@ -457,12 +465,12 @@ const SINGLE_SELECT = 'SINGLE_SELECT';
  * field's options come from its single-select field read, which leaves out the field holding the
  * columns; that field's options come from the board read `setup-board` takes them from.
  */
-async function priority(config, send) {
+async function priority(config, via) {
   const name = 'board priority';
   const declared = config.board.priority;
   if (!declared) return { name, ok: true, detail: 'no priority field is declared, so every card ranks alike' };
   const field = `board ${config.board.project}'s field ${declared.field}`;
-  const reads = readsOf(config, send);
+  const reads = readsOf(config, via);
   let held;
   try {
     const typed = (await reads.readFieldTypes()).find((each) => each.name === declared.field);
@@ -471,7 +479,7 @@ async function priority(config, send) {
       return { name, ok: false, detail: `${field} is a ${typed.type} field, not a single-select field` };
     }
     held = declared.field === COLUMNS
-      ? boardOf('doctor', { repo: config.repo, ...config.board }, send).columns.options.map((option) => option.name)
+      ? (await boardOf('doctor', { repo: config.repo, ...config.board }, via)).columns.options.map((option) => option.name)
       : (await reads.readFields()).find((select) => select.name === declared.field).options;
   } catch (threw) {
     return { name, ok: false, detail: wentWrong(threw) };
@@ -491,7 +499,7 @@ async function priority(config, send) {
  * cannot read, or throws during validation names no board worth reading, so it earns one line
  * saying the board was not checked, and nothing is sent.
  */
-export async function boardChecks({ target = process.cwd(), ask } = {}) {
+export async function boardChecks({ target = process.cwd(), ask, emitter } = {}) {
   const { config, problem } = await consumerConfig(target);
   let why = problem ? 'the config could not be read' : null;
   if (!why) {
@@ -502,7 +510,8 @@ export async function boardChecks({ target = process.cwd(), ask } = {}) {
     }
   }
   if (why) return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
-  return [await reachability(config, ask), ...await columns(config, ask), await priority(config, ask)];
+  const via = { send: ask, emitter };
+  return [await reachability(config, via), ...await columns(config, via), await priority(config, via)];
 }
 
 /**
@@ -583,13 +592,21 @@ export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PA
   return { named };
 }
 
-/** What the command prints for a `doctor` run, and the status it exits with. */
-export async function doctor({
+/**
+ * What the command prints for a `doctor` run, and the status it exits with. Each check is handed
+ * an `L0` emitter on the sink `recording` opens, for L0's kills in the forge calls it makes.
+ */
+export const doctor = (options) => recording((opened) => checking(opened, options));
+
+/** `doctor`'s work, recording through `sink` once `name` has named its state directory. */
+async function checking({ sink, name }, {
   target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
 } = {}) {
   const { named, refusal } = sourceTreeGuard('doctor', { target, packageRoot, ask });
   if (refusal) return refusal;
+  name(named);
+  const emitter = sink.emitter({ layer: 'L0' });
   const results = [];
-  for (const check of checks) results.push(await check({ target: named, packageRoot, ask }));
+  for (const check of checks) results.push(await check({ target: named, packageRoot, ask, emitter }));
   return report(named, results.flat().filter((result) => result !== null));
 }

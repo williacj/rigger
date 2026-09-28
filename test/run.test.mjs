@@ -230,7 +230,8 @@ test('run never holds more claims than N, as derived from the events it wrote', 
 test('each card run claims from the ready column has one L2 transition event from ready into coding', () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
-  assert.deepEqual(transitionsIn(eventsOf(ran)), [
+  // By card: L3 moves the cards it claims at once, so each move's event is recorded as it ends.
+  assert.deepEqual(transitionsIn(eventsOf(ran)).sort((one, other) => one.card - other.card), [
     { card: 10, from: 'ready', to: 'coding' },
     { card: 20, from: 'ready', to: 'coding' },
     { card: 30, from: 'ready', to: 'coding' },
@@ -295,7 +296,8 @@ test('given a board with no ready card, a second run writes no L2 transition eve
 
   assert.match(second.err, /claimed #10\b/, second.err);
   assert.deepEqual(transitionsIn(eventsOf(second)), before);
-  assert.deepEqual(await movesOf(second), [['item-2', 'Coding'], ['item-1', 'Coding']]);
+  // By item: L3 moves the cards it claims at once, so the board takes the moves in either order.
+  assert.deepEqual((await movesOf(second)).sort(([one], [other]) => one.localeCompare(other)), [['item-1', 'Coding'], ['item-2', 'Coding']]);
 });
 
 // proves R-SAFE-5

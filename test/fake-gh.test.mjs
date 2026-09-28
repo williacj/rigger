@@ -10,6 +10,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ANSWERED, commandOf, installFakeGh } from './fake-gh.mjs';
+import { UNKILLED } from './process-fixtures.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
@@ -56,7 +57,7 @@ test('the real adapter reads cards, columns, fields and labels through the fake 
   });
 
   const read = await onPath(fake, async () => {
-    const side = readSide(BOARD);
+    const side = readSide(BOARD, { emitter: UNKILLED });
     return { items: await side.readItems(), columns: await side.readColumns(), fields: await side.readFields(), labels: await side.readLabels() };
   });
 
@@ -86,7 +87,7 @@ test('the fake gh answers a board past one page, and its drafts, pull requests a
     ],
   });
 
-  const { cards, labels } = await onPath(fake, async () => ({ cards: await readSide(BOARD).readItems(), labels: await readSide(BOARD).readLabels() }));
+  const { cards, labels } = await onPath(fake, async () => ({ cards: await readSide(BOARD, { emitter: UNKILLED }).readItems(), labels: await readSide(BOARD, { emitter: UNKILLED }).readLabels() }));
 
   assert.deepEqual(cards.map((card) => card.number), issues.map((issue) => issue.number));
   assert.equal(cards[0].id, 'item-4');
@@ -125,7 +126,7 @@ test("the adapter's card read through the fake gh returns exactly the model's is
   // The projection is not empty and not the whole board, so the comparison below is not vacuous.
   assert.deepEqual(expected.map((card) => card.number), [215, 214, 223]);
 
-  const cards = await onPath(fake, () => readSide(BOARD).readItems());
+  const cards = await onPath(fake, () => readSide(BOARD, { emitter: UNKILLED }).readItems());
 
   assert.deepEqual(cards, expected);
 });
@@ -138,7 +139,7 @@ test("the adapter's column read through the fake gh returns each declared key ma
   assert.deepEqual(held, columns);
   assert.deepEqual(held.filter((name) => !Object.values(COLUMNS).includes(name)), ['Backlog', 'Archive']);
 
-  const read = await onPath(fake, () => readSide(BOARD).readColumns());
+  const read = await onPath(fake, () => readSide(BOARD, { emitter: UNKILLED }).readColumns());
 
   assert.deepEqual(read, { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' });
 });
@@ -149,7 +150,7 @@ test("the adapter's column read through the fake gh fails, naming the key and di
   assert.ok(!(await (await fake.model()).operations.readColumns()).includes('Owner'));
 
   await onPath(fake, () =>
-    assert.rejects(readSide(BOARD).readColumns(), (error) => {
+    assert.rejects(readSide(BOARD, { emitter: UNKILLED }).readColumns(), (error) => {
       assert.ok(error.message.includes('owner (Owner)'), error.message);
       assert.ok(!/\bready\b|\bcoding\b|\breview\b|\bdone\b/.test(error.message), `a column the model holds is named: ${error.message}`);
       return true;
@@ -167,10 +168,10 @@ test("each write the real adapter issues through the fake gh appears in the fake
   });
 
   await onPath(fake, async () => {
-    await itemWriteSide(BOARD).moveItem('item-1', 'Coding');
-    await schemaWriteSide(BOARD).createField('Priority', ['High', 'Low']);
-    await schemaWriteSide(BOARD).createColumn('Owner');
-    await schemaWriteSide(BOARD).createLabel('type:change');
+    await itemWriteSide(BOARD).moveItem('item-1', 'Coding', UNKILLED);
+    await schemaWriteSide(BOARD, { emitter: UNKILLED }).createField('Priority', ['High', 'Low']);
+    await schemaWriteSide(BOARD, { emitter: UNKILLED }).createColumn('Owner');
+    await schemaWriteSide(BOARD, { emitter: UNKILLED }).createLabel('type:change');
   });
 
   const model = await fake.model();
@@ -195,10 +196,10 @@ test('adding a column through the fake gh keeps every card in its column, and a 
   });
 
   const { before, after } = await onPath(fake, async () => {
-    const read = async () => (await readSide(BOARD).readItems()).map(({ number, column }) => [number, column]);
+    const read = async () => (await readSide(BOARD, { emitter: UNKILLED }).readItems()).map(({ number, column }) => [number, column]);
     const held = await read();
-    await schemaWriteSide(BOARD).createColumn('Owner');
-    await itemWriteSide(BOARD).moveItem('item-3', 'Owner');
+    await schemaWriteSide(BOARD, { emitter: UNKILLED }).createColumn('Owner');
+    await itemWriteSide(BOARD).moveItem('item-3', 'Owner', UNKILLED);
     return { before: held, after: await read() };
   });
 
@@ -314,7 +315,7 @@ test('a schema write whose option colour is no value of the enum is refused at t
   await onPath(fake, async () => {
     for (const colour of ['null', '5', 'true', 'NOT_A_COLOUR', '"GRAY"', 'gray']) {
       for (const document of [create(colour), add(colour)]) {
-        assert.throws(() => schemaWriteRunner(['api', 'graphql', '-f', `query=${document}`]), /color/, document);
+        await assert.rejects(schemaWriteRunner(['api', 'graphql', '-f', `query=${document}`], { emitter: UNKILLED }), /color/, document);
       }
     }
   });
@@ -345,11 +346,11 @@ test('given a gh command it does not model, the fake gh exits non-zero and print
 test('given a board owner, the fake gh holds its board under that owner and answers no board under the repository\'s owner', async () => {
   const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, owner: 'octo-org', board: { columns: Object.values(COLUMNS) } });
 
-  const declared = await onPath(fake, () => readSide({ ...BOARD, owner: 'octo-org' }).readColumns());
+  const declared = await onPath(fake, () => readSide({ ...BOARD, owner: 'octo-org' }, { emitter: UNKILLED }).readColumns());
   assert.deepEqual(declared, COLUMNS);
 
   await onPath(fake, () =>
-    assert.rejects(readSide(BOARD).readColumns(), (error) => {
+    assert.rejects(readSide(BOARD, { emitter: UNKILLED }).readColumns(), (error) => {
       assert.ok(error.message.includes('Could not resolve to a ProjectV2 with the number 6'), error.message);
       return true;
     }),

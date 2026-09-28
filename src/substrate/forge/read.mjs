@@ -31,9 +31,12 @@ export function answerOf(operation, board, said, addressed = '') {
   return JSON.parse(said.stdout).data;
 }
 
-/** What `gh` answered to the read `query`, made for `operation` on `board`. */
-const asked = (operation, board, query, send, addressed) =>
-  answerOf(operation, board, readRunner(graphqlRequest(query), { send }), addressed);
+/**
+ * What `gh` answered to the read `query`, made for `operation` on `board` and sent as `via` says:
+ * the read runner's `send`, `emitter` and `timeout`.
+ */
+const asked = async (operation, board, query, via, addressed) =>
+  answerOf(operation, board, await readRunner(graphqlRequest(query), via), addressed);
 
 /** Throws the error a read gives when the board answered something it cannot use. */
 function fail(operation, board, why) {
@@ -63,11 +66,11 @@ function repositoryQuery(board, selection) {
  * fails fails the whole read, so no part of it is returned. `addressed` is what a failure says of
  * a read that finds the board, and is empty for one that does not.
  */
-function everyPage(operation, board, send, query, connectionOf, addressed = '') {
+async function everyPage(operation, board, via, query, connectionOf, addressed = '') {
   const nodes = [];
   let after = '';
   for (;;) {
-    const connection = connectionOf(asked(operation, board, query(`first: ${PAGE}${after}`), send, addressed));
+    const connection = connectionOf(await asked(operation, board, query(`first: ${PAGE}${after}`), via, addressed));
     if (!connection) fail(operation, board, `${addressed}gh answered no such board`);
     nodes.push(...connection.nodes);
     if (!connection.pageInfo.hasNextPage) return nodes;
@@ -80,17 +83,17 @@ function everyPage(operation, board, send, query, connectionOf, addressed = '') 
  * options of its field holding the columns, each option as `{ id, name, color, description }` in
  * board order, which is all a write adding an option has to send back of it.
  */
-export function boardOf(operation, board, send) {
+export async function boardOf(operation, board, via) {
   const query = boardQuery(operation, board, `id field(name: ${literal(COLUMNS)}) { ... on ProjectV2SingleSelectField { id options { id name color description } } }`);
-  const project = asked(operation, board, query, send, asking(board))?.repositoryOwner?.projectV2;
+  const project = (await asked(operation, board, query, via, asking(board)))?.repositoryOwner?.projectV2;
   if (!project) fail(operation, board, `${asking(board)}gh answered no such board`);
   if (!project.field?.options) fail(operation, board, `the board has no single-select field named ${COLUMNS}`);
   return { id: project.id, columns: project.field };
 }
 
 /** The ID of the repository `board.repo` names as `owner/name`. */
-export function repositoryOf(operation, board, send) {
-  return asked(operation, board, repositoryQuery(board, 'id'), send).repository.id;
+export async function repositoryOf(operation, board, via) {
+  return (await asked(operation, board, repositoryQuery(board, 'id'), via)).repository.id;
 }
 
 /** The fields of an item the read asks for: its field values, and an issue's facts. */
@@ -137,15 +140,15 @@ function cardOf(operation, board, node) {
  * once. The board can change between one page and the next, so an item moved meanwhile can be
  * answered on both: it is kept where it first appeared.
  */
-function itemNodes(operation, board, send, item) {
+async function itemNodes(operation, board, via, item) {
   const query = (page) => boardQuery(operation, board, `items(${page}) { pageInfo { hasNextPage endCursor } nodes { ${item} } }`);
-  const nodes = everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
+  const nodes = await everyPage(operation, board, via, query, (data) => data?.repositoryOwner?.projectV2?.items, asking(board));
   const seen = new Set();
   return nodes.filter((node) => !seen.has(node.id) && seen.add(node.id));
 }
 
 /** The board's item nodes that are cards, in board order, each once. */
-const cardNodes = (operation, board, send) => itemNodes(operation, board, send, ITEM).filter((node) => isCard(board, node));
+const cardNodes = async (operation, board, via) => (await itemNodes(operation, board, via, ITEM)).filter((node) => isCard(board, node));
 
 /**
  * What the report of other repositories selects of an item: its type, and the repository of an
@@ -162,10 +165,10 @@ const REDACTED = 'REDACTED';
  * issue or pull request on it belongs to, as `owner/name` in the order first met, and
  * `unreadable`, the count of items whose content GitHub withheld.
  */
-function otherRepositories(operation, board, send) {
+async function otherRepositories(operation, board, via) {
   const repositories = [];
   let unreadable = 0;
-  for (const { type, content } of itemNodes(operation, board, send, OWNED_ITEM)) {
+  for (const { type, content } of await itemNodes(operation, board, via, OWNED_ITEM)) {
     if (type === REDACTED) unreadable += 1;
     const named = content?.repository?.nameWithOwner;
     if (named && !ofRepository(board, named) && !repositories.includes(named)) repositories.push(named);
@@ -179,9 +182,9 @@ function otherRepositories(operation, board, send) {
  * answers a field name the board does not hold by exiting 1 (measured with gh 2.99.0 on board 6,
  * 2026-09-25).
  */
-function typedFields(operation, board, send) {
+function typedFields(operation, board, via) {
   const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } }`);
-  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board));
+  return everyPage(operation, board, via, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board));
 }
 
 /**
@@ -189,8 +192,8 @@ function typedFields(operation, board, send) {
  * read with its name and type, so a field that is not on the board and a field of another type
  * each fail the read, naming the field, and the type where it has one.
  */
-function priorityField(operation, board, send, name) {
-  const field = typedFields(operation, board, send).find((held) => held.name === name);
+async function priorityField(operation, board, via, name) {
+  const field = (await typedFields(operation, board, via)).find((held) => held.name === name);
   if (!field) fail(operation, board, `the board has no field named ${name}`);
   if (!field.options) fail(operation, board, `the board's field ${name} is a ${field.dataType} field, not a single-select field`);
   return field.options.map((option) => option.name);
@@ -200,19 +203,22 @@ function priorityField(operation, board, send, name) {
  * The board's single-select fields, each as `{ name, options }` with its option names in board
  * order. A field of any other type answers as an empty object, and is left out.
  */
-function singleSelectFields(operation, board, send) {
+async function singleSelectFields(operation, board, via) {
   const query = (page) => boardQuery(operation, board, `fields(${page}) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } }`);
-  return everyPage(operation, board, send, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board))
+  return (await everyPage(operation, board, via, query, (data) => data?.repositoryOwner?.projectV2?.fields, asking(board)))
     .filter((field) => field.options)
     .map((field) => ({ name: field.name, options: field.options.map((option) => option.name) }));
 }
 
 /**
  * The reads on `board`, which names its `repo`, its `project` number, its `columns`, the display
- * names the config declares by key, and, where the config declares one, its `owner`. `send`
- * stands in for the runners' spawn in tests.
+ * names the config declares by key, and, where the config declares one, its `owner`. Every read is
+ * sent through the read runner with `emitter`, the `L0` emitter its kills are recorded through, and
+ * `timeout`, the runner's own where it is not given. `send` stands in for the runners' spawn in
+ * tests.
  */
-export function readSide(board, { send } = {}) {
+export function readSide(board, { send, emitter, timeout } = {}) {
+  const via = { send, emitter, timeout };
   return {
     /**
      * The columns the config declares, by its keys, each the option of the field holding the
@@ -220,7 +226,7 @@ export function readSide(board, { send } = {}) {
      * the read fails naming every one, by key and display name.
      */
     readColumns: async () => {
-      const status = singleSelectFields('readColumns', board, send).find((field) => field.name === COLUMNS);
+      const status = (await singleSelectFields('readColumns', board, via)).find((field) => field.name === COLUMNS);
       if (!status) fail('readColumns', board, `the board has no single-select field named ${COLUMNS}`);
       const missing = Object.entries(board.columns).filter(([, name]) => !status.options.includes(name));
       if (missing.length > 0) {
@@ -230,22 +236,22 @@ export function readSide(board, { send } = {}) {
       return { ...board.columns };
     },
     /** The board's single-select fields but the one holding the columns, as `{ name, options }`. */
-    readFields: async () => singleSelectFields('readFields', board, send).filter((field) => field.name !== COLUMNS),
+    readFields: async () => (await singleSelectFields('readFields', board, via)).filter((field) => field.name !== COLUMNS),
     /** Every field on the board, whatever its type, as `{ name, type }`, the type as GitHub's `dataType` names it. */
-    readFieldTypes: async () => typedFields('readFieldTypes', board, send).map((field) => ({ name: field.name, type: field.dataType })),
+    readFieldTypes: async () => (await typedFields('readFieldTypes', board, via)).map((field) => ({ name: field.name, type: field.dataType })),
     /** The names of the labels the board's repository holds. */
     readLabels: async () => {
       const query = (page) => repositoryQuery(board, `labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
-      return everyPage('readLabels', board, send, query, (data) => data?.repository?.labels).map((label) => label.name);
+      return (await everyPage('readLabels', board, via, query, (data) => data?.repository?.labels)).map((label) => label.name);
     },
     /**
      * What the board holds from outside the repository: every other repository whose issue or
      * pull request is on it, and how many items it holds that cannot be read. Its own read of the
      * items, so the item read `readItems` sends is left as it is.
      */
-    readOtherRepositories: async () => otherRepositories('readOtherRepositories', board, send),
+    readOtherRepositories: async () => otherRepositories('readOtherRepositories', board, via),
     /** Every card on the board, in board order, each once. */
-    readItems: async () => cardNodes('readItems', board, send).map((node) => cardOf('readItems', board, node)),
+    readItems: async () => (await cardNodes('readItems', board, via)).map((node) => cardOf('readItems', board, node)),
     /**
      * What L0 hands L3 to rank the board's cards by, from the config's priority declaration, a
      * field and its options highest rank first. It returns `items`, every card as `readItems`
@@ -257,13 +263,13 @@ export function readSide(board, { send } = {}) {
      */
     readPriority: async () => {
       const declaration = board.priority;
-      const options = declaration ? priorityField('readPriority', board, send, declaration.field) : null;
+      const options = declaration ? await priorityField('readPriority', board, via, declaration.field) : null;
       const priorityOf = (node) => {
         if (!declaration) return null;
         const value = valueIn(node, declaration.field);
         return { value, declared: declaration.options.includes(value) };
       };
-      const items = cardNodes('readPriority', board, send).map((node) => ({ ...cardOf('readPriority', board, node), priority: priorityOf(node) }));
+      const items = (await cardNodes('readPriority', board, via)).map((node) => ({ ...cardOf('readPriority', board, node), priority: priorityOf(node) }));
       return { items, declared: declaration ? [...declaration.options] : null, options };
     },
   };

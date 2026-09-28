@@ -14,8 +14,9 @@ const CHANGES = {
 
 /**
  * L2's column changes on the board `config` names, each recorded through `sink`. `items` is the
- * forge adapter's item-write side for that board, and a test passes the fake board's operations
- * in its place, or `send` in place of the runners' spawn.
+ * forge adapter's item-write side for that board, whose move L2 hands an `L0` emitter it opens
+ * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
+ * the runners' spawn.
  */
 export function columnChanges({ config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }) }) {
   const { columns } = config.board;
@@ -37,12 +38,14 @@ export function columnChanges({ config, sink, send, items = itemWriteSide({ repo
 
   /**
    * Moves `card` for `cause`, then records the move as one `transition` event. A move the board
-   * refuses is recorded as nothing, and its caller is told which card and column it was.
+   * refuses is recorded as nothing, and its caller is told which card and column it was. The move
+   * is handed an `L0` emitter L2 opens from `sink` under the card, so every kill L0 makes in it is
+   * recorded with the card's number.
    */
   const change = async (card, cause) => {
     const { from, to } = CHANGES[cause];
     try {
-      await items.moveItem(card.id, columns[to]);
+      await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number }));
     } catch (refusal) {
       throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
     }
