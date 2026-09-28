@@ -248,12 +248,13 @@ const samePids = (one, other) => one.size === other.size && [...one.keys()].ever
  * that run's output is that one process's name, whatever bytes it holds, and `ps`'s padding. A
  * process no longer there is left out.
  *
- * So the census grows with the group. Measured with `/bin/ps` from adv_cmds-240 and Node 26.5.0 on
- * macOS 27.0 (26A428) on 2026-09-27, at a load average of about 23 on 12 cores: 300 such reads, one
- * per `tail` in one group, took 1.09 to 1.23 ms each over three runs, and one read of that group's
- * command lines took about 9 ms. At 1.23 ms a survivor, the names alone reach `READ_TIMEOUT` at
- * about 4,000 survivors, and fewer once the group's own reads are counted. Such a group is killed
- * unnamed.
+ * So the census grows with the group. Measured with `/bin/ps` from adv_cmds-240, `/usr/sbin/lsof`
+ * and Node 26.5.0 on macOS 27.0 (26A428) on 2026-09-27, on 12 cores: 300 such reads, one per
+ * `tail` in one group, took 1.09 to 1.23 ms each over three runs at a load average of about 23,
+ * and 2.13 to 3.29 ms each over three more at about 9. One read of that group's command lines took
+ * 9 to 15 ms, and one `lsof` of its 300 paths 33 to 51 ms. At 3.29 ms a survivor, the names alone
+ * reach `READ_TIMEOUT` at about 1,500 survivors, and fewer once the group's other reads are
+ * counted. Such a group is killed unnamed.
  */
 async function namesOf(pids, read) {
   const names = new Map();

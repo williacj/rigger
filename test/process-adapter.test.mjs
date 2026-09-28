@@ -895,7 +895,7 @@ const watchEnd = (name) => [
   'while [ ! -f "$here/watching" ]; do :; done',
 ].join('\n');
 
-test('while the call waits for a killed group to empty, it uses less than half that wait\'s time of the processor', SETTLES_WITHIN, async (t) => {
+test('while the call waits for a killed group to empty, it uses less than a tenth of that wait\'s time of the processor', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The group never empties, because of the zombie, so the call waits until it gives up on it.
   const command = unreaped(directory, watchEnd('tail'));
@@ -911,19 +911,42 @@ test('while the call waits for a killed group to empty, it uses less than half t
   const cpu = (user + system) / 1000;
   t.diagnostic(`${cpu} ms of the processor over a wait of at least ${waited} ms`);
   assert.ok(waited > 0, `the wait lasted ${waited} ms`);
-  assert.ok(cpu < waited / 2, `the call used ${cpu} ms of the processor over a wait of at least ${waited} ms`);
+  assert.ok(cpu < waited / 10, `the call used ${cpu} ms of the processor over a wait of at least ${waited} ms`);
 });
 
-test('while the call re-reads a census, it uses less than half those re-reads\' time of the processor', SETTLES_WITHIN, async (t) => {
+test('while the call re-reads a census, it uses less than a tenth of those re-reads\' time of the processor', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The stand-in resumes the group before every read of states, so the census never finds it
-  // stopped and reads again until it gives up. Its second call marks the re-reads' start.
-  const ps = fixture(directory, 'ps', [
-    'if ! /bin/mkdir "$here/called" 2>/dev/null; then [ -f "$here/second" ] || : > "$here/second"; fi',
-    'case "$*" in *stat=*) kill -s CONT -- "-$(/bin/cat "$here/group")" ;; esac',
-    ': > "$here/reads/$$"',
-    'exec /bin/ps "$@"',
+  // stopped and reads again until it gives up. Its second call marks the re-reads' start, and
+  // each call leaves a file in `reads`. It is compiled, and `exec`s `ps`, so that a read costs
+  // what a read of `ps` costs, near enough: a shell stand-in costs a shell's start on every read.
+  writeFileSync(join(directory, 'ps.c'), [
+    '#include <fcntl.h>',
+    '#include <signal.h>',
+    '#include <stdio.h>',
+    '#include <string.h>',
+    '#include <sys/stat.h>',
+    '#include <unistd.h>',
+    'int main(int argc, char **argv) {',
+    '  char here[4096], path[4608];',
+    '  snprintf(here, sizeof here, "%s", argv[0]);',
+    '  *strrchr(here, \'/\') = 0;',
+    '  snprintf(path, sizeof path, "%s/called", here);',
+    '  if (mkdir(path, 0700) != 0) { snprintf(path, sizeof path, "%s/second", here); close(open(path, O_CREAT | O_EXCL | O_WRONLY, 0600)); }',
+    '  snprintf(path, sizeof path, "%s/reads/%d", here, getpid());',
+    '  close(open(path, O_CREAT | O_WRONLY, 0600));',
+    '  int group = 0;',
+    '  snprintf(path, sizeof path, "%s/group", here);',
+    '  FILE *file = fopen(path, "r");',
+    '  if (file) { if (fscanf(file, "%d", &group) != 1) group = 0; fclose(file); }',
+    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "stat=") && group > 0) kill(-group, SIGCONT);',
+    '  execv("/bin/ps", argv);',
+    '  return 127;',
+    '}',
   ].join('\n'));
+  const ps = join(directory, 'ps');
+  const built = spawnSync('/usr/bin/cc', ['-o', ps, join(directory, 'ps.c')], { encoding: 'utf8' });
+  assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
   mkdirSync(join(directory, 'reads'));
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
   const readTimeout = 1_500;
@@ -939,7 +962,7 @@ test('while the call re-reads a census, it uses less than half those re-reads\' 
   // The processor time over the whole call is no less than over the re-reads alone.
   const cpu = (user + system) / 1000;
   t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
-  assert.ok(cpu < rereading / 2, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
+  assert.ok(cpu < rereading / 10, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
 });
 
 test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {
