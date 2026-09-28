@@ -26,7 +26,9 @@
     "templates/claude/skills/spec-style/SKILL.md": "strict",
     "templates/claude/skills/tdd/SKILL.md": "strict",
     "docs/spikes/reserved-git-indirection.md": "strict",
-    "docs/spikes/status-option-through-gh.md": "strict"
+    "docs/spikes/status-option-through-gh.md": "strict",
+    "docs/spikes/what-leaves-the-process-group.md": "strict",
+    "docs/spikes/what-leaves-the-process-group-processes.md": "strict"
   },
   "exempt": {
     "paths": {}
