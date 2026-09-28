@@ -1922,3 +1922,30 @@ test('a chain 250 deep is killed and named in full within the default read timeo
   assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
   assert.equal(events.length, 251);
 });
+
+test('a kill of a chain reads a number of rows of the table that grows with the chain\'s depth, not with its square', SETTLES_WITHIN, async (t) => {
+  const depth = 200;
+  const directory = holding(t);
+  // The stand-in answers every read as `ps` does, and adds the rows each of the kill's reads, the
+  // reads that ask for `ppid`, printed to `$here/rows`, one line per read.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *ppid=*)',
+    '  table=$(/bin/ps "$@"); status=$?',
+    '  [ -n "$table" ] && printf "%s\\n" "$table"',
+    '  printf "%s\\n" "$table" | /usr/bin/grep -c . >> "$here/rows"',
+    '  exit $status ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command: chain(directory, depth), ps, readTimeout: 10_000 });
+
+  assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
+  assert.equal(events.length, depth + 1);
+  const rows = read(directory, 'rows').split('\n').map(Number).reduce((sum, each) => sum + each, 0);
+  t.diagnostic(`${rows} rows over the kill's reads of a chain ${depth + 1} processes long`);
+  // A kill that reads the whole group every round reads about half the chain's length squared,
+  // 20,301 rows here. Four rows a process is a bound linear in the depth, with room for the first
+  // read, which holds the whole group.
+  assert.ok(rows <= 4 * (depth + 1), `the kill read ${rows} rows of the table for a chain ${depth + 1} processes long`);
+});

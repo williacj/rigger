@@ -706,9 +706,9 @@ function killsOf(group, survivors, unnamed, killed) {
  *
  * A survivor can exit on its own after any read of the table and before L0's kill lands, and its
  * parent, stopped, leaves it a zombie, which signal 0 still reaches. Its exit status tells the two
- * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the group, sorts out
+ * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the table, sorts out
  * each survivor sent the kill since the round before, by that status, and sends the kill to each
- * live member none of whose children is live. Its parent is then alive, and stopped, until a later
+ * survivor none of whose children is left. Its parent is then alive, and stopped, until a later
  * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
  * before L0 sent it the kill exited on its own, and so does one the kill found gone (`ESRCH`),
  * reaped at once by a parent the group does not hold. One gone after the kill reached it is
@@ -732,7 +732,23 @@ function killsOf(group, survivors, unnamed, killed) {
  * The census's reads can fail the other way, agreeing on only some of the group's live members.
  * So each live member a read of the kill finds must be one the census named, and the kill fails
  * where it finds another, so the group is killed unnamed rather than that process ended
- * unrecorded. The kill reads the table at least once, even where the census named no one.
+ * unrecorded. The kill reads the whole group at least once, in its first round, even where the
+ * census named no one.
+ *
+ * A chain of parent and child takes a round for each process in it, so a round reads no more of
+ * the table than it must. The first reads the whole group. A later round with one survivor to
+ * look at, as each round of a chain has, reads that pid alone, and any other reads the group
+ * again. A row whose group is not this one is left out (`tableOf`). So a chain costs the kill one
+ * read of one process a level, where a read of the whole group every round costs, over the chain,
+ * the square of its depth. A read of several pids is no cheaper than one of the group: measured
+ * with `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 200 reads each of one pid
+ * took 2.45 ms a read, of two pids 28.1 ms, and of the whole table 14.6 ms.
+ *
+ * A survivor whose last child the round's read found a zombie is sent the kill without a read of
+ * its own: that child's row names it as the parent, so it had not been reaped, and its pid is
+ * still the process the census named. One whose child the read left out is read before it is
+ * sent the kill. Where it had exited on its own meanwhile, the kill reaches its zombie, and a
+ * later read finds its own exit status, not `9`, so it is not recorded as killed.
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
@@ -742,7 +758,7 @@ function killsOf(group, survivors, unnamed, killed) {
  *
  * Room is the time left before the deadline after holding back, for each round still to come,
  * three times what a round has cost on average so far. The rounds still to come are taken as one
- * more than the depth of the live tree. Each pause is capped at its share of that room, so the pace
+ * more than the depth of the survivors left (`treeOf`). Each pause is capped at its share of that room, so the pace
  * tightens as the deadline nears. Where no room is left the cap is zero, and the rounds run back to
  * back, over the tenth. Close to the deadline, naming the group's processes takes precedence over
  * that bound, so a kill that reading alone could finish in time is not pushed past the deadline and
@@ -754,6 +770,8 @@ async function killedOf(survivors, group, ps, timeout) {
   const named = new Set(pending.keys());
   const sent = new Set();
   const killed = [];
+  let tree;
+  let watched = [...pending.keys()];
   const [began, used] = [performance.now(), process.cpuUsage()];
   let [rounds, paused] = [0, 0];
   for (let wait = 0; rounds === 0 || pending.size > 0; ) {
@@ -761,55 +779,91 @@ async function killedOf(survivors, group, ps, timeout) {
     paused += wait;
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`not every survivor had ended within ${timeout} ms`);
-    const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
-    let moved = false;
-    for (const [pid, survivor] of pending) {
-      const row = table.get(pid);
-      if (row !== undefined && !row.state.startsWith('Z')) continue;
-      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
-      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
-      pending.delete(pid);
-      moved = true;
-    }
+    const whom = rounds > 0 && watched.length === 1 ? ['-p', String(watched[0])] : ['-g', String(group)];
+    const table = tableOf(await run(ps, [...whom, '-o', 'pid=,ppid=,pgid=,stat=,xstat='], remaining, timeout), group);
     const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
     const unnamed = living.find(([pid]) => !named.has(pid));
     if (unnamed) throw new Error(`the kill found process ${unnamed[0]} in the group, which the census did not name`);
-    const parents = new Set(living.map(([, row]) => row.parent));
-    for (const [pid] of living) {
-      if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
+    tree ??= treeOf(new Map(living.map(([pid, row]) => [pid, row.parent])), [...pending.keys()]);
+    let moved = false;
+    for (const pid of watched) {
+      const row = table.get(pid);
+      if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
+      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(pending.get(pid));
+      pending.delete(pid);
+      tree.drop(pid);
+      moved = true;
+    }
+    const vouched = new Set([...table.values()].map((row) => row.parent));
+    for (const pid of tree.leaves) {
+      const row = table.get(pid);
+      if (sent.has(pid) || (row === undefined ? !vouched.has(pid) : row.state.startsWith('Z')) || !end(pid)) continue;
       sent.add(pid);
       moved = true;
     }
+    watched = [...tree.leaves];
     rounds += 1;
     const { user, system } = process.cpuUsage(used);
     const elapsed = performance.now() - began;
     const paced = moved ? (ROUND_SHARE * (user + system)) / 1000 - elapsed : longer(wait);
-    const left = depthOf(living) + 1;
+    const left = tree.deepest() + 1;
     const spare = deadline - Date.now() - 3 * left * ((elapsed - paused) / rounds);
     wait = Math.max(0, Math.min(paced, spare / left));
   }
   return killed;
 }
 
-/** The length of the longest line of parent and child among the `living` rows of a table. */
-function depthOf(living) {
-  const parents = new Map(living.map(([pid, row]) => [pid, row.parent]));
+/**
+ * The line of parent and child among `pids`, by `parents`, as the kill ends it from the bottom up.
+ * `leaves` holds each of `pids` none of whose children among them is left; `drop` takes one of
+ * them out, which a kill does only to a leaf; and `deepest` is the length of the longest line of
+ * parent and child left. Each costs no more than the pids it moves, so a chain thousands deep does
+ * not cost the kill a pass over every process it holds at every round.
+ */
+function treeOf(parents, pids) {
+  const held = new Set(pids);
+  const below = new Map();
+  for (const pid of pids) below.set(parents.get(pid), (below.get(parents.get(pid)) ?? 0) + 1);
+  const leaves = new Set(pids.filter((pid) => !below.has(pid)));
+  // A process's depth is one more than its parent's, where the parent is among `pids`. The kill
+  // ends a parent only once its children are gone, so the longest line left always runs from a
+  // process whose ancestors are all still held.
   const depths = new Map();
-  const depth = (pid) => {
-    if (!parents.has(pid)) return 0;
-    if (!depths.has(pid)) depths.set(pid, 1 + depth(parents.get(pid)));
+  const depthOf = (pid) => {
+    const line = [];
+    for (let at = pid; held.has(at) && !depths.has(at); at = parents.get(at)) line.push(at);
+    for (const at of line.reverse()) depths.set(at, 1 + (depths.get(parents.get(at)) ?? 0));
     return depths.get(pid);
   };
-  return [...parents.keys()].reduce((deepest, pid) => Math.max(deepest, depth(pid)), 0);
+  const counts = [];
+  for (const pid of pids) counts[depthOf(pid)] = (counts[depthOf(pid)] ?? 0) + 1;
+  let deepest = counts.length - 1;
+  return {
+    leaves,
+    drop(pid) {
+      held.delete(pid);
+      leaves.delete(pid);
+      counts[depths.get(pid)] -= 1;
+      while (deepest > 0 && !counts[deepest]) deepest -= 1;
+      const parent = parents.get(pid);
+      below.set(parent, below.get(parent) - 1);
+      if (below.get(parent) === 0 && held.has(parent)) leaves.add(parent);
+    },
+    deepest: () => Math.max(deepest, 0),
+  };
 }
 
-/** Each row of a read of `pid=,ppid=,stat=,xstat=`, by pid. */
-function tableOf(printed) {
+/**
+ * Each row of a read of `pid=,ppid=,pgid=,stat=,xstat=` whose process is in `group`, by pid. A row
+ * of another group is a pid the system has handed on to a process outside it, and is left out.
+ */
+function tableOf(printed, group) {
   const rows = new Map();
   for (const line of printed.split('\n').filter(Boolean)) {
-    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
+    const row = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
     if (!row) throw new Error(`the process table held a row the kill cannot read: ${JSON.stringify(line)}`);
-    rows.set(Number(row[1]), { parent: Number(row[2]), state: row[3], status: row[4] });
+    if (Number(row[3]) === group) rows.set(Number(row[1]), { parent: Number(row[2]), state: row[4], status: row[5] });
   }
   return rows;
 }
