@@ -1,28 +1,28 @@
-ABOUTME: Records card #358, which records a survivor by its executable's whole name, settles past an
-unreaped zombie, paces L0's waits, and records only the survivors L0 itself killed.
+ABOUTME: Records card #358, which names a survivor by what `ucomm` holds, settles past an unreaped
+zombie, paces L0's waits, and records only the survivors L0 itself killed.
 
 # 2026-09-27 — The adapter's follow-ups from #354
 
 **`ucomm` cannot say how a name ends.** `ps -o ucomm=` pads a name with spaces to 16 columns even
-as the last column, so `a` and `a` with a space print the same bytes, and it holds only the first
-16 bytes of a longer name. Trimming only the padding keeps a trailing newline, because `ucomm`
-prints it raw, but no trim of `ucomm` alone can keep a trailing space.
+as the last column, and holds only a name's first 16 bytes. So `sp` and `sp` with a space print
+the same bytes, and so do `abcdefghijklmno`, the same with a space, and the same with a space and
+`x`: every `ucomm` form `ps` offers, under every locale tried, printed them alike. Trimming only
+the padding keeps a trailing newline, because `ucomm` prints it raw, but no read of `ps` keeps a
+trailing space.
 
 **`ps -c` is argv[0], not the executable.** The first round read `ps -c -o command=` for the spaces
 a name ends in, on the belief that it printed the executable's name. It prints argv[0]'s last part:
 `exec -a Tx` shows `Tx`, and an argv[0] of `w` and two spaces added two spaces to the name `w`. The
 probes that misled were all run with argv[0] equal to the executable's path.
 
-**`lsof` gives the whole name, with one ambiguity.** `lsof -F n -d txt` gives the executable's
-path, the name whole and unpadded, trailing spaces kept. It escapes a backslash, so a name holding
-`\012` and one holding a newline are told apart, but writes a control character as `^` and a
-letter and a `^` of the name's own as it is. So the census aligns `lsof`'s name with `ucomm`'s raw
-bytes, which settle the first 16, and reads the rest as `lsof` writes. A `^A` of a name's own past
-its 16th byte is read as a control character. `pgrep -l -F` prints the name raw, but cut at 15.
+**`lsof` was tried and taken out.** The second round read the executable's path with `lsof`, which
+keeps the whole name. The card's author then ruled that the adapter names a survivor only from its
+process-table reads, which the Failure model excepts, so a name is what `ucomm` holds.
 
 **A zombie answers signal 0.** `kill -0` and Node's `process.kill(pid, 0)` both succeed on a zombie
 on macOS 27.0. So a survivor that exits on its own and is left unreaped is told from a live one
-only by a read of states, which the adapter now takes just before the kill.
+only by a read of states, which the adapter takes just before the kill. Where that read fails, the
+survivors go unnamed, as they do when the census fails.
 
 **A read that fails must not hold the wait.** The first round counted a failed read of states as
 finding a live member, so a zombie never reaped and a `ps` that failed or hung kept the call
