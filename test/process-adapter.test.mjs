@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { openSink } from '../src/observation/sink.mjs';
+import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 
 /**
@@ -175,4 +175,143 @@ test('two commands running at once through the adapter report different process 
   assert.match(read(directory, 'one'), /^\d+$/);
   assert.match(read(directory, 'two'), /^\d+$/);
   assert.notEqual(read(directory, 'one'), read(directory, 'two'));
+});
+
+/** Whether a process `pid` names is alive: signal 0 reaches it. */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/**
+ * The lines of a fixture that start `program` in the background, holding the command's standard
+ * output and standard error, and write its pid to `$here/<name>.pid`. `program` runs until it is
+ * killed, and names the scratch directory in its command line.
+ */
+const leave = (program, name) => `${program} &\necho $! > "$here/${name}.pid"`;
+
+/** A survivor that runs until killed: `tail` following a file nothing writes to. */
+const TAIL = '/usr/bin/tail -f "$here/hold"';
+
+/** A scratch directory holding the file `TAIL` follows. */
+function holding(t) {
+  const directory = scratch(t);
+  writeFileSync(join(directory, 'hold'), '');
+  return directory;
+}
+
+test('a command that exits 0 leaving a child alive that holds its standard output has exit code 0, and all its payload', async (t) => {
+  const directory = holding(t);
+  const payload = bytes(300_001, 11);
+  writeFileSync(join(directory, 'payload'), payload);
+  const command = fixture(directory, 'command', `/bin/cat "$here/payload"\n${leave(TAIL, 'survivor')}\nexit 0`);
+
+  const result = await adapt(directory, { command });
+
+  assert.equal(result.exit, 0);
+  assert.ok(result.stdout.equals(payload), 'standard output holds every byte of the command\'s payload');
+});
+
+test('a child that writes to standard output and standard error before the command exits, and stays alive, has every byte in the result', async (t) => {
+  const directory = holding(t);
+  const second = bytes(200_003, 17);
+  const third = bytes(150_007, 19);
+  writeFileSync(join(directory, 'second'), second);
+  writeFileSync(join(directory, 'third'), third);
+  fixture(directory, 'child', `/bin/cat "$here/second"\n/bin/cat "$here/third" >&2\n: > "$here/written"\nexec ${TAIL}`);
+  const command = fixture(directory, 'command', `${leave('"$here/child"', 'survivor')}\nwhile [ ! -f "$here/written" ]; do :; done\nexit 0`);
+
+  const result = await adapt(directory, { command });
+
+  assert.ok(result.stdout.equals(second), 'standard output holds every byte of the child\'s second payload');
+  assert.ok(result.stderr.equals(third), 'standard error holds every byte of the child\'s third payload');
+});
+
+test('a child a command leaves alive is not alive when the adapter\'s call settles', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  await adapt(directory, { command });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+});
+
+test('a child a command leaves alive that ignores SIGTERM is not alive when the adapter\'s call settles', async (t) => {
+  const directory = holding(t);
+  // The command waits until the child ignores SIGTERM, or it could exit, and be killed, first.
+  fixture(directory, 'stubborn', `trap '' TERM\n: > "$here/ignoring"\nexec ${TAIL}`);
+  const command = fixture(directory, 'command', `${leave('"$here/stubborn"', 'survivor')}\nwhile [ ! -f "$here/ignoring" ]; do :; done`);
+
+  await adapt(directory, { command });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+});
+
+/** Every event in the state directory `state`, or none where nothing has been recorded there. */
+const eventsIn = (state) => (existsSync(streamPath(state)) ? readEvents(state) : []);
+
+/** Runs a command through the adapter in `directory`, and hands back its result and its events. */
+async function recorded(directory, options) {
+  const { state, emitter } = l0(directory);
+  const result = await adapt(directory, { emitter, ...options });
+  return { result, events: eventsIn(state) };
+}
+
+test('a child left alive when its command exits is recorded under L0 as killed, by its process name and command line', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command });
+
+  // The name is argv[0], which is how the fixture spelled the program, and the command line is its
+  // arguments as the fixture wrote them, each read off the fixture rather than asked of `ps`.
+  assert.deepEqual(events.map(({ layer, event, pid, name, cmd }) => ({ layer, event, pid, name, cmd })), [{
+    layer: 'L0',
+    event: 'survivor.killed',
+    pid: Number(read(directory, 'survivor.pid')),
+    name: '/usr/bin/tail',
+    cmd: `/usr/bin/tail -f ${directory}/hold`,
+  }]);
+});
+
+test('two children left alive when their command exits are recorded as one kill each, each naming its own process', async (t) => {
+  const directory = holding(t);
+  // `cat` opening a FIFO nothing writes to waits in the open, so it runs until it is killed.
+  const command = fixture(directory, 'command', [
+    '/usr/bin/mkfifo "$here/fifo"',
+    leave(TAIL, 'tail'),
+    leave('/bin/cat "$here/fifo"', 'cat'),
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command });
+
+  const killed = events.filter(({ event }) => event === 'survivor.killed').map(({ pid, name, cmd }) => ({ pid, name, cmd }));
+  assert.deepEqual(killed.sort((a, b) => a.pid - b.pid), [
+    { pid: Number(read(directory, 'tail.pid')), name: '/usr/bin/tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+    { pid: Number(read(directory, 'cat.pid')), name: '/bin/cat', cmd: `/bin/cat ${directory}/fifo` },
+  ].sort((a, b) => a.pid - b.pid));
+});
+
+test('a command whose group holds no survivor when it exits is recorded with no kill', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', '/usr/bin/true\nexit 0');
+
+  const { result, events } = await recorded(directory, { command });
+
+  assert.equal(result.exit, 0);
+  assert.deepEqual(events, []);
+});
+
+test('a survivor whose command line holds text outside ASCII is recorded with that text unchanged', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', leave(`${TAIL} "ü ✓ 日本" 2>/dev/null`, 'survivor'));
+
+  const { events } = await recorded(directory, { command });
+
+  assert.deepEqual(events.map(({ cmd }) => cmd), [`/usr/bin/tail -f ${directory}/hold ü ✓ 日本`]);
 });
