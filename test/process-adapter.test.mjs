@@ -1559,6 +1559,61 @@ test('a delay cancelled partway through its timers never elapses', () => {
   assert.equal(done, false);
 });
 
+/**
+ * Runs `body`, a module, in a Node process of its own, and hands back its exit status and what it
+ * wrote to standard error, or fails the test where that process has not exited within `within`
+ * milliseconds. The test's teardown kills the process, whether the test passes or fails.
+ */
+async function exitOf(t, body, within) {
+  const caller = spawn(process.execPath, ['--input-type=module', '-e', body], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => caller.kill('SIGKILL'));
+  let stderr = '';
+  caller.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = once(caller, 'exit').then(([status]) => ({ status, stderr }));
+  let stop;
+  const late = new Promise((resolve) => { stop = setTimeout(resolve, within, 'late'); });
+  const outcome = await Promise.race([exited, late]);
+  clearTimeout(stop);
+  assert.notEqual(outcome, 'late', `the process had not exited within ${within} ms`);
+  return outcome;
+}
+
+/**
+ * How long a Node process of its own has to exit once it has nothing left to do. A judgment: it
+ * covers Node's own start and a call that settles at once, on a loaded host, and is far under any
+ * timer of the adapter's the tests below leave armed.
+ */
+const EXITS_WITHIN = 10_000;
+
+const PROCESS_MODULE = JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href);
+
+test('a delay the adapter keeps, left armed, does not hold its process open', SETTLES_WITHIN, async (t) => {
+  const { status, stderr } = await exitOf(t, [
+    `import { TIMER_MAX, whenElapsed } from ${PROCESS_MODULE};`,
+    'whenElapsed(2 * TIMER_MAX, () => process.exit(7));',
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+});
+
+test('a caller whose call has settled exits at once, though the call\'s timeout and read deadline are longer than the test', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The command leaves a survivor, so the call reads the process table under its read deadline.
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  // The caller does nothing once the call has settled, so the one thing that could keep it from
+  // exiting is what the adapter holds.
+  const { status, stderr } = await exitOf(t, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { TIMER_MAX, runCommand } from ${PROCESS_MODULE};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: 2 * TIMER_MAX, readTimeout: TIMER_MAX, emitter: sink.emitter({ layer: 'L0' }) });`,
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event }) => event), ['survivor.killed'], 'the call read no survivor, so it proves nothing of its read deadline');
+});
+
 test('a timeout that is not a positive finite number of milliseconds starts no process, and the failure names it', async (t) => {
   for (const timeout of [0, -1, NaN, Infinity, '300']) {
     const directory = scratch(t);
@@ -1570,6 +1625,50 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
     });
 
     assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given the timeout ${timeout}`);
+  }
+});
+
+/**
+ * An object with `toString` and a hook for `util.inspect`, each doing `does`. The hook is not
+ * enumerable, so an `inspect` that ignores it prints only `toString`: Node 20 and Node 26 print an
+ * enumerable symbol key differently, and a hidden one alike.
+ */
+function hooked(does) {
+  return Object.defineProperty({ toString() { return does(); } }, Symbol.for('nodejs.util.inspect.custom'), { value: does });
+}
+
+/** An object whose `toString` and whose hook for `util.inspect` each throw. */
+const throwing = hooked(() => { throw new Error('no conversion'); });
+
+/** An object whose `toString` and whose hook for `util.inspect` each print nothing. */
+const blank = hooked(() => '');
+
+test('the refusal of an invalid timeout names the value and its type', async (t) => {
+  for (const [timeout, named] of [
+    ['5', 'the timeout 5 (of type string)'],
+    [null, 'the timeout null (of type null)'],
+    [NaN, 'the timeout NaN (of type number)'],
+    // A template literal throws on each of these three, so the refusal must print them another way.
+    [Symbol('t'), 'the timeout Symbol(t) (of type symbol)'],
+    [Object.create(null), 'the timeout [Object: null prototype] {} (of type object)'],
+    [{ toString() { throw new Error('no toString'); } }, 'the timeout { toString: [Function: toString] } (of type object)'],
+    // Each of these prints as nothing, so the refusal must print them so they show.
+    [[], 'the timeout [] (of type object)'],
+    ['', 'the timeout \'\' (of type string)'],
+    // Each of these prints nothing, or throws, however it is asked to print itself, so the refusal
+    // must print what the object holds.
+    [throwing, 'the timeout { toString: [Function: toString] } (of type object)'],
+    [blank, 'the timeout { toString: [Function: toString] } (of type object)'],
+  ]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), (error) => {
+      assert.ok(error.message.includes(named), `the failure does not say "${named}": ${error.message}`);
+      return true;
+    });
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${named}`);
   }
 });
 
@@ -1611,29 +1710,51 @@ test('given a command that finishes inside its timeout, the result reports no ti
   assert.equal(result.exit, 3);
 });
 
-test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
-  const directory = scratch(t);
-  const command = fixture(directory, 'command', 'echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit 0');
+/** The last lines of a command `asItsTimeoutFires` holds for: they write its pid, then exit `code`. */
+const pidThenExit = (code) => `echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit ${code}`;
 
-  // The timer is armed before the call first yields. Holding this thread until the command is a
-  // zombie, which Node has not reaped because its loop cannot run, leaves the timer and the exit
-  // both due when the loop resumes, and Node runs due timers before it reaps.
-  const call = adapt(directory, { command, timeout: 1 });
+/**
+ * What `call` settles on, where its command ends with `pidThenExit` and its timeout is 1 ms, once
+ * this thread has been held until that command is a zombie. The timer is armed before the call
+ * first yields. Holding this thread until the command is a zombie, which Node has not reaped
+ * because its loop cannot run, leaves the timer and the exit both due when the loop resumes, and
+ * Node runs due timers before it reaps.
+ */
+async function asItsTimeoutFires(directory, call) {
   const zombie = () => existsSync(join(directory, 'command.pid'))
     && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
   // The wait holds the thread, so no test timeout can end it: it carries its own deadline, and a
   // command that never runs fails the test rather than holding the suite. The deadline is a
-  // judgment: the command, which only writes its pid and exits, has nothing to wait for.
+  // judgment: the command has nothing to wait for but a survivor's start, where it leaves one.
   const deadline = Date.now() + 5_000;
   while (!zombie() && Date.now() < deadline);
   if (!zombie()) {
     const outcome = await call.then((result) => JSON.stringify(result), (error) => error.message);
     assert.fail(`the command was not a zombie within 5,000 ms, so the race was not set up; the call settled with: ${outcome}`);
   }
-  const result = await call;
+  return call;
+}
+
+test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', pidThenExit(0));
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, timeout: 1 }));
 
   assert.equal(result.timedOut, false);
   assert.equal(result.exit, 0);
+});
+
+test('given a command that exits 3 on its own as its timeout fires, the process killed after that exit is recorded as a survivor kill, and the result carries exit 3 with no timeout', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${leave(TAIL, 'survivor')}\n${pidThenExit(3)}`);
+  const { state, emitter } = l0(directory);
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, emitter, timeout: 1 }));
+
+  assert.deepEqual(eventsIn(state).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }]);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
 });
 
 test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
