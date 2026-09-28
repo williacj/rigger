@@ -269,13 +269,13 @@ test('a child left alive when its command exits is recorded under L0 as killed, 
 
   const { events } = await recorded(directory, { command });
 
-  // The name is argv[0], which is how the fixture spelled the program, and the command line is its
+  // The name is the executable's, the program the fixture ran, and the command line is its
   // arguments as the fixture wrote them, each read off the fixture rather than asked of `ps`.
   assert.deepEqual(events.map(({ layer, event, pid, name, cmd }) => ({ layer, event, pid, name, cmd })), [{
     layer: 'L0',
     event: 'survivor.killed',
     pid: Number(read(directory, 'survivor.pid')),
-    name: '/usr/bin/tail',
+    name: 'tail',
     cmd: `/usr/bin/tail -f ${directory}/hold`,
   }]);
 });
@@ -293,8 +293,8 @@ test('two children left alive when their command exits are recorded as one kill 
 
   const killed = events.filter(({ event }) => event === 'survivor.killed').map(({ pid, name, cmd }) => ({ pid, name, cmd }));
   assert.deepEqual(killed.sort((a, b) => a.pid - b.pid), [
-    { pid: Number(read(directory, 'tail.pid')), name: '/usr/bin/tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
-    { pid: Number(read(directory, 'cat.pid')), name: '/bin/cat', cmd: `/bin/cat ${directory}/fifo` },
+    { pid: Number(read(directory, 'tail.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+    { pid: Number(read(directory, 'cat.pid')), name: 'cat', cmd: `/bin/cat ${directory}/fifo` },
   ].sort((a, b) => a.pid - b.pid));
 });
 
@@ -353,7 +353,7 @@ test('a caller whose PATH holds no ps still has a surviving child killed and rec
 
   assert.equal(status, 0, stderr);
   assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
-  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: '/usr/bin/tail' }]);
+  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event, name }) => ({ event, name })), [{ event: 'survivor.killed', name: 'tail' }]);
 });
 
 test('given a process-table read that never answers, the call settles with no process of the group alive, and records the group\'s kill and the timeout', async (t) => {
@@ -400,4 +400,32 @@ test('survivors that keep forking while the group is killed are all dead when th
   await adapt(directory, { command });
 
   assert.equal(alive(-Number(read(directory, 'group'))), false, 'a process of the command\'s group is alive');
+});
+
+test('a survivor that re-executes while the census runs is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The survivor runs `first` until the process table has been read once, then becomes `second`,
+  // which becomes `tail`.
+  fixture(directory, 'second', `: > "$here/re-executed"\nexec ${TAIL}`);
+  fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/read" ]; do :; done\nexec /bin/sh "$here/second"`);
+  // The real `ps`, with a hook between reads: the first read returns only once the survivor has
+  // re-executed, and any later read starts only after that, so two reads see two images.
+  const ps = fixture(directory, 'ps', [
+    'if /bin/mkdir "$here/first-read" 2>/dev/null; then',
+    '  /bin/ps "$@"',
+    '  : > "$here/read"',
+    '  while [ ! -f "$here/re-executed" ]; do :; done',
+    'else',
+    '  while [ ! -f "$here/re-executed" ]; do :; done',
+    '  exec /bin/ps "$@"',
+    'fi',
+  ].join('\n'));
+  // `first` runs under `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
+  const command = fixture(directory, 'command', `/bin/bash "$here/first" &\nwhile [ ! -f "$here/running" ]; do :; done`);
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
+    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
+  ]);
 });

@@ -14,8 +14,8 @@ export const PS = '/bin/ps';
 /**
  * How long L0 waits for one read of the process table before it gives up on the census and kills
  * the group unnamed. A judgment, not a measurement. Its premise is a measurement: 20 reads of one
- * four-process group, `ps -g <group> -o pid=,comm=` with macOS 27.0's `ps` on 2026-09-27, took
- * 1.8 to 3.9 ms each. Five seconds is over a thousand times that, room for a loaded host, while a
+ * four-process group, the census's own `ps -ww -g <group> -o pid=,ucomm=,command=` with macOS
+ * 27.0's `ps` on 2026-09-27, took 1.0 to 1.6 ms each. Five seconds is over a thousand times that, room for a loaded host, while a
  * read that hangs holds a kill back by no more than five seconds.
  */
 export const READ_TIMEOUT = 5_000;
@@ -68,18 +68,25 @@ async function ended(group) {
 }
 
 /**
- * One column of `ps` for every process in `group`, by pid, read with `ps` at the path `ps` names
- * and given up on after `timeout` milliseconds.
+ * Every process in `group`: its pid, its name, which is the executable's name, and its command
+ * line. Both come from one row of one `ps` run, read with `ps` at the path `ps` names and given
+ * up on after `timeout` milliseconds, so a process that re-executes during the census is not
+ * named by one image and described by another.
  *
  * Where `ps`'s answer can differ from the process's own (`D16` rule 3), measured with `ps` from
  * adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:
  *
- * - `comm` is argv[0], whole, when it is the last column, and cut to 16 characters when it is
- *   not. So the name is read in a column of its own, last. It is argv[0], not the executable's
- *   name: a process started as `exec -a <anything>` reports `<anything>`, and `ucomm`, the
- *   executable's name, is cut to 16 characters wherever it stands.
+ * - `ucomm` is the executable's name as the kernel holds it, cut to 16 characters, and padded to
+ *   16 columns by display width, so a name of wide characters takes fewer than 16. The row is
+ *   split on the padding, which holds while the command line does not start with a space. It
+ *   names what runs, not what was asked for: a script run by `/bin/sh` is named `bash`.
+ * - `comm`, argv[0], would name `exec -a <anything>` as `<anything>`. It is cut to 16 characters
+ *   unless it is the last column, and `command` must be last to stay whole, so one row cannot
+ *   hold both whole. Two runs could, and a process re-executing between them was then named by
+ *   one image and described by the other (the engineer judge on #354, 2 events in 100 runs).
  * - `command` is the process's arguments joined by spaces, so arguments holding spaces cannot be
- *   told apart from more arguments.
+ *   told apart from more arguments. A process caught mid-exec can show `(name)` in its place, as
+ *   the engineer judge on #354 saw `comm` do.
  * - Under no locale, `ps` writes each byte outside ASCII in `vis` form, so `ü` reads `M-CM-<`.
  *   Under `LC_ALL=C.UTF-8`, which `ps` is given here, UTF-8 text reads unchanged. So `ps` gets
  *   that locale and nothing else of the caller's environment.
@@ -94,26 +101,20 @@ async function ended(group) {
  *   read is not listed, and one that joins it after the read is killed unnamed.
  * - `ps` exits 1, printing nothing, when no process matches.
  */
-function column(ps, group, name, timeout) {
+function census(ps, group, timeout) {
   return new Promise((resolve, reject) => {
-    const args = ['-ww', '-g', String(group), '-o', `pid=,${name}=`];
+    const args = ['-ww', '-g', String(group), '-o', 'pid=,ucomm=,command='];
     execFile(ps, args, { env: { LC_ALL: 'C.UTF-8' }, timeout, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' }, (error, stdout) => {
       if (error?.killed) return reject(new Error(`the process-table read timed out after ${timeout} ms`));
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
-      const rows = new Map();
+      const survivors = [];
       for (const line of stdout.split('\n')) {
-        const row = /^\s*(\d+) (.*)$/.exec(line);
-        if (row) rows.set(Number(row[1]), row[2]);
+        const row = /^\s*(\d+) (.{1,16}) +(\S.*)$/.exec(line);
+        if (row) survivors.push({ pid: Number(row[1]), name: row[2].trimEnd(), cmd: row[3] });
       }
-      resolve(rows);
+      resolve(survivors);
     });
   });
-}
-
-/** Every process in `group`: its pid, its name, which is its argv[0], and its command line. */
-async function census(ps, group, timeout) {
-  const [commands, names] = await Promise.all([column(ps, group, 'command', timeout), column(ps, group, 'comm', timeout)]);
-  return [...commands].map(([pid, cmd]) => ({ pid, name: names.get(pid), cmd }));
 }
 
 /**
