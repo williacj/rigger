@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
@@ -197,7 +197,8 @@ test('after the call returns, the record holds no entry whose group it confirmed
 
 test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
   // A record torn part-way, JSON that is no list, entries missing a field or holding one of the
-  // wrong type, and a group id no dispatch's group can have: 1 is launchd's.
+  // wrong type, a card that is no issue number, and a group id no dispatch's group can have: 1 is
+  // launchd's.
   const contents = [
     '[{"group": 4242, "sta',
     '{"group": 4242}',
@@ -205,6 +206,8 @@ test('given a record whose content cannot be read as entries, the call kills not
     '[{"group": 4242, "dispatch": "d-1"}]',
     '[{"group": 4242, "started": 0}]',
     '[{"group": 1, "started": 0, "dispatch": "d-1"}]',
+    '[{"group": 4242, "started": 0, "dispatch": "d-1", "card": {"unexpected": true}}]',
+    '[{"group": 4242, "started": 0, "dispatch": "d-1", "card": "1412"}]',
   ];
   for (const content of contents) {
     const directory = scratch(t);
@@ -245,26 +248,60 @@ test('given a recorded group whose start-time read never answers, the call kills
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });
 
-test('given a sink that refuses every append and two recorded groups, every process of both is dead, the record holds neither entry, and the call rejects naming every unrecorded kill with its dispatch id and card', SETTLES_WITHIN, async (t) => {
-  const directory = scratch(t);
-  const one = await startGroup(directory, 'one');
-  const other = await startGroup(directory, 'other');
-  const state = stateOf(directory);
-  writeGroups(state, [entryFor(one, { dispatch: 'd-one', card: 11 }), entryFor(other, { dispatch: 'd-other', card: 22 })]);
-  // The sink's stream lies under a regular file, so every append fails, while the record, in the
-  // state directory, still takes writes.
+/** A sink whose stream lies under a regular file in `directory`, so it refuses every append. */
+function refusingSink(directory) {
   writeFileSync(join(directory, 'blocked'), '');
-  const sink = openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+  return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 });
+}
 
-  const failure = await killRecordedGroups({ directory: state, sink }).then(() => assert.fail('the call settled without rejecting'), (error) => error);
+/** What `call` rejects with; it fails the test where the call settles. */
+const failureOf = (call) => call.then(() => assert.fail('the call settled without rejecting'), (error) => error);
 
-  for (const pid of [one.leader, one.member, other.leader, other.member]) assert.equal(alive(pid), false, `process ${pid} is alive`);
-  assert.deepEqual(readGroups(state), []);
-  // Each kill is named on a line of its own, by its pid, under its entry's dispatch id and card.
+/**
+ * Asserts that `failure` names, each on a line of its own, the kill of every process of each
+ * group `named` holds, by its pid, under that group's dispatch id and card.
+ */
+function assertNamesKills(failure, named) {
   const lines = failure.message.split('\n');
-  for (const [started, dispatch, card] of [[one, 'd-one', 11], [other, 'd-other', 22]]) {
+  for (const [started, dispatch, card] of named) {
     for (const pid of [started.leader, started.member]) {
       assert.ok(lines.some((line) => line.includes(`"pid":${pid}`) && line.includes(dispatch) && line.includes(`#${card}`)), `the failure does not name the kill of ${pid} under ${dispatch} and #${card}: ${failure.message}`);
     }
   }
+}
+
+/** Two groups started outside Rigger in `directory`, both recorded in its state directory. */
+async function twoRecorded(directory) {
+  const one = await startGroup(directory, 'one');
+  const other = await startGroup(directory, 'other');
+  writeGroups(stateOf(directory), [entryFor(one, { dispatch: 'd-one', card: 11 }), entryFor(other, { dispatch: 'd-other', card: 22 })]);
+  return { pids: [one.leader, one.member, other.leader, other.member], named: [[one, 'd-one', 11], [other, 'd-other', 22]] };
+}
+
+test('given a sink that refuses every append and two recorded groups, every process of both is dead, the record holds neither entry, and the call rejects naming every unrecorded kill with its dispatch id and card', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const { pids, named } = await twoRecorded(directory);
+
+  // The record, in the state directory, still takes writes.
+  const failure = await failureOf(killRecordedGroups({ directory: stateOf(directory), sink: refusingSink(directory) }));
+
+  for (const pid of pids) assert.equal(alive(pid), false, `process ${pid} is alive`);
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+  assertNamesKills(failure, named);
+});
+
+test('given a sink that refuses every append and a record that refuses its rewrite, the call still rejects naming every unrecorded kill, with the record\'s failure on it', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const { pids, named } = await twoRecorded(directory);
+  const state = stateOf(directory);
+  // The state directory refuses new entries, so the record can be read but not rewritten.
+  chmodSync(state, 0o555);
+  t.after(() => chmodSync(state, 0o755));
+
+  const failure = await failureOf(killRecordedGroups({ directory: state, sink: refusingSink(directory) }));
+
+  for (const pid of pids) assert.equal(alive(pid), false, `process ${pid} is alive`);
+  assertNamesKills(failure, named);
+  assert.equal(failure.recordFailure?.code, 'EACCES', 'the rewrite\'s failure is not carried on the failure');
+  assert.ok(failure.message.includes(state), `the failure does not say the record in ${state} was not rewritten: ${failure.message}`);
 });

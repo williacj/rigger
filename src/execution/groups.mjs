@@ -36,14 +36,16 @@ export function readGroups(directory) {
 }
 
 /**
- * Whether `entry` names a group a dispatch can hold, the start of its leader, and its dispatch.
+ * Whether `entry` names a group a dispatch can hold, the start of its leader, its dispatch, and
+ * its card, an issue number, where it has one.
  * No group Rigger creates has an id of 1 or less, and L0 signals a group by its id negated, so
  * 1, 0 or a negative id would reach launchd, the caller's own group, or every process.
  */
 const isEntry = (entry) => typeof entry === 'object' && entry !== null
   && Number.isSafeInteger(entry.group) && entry.group > 1
   && Number.isSafeInteger(entry.started)
-  && typeof entry.dispatch === 'string' && entry.dispatch !== '';
+  && typeof entry.dispatch === 'string' && entry.dispatch !== ''
+  && (entry.card === undefined || (Number.isSafeInteger(entry.card) && entry.card > 0));
 
 /**
  * Replaces the record in `directory` with `entries`.

@@ -90,7 +90,8 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
  * other group empty, killed it, or found it is not the one recorded. The call then rejects naming
  * each entry it kept and each kill the sink refused, with its dispatch id and card. A group whose
  * kill went unrecorded is dead, so its entry goes too: keeping it would record nothing later
- * (the architect's ruling 2, §5, on #332).
+ * (the architect's ruling 2, §5, on #332). Where the record then refuses its rewrite, that
+ * failure is added to the rejection and carried on it as `recordFailure`.
  */
 export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
   const entries = readGroups(directory);
@@ -112,9 +113,18 @@ export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
       for (const { event, cause, ...fields } of failure.unrecorded) unrecorded.push(`${under}: ${event} ${JSON.stringify(fields)}: ${cause.message}`);
     }
   }
-  writeGroups(directory, kept);
   const failures = [];
   if (unconfirmed.length > 0) failures.push(`L1 could not confirm ${unconfirmed.length} recorded group(s) as the one recorded, so it killed nothing in them and kept their entries:`, ...unconfirmed);
   if (unrecorded.length > 0) failures.push(`the sink refused ${unrecorded.length} kill(s) of recorded groups, so they went unrecorded:`, ...unrecorded);
-  if (failures.length > 0) throw new Error(failures.join('\n'));
+  // A rewrite the record refuses rides on the failure rather than replacing it, so the caller
+  // still learns which kills went unrecorded and which groups went unconfirmed.
+  let recordFailure;
+  try {
+    writeGroups(directory, kept);
+  } catch (cause) {
+    if (failures.length === 0) throw cause;
+    recordFailure = cause;
+    failures.push(`and the record of process groups in ${directory} was not rewritten, so it still holds every entry it held: ${cause.message}`);
+  }
+  if (failures.length > 0) throw Object.assign(new Error(failures.join('\n')), { recordFailure });
 }

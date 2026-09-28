@@ -52,3 +52,13 @@ process group a dead engine recorded, once L0 has confirmed it is the group reco
 - **The lint on spawned environments caught a fixture.** The rewritten "L0 rejects for any
   reason" test spawned its held group with no `env`, and `test/git-environment.test.mjs` refused
   it. It is now handed an empty one.
+- **Round 1 let a malformed card through.** The reader checked every field but `card`, so a
+  record holding `card: {"unexpected": true}` was read, acted on, and rewritten to `[]` (Codex's
+  judge, item 11). The reader now requires a card, where there is one, to be a positive integer;
+  two such contents, each ahead of a valid entry, join the unreadable-record test. Dropping the
+  check fails that test on the object card.
+- **Round 1's rewrite could hide the kills it was reporting.** Where the sink refused the kills
+  and the record then refused its rewrite, the record's `EACCES` replaced the unrecorded kills,
+  the defect #339's judges found as N4 (Codex's judge, non-blocking here). The rewrite's failure
+  now rides on the rejection as `recordFailure`, and a test holds the state directory read-only
+  under a refusing sink.
