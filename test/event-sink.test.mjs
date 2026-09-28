@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -258,6 +258,21 @@ test('a sink opened with no state directory accepts events and writes no file an
   assert.deepEqual(left, []);
 });
 
+test('emitting to a sink with no state directory yet is never refused, even where nothing could be written', () => {
+  // The child's working directory and temp directory refuse every write, so an emit that tried
+  // to write anything anywhere it could reach by default would throw.
+  const { status, stderr } = inChild([
+    "import { chmodSync } from 'node:fs';",
+    "chmodSync('.', 0o555);",
+    `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+    "const { emit } = sink.emitter({ layer: 'L0', card: 1412 });",
+    "for (let index = 0; index < 1000; index += 1) emit('survivor.killed', { index });",
+  ].join('\n'));
+
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+});
+
 test('a sink given its state directory late writes what it held there first, in order, ahead of what follows', () => {
   const directory = join(stateDir(), '.rigger');
   const sink = openSink({ run: 'r-8f21', now: clockOver([AT_14_14, AT_14_14, AT_14_19]) });
@@ -283,6 +298,22 @@ test('a held event carries the time it was emitted, not the time it was written'
   assert.deepEqual(readEvents(directory).map((event) => event.ts), ['2026-09-13T14:14:45.882Z']);
 });
 
+test('naming a state directory that refuses writes fails, naming every held event that went unrecorded', () => {
+  const directory = stateDir();
+  chmodSync(directory, 0o555);
+  const sink = openSink({ run: 'r-8f21', now: clockOver([AT_14_14, AT_14_19]) });
+  const { emit } = sink.emitter({ layer: 'L0', card: 1412 });
+  emit('survivor.killed', { name: 'rust-analyzer-proc-macro-srv' });
+  emit('survivor.killed', { name: 'git' });
+
+  assert.throws(() => sink.name(directory), (error) => {
+    assert.match(error.message, /"ts":"2026-09-13T14:14:45\.882Z".*"name":"rust-analyzer-proc-macro-srv"/);
+    assert.match(error.message, /"ts":"2026-09-13T14:19:03\.005Z".*"name":"git"/);
+    assert.match(error.message, /EACCES/);
+    return true;
+  });
+});
+
 test('a sink named a state directory that never records an event creates neither the directory nor a file', () => {
   const parent = stateDir();
   const atOpen = join(parent, 'named-at-open');
@@ -292,4 +323,76 @@ test('a sink named a state directory that never records an event creates neither
   openSink({ run: 'r-8f21', now: clockOver([]) }).name(later);
 
   assert.deepEqual(readdirSync(parent), []);
+});
+
+/** A child's sink, never named, holding two kills. The body goes on from there. */
+const holdingTwo = [
+  `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+  "const { emit } = sink.emitter({ layer: 'L0', card: 1412 });",
+  "emit('survivor.killed', { name: 'first' });",
+  "emit('survivor.killed', { name: 'second' });",
+].join('\n');
+
+const HELD_TWO = [
+  { ts: '2026-09-13T14:14:45.882Z', run: 'r-8f21', layer: 'L0', event: 'survivor.killed', card: 1412, name: 'first' },
+  { ts: '2026-09-13T14:14:45.882Z', run: 'r-8f21', layer: 'L0', event: 'survivor.killed', card: 1412, name: 'second' },
+];
+
+test('a sink ended without a state directory writes each held event to standard error, and no file', () => {
+  const { status, stderr, left } = inChild(`${holdingTwo}\nsink.end();`);
+
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(eventsIn(stderr), HELD_TWO);
+  assert.deepEqual(left, []);
+});
+
+test('a sink ended twice without a state directory writes nothing more at its second end', () => {
+  // The verb and L0's exit cleanup can each end it (ruling 3, §3), so the second is the usual case.
+  const { status, stderr } = inChild(`${holdingTwo}\nsink.end();\nsink.end();`);
+
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(eventsIn(stderr), HELD_TWO);
+});
+
+test('a sink that was given a state directory writes nothing when it is ended', () => {
+  const { status, stderr, home } = inChild(`${holdingTwo}\nsink.name('.rigger');\nemit('survivor.killed', { name: 'third' });\nsink.end();`);
+
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  assert.deepEqual(readEvents(join(home, '.rigger')).map((event) => event.name), ['first', 'second', 'third']);
+});
+
+test('an event given to an unnamed sink after its end is written to standard error at once', () => {
+  // The child is killed outright straight after the emit, so an event the sink kept for a later
+  // write never reaches the pipe.
+  const { stderr, signal } = inChild([
+    holdingTwo,
+    'sink.end();',
+    "emit('survivor.killed', { name: 'late' });",
+    "process.kill(process.pid, 'SIGKILL');",
+  ].join('\n'));
+
+  assert.equal(signal, 'SIGKILL', stderr);
+  assert.deepEqual(eventsIn(stderr).map((event) => event.name), ['first', 'second', 'late']);
+});
+
+test('what an unnamed sink held reaches standard error whole at exit, past a full pipe of 65,536 bytes', () => {
+  // A pipe on macOS holds 65,536 bytes. Past that, a write to a non-blocking descriptor comes back
+  // short, and the process then exits with the rest unwritten. So the end runs where L0's exit
+  // cleanup runs it, in an `exit` listener, and the child leaves through `process.exit`.
+  const count = 2000;
+  const { status, stderr } = inChild([
+    `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+    "const { emit } = sink.emitter({ layer: 'L0', card: 1412 });",
+    `for (let index = 0; index < ${count}; index += 1) emit('survivor.killed', { index, command: 'x'.repeat(100) });`,
+    "process.on('exit', () => sink.end());",
+    'process.exit(1);',
+  ].join('\n'));
+
+  assert.equal(status, 1);
+  assert.ok(Buffer.byteLength(stderr) > 65_536, `only ${Buffer.byteLength(stderr)} bytes were written`);
+  assert.deepEqual(
+    eventsIn(stderr).map((event) => event.index),
+    Array.from({ length: count }, (unused, index) => index),
+  );
 });
