@@ -1,11 +1,11 @@
 // ABOUTME: Fixtures for tests that start real processes: a scratch directory torn down with every
 // process naming it, shell scripts that live in it, children they leave alive or that outlive a
-// timeout, reads of what those scripts leave behind and of a process's start time, and a wait on a
-// condition.
+// timeout, reads of what those scripts leave behind and of a process's start time, a standard error
+// nothing drains, and a wait on a condition.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as files, existsSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,24 @@ export function scratch(t) {
     while (running(directory).length > 0) spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]);
   });
   return directory;
+}
+
+/**
+ * The write end of a FIFO in `directory` whose read end this process holds open and never reads,
+ * for a standard error whose reader stays open and never drains. Both ends close at the test's
+ * teardown, whether it passed or failed.
+ */
+export function undrained(t, directory) {
+  const path = join(directory, 'undrained');
+  execFileSync('/usr/bin/mkfifo', [path]);
+  // The read end is opened first, and without blocking, so the write end's open finds a reader.
+  const reader = openSync(path, files.O_RDONLY | files.O_NONBLOCK);
+  const writer = openSync(path, files.O_WRONLY);
+  t.after(() => {
+    closeSync(writer);
+    closeSync(reader);
+  });
+  return writer;
 }
 
 /** `text` as a pattern `pgrep` and `pkill` match only as written. */

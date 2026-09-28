@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
-import { alive, fixture, read, running, scratch } from './process-fixtures.mjs';
+import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
+import { alive, fixture, read, running, scratch, undrained } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -35,6 +36,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
  *   read of the process table does not answer, so that group is stopped when the caller ends.
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
+ * - `timed`: whether the caller writes to `end.took` how many milliseconds its sink's end took,
+ *   where the exit cleanup takes it.
  * - `before` and `after`: code of the test's own, which the caller runs before it starts its first
  *   group and once its groups are up. It can call `start(label)`, which starts a command as the
  *   caller starts its own, and settles once its child is up; `settled`, how many of its calls to
@@ -45,14 +48,17 @@ const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
   `import { dispatch } from ${moduleAt('../src/execution/run.mjs')};`,
   `import { atExit, runCommand } from ${moduleAt('../src/substrate/process.mjs')};`,
-  "import { existsSync, readFileSync } from 'node:fs';",
+  "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
   "import { spawnSync } from 'node:child_process';",
   "import { join } from 'node:path';",
   'const directory = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
+  'let began;',
+  'if (options.timed) atExit(() => { began = performance.now(); });',
   'atExit(sink.end);',
+  "if (options.timed) atExit(() => writeFileSync(join(directory, 'end.took'), String(performance.now() - began)));",
   // Touching process.stderr is what every verb that prints does, and it leaves the descriptor
   // non-blocking, where a single write to a full pipe comes back short.
   "process.stderr.write('');",
@@ -163,9 +169,10 @@ function fixtures(directory) {
  * the directory once the caller is ready and before it ends, and what it answers is `seen`. So is
  * `whileHeard`, once the caller has said `heard` on its standard output, and what it answers is
  * `heard`. Then, where `again` names a signal, the caller is sent it; and where it does not, the
- * test writes `go`.
+ * test writes `go`. Where `stuck` is set, the caller's standard error is a pipe nothing drains,
+ * and what it wrote there is not read.
  */
-async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard } = {}) {
+async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
   const directory = scratch(t);
   fixtures(directory);
   if (refusing) {
@@ -175,10 +182,10 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   }
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
-  const run = spawn(process.execPath, [caller, directory, JSON.stringify(options)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = spawn(process.execPath, [caller, directory, JSON.stringify(options)], { stdio: ['ignore', 'pipe', stuck ? undrained(t, directory) : 'pipe'] });
   let stdout = '';
   let stderr = '';
-  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  run.stderr?.on('data', (chunk) => { stderr += chunk; });
   const ready = new Promise((resolve) => {
     run.stdout.on('data', (chunk) => {
       stdout += chunk;
@@ -568,6 +575,22 @@ test('the unrecorded kills the cleanup writes to standard error arrive whole pas
   await assertNoneAlive(directory);
   assert.ok(Buffer.byteLength(stderr) > 65_536, `only ${Buffer.byteLength(stderr)} bytes were written`);
   assert.deepEqual(kills(unrecordedIn(stderr)), byPid(processes));
+});
+
+// A standard error whose reader stays open and never drains.
+
+test(`given a standard error that is never drained, a caller whose exit cleanup has more to write than the pipe holds still ends on SIGTERM, its write given up within ${UNDRAINED_BOUND} ms`, ENDS_WITHIN, async (t) => {
+  // The sink is unnamed, so the kills it holds are what its end writes in the exit cleanup, and
+  // each command's command line carries 40,000 more bytes, so they pass the 65,536 bytes a pipe on
+  // macOS holds.
+  const filler = 'x'.repeat(40_000);
+  const { directory, signal } = await endCaller(t, { ending: 'wait', sink: 'unnamed', groups: true, filler, timed: true }, { signal: 'SIGTERM', stuck: true });
+
+  assert.equal(signal, 'SIGTERM');
+  await assertNoneAlive(directory);
+  const took = Number(read(directory, 'end.took'));
+  assert.ok(took >= UNDRAINED_BOUND / 2, `the sink's end took ${took} ms, so the pipe never held it and this proves nothing`);
+  assert.ok(took <= UNDRAINED_BOUND, `the sink's end took ${took} ms`);
 });
 
 // Item 37: a group the census has stopped when the caller ends.

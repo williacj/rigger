@@ -3,7 +3,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,6 +12,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { productionFiles } from '../scripts/package-budget.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
+import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
+import { scratch, undrained } from './process-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
@@ -395,4 +398,60 @@ test('what an unnamed sink held reaches standard error whole at exit, past a ful
     eventsIn(stderr).map((event) => event.index),
     Array.from({ length: count }, (unused, index) => index),
   );
+});
+
+/**
+ * Runs `body` after the line `inChild` runs first, in a child whose standard error is a pipe
+ * nothing drains, and answers how it ended and what it wrote to standard output. The script lives
+ * in a scratch directory, so the child is ended at the test's teardown, whether it passed or failed.
+ */
+async function stuckChild(t, body) {
+  const directory = scratch(t);
+  const script = join(directory, 'child.mjs');
+  writeFileSync(script, [
+    `import { openSink } from ${JSON.stringify(sinkModule)};`,
+    "process.stderr.write('');",
+    body,
+  ].join('\n'));
+  const child = spawn(process.execPath, [script], { cwd: directory, stdio: ['ignore', 'pipe', undrained(t, directory)] });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  const [status] = await once(child, 'close');
+  return { status, stdout };
+}
+
+/** Lines that open an unnamed sink and give it 2,000 events, some 200,000 bytes, past a full pipe. */
+const holdingMany = [
+  `const sink = openSink({ run: 'r-8f21', now: () => ${AT_14_14} });`,
+  "const { emit } = sink.emitter({ layer: 'L0', card: 1412 });",
+  "for (let index = 0; index < 2000; index += 1) emit('survivor.killed', { index, command: 'x'.repeat(100) });",
+].join('\n');
+
+test(`given a standard error that is never drained, a sink ended while it holds more than the pipe holds returns within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+  const { status, stdout } = await stuckChild(t, [
+    holdingMany,
+    'const began = performance.now();',
+    'sink.end();',
+    'process.stdout.write(String(performance.now() - began));',
+  ].join('\n'));
+
+  assert.equal(status, 0);
+  const took = Number(stdout);
+  assert.ok(took >= UNDRAINED_BOUND / 2, `the end took ${took} ms, so the pipe never held it and this proves nothing`);
+  assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
+});
+
+test(`given a standard error that is never drained, a sink ended while it holds more than the pipe holds, then given an event, returns from both within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+  const { status, stdout } = await stuckChild(t, [
+    holdingMany,
+    'const began = performance.now();',
+    'sink.end();',
+    "emit('survivor.killed', { name: 'late' });",
+    'process.stdout.write(String(performance.now() - began));',
+  ].join('\n'));
+
+  assert.equal(status, 0);
+  const took = Number(stdout);
+  assert.ok(took >= UNDRAINED_BOUND / 2, `the end and the event took ${took} ms, so the pipe never held them and this proves nothing`);
+  assert.ok(took <= UNDRAINED_BOUND, `the end and the event took ${took} ms`);
 });
