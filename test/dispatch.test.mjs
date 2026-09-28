@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join, relative } from 'node:path';
 
 import { openSink, streamPath } from '../src/observation/sink.mjs';
@@ -184,17 +185,52 @@ test('every path the record writes is under the state directory of the repositor
   const fixtures = ['command', 'group', 'release'];
   const before = filesUnder(directory);
   const written = () => filesUnder(directory).filter((file) => !before.includes(file) && !fixtures.includes(file));
-  let whileRunning;
+  // Every path handed to a call of `node:fs` that writes, while the dispatch runs in this
+  // process, so that a file written and then renamed or removed is seen too.
+  const touched = [];
+  const { release } = watchingWrites(t, (path) => touched.push(path));
 
-  await whileHeld(directory, { id: 'd-1', card: 1412, directory: state, sink, cwd: repository }, () => {
-    whileRunning = written();
-  });
+  await whileHeld(directory, { id: 'd-1', card: 1412, directory: state, sink, cwd: repository }, () => {});
+  release();
 
-  const outside = (files) => files.filter((file) => !file.startsWith(`${relative(directory, state)}/`));
-  assert.ok(whileRunning.length > 0, 'the record wrote nothing while the dispatch ran');
-  assert.deepEqual(outside(whileRunning), [], 'while the dispatch ran');
-  assert.deepEqual(outside(written()), [], 'after the dispatch settled');
+  const outside = (paths) => paths.filter((path) => !path.startsWith(`${state}/`) && path !== state);
+  // The test's own fixture writes its command and its release, and neither is the record's.
+  const ours = touched.filter((path) => !fixtures.map((file) => join(directory, file)).includes(path));
+  assert.ok(ours.includes(join(state, 'groups.json')), `the record's file was not written: ${ours}`);
+  assert.deepEqual(outside(ours), [], 'a write of the dispatch');
+  assert.deepEqual(outside(written().map((file) => join(directory, file))), [], 'a file left after the dispatch settled');
 });
+
+/** The calls of `node:fs` that create, change, move or remove a path, each naming its path first. */
+const WRITES = ['appendFileSync', 'copyFileSync', 'cpSync', 'linkSync', 'mkdirSync', 'mkdtempSync', 'openSync', 'renameSync', 'rmSync', 'rmdirSync', 'symlinkSync', 'truncateSync', 'unlinkSync', 'writeFileSync'];
+
+/** Those of them whose second argument is a path too. */
+const TWO_PATHS = ['copyFileSync', 'cpSync', 'linkSync', 'renameSync', 'symlinkSync'];
+
+/**
+ * Has every call in `WRITES` hand its path arguments to `seen` before it runs, until `release` or
+ * the test's end. `syncBuiltinESMExports` carries the change to every module importing a name from
+ * `node:fs`, so the code under test is watched without knowing it.
+ */
+function watchingWrites(t, seen) {
+  const originals = Object.fromEntries(WRITES.map((name) => [name, fs[name]]));
+  for (const name of WRITES) {
+    fs[name] = (...args) => {
+      for (const arg of args.slice(0, TWO_PATHS.includes(name) ? 2 : 1)) seen(String(arg));
+      return originals[name](...args);
+    };
+  }
+  syncBuiltinESMExports();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  };
+  t.after(release);
+  return { release };
+}
 
 test('given a dispatch whose command never started, the record holds no entry for it afterwards', async (t) => {
   const directory = scratch(t);
