@@ -226,14 +226,19 @@ async function contain(group, { emitter, ps, readTimeout }) {
  * The order is fixed: the command exits; L0 kills what is left of its group and confirms it is
  * empty; L0 reads both pipes until they close; the call settles. So the output is everything the
  * group wrote until that kill, and a survivor holding a pipe never holds the call open.
+ *
+ * `onGroup`, where the caller gives one, is handed the group's id in the step that creates the
+ * group, before the call first yields (`ARCHITECTURE.md`, "Failure model"). L1 records a
+ * dispatch's group there. A command that never started has no group, and `onGroup` is not called.
  */
-export async function runCommand({ command, args, cwd, env, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
+export async function runCommand({ command, args, cwd, env, emitter, onGroup, ps = PS, readTimeout = READ_TIMEOUT }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
   const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
+  if (child.pid !== undefined) onGroup?.(child.pid);
   const [exit] = await once(child, 'exit');
   await contain(child.pid, { emitter, ps, readTimeout });
   const [stdout, stderr] = await output;
