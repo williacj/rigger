@@ -78,9 +78,12 @@ async function drained(stream) {
  * 200 groups each SIGKILLed with two members: the kernel answered `EPERM` once in every one of
  * them while its members were exiting, and `ESRCH` on a later poll.
  */
-function occupied(group) {
+const occupied = (group) => answers(-group);
+
+/** Whether signal 0 reaches `target`, a pid or a group's id negated, `EPERM` counting as reached. */
+function answers(target) {
   try {
-    process.kill(-group, 0);
+    process.kill(target, 0);
     return true;
   } catch (error) {
     if (error.code === 'ESRCH') return false;
@@ -301,9 +304,14 @@ async function contain(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
+  // Asked of the kernel in the turn that sends the kill, so a survivor that exited on its own
+  // after the census's last read, and was reaped, is not recorded as killed. One not yet reaped
+  // still answers, because signal 0 reaches a zombie (measured with Node 26.5.0 on macOS 27.0 on
+  // 2026-09-27), and is recorded as killed.
+  const killed = survivors?.filter(({ pid }) => answers(pid));
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return survivors.map((survivor) => ['survivor.killed', survivor]);
+  return killed.map((survivor) => ['survivor.killed', survivor]);
 }
 
 /**

@@ -948,3 +948,34 @@ test('while the call re-reads a census, it uses less than half those re-reads\' 
   t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
   assert.ok(cpu < rereading / 2, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
 });
+
+test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The quitter exits once told to go. The stand-in tells it to go, and resumes it, inside the
+  // census's last read of states, which it answers as the table stood before, so the census names
+  // the quitter and has read the table for the last time before it is gone.
+  fixture(directory, 'quitter', 'while [ ! -f "$here/go" ]; do :; done\nexit 0');
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
+    'case "$*" in *stat=*)',
+    '  if [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null; then',
+    '    table=$(/bin/ps "$@")',
+    '    quitter=$(/bin/cat "$here/quitter.pid")',
+    '    : > "$here/go"',
+    '    kill -s CONT "$quitter"',
+    '    while kill -0 "$quitter" 2>/dev/null; do :; done',
+    '    printf "%s\\n" "$table"',
+    '    exit 0',
+    '  fi ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [leave(TAIL, 'tail'), leave('"$here/quitter"', 'quitter', 'bash')].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+    { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')) },
+  ]);
+});
