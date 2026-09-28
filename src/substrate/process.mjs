@@ -43,6 +43,12 @@ export const READ_TIMEOUT = 5_000;
  * writing 300,000 bytes, half of them leaving a survivor on both pipes, with Node 26.5.0 on macOS
  * 27.0 on 2026-09-27. One second is over seven thousand times that, room for a loaded host, and
  * costs a command whose output a detached process holds one second.
+ *
+ * A process that left the group and holds a pipe is outside containment (the owner's Q6 on #332),
+ * so what it writes is not the group's, and the bound does not keep it out. What it writes before
+ * the bound passes is in the result, after the group's own bytes; what it writes after is dropped,
+ * because L0 closes the pipes then. How much lands depends on when it writes: the engineer judge on
+ * #361 saw a holder printing a line every millisecond put 198 lines into standard output.
  */
 export const OUTPUT_BOUND = 1_000;
 
@@ -861,6 +867,15 @@ function recorded(group, started, starts) {
  * group, to tell the group from a later one given the same id. It blocks the event loop while
  * `ps` runs: one read took 0.95 ms at the median and 1.55 ms at most, over 200 reads in the tick
  * that spawned the process, with Node 26.5.0 on macOS 27.0 on 2026-09-27.
+ *
+ * So a read that stalls blocks the event loop, and everything else in the process, for up to
+ * `timeout`, which is `READ_TIMEOUT` unless the caller gives another. The engineer judge on #365
+ * measured it (N2): with a `ps` that never answered and a timeout of 2,000 ms, a 20 ms timer fired
+ * 1,985 ms late, and the call rejected with the group killed.
+ *
+ * The read is synchronous all the same, because L1 writes a dispatch's entry, its leader's start
+ * time included, in the step that creates the group, before the call yields (the architect's
+ * ruling 1, P2, on #332). A read that waited on the event loop would yield first.
  *
  * Where `ps`'s start time can differ from the process's true start (`D16` rule 3), measured with
  * `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-27:

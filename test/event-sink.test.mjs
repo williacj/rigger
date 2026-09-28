@@ -403,7 +403,8 @@ test('what an unnamed sink held reaches standard error whole at exit, past a ful
 /**
  * Runs `body` after the line `inChild` runs first, in a child whose standard error is a pipe
  * nothing drains, and answers how it ended and what it wrote to standard output. The script lives
- * in a scratch directory, so the child is ended at the test's teardown, whether it passed or failed.
+ * in a scratch directory, so the child is ended at the test's teardown, whether it passed or
+ * failed.
  */
 async function stuckChild(t, body) {
   const directory = scratch(t);
