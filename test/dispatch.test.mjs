@@ -688,3 +688,45 @@ test('given a dispatch whose command leaves a child alive and exits 0, its dispa
   assert.ok(kills.length > 0, `the child's kill was not recorded: ${JSON.stringify(events)}`);
   assert.ok(end >= 0 && kills.every((index) => index < end), `the end does not follow every kill: ${JSON.stringify(events)}`);
 });
+
+test('given a dispatch whose command leaves alive a child holding none of its pipes and exits 0, it settles only once that child is dead', SETTLES_WITHIN, async (t) => {
+  // The child's output goes nowhere, so the pipes close when the command exits, and only L1
+  // awaiting L0's kill holds the call until the child is dead.
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${leave(`${TAIL} >/dev/null 2>&1 </dev/null`, 'survivor')}\nexit 0`);
+
+  await dispatchIn(directory, { id: 'd-pipeless', card: 1412, command });
+
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false, 'the child is alive');
+});
+
+test('given a dispatch whose command leaves a child alive and exits 0, the record holds no entry for it when its dispatch-end event is appended', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const state = stateOf(directory);
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+  // What another process reading the record finds at the moment the sink is handed the end.
+  let atEnd;
+  const reading = {
+    emitter(envelope) {
+      const emitter = sink.emitter(envelope);
+      return {
+        emit(event, fields) {
+          if (envelope.layer === 'L1' && event === 'dispatch.end') atEnd = readInAnotherProcess(state);
+          emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+
+  await dispatchIn(directory, { id: 'd-cleared', card: 1412, command: leavingTail(directory), sink: reading });
+
+  assert.ok(atEnd !== undefined, 'the sink was never handed the dispatch\'s end');
+  assert.deepEqual(atEnd.filter((entry) => entry.dispatch === 'd-cleared'), []);
+});
+
+test('given a state directory whose event stream exists and which refuses new entries, the caller can tell the rejection is a failure to start without reading its message', async (t) => {
+  const directory = scratch(t);
+  refusingNewEntries(t, directory);
+
+  await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }), (failure) => failure.code === NOT_STARTED);
+});
