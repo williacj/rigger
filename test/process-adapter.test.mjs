@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
-import { PS, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, PS, runCommand } from '../src/substrate/process.mjs';
 
 /**
  * A scratch directory for one test, torn down with every process that names it.
@@ -717,4 +717,84 @@ test('a caller whose call settled past a process holding its output can exit whi
 
   assert.equal(status, 0, stderr);
   assert.equal(alive(Number(read(directory, 'holder.pid'))), true, 'the holder was not alive when the caller exited, so it proves nothing');
+});
+
+/**
+ * An `L0` emitter over a real sink that refuses every append, because its state directory would
+ * sit under a regular file, so the sink can never make it.
+ */
+function refusing(directory) {
+  writeFileSync(join(directory, 'blocked'), '');
+  return openSink({ directory: join(directory, 'blocked', 'state'), run: 'r-test', now: () => 0 }).emitter({ layer: 'L0' });
+}
+
+/**
+ * A command that writes to both its outputs, leaves two children alive, a `tail` and a `cat`, and
+ * exits 5.
+ */
+const leavingTwo = (directory) => fixture(directory, 'command', [
+  '/usr/bin/mkfifo "$here/fifo"',
+  leave(TAIL, 'tail'),
+  leave('/bin/cat "$here/fifo"', 'cat', 'cat'),
+  'printf "to standard output"',
+  'printf "to standard error" >&2',
+  'exit 5',
+].join('\n'));
+
+test('given a sink that refuses every append, both children a command leaves alive are dead when the call settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  await assert.rejects(adapt(directory, { command, emitter: refusing(directory) }));
+
+  assert.equal(alive(Number(read(directory, 'tail.pid'))), false, 'the tail is alive');
+  assert.equal(alive(Number(read(directory, 'cat.pid'))), false, 'the cat is alive');
+});
+
+/** What the adapter's call rejects with, given `options`; it fails the test if the call resolves. */
+async function rejection(directory, options) {
+  try {
+    await adapt(directory, options);
+  } catch (error) {
+    return error;
+  }
+  assert.fail('the call settled without rejecting');
+}
+
+test('given a sink that refuses every append, the call rejects naming each unrecorded kill by process name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+
+  // Each name and command line is read off the fixture, not asked of `ps`.
+  const killed = [
+    { event: 'survivor.killed', pid: Number(read(directory, 'tail.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+    { event: 'survivor.killed', pid: Number(read(directory, 'cat.pid')), name: 'cat', cmd: `/bin/cat ${directory}/fifo` },
+  ];
+  const byPid = (a, b) => a.pid - b.pid;
+  assert.deepEqual((error.unrecorded ?? []).map(({ event, pid, name, cmd }) => ({ event, pid, name, cmd })).sort(byPid), killed.sort(byPid));
+  for (const { cmd } of killed) assert.ok(error.message.includes(cmd), `the failure's message does not give ${cmd}: ${error.message}`);
+});
+
+test('given a sink that refuses every append, the failure carries the command\'s exit code and output', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+
+  assert.equal(error.result?.exit, 5);
+  assert.equal(error.result?.stdout.toString(), 'to standard output');
+  assert.equal(error.result?.stderr.toString(), 'to standard error');
+});
+
+test('given a sink that refuses every append, the failure\'s code tells it from a command that never started', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = leavingTwo(directory);
+
+  const error = await rejection(directory, { command, emitter: refusing(directory) });
+  const unstarted = await rejection(directory, { command: join(directory, 'absent'), emitter: l0(directory).emitter });
+
+  assert.equal(error.code, EVENT_REFUSED);
+  assert.notEqual(unstarted.code, EVENT_REFUSED, 'a command that never started reads as a refused event');
 });
