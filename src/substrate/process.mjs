@@ -4,11 +4,12 @@
 // it kills a group a dead engine recorded, once it has confirmed that group is the one recorded. On
 // the process's own exit it kills every group it holds.
 
-import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { accessSync, constants as files, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
+import { inspect } from 'node:util';
 
 import { writeWhole } from './standard-error.mjs';
 
@@ -309,6 +310,45 @@ async function ended(group, ps, readTimeout) {
   }
 }
 
+/**
+ * Why `group` may still hold a member that is not a zombie, or nothing where it holds none: signal 0
+ * reaches it, and a read of its states finds such a member, or fails. A read that lists no process
+ * while signal 0 still reaches the group is taken again, because a member that is exiting still
+ * answers signal 0 (`occupied`) and may not be listed, until the group no longer answers or
+ * `timeout` has passed, which counts as holding one. Each read has `timeout` of its own, so one
+ * begun near that bound fails only where the read itself does. Only a read that found such a
+ * member says it saw one.
+ *
+ * One case is left unrecorded, and nothing but the process table can close it (`D16` rule 3): a
+ * table that leaves a live member of the group out of every read, of the census, the kill and this
+ * one alike, while listing the group's zombies. Signal 0 reaches a zombie, and a group holding only
+ * a zombie, as it reaches a live process: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
+ * `process.kill(pid, 0)` succeeded on a zombie, and a group left holding only a zombie its parent
+ * outside the group never reaps kept answering signal 0 (`UNREAPED_BOUND`). So only the table
+ * tells a zombie from a live process, and such a table reads exactly as a group holding only
+ * zombies does. Recording the group's kill whenever signal 0 reaches the group would record the
+ * kill of every group left holding only zombies, which L0 did not end, so the group's kill then
+ * ends that hidden member unrecorded.
+ */
+async function outlived(group, ps, timeout) {
+  const deadline = Date.now() + timeout;
+  const unseen = ', so the kill of the group may have ended a process the census and the kill had not named';
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    if (!occupied(group)) return undefined;
+    if (Date.now() >= deadline) return `the reads of the group before its kill listed no process for ${timeout} ms while signal 0 still reached it${unseen}`;
+    let states;
+    try {
+      states = [...(await statesOf(group, ps, timeout)).values()];
+    } catch (error) {
+      return `the read of the group before its kill failed while signal 0 still reached it${unseen}: ${error.message}`;
+    }
+    if (states.length === 0) continue;
+    if (states.some((state) => !state.startsWith('Z'))) return 'the group still held a live process the census and the kill had not named, which the kill of the group ended';
+    return undefined;
+  }
+}
+
 /** Whether a read of `group`'s states finds a member that is not a zombie. One that fails does not. */
 async function living(group, ps, timeout) {
   try {
@@ -348,6 +388,11 @@ function signal(group, name) {
  * a member not yet stopped is one the signal has not reached, one caught mid-exec (state `?`), or
  * a fork the signal missed. A zombie cannot exec either, and is left out, because it is already
  * dead.
+ *
+ * Reads that agree on no process at all are kept only where signal 0 no longer reaches the group,
+ * because a read that failed can list nothing, even one that exits 1 and prints nothing (`run`).
+ * While the group still answers, the census reads again, and where `timeout` passes first it fails
+ * saying so, and the group is killed unnamed.
  *
  * A read of states or command lines holds the pid and that one column, so no field of varying
  * width comes before the one split it takes. `ps` pads a column by display width, and a name of
@@ -397,22 +442,35 @@ function signal(group, name) {
  *   so this reads one group rather than the whole table, with `-ww`, which the manual says uses
  *   as many columns as are needed.
  * - `-g` lists the processes whose group is `group`. A process that leaves the group before the
- *   read is not listed, and one that joins it after the read is killed unnamed.
- * - `ps` exits 1, printing nothing, when no process matches.
+ *   read is not listed, and one that joins it after the read is recorded only as the kill of the
+ *   group, where a later read finds it (`killedOf`, `contain`).
+ * - `ps` exits 1, printing nothing, when no process matches, and writes to standard error when a
+ *   read fails (`run`).
  */
 function* census(group) {
+  // Whether the census's last reads that agreed named no process while the group still had one.
+  let unseen = false;
+  const read = function* (args) {
+    try {
+      return yield args;
+    } catch (error) {
+      throw unseen ? new Error(`the census's reads named no process of the group while it still had one: ${error.message}`) : error;
+    }
+  };
   const column = function* (name) {
-    return rowsOf(yield ['-ww', '-g', String(group), '-o', `pid=,${name}=`]);
+    return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   };
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) yield wait;
     signal(group, 'SIGSTOP');
     const before = yield* column('stat');
     if (!stopped(before)) continue;
-    const names = yield* namesOf([...before.keys()]);
+    const names = yield* namesOf([...before.keys()], read);
     const commands = yield* column('command');
     const after = yield* column('stat');
     if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
+    unseen = after.size === 0 && occupied(group);
+    if (unseen) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
       .map(([pid]) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
@@ -436,10 +494,10 @@ const samePids = (one, other) => one.size === other.size && [...one.keys()].ever
  * 3.29 ms a survivor, the names alone reach `READ_TIMEOUT` at about 1,500 survivors, and fewer
  * once the group's other reads are counted. Such a group is killed unnamed.
  */
-function* namesOf(pids) {
+function* namesOf(pids, read) {
   const names = new Map();
   for (const pid of pids) {
-    const printed = yield ['-p', String(pid), '-o', 'ucomm='];
+    const printed = yield* read(['-p', String(pid), '-o', 'ucomm=']);
     // `ps` ends the name with its padding, spaces alone, and a newline, which are not the name's own.
     if (printed !== '') names.set(pid, printed.replace(/ *\n$/, ''));
   }
@@ -472,7 +530,16 @@ async function reading(looks, ps, timeout) {
     if (typeof look.value === 'number') {
       await pause(look.value);
       look = looks.next();
-    } else look = looks.next(await run(ps, look.value, deadline - Date.now(), timeout));
+    } else {
+      let printed;
+      try {
+        printed = await run(ps, look.value, deadline - Date.now(), timeout);
+      } catch (error) {
+        look = looks.throw(error);
+        continue;
+      }
+      look = looks.next(printed);
+    }
   }
   return look.value;
 }
@@ -481,7 +548,20 @@ async function reading(looks, ps, timeout) {
 function readingNow(looks, ps, timeout) {
   const deadline = Date.now() + timeout;
   let look = looks.next();
-  while (!look.done) look = typeof look.value === 'number' ? looks.next() : looks.next(runNow(ps, look.value, deadline - Date.now(), timeout));
+  while (!look.done) {
+    if (typeof look.value === 'number') {
+      look = looks.next();
+      continue;
+    }
+    let printed;
+    try {
+      printed = runNow(ps, look.value, deadline - Date.now(), timeout);
+    } catch (error) {
+      look = looks.throw(error);
+      continue;
+    }
+    look = looks.next(printed);
+  }
   return look.value;
 }
 
@@ -491,19 +571,37 @@ const reader = (remaining) => ({ timeout: remaining, killSignal: 'SIGKILL', maxB
 /** The failure for a census that ran out of time between reads. */
 const late = (timeout) => new Error(`the census found the group not all stopped within ${timeout} ms`);
 
+/** The failure for a read of the process table that wrote `stderr`, which `ps` does only on a failure (`run`). */
+const failed = (stderr) => new Error(`the process-table read failed: ${stderr.trim()}`);
+
 /** The failure for a read of the process table that ran out of time. */
 const timedOut = (timeout) => new Error(`the process-table read timed out after ${timeout} ms`);
 
 /**
  * What one run of `ps`, at the path `ps` names, prints given `args`, or nothing where no process
- * matches. It is given up on after `remaining` milliseconds of the census's `timeout`.
+ * matches. It is given up on after `remaining` milliseconds of the census's `timeout`. A run that
+ * writes anything to standard error has failed, whatever its exit code.
+ *
+ * How `ps` reports that no process matched, against a read that failed (`D16` rule 3), measured
+ * with `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28: each of the adapter's five
+ * forms of read, given a group or pid that holds no process, exits 1 and writes nothing to either
+ * stream. Given a group `x`, a group `999999` or an unknown keyword, it exits 1 and writes why to
+ * standard error. The source of adv_cmds-237, the latest Apple publishes, agrees: `ps` exits 1
+ * with nothing written only once it kept no process, and every failure it reports is written to
+ * standard error, one of them, a failed read of the kernel's table, with exit 0 and nothing on
+ * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
+ * matched.
+ *
+ * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(late(timeout));
-    const read = execFile(ps, args, { env: PS_ENV, ...reader(remaining) }, (error, stdout) => {
+    const read = execFile(ps, args, { env: PS_ENV, ...reader(remaining) }, (error, stdout, stderr) => {
       reads.delete(read);
       if (error?.killed) return reject(timedOut(timeout));
+      if (stderr !== '') return reject(failed(stderr));
       if (error && !(error.code === 1 && stdout === '')) return reject(error);
       resolve(stdout);
     });
@@ -518,9 +616,10 @@ function run(ps, args, remaining, timeout) {
  */
 function runNow(ps, args, remaining, timeout) {
   if (remaining <= 0) throw late(timeout);
-  const { error, status, signal: ending, stdout } = spawnSync(ps, args, { env: PS_ENV, ...reader(remaining) });
+  const { error, status, signal: ending, stdout, stderr } = spawnSync(ps, args, { env: PS_ENV, ...reader(remaining) });
   if (error?.code === 'ETIMEDOUT') throw timedOut(timeout);
   if (error) throw error;
+  if (stderr !== '') throw failed(stderr);
   if (status !== 0 && !(status === 1 && stdout === '')) throw new Error(`${ps} ${args.join(' ')} ended with ${status ?? ending}`);
   return stdout;
 }
@@ -532,6 +631,14 @@ function runNow(ps, args, remaining, timeout) {
  * and only then the `L0` events to record, one `killed` event per process the kill ended, which it
  * hands back. A census or a kill whose read fails still kills the group, and hands back the kill
  * of the group with why its processes went unnamed.
+ *
+ * A kill whose reads all left out a live member ends without having named it, and the group's
+ * kill then ends it. So before that kill the group is read once more, and where it still holds a
+ * member that is not a zombie, or signal 0 reaches it and the read fails or lists nothing until
+ * `readTimeout`, the kill of the group is handed back beside the processes the kill named, saying
+ * which (`outlived`). A process that joins the group after that read is ended by the group's kill
+ * unrecorded, and so is one the table hides from every read while listing the group's zombies
+ * (`outlived` says why no read can find it).
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
@@ -545,9 +652,12 @@ async function contain(group, { ps, readTimeout }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
+  const left = unnamed === undefined ? await outlived(group, ps, readTimeout) : undefined;
   await ended(group, ps, readTimeout);
   if (unnamed !== undefined) return [['group.killed', { group, census: unnamed }]];
-  return dead.map((survivor) => [killed, survivor]);
+  const named = dead.map((survivor) => [killed, survivor]);
+  if (left === undefined) return named;
+  return [...named, ['group.killed', { group, census: left }]];
 }
 
 /**
@@ -619,6 +729,17 @@ function killsOf(group, survivors, unnamed, killed) {
  * from L0's kill. A read that fails, or a group still not ended at `timeout`, fails the whole,
  * and the group is killed unnamed.
  *
+ * A survivor a read leaves out is gone only where signal 0 no longer reaches it. A read that failed
+ * can leave out a live one, even one that exits 1 and prints nothing, which `ps` reports only when
+ * the kernel handed it no process (`run`). So such a survivor stays to be read again, and a table
+ * that goes on leaving it out holds the kill to `timeout`, where the group is killed unnamed. So
+ * does a survivor's pid the system has handed on to another process meanwhile.
+ *
+ * The census's reads can fail the other way, agreeing on only some of the group's live members.
+ * So each live member a read of the kill finds must be one the census named, and the kill fails
+ * where it finds another, so the group is killed unnamed rather than that process ended
+ * unrecorded. The kill reads the table at least once, even where the census named no one.
+ *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
  * nothing move, it pauses as a wait does, so a group killed in many rounds is not read back to
@@ -636,11 +757,12 @@ function killsOf(group, survivors, unnamed, killed) {
 async function killedOf(survivors, group, ps, timeout) {
   const deadline = Date.now() + timeout;
   const pending = new Map(survivors.map((survivor) => [survivor.pid, survivor]));
+  const named = new Set(pending.keys());
   const sent = new Set();
   const killed = [];
   const [began, used] = [performance.now(), process.cpuUsage()];
   let [rounds, paused] = [0, 0];
-  for (let wait = 0; pending.size > 0; ) {
+  for (let wait = 0; rounds === 0 || pending.size > 0; ) {
     if (wait > 0) await pause(wait);
     paused += wait;
     const remaining = deadline - Date.now();
@@ -650,11 +772,14 @@ async function killedOf(survivors, group, ps, timeout) {
     for (const [pid, survivor] of pending) {
       const row = table.get(pid);
       if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
       if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
       pending.delete(pid);
       moved = true;
     }
     const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
+    const unnamed = living.find(([pid]) => !named.has(pid));
+    if (unnamed) throw new Error(`the kill found process ${unnamed[0]} in the group, which the census did not name`);
     const parents = new Set(living.map(([, row]) => row.parent));
     for (const [pid] of living) {
       if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
@@ -767,9 +892,10 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
   if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
-  if (timeout == null) throw new Error(`the process adapter was given no timeout, so it did not start ${command}`);
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
-    throw new Error(`the process adapter was given the timeout ${timeout} ms, which is not a positive finite number of milliseconds, so it did not start ${command}`);
+    // The type is named because a string, a bigint or a boxed number prints as the number it holds.
+    const type = timeout === null ? 'null' : typeof timeout;
+    throw new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
@@ -797,11 +923,14 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const events = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  const killedAtTimeout = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
   const timedOut = expired && signal !== null;
+  // A command that exited on its own did so before the containment stopped its group, because a
+  // stopped process cannot exit, so every process that containment killed outlived the command.
+  const events = timedOut ? killedAtTimeout : killedAtTimeout.map(([event, fields]) => [event === 'timeout.killed' ? 'survivor.killed' : event, fields]);
   // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
   // 128 and the signal's number, which is never 0.
   const exit = signal === null ? code : 128 + constants.signals[signal];
@@ -898,13 +1027,11 @@ function recorded(group, started, starts) {
  *   moves it is not measured here.
  */
 function startOf(ps, pid, timeout) {
-  let printed;
-  try {
-    printed = execFileSync(ps, ['-p', String(pid), '-o', 'lstart='], { env: PS_ENV, timeout, killSignal: 'SIGKILL', encoding: 'utf8' });
-  } catch (cause) {
-    throw new Error(`L0 could not read when the leader of group ${pid} started, so it ended the group: ${cause.message}`, { cause });
-  }
-  return secondsOf(printed.replace(/\n$/, ''));
+  const read = spawnSync(ps, ['-p', String(pid), '-o', 'lstart='], { env: PS_ENV, timeout, killSignal: 'SIGKILL', encoding: 'utf8' });
+  // A read that wrote to standard error has failed whatever its exit code, as `run` holds.
+  const failure = read.error?.message ?? (read.stderr !== '' ? read.stderr.trim() : undefined) ?? (read.status !== 0 ? `${ps} ended with ${read.status ?? read.signal}` : undefined);
+  if (failure !== undefined) throw new Error(`L0 could not read when the leader of group ${pid} started, so it ended the group: ${failure}`);
+  return secondsOf(read.stdout.replace(/\n$/, ''));
 }
 
 /**
@@ -973,6 +1100,27 @@ function unusable(cwd) {
   }
 }
 
+/**
+ * `value` as text for a refusal, never blank, which no value can make throw. It is the first of
+ * these that prints something: its own conversion; Node's `inspect`; and `inspect` ignoring the
+ * value's own hook for it, which prints what an object holds. A conversion can throw, as a
+ * Symbol's does in a template literal and a null-prototype object's does anywhere, or print
+ * nothing, as `[]` and `''` do, and a value's own hook can do either. Where every one fails, the
+ * refusal says so; no value tried reached that.
+ */
+function shown(value) {
+  const ways = [() => String(value), () => inspect(value, { breakLength: Infinity }), () => inspect(value, { breakLength: Infinity, customInspect: false })];
+  for (const way of ways) {
+    try {
+      const text = way();
+      if (text.trim() !== '') return text;
+    } catch {
+      // The next way is tried.
+    }
+  }
+  return 'that cannot be printed';
+}
+
 /** The failure for a call whose `command` never started, saying `why`. */
 const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
 
@@ -980,12 +1128,17 @@ const notStarted = (command, why) => Object.assign(new Error(`the process adapte
  * Calls `done` once `delay` milliseconds have passed, and hands back what cancels that. A delay
  * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
  * `schedule` and `cancel` are Node's timers unless a test gives its own.
+ *
+ * No timer holds the process open, so one left armed never keeps the caller from exiting. What the
+ * delay races holds the process open itself where it must: a running command's child handle, and
+ * the pipes it writes to.
  */
 export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
   let timer;
   const arm = (left) => {
     const step = Math.min(left, TIMER_MAX);
     timer = schedule(() => (left > step ? arm(left - step) : done()), step);
+    timer.unref?.();
   };
   arm(delay);
   return () => cancel(timer);

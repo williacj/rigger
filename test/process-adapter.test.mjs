@@ -322,6 +322,20 @@ test('given an onGroup and a start-time read that fails, the call rejects naming
   assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
 });
 
+test('given an onGroup and a start-time read that prints the start time and a failure on standard error, and exits 0, the call rejects naming that failure, and onGroup is not called', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `exec ${TAIL}`);
+  // The stand-in answers the read of the leader's start time as `ps` does, and then writes a
+  // failure to standard error as `ps` writes every failure it reports (`run`).
+  const ps = fixture(directory, 'ps', 'case "$*" in *lstart=*) /bin/ps "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec /bin/ps "$@"');
+  let called = false;
+
+  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .*ps: failing on purpose/);
+
+  assert.equal(called, false, 'onGroup was called');
+  assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
+});
+
 test('given an onGroup that throws, the call rejects with what it threw, and no process of the command\'s group is alive', async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `exec ${TAIL}`);
@@ -1190,13 +1204,16 @@ function compiled(directory, name, source) {
 
 /**
  * A command that leaves a chain of processes `depth` deep in its group, each the parent of the
- * next, so the kill takes a round for each.
+ * next, so the kill takes a round for each. Each process of the chain writes its pid to
+ * `$here/chain.pids` before it forks, so every one is there once the last marks `$here/ready`.
  */
 function chain(directory, depth) {
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'chain'), [
     'my ($here, $n) = @ARGV;',
-    'for my $i (1 .. $n) { my $c = fork(); if ($c) { select(undef, undef, undef, undef); } }',
+    'sub mine { open(my $f, ">>", "$here/chain.pids"); print $f "$$\\n"; close $f; }',
+    'for my $i (1 .. $n) { mine(); my $c = fork(); if ($c) { select(undef, undef, undef, undef); } }',
+    'mine();',
     'open(my $r, ">", "$here/ready"); close $r;',
     'select(undef, undef, undef, undef);',
   ].join('\n'));
@@ -1262,6 +1279,194 @@ test('a kill whose read of the table never answers records the group\'s kill wit
 
   assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
   assert.match(events[0].census, /^the kill /);
+});
+
+/**
+ * A `ps` stand-in that answers every read as `ps` does, except the kill's second read of the
+ * table, the reads that ask for `ppid`, where it runs the shell lines `failing` instead and marks
+ * `$here/failed`. By then the kill's first round has sent the kill to the chain's last process,
+ * and every other process of the chain is still to be killed.
+ */
+const failingOnce = (directory, failing) => fixture(directory, 'ps', [
+  'case "$*" in *ppid=*)',
+  '  if [ -f "$here/first" ] && /bin/mkdir "$here/failed" 2>/dev/null; then',
+  failing,
+  '  fi',
+  '  : > "$here/first" ;;',
+  'esac',
+  'exec /bin/ps "$@"',
+].join('\n'));
+
+/**
+ * Runs a chain 3 deep through the adapter, the kill's second read of the table failing as
+ * `failing` does, and asserts every process of the chain is recorded, each by name, or all by the
+ * kill of their group. Hands back the events.
+ */
+async function recordsEveryProcess(t, failing, options = {}) {
+  const directory = holding(t);
+  const command = chain(directory, 3);
+  const ps = failingOnce(directory, failing);
+
+  const { events } = await recorded(directory, { command, ps, ...options });
+
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the kill failed, so the test proves nothing');
+  const chained = read(directory, 'chain.pids').split('\n').map(Number).sort((a, b) => a - b);
+  assert.equal(chained.length, 4);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    const named = events.filter(({ event }) => event === 'survivor.killed').map(({ pid }) => pid).sort((a, b) => a - b);
+    assert.deepEqual(named, chained, `not every process of the chain was recorded: ${JSON.stringify(events)}`);
+  }
+  return events;
+}
+
+test('a kill during which one read of the table exits 1 and prints nothing records every process of the group it ended', SETTLES_WITHIN, async (t) => {
+  await recordsEveryProcess(t, '    exit 1');
+});
+
+for (const [what, failing, options] of [
+  ['exits non-zero after printing only part of the table', '    /bin/ps "$@" | /usr/bin/head -n 1\n    exit 1'],
+  ['does not answer within its timeout', '    exec /usr/bin/tail -f "$here/hold"', { readTimeout: 2_000 }],
+  // `ps` from adv_cmds-237 exits 0 so, where its read of the kernel's table fails (`run`).
+  ['exits 0 printing nothing but a failure to standard error', '    echo "Failure calling sysctl: Cannot allocate memory" >&2\n    exit 0'],
+  ['exits 0 after printing only part of the table', '    /bin/ps "$@" | /usr/bin/head -n 1\n    exit 0'],
+]) {
+  test(`a kill during which one read of the table ${what} records every process of the group it ended`, SETTLES_WITHIN, async (t) => {
+    await recordsEveryProcess(t, failing, options);
+  });
+}
+
+test('a census whose every read of the group exits 1 and prints nothing while the group holds a survivor records the group\'s kill, saying why', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in fails every read of the census and none other.
+  const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec /bin/ps "$@"');
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the census failed, so the test proves nothing');
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+  assert.match(events[0].census, /named no process/);
+});
+
+test('a census whose every read of the group lists only one of two survivors still has both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in cuts every read of the census down to the first survivor's row, and none other.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/one.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.deepEqual(survivors.map(alive), [false, false]);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
+  }
+});
+
+test('a census whose every read of the group lists only its zombie, while a survivor lives, still has the survivor recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill and the wait read it without, so the
+  // stand-in cuts every read of the census down to the zombie's row, and none other.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = unreaped(directory);
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivor = Number(read(directory, 'tail.pid'));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.equal(alive(survivor), false);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid), [survivor], `the survivor was not recorded: ${JSON.stringify(events)}`);
+  }
+});
+
+test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
+  // second survivor's row from every read of both, and answers every other read as `ps` does.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*|*ppid=*)',
+    '  : > "$here/cut"',
+    '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read was cut, so the test proves nothing');
+  assert.deepEqual(survivors.map(alive), [false, false]);
+  if (!events.some(({ event }) => event === 'group.killed')) {
+    assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
+  }
+});
+
+/**
+ * Runs a group holding a survivor and a zombie its parent outside the group never reaps, so signal
+ * 0 still reaches the group once the survivor is killed, through a `ps` stand-in that answers every
+ * read as `ps` does except the reads of the group's states alone (`-g <group> -o pid=,stat=`), taken
+ * once the kill has named the survivor, which run the shell lines `failing` instead. Hands back
+ * the survivor's pid and the events.
+ */
+async function lastReadFailing(t, failing) {
+  const directory = holding(t);
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in "-g "*" -o pid=,stat=")',
+    '  : > "$here/failed"',
+    failing,
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const command = unreaped(directory);
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the group\'s states failed, so the test proves nothing');
+  return { survivor: Number(read(directory, 'tail.pid')), events };
+}
+
+test('where the read of the group before its kill fails while signal 0 reaches the group, the kill of the group is recorded beside the names, not saying it saw a live process', SETTLES_WITHIN, async (t) => {
+  const { survivor, events } = await lastReadFailing(t, '  echo "ps: failing on purpose" >&2\n  exit 2');
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: survivor }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /ps: failing on purpose/);
+  assert.doesNotMatch(events[1].census, /held a live process/);
+});
+
+test('where the reads of the group before its kill list nothing while signal 0 reaches the group, the kill of the group is recorded beside the names, not saying it saw a live process', SETTLES_WITHIN, async (t) => {
+  const { survivor, events } = await lastReadFailing(t, '  exit 1');
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: survivor }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /listed no process/);
+  assert.doesNotMatch(events[1].census, /held a live process/);
+});
+
+test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
+  const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
+
+  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
+  assert.match(events[0].census, /ps: failing on purpose/);
 });
 
 test('a call with no timeout starts no process, and fails naming the missing timeout', async (t) => {
@@ -1354,6 +1559,61 @@ test('a delay cancelled partway through its timers never elapses', () => {
   assert.equal(done, false);
 });
 
+/**
+ * Runs `body`, a module, in a Node process of its own, and hands back its exit status and what it
+ * wrote to standard error, or fails the test where that process has not exited within `within`
+ * milliseconds. The test's teardown kills the process, whether the test passes or fails.
+ */
+async function exitOf(t, body, within) {
+  const caller = spawn(process.execPath, ['--input-type=module', '-e', body], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => caller.kill('SIGKILL'));
+  let stderr = '';
+  caller.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = once(caller, 'exit').then(([status]) => ({ status, stderr }));
+  let stop;
+  const late = new Promise((resolve) => { stop = setTimeout(resolve, within, 'late'); });
+  const outcome = await Promise.race([exited, late]);
+  clearTimeout(stop);
+  assert.notEqual(outcome, 'late', `the process had not exited within ${within} ms`);
+  return outcome;
+}
+
+/**
+ * How long a Node process of its own has to exit once it has nothing left to do. A judgment: it
+ * covers Node's own start and a call that settles at once, on a loaded host, and is far under any
+ * timer of the adapter's the tests below leave armed.
+ */
+const EXITS_WITHIN = 10_000;
+
+const PROCESS_MODULE = JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href);
+
+test('a delay the adapter keeps, left armed, does not hold its process open', SETTLES_WITHIN, async (t) => {
+  const { status, stderr } = await exitOf(t, [
+    `import { TIMER_MAX, whenElapsed } from ${PROCESS_MODULE};`,
+    'whenElapsed(2 * TIMER_MAX, () => process.exit(7));',
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+});
+
+test('a caller whose call has settled exits at once, though the call\'s timeout and read deadline are longer than the test', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The command leaves a survivor, so the call reads the process table under its read deadline.
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  // The caller does nothing once the call has settled, so the one thing that could keep it from
+  // exiting is what the adapter holds.
+  const { status, stderr } = await exitOf(t, [
+    `import { openSink } from ${JSON.stringify(new URL('../src/observation/sink.mjs', import.meta.url).href)};`,
+    `import { TIMER_MAX, runCommand } from ${PROCESS_MODULE};`,
+    `const sink = openSink({ directory: ${JSON.stringify(join(directory, 'state'))}, run: 'r-test', now: () => 0 });`,
+    `await runCommand({ command: ${JSON.stringify(command)}, args: [], cwd: ${JSON.stringify(directory)}, env: {}, timeout: 2 * TIMER_MAX, readTimeout: TIMER_MAX, emitter: sink.emitter({ layer: 'L0' }) });`,
+  ].join('\n'), EXITS_WITHIN);
+
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(eventsIn(join(directory, 'state')).map(({ event }) => event), ['survivor.killed'], 'the call read no survivor, so it proves nothing of its read deadline');
+});
+
 test('a timeout that is not a positive finite number of milliseconds starts no process, and the failure names it', async (t) => {
   for (const timeout of [0, -1, NaN, Infinity, '300']) {
     const directory = scratch(t);
@@ -1365,6 +1625,50 @@ test('a timeout that is not a positive finite number of milliseconds starts no p
     });
 
     assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given the timeout ${timeout}`);
+  }
+});
+
+/**
+ * An object with `toString` and a hook for `util.inspect`, each doing `does`. The hook is not
+ * enumerable, so an `inspect` that ignores it prints only `toString`: Node 20 and Node 26 print an
+ * enumerable symbol key differently, and a hidden one alike.
+ */
+function hooked(does) {
+  return Object.defineProperty({ toString() { return does(); } }, Symbol.for('nodejs.util.inspect.custom'), { value: does });
+}
+
+/** An object whose `toString` and whose hook for `util.inspect` each throw. */
+const throwing = hooked(() => { throw new Error('no conversion'); });
+
+/** An object whose `toString` and whose hook for `util.inspect` each print nothing. */
+const blank = hooked(() => '');
+
+test('the refusal of an invalid timeout names the value and its type', async (t) => {
+  for (const [timeout, named] of [
+    ['5', 'the timeout 5 (of type string)'],
+    [null, 'the timeout null (of type null)'],
+    [NaN, 'the timeout NaN (of type number)'],
+    // A template literal throws on each of these three, so the refusal must print them another way.
+    [Symbol('t'), 'the timeout Symbol(t) (of type symbol)'],
+    [Object.create(null), 'the timeout [Object: null prototype] {} (of type object)'],
+    [{ toString() { throw new Error('no toString'); } }, 'the timeout { toString: [Function: toString] } (of type object)'],
+    // Each of these prints as nothing, so the refusal must print them so they show.
+    [[], 'the timeout [] (of type object)'],
+    ['', 'the timeout \'\' (of type string)'],
+    // Each of these prints nothing, or throws, however it is asked to print itself, so the refusal
+    // must print what the object holds.
+    [throwing, 'the timeout { toString: [Function: toString] } (of type object)'],
+    [blank, 'the timeout { toString: [Function: toString] } (of type object)'],
+  ]) {
+    const directory = scratch(t);
+    const command = fixture(directory, 'command', ': > "$here/started"');
+
+    await assert.rejects(adapt(directory, { command, timeout }), (error) => {
+      assert.ok(error.message.includes(named), `the failure does not say "${named}": ${error.message}`);
+      return true;
+    });
+
+    assert.equal(existsSync(join(directory, 'started')), false, `the command ran, given ${named}`);
   }
 });
 
@@ -1406,29 +1710,51 @@ test('given a command that finishes inside its timeout, the result reports no ti
   assert.equal(result.exit, 3);
 });
 
-test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
-  const directory = scratch(t);
-  const command = fixture(directory, 'command', 'echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit 0');
+/** The last lines of a command `asItsTimeoutFires` holds for: they write its pid, then exit `code`. */
+const pidThenExit = (code) => `echo $$ > "$here/command.tmp" && /bin/mv "$here/command.tmp" "$here/command.pid"\nexit ${code}`;
 
-  // The timer is armed before the call first yields. Holding this thread until the command is a
-  // zombie, which Node has not reaped because its loop cannot run, leaves the timer and the exit
-  // both due when the loop resumes, and Node runs due timers before it reaps.
-  const call = adapt(directory, { command, timeout: 1 });
+/**
+ * What `call` settles on, where its command ends with `pidThenExit` and its timeout is 1 ms, once
+ * this thread has been held until that command is a zombie. The timer is armed before the call
+ * first yields. Holding this thread until the command is a zombie, which Node has not reaped
+ * because its loop cannot run, leaves the timer and the exit both due when the loop resumes, and
+ * Node runs due timers before it reaps.
+ */
+async function asItsTimeoutFires(directory, call) {
   const zombie = () => existsSync(join(directory, 'command.pid'))
     && spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'command.pid')], { encoding: 'utf8' }).stdout.startsWith('Z');
   // The wait holds the thread, so no test timeout can end it: it carries its own deadline, and a
   // command that never runs fails the test rather than holding the suite. The deadline is a
-  // judgment: the command, which only writes its pid and exits, has nothing to wait for.
+  // judgment: the command has nothing to wait for but a survivor's start, where it leaves one.
   const deadline = Date.now() + 5_000;
   while (!zombie() && Date.now() < deadline);
   if (!zombie()) {
     const outcome = await call.then((result) => JSON.stringify(result), (error) => error.message);
     assert.fail(`the command was not a zombie within 5,000 ms, so the race was not set up; the call settled with: ${outcome}`);
   }
-  const result = await call;
+  return call;
+}
+
+test('given a command that exits 0 on its own after its timeout is due but before L0 has seen either, the result reports no timeout and exit code 0', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const command = fixture(directory, 'command', pidThenExit(0));
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, timeout: 1 }));
 
   assert.equal(result.timedOut, false);
   assert.equal(result.exit, 0);
+});
+
+test('given a command that exits 3 on its own as its timeout fires, the process killed after that exit is recorded as a survivor kill, and the result carries exit 3 with no timeout', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${leave(TAIL, 'survivor')}\n${pidThenExit(3)}`);
+  const { state, emitter } = l0(directory);
+
+  const result = await asItsTimeoutFires(directory, adapt(directory, { command, emitter, timeout: 1 }));
+
+  assert.deepEqual(eventsIn(state).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }]);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 3);
 });
 
 test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
