@@ -40,7 +40,9 @@ export const streamPath = (directory) => join(directory, STREAM);
  * when it was emitted.
  *
  * `end` is idempotent, because the verb and L0's exit cleanup can each call it. A sink never
- * named writes what it held to standard error there, and any event after that as it arrives.
+ * named writes what it held to standard error there, and any event after that as it arrives. A
+ * reader of standard error that stops draining it holds either write for no longer than
+ * `UNDRAINED_BOUND`, and what it did not take is dropped (`writeWhole`).
  */
 export function openSink({ directory, run, now }) {
   required(run, 'run');
