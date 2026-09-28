@@ -758,6 +758,7 @@ for (const ending of ['exit 0', 'exit 1', 'throw', 'reject', ...HANDLED]) {
   });
 }
 
+// proves R-STATE-9
 test('given a dispatch still running when the caller receives SIGTERM, and a listener that keeps the caller running until its dispatch settles, the stream holds one dispatch end for it', ENDS_WITHIN, async (t) => {
   // The listener exits once both calls have settled, so the dispatch's call has done all it will.
   const after = "process.on('SIGTERM', async () => { while (settled < 2) await turn(); process.exit(3); });";
@@ -769,6 +770,7 @@ test('given a dispatch still running when the caller receives SIGTERM, and a lis
   assertEndedOnce(directory, streamOf(directory), 'd-1');
 });
 
+// proves R-STATE-9
 test('given a sink that accepts the dispatch\'s start and refuses every append after it, after the caller receives SIGTERM while the dispatch runs, a line on standard error names the unrecorded dispatch end, the dispatch and its card', ENDS_WITHIN, async (t) => {
   // The stream takes no append from the moment the dispatch is running.
   const refuse = (directory) => chmodSync(streamPath(join(directory, 'state')), 0o444);
@@ -782,6 +784,7 @@ test('given a sink that accepts the dispatch\'s start and refuses every append a
   assert.equal(named.length, 1, stderr);
 });
 
+// proves R-STATE-9, R-STATE-12
 test('given a sink that has no state directory yet, after the caller receives SIGTERM while a dispatch runs, its one dispatch end is on standard error with the other held events', ENDS_WITHIN, async (t) => {
   const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'unnamed', groups: true, dispatch: [1], spy: true }, { signal: 'SIGTERM' });
 
@@ -790,6 +793,7 @@ test('given a sink that has no state directory yet, after the caller receives SI
   assertEndedOnce(directory, eventLines(stderr), 'd-1');
 });
 
+// proves R-STATE-9, R-STATE-15
 test('the cleanup hands each command\'s step the exit code of its command: its own where it had exited, and a killed one\'s where the cleanup ended it', ENDS_WITHIN, async (t) => {
   // The first command exits 0 at once, and its census holds its group stopped. The second runs
   // until the cleanup kills it.
@@ -800,6 +804,7 @@ test('the cleanup hands each command\'s step the exit code of its command: its o
   assert.deepEqual([1, 2].map((label) => JSON.parse(read(directory, `exit.${label}`))), [{ exit: 0 }, { exit: 128 + constants.signals.SIGKILL }]);
 });
 
+// proves R-STATE-9, R-STATE-12
 test('given two dispatches still running when the caller receives SIGTERM, the stream holds one dispatch end for each', ENDS_WITHIN, async (t) => {
   const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1, 2], spy: true }, { signal: 'SIGTERM' });
 
@@ -824,6 +829,7 @@ const EXIT_UNREAPED = [
   'process.exit(0);',
 ].join('\n');
 
+// proves R-STATE-15
 test('given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
   const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, commands: { 1: 'exiting' }, after: EXIT_UNREAPED });
 
@@ -847,6 +853,16 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
     assert.match(ends[0].unread ?? '', /could not read the command's status/, JSON.stringify(ends[0]));
     assert.match(ends[0].unread, why);
   });
+
+  test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries the killed command's non-zero exit code`, ENDS_WITHIN, async (t) => {
+    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], ps, readTimeout: 300 }, { signal: 'SIGTERM' });
+
+    assert.equal(signal, 'SIGTERM', stderr);
+    await assertNoneAlive(directory);
+    assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
+    const ends = endsOf(streamOf(directory), 'd-1');
+    assert.deepEqual(ends.map(({ exit, unread }) => ({ exit, unread })), [{ exit: 128 + constants.signals.SIGKILL, unread: undefined }]);
+  });
 }
 
 test('the cleanup reads nothing of a group the call has already ended, though a zombie keeps it in being', ENDS_WITHIN, async (t) => {
@@ -867,6 +883,7 @@ test('the cleanup reads nothing of a group the call has already ended, though a 
   await assertNoneAlive(directory);
 });
 
+// proves R-STATE-15
 test('given a dispatch whose command exits 3 and is reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
   const after = "writeFileSync(join(directory, 'release'), '');";
 
@@ -878,6 +895,7 @@ test('given a dispatch whose command exits 3 and is reaped in the turn in which 
   assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
 });
 
+// proves R-STATE-12, R-STATE-15
 test('given a dispatch whose command exits 0 leaving its child in the group, reaped in the turn in which the caller calls process.exit(0), its one dispatch end carries 0 and follows the child\'s kill', ENDS_WITHIN, async (t) => {
   const after = "writeFileSync(join(directory, 'release'), '');";
 
@@ -893,6 +911,7 @@ test('given a dispatch whose command exits 0 leaving its child in the group, rea
   assert.ok(kill !== -1 && kill < events.indexOf(ends[0]), 'the child\'s kill was not recorded before the end');
 });
 
+// proves R-STATE-12, R-STATE-15
 test('given a dispatch whose command has exited 3 while a process outside its group holds its output open, after the caller receives SIGTERM its one dispatch end carries 3 and the record holds no entry for it', ENDS_WITHIN, async (t) => {
   // The command leaves its child in the group, and the caller is signalled once the adapter has
   // killed that child and waits on the output.
@@ -912,6 +931,7 @@ test('given a dispatch whose command has exited 3 while a process outside its gr
   assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
 });
 
+// proves R-STATE-15
 test('the cleanup hands a call\'s step the command\'s exit code where the caller ends in the turn the call settles', ENDS_WITHIN, async (t) => {
   const after = "writeFileSync(join(directory, 'release'), '');";
 
@@ -922,6 +942,7 @@ test('the cleanup hands a call\'s step the command\'s exit code where the caller
   assert.deepEqual(JSON.parse(read(directory, 'exit.1')), { exit: 3 });
 });
 
+// proves R-STATE-15
 test('given a dispatch whose command exits 3, when the caller calls process.exit(0) in the turn the dispatch settles, the stream holds its one dispatch end, carrying 3', ENDS_WITHIN, async (t) => {
   const after = "writeFileSync(join(directory, 'release'), '');";
 
@@ -932,6 +953,7 @@ test('given a dispatch whose command exits 3, when the caller calls process.exit
   assert.deepEqual(endsOf(streamOf(directory), 'd-1').map(({ exit }) => exit), [3]);
 });
 
+// proves R-STATE-9
 test('given a record that refuses the entry\'s removal, after the caller receives SIGTERM while a dispatch runs, its one dispatch end says the entry was kept and why', ENDS_WITHIN, async (t) => {
   // The state directory takes no new file from the moment the dispatch is running, so the record
   // cannot be rewritten, and the stream, which exists, still takes appends.

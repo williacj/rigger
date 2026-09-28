@@ -222,12 +222,16 @@ function cleanup() {
  * `{ unread }`, why its status could not be read. Where Node has reaped the command, Node says how
  * it ended. Otherwise the command is a zombie, since Node reaps no child while the cleanup runs,
  * and `leader` is the wait status `ps` read for it as `xstat` on the kill's last look: its own
- * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer,
- * `unread` says why, and nothing tells the command's own exit from the kill.
+ * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer, a
+ * leader the census found `stopped` and alive was ended by the cleanup's kill. Otherwise `unread`
+ * says why, and nothing tells the command's own exit from the kill: the command may have exited
+ * before the cleanup ran, and where the census's reads failed too, even a command the cleanup
+ * killed cannot be told from one that exited.
  */
-function endingOf(child, { leader, unread }) {
+function endingOf(child, { leader, unread, stopped }) {
   if (child.exitCode !== null) return { exit: child.exitCode };
   if (child.signalCode !== null) return { exit: signalled(child.signalCode) };
+  if (leader === undefined && stopped) return { exit: signalled('SIGKILL') };
   if (leader === undefined) return { unread: `the exit cleanup could not read the command's status: ${unread}` };
   // `ps` prints the wait status in hexadecimal. Its low seven bits are the signal that ended the
   // process, where one did, and the byte above them its exit code (wait(2): WTERMSIG, WEXITSTATUS).
@@ -705,7 +709,10 @@ function containNow(group, { ps, readTimeout }) {
     // The kill was sent on every look, and nothing is left to wait on.
     unread = error.message;
   }
-  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader, unread };
+  // A leader the census named was stopped and alive, and a stopped process cannot exit on its own,
+  // so the cleanup's kill is what ended it, whatever the last read could tell.
+  const stopped = survivors?.some(({ pid }) => pid === group) ?? false;
+  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader, unread, stopped };
 }
 
 /**
