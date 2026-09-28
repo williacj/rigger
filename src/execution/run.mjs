@@ -2,7 +2,7 @@
 // process adapter while recording the command's process group, and records the dispatch's end.
 // And L1's kill of recorded groups, which on a start ends what a dead engine's dispatches left.
 
-import { addGroup, holdsDispatch, readGroups, removeGroup, writeGroups } from './groups.mjs';
+import { addGroup, holdsDispatch, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
 import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
 /**
@@ -160,6 +160,8 @@ function refused(id, card, unrecorded, result) {
  * own where the caller gives them.
  *
  * A record that cannot be read as entries fails whole, naming its file, before anything is killed.
+ * Once it is read, the partial file a writer stopped before its rename left beside it goes, because
+ * `.rigger/` holds no file but the three things `ARCHITECTURE.md` names ("Failure model").
  * Every entry is tried whatever became of those before it. Afterwards the record keeps only the
  * entries whose group L0 could not confirm, because a later start may: L0 has confirmed every
  * other group empty, killed it, or found it is not the one recorded. The call then rejects naming
@@ -170,6 +172,7 @@ function refused(id, card, unrecorded, result) {
  */
 export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
   const entries = readGroups(directory);
+  removePartial(directory);
   if (entries.length === 0) return;
   const kept = [];
   const unconfirmed = [];

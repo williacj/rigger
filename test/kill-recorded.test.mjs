@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
@@ -284,7 +284,44 @@ test('after the call returns, the record holds no entry whose group it confirmed
   assert.deepEqual(readGroups(stateOf(directory)), []);
 });
 
-test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
+/**
+ * Leaves in `directory`'s state directory what a record writer stopped before its rename leaves:
+ * the partial file, torn part-way through an entry, beside the record as it was before the write.
+ */
+function leavePartial(directory) {
+  const state = stateOf(directory);
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
+}
+
+// proves R-STATE-4
+test('given a leftover partial record beside a record holding no entry, or beside no record, the call leaves no partial record in the state directory', SETTLES_WITHIN, async (t) => {
+  for (const record of ['[]', undefined]) {
+    const directory = scratch(t);
+    leavePartial(directory);
+    if (record !== undefined) writeFileSync(join(stateOf(directory), 'groups.json'), record);
+
+    await killIn(directory);
+
+    assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), record === undefined ? [] : ['groups.json'], `with the record ${record}`);
+  }
+});
+
+// proves R-STATE-4, R-STATE-10
+test('given a leftover partial record beside a record holding an entry, the call kills the entry\'s group, clears its entry, and leaves no partial record', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(directory, 'group');
+  writeGroups(stateOf(directory), [entryFor(started)]);
+  leavePartial(directory);
+
+  await killIn(directory);
+
+  assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
+  assert.deepEqual(readGroups(stateOf(directory)), []);
+  assert.deepEqual(readdirSync(stateOf(directory)).filter((file) => file.startsWith('groups.json')), ['groups.json']);
+});
+
+test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file',SETTLES_WITHIN, async (t) => {
   // A record torn part-way, JSON that is no list, entries missing a field or holding one of the
   // wrong type, a card that is no issue number, and a group id no dispatch's group can have: 1 is
   // launchd's.
