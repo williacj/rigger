@@ -142,8 +142,10 @@ and again once the group is empty, the harness takes three readings:
   tracking never did:
   - 119 and 120 `sleep 1` children of the `&` loop, named from a `ps` sample that held them but
     was not tracking them;
-  - 36 and 40 pids that no `ps` sample held at all, so they have no name. I judge them to be more
-    of the loop's `sleep 1` children, from their one-second spacing, but that is not measured.
+  - 36 and 40 entries with no name, because their pid was absent from the latest `ps` sample. In
+    run 3, 35 of the 36 pids appear under a name in another census entry; in run 4, 38 of the 40
+    do, one of them the survivor 6371. Those counts are measured, read from the runs' raw records
+    by [#355's round-2 review](https://github.com/williacj/rigger/pull/355#issuecomment-5861640410).
 - **Cargo.** The working-directory census saw pid 74625 at 89,599 ms, with its working directory
   under the Tauri tree. No `ps` sample held that pid, before or after, so its name, group and
   command line are unknown. It is the one process of cargo's that only the census saw.
@@ -2760,7 +2762,7 @@ Record `cargo-2026-09-28T00-20-16-207Z`. Group 51109; the direct child exited at
 | 63233 | clang | 51109 | 62519 | 179050–179808 | no |  | `/Library/Developer/CommandLineTools/usr/bin/clang -Wl,-exported_symbols_list -Wl,/private/tmp/c335/tauri/target/debug/deps/rustcxSQry0/list /private/tmp/c335/tauri/target/debug/deps/rustcxSQry0/symbol … (55332 chars)` |
 | 63291 | ld | 51109 | 63233 | 179123–179808 | no |  | `/Library/Developer/CommandLineTools/usr/bin/ld -demangle -lto_library /Library/Developer/CommandLineTools/usr/lib/libLTO.dylib -dynamic -dylib -arch arm64 -platform_version macos 11.0.0 27.0 -syslibro … (55514 chars)` |
 
-The working-directory census recorded 66 entries, of which 1 are pids `ps` tracking never saw:
+The working-directory census recorded 66 entries, of which 1 is a pid `ps` tracking never saw:
 
 | pid | name | pgid | seen (ms) | alive after group empty (ms) | `ps` tracked this pid | command line |
 |---:|---|---|---|---:|---|---|
