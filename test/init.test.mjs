@@ -664,3 +664,54 @@ test('given an origin remote carrying a credential and ending in no owner and na
   assert.ok(!ran.text.includes(secret), ran.text);
   assert.match(ran.text, /git remote get-url origin/);
 });
+
+/**
+ * `init` run over a repository whose `origin` is `url`, as the report it printed, the text of the
+ * config it wrote, and the `repo` that config names once loaded.
+ */
+async function initOver(url) {
+  const consumer = repository(url);
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+  assert.equal(ran.code, 0, ran.text);
+  const path = join(consumer, CONFIG);
+  return { ran, text: readFileSync(path, 'utf8'), repo: (await import(pathToFileURL(path))).default.repo };
+}
+
+for (const { url, userinfo } of [
+  { url: 'https://user:s3cret-token@git.example.invalid/widgets', userinfo: 'user:s3cret-token' },
+  { url: 'https://s3cret-token@github.com/widgets', userinfo: 's3cret-token' },
+]) {
+  test(`given the origin remote ${url.replace(userinfo, '<userinfo>')}, which carries userinfo and one path segment, init writes the placeholder and neither writes nor prints the userinfo`, async () => {
+    // AGENTS.md: never log a secret, and a config the consumer commits is read by more people than
+    // a log. The defect this catches is the owner and name read across the host, so the userinfo
+    // lands in `repo`, as `s3cret-token@git.example.invalid/widgets` did.
+    const { ran, text, repo } = await initOver(url);
+
+    // `ok` rather than `equal`, so a failure prints only the redacted name, never what was read.
+    assert.ok(repo === PLACEHOLDER.repo, `the config names \`${repo.replaceAll('s3cret-token', '<credential>')}\``);
+    for (const leaked of [userinfo, 's3cret-token']) {
+      assert.ok(!text.includes(leaked), 'the written config carries the credential');
+      assert.ok(!ran.text.includes(leaked), 'init printed the credential');
+    }
+  });
+}
+
+for (const [url, carrying] of [
+  ['https://user:tok@github.com/acme/widgets.git', 'a user and a token'],
+  ['https://tok@github.com/acme/widgets.git', 'a token alone'],
+]) {
+  test(`given an origin remote whose userinfo is ${carrying}, ahead of two path segments, init writes acme/widgets, without the userinfo`, async () => {
+    const { ran, text, repo } = await initOver(url);
+
+    assert.equal(repo, 'acme/widgets');
+    assert.ok(!text.includes('tok'), 'the written config carries the credential');
+    assert.ok(!ran.text.includes('tok'), 'init printed the credential');
+  });
+}
+
+test('an ssh:// remote reads as the owner and name at the end of its path', async () => {
+  // Real repositories configured through git, as the other spellings are above, because a string
+  // parsed by the same pattern would agree with it by construction.
+  assert.equal(await slugOf(repository('ssh://git@github.com/acme/widgets.git')), 'acme/widgets');
+  assert.equal(await initOver('ssh://git@github.com/acme/widgets.git').then(({ repo }) => repo), 'acme/widgets');
+});
