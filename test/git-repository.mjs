@@ -50,6 +50,10 @@ export function repositoryAt(root, files = {}) {
   gitIn(root, 'init', '-q');
   gitIn(root, 'config', 'user.email', 'fixture@example.invalid');
   gitIn(root, 'config', 'user.name', 'fixture');
+  // No commit here starts git's maintenance in the background, which writes under `.git` on its
+  // own time, so a test comparing what is under a repository races nothing but what it runs.
+  gitIn(root, 'config', 'maintenance.auto', 'false');
+  gitIn(root, 'config', 'gc.auto', '0');
   if (Object.keys(files).length > 0) {
     gitIn(root, 'add', '-A');
     gitIn(root, 'commit', '-qm', 'fixture');

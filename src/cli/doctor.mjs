@@ -1,29 +1,42 @@
 // ABOUTME: The `doctor` verb: what it asks the tool that owns each fact, what it reports one line
 // at a time, and the source tree it refuses to run against.
 
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
-import { COLUMNS, readRunner } from '../substrate/forge/runners.mjs';
-import { NOT_STARTED } from '../substrate/process.mjs';
+import { COLUMNS, FORGE_TIMEOUT, readRunner } from '../substrate/forge/runners.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 import { recording } from './recording.mjs';
 
 /**
- * Runs a command and hands back what it answered, which is every authority this verb asks but the
- * forge. The forge is L0's, and `ghAuth` asks it through the forge adapter's read runner.
+ * Runs a command through L0's process adapter and hands back what it answered: its exit code as
+ * `status`, its output as text, and whether the timeout ended it. This is every authority the
+ * guard and `doctor` ask but the forge, which `ghAuth` asks through the forge adapter's read
+ * runner. The command runs in a group of its own, ended at `timeout`, and every process it leaves
+ * is killed and recorded through `emitter`. A command that never started, and a kill the sink
+ * refused, reject as the adapter rejects, each failure's `code` naming which.
  *
  * The environment is the one `gitEnvironment` hands a git child. A `doctor` run from inside a git
  * hook, a `git rebase --exec` or a `git bisect run` inherits variables naming the repository that
  * started it, and git honours those over the directory this verb was pointed at. Every authority
  * here is asked about a named directory, so none may be redirected by the environment.
  */
-const asked = (command, args) => spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
+async function asked(command, args, { emitter, timeout }) {
+  const { exit, timedOut, stdout, stderr } = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
+  return { status: exit, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
+}
+
+/**
+ * How long the guard's `git` and each agent CLI probe may run before L0 kills its group. Every
+ * call that is not a dispatch passes the one L0 constant the forge adapter states (the
+ * architect's ruling 2, (g), on #332), and a test passes a value of its own.
+ */
+const CALL_TIMEOUT = FORGE_TIMEOUT;
 
 /**
  * The package this code is part of, which is the source tree `R-SAFE-5` is about.
@@ -99,7 +112,8 @@ export function sameTree(target, packageRoot = PACKAGE) {
 }
 
 /**
- * The root of the repository a directory sits in, as git names it, or null where git names none.
+ * The root of the repository a directory sits in, as git names it, as `{ root }`, or `{ root: null,
+ * why }` where git names none, `why` saying in one line what git answered instead.
  *
  * Git owns what a repository is, so it is asked (`D16` rule 1). Null rather than the directory
  * handed in, because a fallback is this code answering the same question a weaker way: the whole
@@ -109,12 +123,26 @@ export function sameTree(target, packageRoot = PACKAGE) {
  *
  * Where git's answer can differ from the directory handed in, measured by asking rather than
  * reasoned about, with git 2.55.0: it walks up, so a run from `docs/` inside a checkout answers
- * the checkout; a directory that is no repository answers 128 with nothing on stdout; and a host
- * with no git at all answers a null status, which is why the status is read before the output.
+ * the checkout; and a directory that is no repository answers 128 with nothing on stdout, which
+ * is why the status is read before the output. A host with no git at all never starts it, and a
+ * git its timeout ended answers nothing that can be read.
+ *
+ * Git is asked through L0 (`asked`), with `emitter` for L0's kills and `timeout` for the call, and
+ * `ask` stands in for that in tests. A kill the sink refused rejects, as the adapter rejects.
  */
-export function repoRoot(dir, ask = asked) {
-  const said = ask('git', ['-C', dir, 'rev-parse', '--show-toplevel']);
-  return said.status === 0 ? real(said.stdout.trim()) : null;
+export async function repoRoot(dir, { ask = asked, emitter, timeout = CALL_TIMEOUT } = {}) {
+  const args = ['-C', dir, 'rev-parse', '--show-toplevel'];
+  const spelled = `\`${['git', ...args].join(' ')}\``;
+  let said;
+  try {
+    said = await ask('git', args, { emitter, timeout });
+  } catch (failure) {
+    if (failure.code !== NOT_STARTED) throw failure;
+    return { root: null, why: `${spelled} could not be run here: ${oneLine(failure.message)}` };
+  }
+  if (said.timedOut) return { root: null, why: `the timeout of ${timeout} ms ended ${spelled}` };
+  if (said.status !== 0) return { root: null, why: `${spelled} exited ${said.status}: ${firstLine(said)}` };
+  return { root: real(said.stdout.trim()) };
 }
 
 /**
@@ -218,17 +246,6 @@ const wentWrong = (threw) => {
 };
 
 /**
- * Why a command answered no status.
- *
- * Measured rather than reasoned: `spawnSync` answers a command it could not start at all with a
- * null status and an `error` carrying the code, where a command that ran and refused answers a
- * number. `test/doctor.test.mjs` runs a name that is not there and asserts that shape before it
- * relies on it. A status read without that distinction calls a tool nobody has as a tool that
- * answered, which is the green no one measured.
- */
-const reason = (said) => said.error?.code ?? said.error?.message ?? 'it answered no status at all';
-
-/**
  * Whether `gh` is authenticated, which is `gh auth status`'s answer and not this code's.
  *
  * `D16` rule 1: gh owns the fact. Its exit status is the whole of what is read — measured with
@@ -295,17 +312,29 @@ const folded = (verdicts) => {
  * - an answer carrying no `loggedIn` this can read is reported unread. That is not a measured
  *   version of this CLI but the shape a later one could take, and reading a missing key as
  *   `false` would report a consumer signed out on a day the CLI merely reworded itself.
+ *
+ * Each CLI is asked through L0 (`asked`), with `emitter` for L0's kills and `timeout` for the
+ * call. A CLI L0 could not start, or whose timeout ended it, is reported unread, and a kill the
+ * sink refused rejects, as the adapter rejects. `ask` stands in for that in tests.
  */
-export function agentAuth({ ask = asked, clis = AGENT_CLI } = {}) {
+export async function agentAuth({ ask = asked, clis = AGENT_CLI, emitter, timeout = CALL_TIMEOUT } = {}) {
   const name = 'agent CLI authentication';
   const verdicts = [];
   const lines = [];
   for (const [command, ...args] of Object.values(clis)) {
-    const said = ask(command, args);
     const spelled = `\`${[command, ...args].join(' ')}\``;
-    if (said.status === null) {
+    let said;
+    try {
+      said = await ask(command, args, { emitter, timeout });
+    } catch (failure) {
+      if (failure.code !== NOT_STARTED) throw failure;
       verdicts.push(null);
-      lines.push(`${spelled} could not be run here: ${reason(said)}`);
+      lines.push(`${spelled} could not be run here: ${oneLine(failure.message)}`);
+      continue;
+    }
+    if (said.timedOut) {
+      verdicts.push(null);
+      lines.push(`the timeout of ${timeout} ms ended ${spelled}, so nothing was read from it`);
     } else if (typeof states(said.stdout) !== 'boolean') {
       verdicts.push(null);
       lines.push(`${spelled} exited ${said.status} and stated no \`loggedIn\`, so nothing was read from it`);
@@ -364,6 +393,16 @@ export async function consumerConfig(target) {
 }
 
 /**
+ * The failed line for the check `name`, whose forge read threw `threw`, carrying the adapter's
+ * message. A kill the sink refused is no failed read, and is thrown on, told apart by its kind:
+ * it stops `doctor` before its next call (the architect's ruling 3, §4, on #332).
+ */
+function failedRead(name, threw) {
+  if (threw?.code === EVENT_REFUSED) throw threw;
+  return { name, ok: false, detail: wentWrong(threw) };
+}
+
+/**
  * What the forge adapter's report of other repositories says of the board numbered `project`, or
  * null where the board holds nothing from outside the repository. It names the other repositories
  * and the count of items that cannot be read, and never the repository itself. `setup-board`
@@ -409,7 +448,7 @@ export async function boardSharing({ target = process.cwd(), ask, emitter } = {}
   try {
     held = await readsOf(config, { send: ask, emitter }).readOtherRepositories();
   } catch (threw) {
-    return { name, ok: false, detail: wentWrong(threw) };
+    return failedRead(name, threw);
   }
   const shared = sharedWith(config.board.project, held);
   return { name, ok: shared === null, detail: shared ?? `board ${config.board.project} holds nothing from outside ${config.repo}` };
@@ -425,7 +464,7 @@ async function reachability(config, via) {
   try {
     await readsOf(config, via).readFieldTypes();
   } catch (threw) {
-    return { name, ok: false, detail: wentWrong(threw) };
+    return failedRead(name, threw);
   }
   return { name, ok: true, detail: `board ${config.board.project} can be read` };
 }
@@ -444,7 +483,7 @@ async function columns(config, via) {
       await readsOf(config, via, { ...config.board, columns: { [key]: display } }).readColumns();
       lines.push({ name, ok: true, detail: `${display} is an option of board ${config.board.project}'s columns` });
     } catch (threw) {
-      lines.push({ name, ok: false, detail: wentWrong(threw) });
+      lines.push(failedRead(name, threw));
     }
   }
   return lines;
@@ -482,7 +521,7 @@ async function priority(config, via) {
       ? (await boardOf('doctor', { repo: config.repo, ...config.board }, via)).columns.options.map((option) => option.name)
       : (await reads.readFields()).find((select) => select.name === declared.field).options;
   } catch (threw) {
-    return { name, ok: false, detail: wentWrong(threw) };
+    return failedRead(name, threw);
   }
   const unasked = held.filter((option) => !declared.options.includes(option));
   const missing = declared.options.filter((option) => !held.includes(option));
@@ -557,10 +596,11 @@ export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChec
 /**
  * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
  * verb prints and exits with where that is the source tree this Rigger is running from, or a tree
- * git cannot name (`R-SAFE-5`). Nothing but git is asked before this answers.
+ * git cannot name (`R-SAFE-5`). Nothing but git is asked before this answers, through L0 with
+ * `emitter` and `timeout` (`repoRoot`), and a kill the sink refused rejects.
  */
-export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PACKAGE, ask } = {}) {
-  const named = repoRoot(target, ask);
+export async function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PACKAGE, ask, emitter, timeout } = {}) {
+  const { root: named, why } = await repoRoot(target, { ask, emitter, timeout });
   // The paths are compared whatever git said, so a tree the comparison can name is named
   // precisely even where git declines — a run from inside the installed package is the case.
   const here = named ?? real(target);
@@ -582,7 +622,7 @@ export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PA
   if (named === null) {
     return {
       refusal: {
-        text: `rigger ${verb}: git names no repository at ${here}, so Rigger cannot tell it from the `
+        text: `rigger ${verb}: git names no repository at ${here} (${why}), so Rigger cannot tell it from the `
           + 'source tree this Rigger is running from, and it never runs against that (`R-SAFE-5`). '
           + 'Run it in a git repository, with git on the path.',
         code: 1,
@@ -593,20 +633,46 @@ export function sourceTreeGuard(verb, { target = process.cwd(), packageRoot = PA
 }
 
 /**
+ * The repository a verb named `verb` serves, settled for the sink `recording` opened: the guard
+ * asks git with an `L0` emitter on `sink`, and where it accepts the target, `name` names the state
+ * directory there, which writes every event the sink held. As `{ named }`, or `{ refusal }`, what
+ * the verb prints and exits with where the guard refused, or where the state directory refused
+ * what the sink held, which names each event that went unrecorded (`R-RECORD-9`).
+ */
+export async function settled(verb, { sink, name }, options = {}) {
+  const guarded = await sourceTreeGuard(verb, { ...options, emitter: sink.emitter({ layer: 'L0' }) });
+  if (guarded.refusal) return guarded;
+  try {
+    name(guarded.named);
+  } catch (refused) {
+    return { refusal: { text: `rigger ${verb}: ${refused.message}`, code: 1 } };
+  }
+  return guarded;
+}
+
+/**
  * What the command prints for a `doctor` run, and the status it exits with. Each check is handed
  * an `L0` emitter on the sink `recording` opens, for L0's kills in the forge calls it makes.
  */
 export const doctor = (options) => recording((opened) => checking(opened, options));
 
-/** `doctor`'s work, recording through `sink` once `name` has named its state directory. */
-async function checking({ sink, name }, {
+/** `doctor`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
+async function checking(opened, {
   target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
 } = {}) {
-  const { named, refusal } = sourceTreeGuard('doctor', { target, packageRoot, ask });
+  const { named, refusal } = await settled('doctor', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
-  name(named);
-  const emitter = sink.emitter({ layer: 'L0' });
+  const emitter = opened.sink.emitter({ layer: 'L0' });
   const results = [];
-  for (const check of checks) results.push(await check({ target: named, packageRoot, ask, emitter }));
+  for (const check of checks) {
+    try {
+      results.push(await check({ target: named, packageRoot, ask, emitter }));
+    } catch (failure) {
+      // A kill the sink refused stops the verb before its next call, and is never a failed check
+      // (the architect's ruling 3, §4, on #332): the failure's kind says so, not its message.
+      if (failure.code !== EVENT_REFUSED) throw failure;
+      return { text: `rigger doctor: ${failure.message}`, code: 1 };
+    }
+  }
   return report(named, results.flat().filter((result) => result !== null));
 }
