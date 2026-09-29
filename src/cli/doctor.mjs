@@ -16,9 +16,9 @@ import { recording } from './recording.mjs';
 /**
  * Runs a command through L0's process adapter and hands back what it answered: its exit code as
  * `status`, its output as text, and whether the timeout ended it. This is every authority the
- * guard and `doctor` ask but the forge, which `ghAuth` asks through the forge adapter's read
- * runner. The command runs in a group of its own, ended at `timeout`, and every process it leaves
- * is killed and recorded through `emitter`. A command that never started, and a kill the sink
+ * guard, `doctor` and `init` ask but the forge, which `ghAuth` asks through the forge adapter's
+ * read runner. The command runs in a group of its own, ended at `timeout`, and every process it
+ * leaves is killed and recorded through `emitter`. A command that never started, and a kill the sink
  * refused, reject as the adapter rejects, each failure's `code` naming which.
  *
  * The environment is the one `gitEnvironment` hands a git child. A `doctor` run from inside a git
@@ -26,17 +26,17 @@ import { recording } from './recording.mjs';
  * started it, and git honours those over the directory this verb was pointed at. Every authority
  * here is asked about a named directory, so none may be redirected by the environment.
  */
-async function asked(command, args, { emitter, timeout }) {
+export async function asked(command, args, { emitter, timeout }) {
   const { exit, timedOut, stdout, stderr } = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
   return { status: exit, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
 }
 
 /**
- * How long the guard's `git` and each agent CLI probe may run before L0 kills its group. Every
- * call that is not a dispatch passes the one L0 constant the forge adapter states (the
- * architect's ruling 2, (g), on #332), and a test passes a value of its own.
+ * How long the guard's `git`, `init`'s read of `origin`, and each agent CLI probe may run before
+ * L0 kills its group. Every call that is not a dispatch passes the one L0 constant the forge
+ * adapter states (the architect's ruling 2, (g), on #332), and a test passes a value of its own.
  */
-const CALL_TIMEOUT = FORGE_TIMEOUT;
+export const CALL_TIMEOUT = FORGE_TIMEOUT;
 
 /**
  * The package this code is part of, which is the source tree `R-SAFE-5` is about.
@@ -130,19 +130,31 @@ export function sameTree(target, packageRoot = PACKAGE) {
  * Git is asked through L0 (`asked`), with `emitter` for L0's kills and `timeout` for the call, and
  * `ask` stands in for that in tests. A kill the sink refused rejects, as the adapter rejects.
  */
-export async function repoRoot(dir, { ask = asked, emitter, timeout = CALL_TIMEOUT } = {}) {
-  const args = ['-C', dir, 'rev-parse', '--show-toplevel'];
+export async function repoRoot(dir, options = {}) {
+  const { stdout, why } = await gitAnswer(['-C', dir, 'rev-parse', '--show-toplevel'], options);
+  return why === undefined ? { root: real(stdout.trim()) } : { root: null, why };
+}
+
+/**
+ * What git printed on standard output for `args`, as `{ stdout }`, where it ran and exited 0, or
+ * `{ why }`, one line saying what it answered instead: that it could not be run, that its timeout
+ * ended it, or the status it exited with and the first line it said.
+ *
+ * Git is asked through L0 (`asked`), with `emitter` for L0's kills and `timeout` for the call, and
+ * `ask` stands in for that in tests. A kill the sink refused rejects, as the adapter rejects.
+ */
+export async function gitAnswer(args, { ask = asked, emitter, timeout = CALL_TIMEOUT } = {}) {
   const spelled = `\`${['git', ...args].join(' ')}\``;
   let said;
   try {
     said = await ask('git', args, { emitter, timeout });
   } catch (failure) {
     if (failure.code !== NOT_STARTED) throw failure;
-    return { root: null, why: `${spelled} could not be run here: ${oneLine(failure.message)}` };
+    return { why: `${spelled} could not be run here: ${oneLine(failure.message)}` };
   }
-  if (said.timedOut) return { root: null, why: `the timeout of ${timeout} ms ended ${spelled}` };
-  if (said.status !== 0) return { root: null, why: `${spelled} exited ${said.status}: ${firstLine(said)}` };
-  return { root: real(said.stdout.trim()) };
+  if (said.timedOut) return { why: `the timeout of ${timeout} ms ended ${spelled}` };
+  if (said.status !== 0) return { why: `${spelled} exited ${said.status}: ${firstLine(said)}` };
+  return { stdout: said.stdout };
 }
 
 /**
@@ -594,6 +606,17 @@ export function report(where, results) {
 export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing];
 
 /**
+ * What a verb named `verb` prints and exits with where `here` and the source tree this Rigger is
+ * running from are one tree, as `sameTree` answers it (`R-SAFE-5`).
+ */
+export const sourceTreeRefusal = (verb, here) => ({
+  text: `rigger ${verb}: ${here} is the source tree this Rigger is running from, and Rigger `
+    + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
+    + 'from there.',
+  code: 1,
+});
+
+/**
  * The repository a verb named `verb` was pointed at, as `{ named }`, or `{ refusal }`, what the
  * verb prints and exits with where that is the source tree this Rigger is running from, or a tree
  * git cannot name (`R-SAFE-5`). Nothing but git is asked before this answers, through L0 with
@@ -604,16 +627,7 @@ export async function sourceTreeGuard(verb, { target = process.cwd(), packageRoo
   // The paths are compared whatever git said, so a tree the comparison can name is named
   // precisely even where git declines — a run from inside the installed package is the case.
   const here = named ?? real(target);
-  if (sameTree(here, packageRoot)) {
-    return {
-      refusal: {
-        text: `rigger ${verb}: ${here} is the source tree this Rigger is running from, and Rigger `
-          + 'never runs against that (`R-SAFE-5`). Install the package outside this tree and run it '
-          + 'from there.',
-        code: 1,
-      },
-    };
-  }
+  if (sameTree(here, packageRoot)) return { refusal: sourceTreeRefusal(verb, here) };
   // A tree git cannot name is refused rather than checked, because the comparison above is only
   // as good as the name it was given: asked about `<repo>/src` rather than `<repo>`, it answers
   // that an engine in `<repo>/node_modules` is a different tree, and the run goes ahead with the
