@@ -82,6 +82,17 @@ async function gone(pid, within = 10_000) {
   return !alive(pid);
 }
 
+/**
+ * Settles once `child` has exited, killing it first where it has not: a process that has exited
+ * spawns nothing more.
+ */
+function ended(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return undefined;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGKILL');
+  return exited;
+}
+
 /** The environment the bin runs under: `directory` first on PATH, ahead of the refusing `gh`. */
 const withFirst = (directory) => ({ ...gitEnvironment(), PATH: `${directory}${delimiter}${process.env.PATH}` });
 
@@ -204,21 +215,25 @@ function terminatingInSpawn(directory) {
  * (`terminatingInSpawn`).
  */
 async function endsTheChildOnSigterm(t, verb, { inSpawn = false } = {}) {
+  // Teardown hooks run in the order they are registered. This one is registered before `holding`'s
+  // sweep, so a verb the test left running is dead before the sweep looks for its fixture's
+  // processes, and cannot spawn a stand-in after it.
+  let running;
+  t.after(() => running && ended(running));
   const directory = holding(t);
   hanging(directory);
   const { where } = consumer();
   const loaded = inSpawn ? ['--import', terminatingInSpawn(directory)] : [];
-  const running = spawn(process.execPath, [...loaded, bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => running.kill('SIGKILL'));
+  running = spawn(process.execPath, [...loaded, bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
   let said = '';
   running.stdout.on('data', (chunk) => (said += chunk));
   running.stderr.on('data', (chunk) => (said += chunk));
-  const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
+  const exited = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
 
-  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), ended]);
+  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), exited]);
   assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said}`);
   if (!inSpawn) running.kill('SIGTERM');
-  const { code, signal } = await ended;
+  const { code, signal } = await exited;
 
   assert.equal(signal, 'SIGTERM', `exited ${code}: ${said}`);
   const [child] = childrenIn(directory);
