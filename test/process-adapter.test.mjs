@@ -1981,16 +1981,47 @@ test('a kill of a chain reads a number of rows of the table that grows with the 
   const depth = 200;
   const directory = holding(t);
   // The stand-in answers every read as `ps` does, and adds the rows each of the kill's reads, the
-  // reads that ask for `ppid`, printed to `$here/rows`, one line per read.
-  const ps = fixture(directory, 'ps', [
-    'case "$*" in *ppid=*)',
-    '  table=$(/bin/ps "$@"); status=$?',
-    '  [ -n "$table" ] && printf "%s\\n" "$table"',
-    '  printf "%s\\n" "$table" | /usr/bin/grep -c . >> "$here/rows"',
-    '  exit $status ;;',
-    'esac',
-    'exec /bin/ps "$@"',
-  ].join('\n'));
+  // reads that ask for `ppid`, printed to `$here/rows`, one line per read. The kill makes one read
+  // a level, so what a read costs is paid two hundred times over. So the stand-in is compiled and
+  // starts `ps` and nothing else: a shell script counting with `grep` starts four or five
+  // processes a read, and under load two hundred of those take longer than the read timeout.
+  const ps = compiled(directory, 'ps', [
+    '#include <stdio.h>',
+    '#include <string.h>',
+    '#include <sys/wait.h>',
+    '#include <unistd.h>',
+    'int main(int argc, char **argv) {',
+    '  int kill = 0;',
+    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "ppid=")) kill = 1;',
+    '  if (!kill) { execv("/bin/ps", argv); return 127; }',
+    '  int out[2];',
+    '  if (pipe(out) != 0) return 127;',
+    '  pid_t pid = fork();',
+    '  if (pid < 0) return 127;',
+    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv("/bin/ps", argv); _exit(127); }',
+    '  close(out[1]);',
+    '  char buffer[65536];',
+    '  ssize_t got;',
+    '  long rows = 0;',
+    '  char last = \'\\n\';',
+    '  while ((got = read(out[0], buffer, sizeof buffer)) > 0) {',
+    '    for (ssize_t i = 0; i < got; i++) { if (buffer[i] == \'\\n\' && last != \'\\n\') rows++; last = buffer[i]; }',
+    '    for (ssize_t sent = 0, wrote; sent < got; sent += wrote) if ((wrote = write(1, buffer + sent, got - sent)) < 0) return 127;',
+    '  }',
+    '  if (last != \'\\n\') rows++;',
+    '  int status;',
+    '  if (waitpid(pid, &status, 0) != pid) return 127;',
+    '  char here[4096], path[4608];',
+    '  snprintf(here, sizeof here, "%s", argv[0]);',
+    '  *strrchr(here, \'/\') = 0;',
+    '  snprintf(path, sizeof path, "%s/rows", here);',
+    '  FILE *file = fopen(path, "a");',
+    '  if (file == NULL) return 127;',
+    '  fprintf(file, "%ld\\n", rows);',
+    '  fclose(file);',
+    '  return WIFEXITED(status) ? WEXITSTATUS(status) : 127;',
+    '}',
+  ]);
 
   const { events } = await recorded(directory, { command: chain(directory, depth), ps, readTimeout: 10_000 });
 
