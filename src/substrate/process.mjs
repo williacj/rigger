@@ -687,9 +687,16 @@ function runNow(ps, args, remaining, timeout) {
  * kill then ends it. So before that kill the group is read once more, and where it still holds a
  * member that is not a zombie, or signal 0 reaches it and the read fails or lists nothing until
  * `readTimeout`, the kill of the group is handed back beside the processes the kill named, saying
- * which (`outlived`). A process that joins the group after that read is ended by the group's kill
- * unrecorded, and so is one the table hides from every read while listing the group's zombies
- * (`outlived` says why no read can find it).
+ * which (`outlived`). One the table hides from every read while listing the group's zombies is
+ * ended by the group's kill unrecorded (`outlived` says why no read can find it).
+ *
+ * One window is also excluded: a process that joins the group after L0's last read of it and is
+ * ended by L0's next kill, or that joins while those reads fail, is ended unrecorded. Here L0's
+ * last read is `outlived`'s, and the next kill is `ended`'s, which reads nothing it records.
+ * No read can tell such a joiner from a group holding only zombies (`D16` rule 3): signal 0
+ * reaches both, and once the kill has ended the joiner and a parent outside the group has reaped
+ * it, the table holds only the zombies both leave behind. Recording the kill of the group whenever
+ * that could have happened would record it for every group left holding only zombies.
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
@@ -706,6 +713,8 @@ async function contain(group, { ps, readTimeout }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
+  // L0's last read of the group it records from. A process that joins after it, or while its
+  // reads fail, is ended by `ended`'s kill unrecorded: the window excluded above.
   const left = unnamed === undefined ? await within((deadline) => outlived(group, readTimeout, deadline), readTimeout) : undefined;
   await ended(group, ps, readTimeout);
   return killsOf(group, { dead, unnamed, left }, killed);
@@ -720,10 +729,15 @@ async function contain(group, { ps, readTimeout }, killed) {
  * records the kill of the group where a census or a kill left out a live member or its reads
  * failed (`outlived`), but for the one case no read can find. Unlike `contain`, it also records
  * the kill of the group where a process joined the group after that last read and the
- * confirmation read it live, which it reads before its first kill (`emptied`). One that joins
- * after a read of the confirmation and is killed before the next, or where its reads fail, goes
- * unrecorded, as one that joins after the last read does in `contain`: a group left holding only
- * zombies answers those reads as a group that held such a joiner does.
+ * confirmation read it live, which it reads before its first kill (`emptied`).
+ *
+ * One window is also excluded, as in `contain`: a process that joins the group after L0's last
+ * read of it and is ended by L0's next kill, or that joins while those reads fail, is ended
+ * unrecorded. Here L0's last read is whichever of the confirmation's reads came before that kill.
+ * No read can tell such a joiner from a group holding only zombies (`D16` rule 3): signal 0
+ * reaches both, and once the kill has ended the joiner and a parent outside the group has reaped
+ * it, the table holds only the zombies both leave behind. Recording the kill of the group whenever
+ * that could have happened would record it for every group left holding only zombies.
  *
  * Where the confirmation's reads fail or run out of time, the group has had the kill on every look
  * until then, and the cleanup goes on: it cannot wait longer on a process table it cannot read.
