@@ -1,7 +1,8 @@
 // ABOUTME: Fixtures for tests that start real processes: a scratch directory torn down with every
-// process naming it, shell scripts that live in it, children they leave alive or that outlive a
-// timeout, reads of what those scripts leave behind and of a process's start time, a standard error
-// nothing drains, and a wait on a condition that ends with its test.
+// process naming it, shell scripts that live in it, `git` stand-ins put first on PATH, children
+// they leave alive or that outlive a timeout, reads of what those scripts leave behind and of a
+// process's start time, a standard error nothing drains, and a wait on a condition that ends with
+// its test.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -193,3 +194,29 @@ export const UNKILLED = {
 
 /** Fails the test where the timeout ended an `outliving` command before it was ready. */
 export const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
+
+/** The git this host runs, by its absolute path, which a stand-in hands every call on to. */
+export const GIT = execFileSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).trim();
+
+/**
+ * A `git` stand-in in `directory` that answers as the real git does, then leaves a child alive,
+ * whose pid it writes to `child-<the stand-in's pid>.pid`, and exits with git's status.
+ */
+export const gitLeavingChild = (directory) => fixture(directory, 'git', [`'${GIT}' "$@"`, 'status=$?', leave(TAIL, 'child-$$'), 'exit $status'].join('\n'));
+
+/** Runs `body` with `directory` first on this process's PATH, and puts PATH back after. */
+export async function withFirstOnPath(directory, body) {
+  const held = process.env.PATH;
+  process.env.PATH = `${directory}:${held}`;
+  try {
+    return await body();
+  } finally {
+    process.env.PATH = held;
+  }
+}
+
+/**
+ * A `git` stand-in in `directory` that never answers: it leaves a child alive, writes its own pid
+ * to `git.pid`, marks `ready`, and waits on the child, which runs until killed.
+ */
+export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));

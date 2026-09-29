@@ -16,7 +16,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
-import { alive, childrenIn, fixture, gone, holding, leave, OUTLIVED, read, ready, TAIL, until } from './process-fixtures.mjs';
+import { alive, childrenIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, withFirstOnPath } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
@@ -68,30 +68,10 @@ function holdsChildKill(events, directory, said) {
   assert.equal(kills[0].cmd, `/usr/bin/tail -f ${directory}/hold`, said);
 }
 
-/** The git this host runs, by its absolute path, which a stand-in hands every call on to. */
-const GIT = execFileSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).trim();
-
-/**
- * A `git` stand-in in `directory` that answers as the real git does, then leaves a child alive,
- * whose pid it writes to `child-<the stand-in's pid>.pid`, and exits with git's status.
- */
-const gitLeavingChild = (directory) => fixture(directory, 'git', [`'${GIT}' "$@"`, 'status=$?', leave(TAIL, 'child-$$'), 'exit $status'].join('\n'));
-
 /** An `L0` emitter that keeps every event it is given, in `events`. */
 function keeping() {
   const events = [];
   return { events, emit: (event, fields) => events.push({ event, ...fields }) };
-}
-
-/** Runs `body` with `directory` first on this process's PATH, and puts PATH back after. */
-async function withFirstOnPath(directory, body) {
-  const held = process.env.PATH;
-  process.env.PATH = `${directory}:${held}`;
-  try {
-    return await body();
-  } finally {
-    process.env.PATH = held;
-  }
 }
 
 // proves R-STATE-7, R-STATE-12
@@ -184,12 +164,6 @@ test('given a git stand-in for the guard that leaves a child alive, a target the
   assert.match(ran.err, /rigger\.config\.mjs/, `the config was not refused, so this proves nothing: ${said}`);
   holdsChildKill(readEvents(state), directory, said);
 });
-
-/**
- * A `git` stand-in in `directory` that never answers: it leaves a child alive, writes its own pid
- * to `git.pid`, marks `ready`, and waits on the child, which runs until killed.
- */
-const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
 /** The name and command line `ps` reads for `pid`, as L0's census reads them. */
 function described(pid) {
