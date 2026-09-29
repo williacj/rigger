@@ -10,12 +10,29 @@ const DEFAULT_CONCURRENCY = 3;
 
 /**
  * What the loop and the claim-only call share over the board `config` names: N, the claims held
- * in memory, L3's events, and the steps that take a claim, start it and release it. The arguments
- * are `loop`'s, less the dispatch.
+ * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
+ * it. The arguments are `loop`'s, less the dispatch.
+ *
+ * `kill` is L1's kill of the process groups a dead engine left, injected. A handle is refused
+ * where it is not a function, when the handle is built, because a start that could not kill has
+ * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
+ * "Failure model").
  */
-function claiming({ config, board, decide, l2, sink }) {
+function claiming({ config, board, decide, l2, sink, kill }) {
+  if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
   const claims = new Set();
+  let killing;
+
+  /**
+   * Settles once the start's kill has settled, calling it on this handle's first call and never
+   * again, and rejects with its failure on that call and every later one: a kill that failed
+   * stops the start, and nothing on this handle then records or reads.
+   */
+  const killed = () => {
+    killing ??= (async () => kill())();
+    return killing;
+  };
 
   /**
    * Appends one of L3's events, under `card` where it concerns one. An append the sink refuses
@@ -29,6 +46,7 @@ function claiming({ config, board, decide, l2, sink }) {
   return {
     concurrency,
     claims,
+    killed,
     record,
     refused,
 
@@ -41,9 +59,10 @@ function claiming({ config, board, decide, l2, sink }) {
      * event's refusal where the sink refused it. A trigger is no start, so its refusal stops
      * nothing: each start still tries its own event, which is what names the cards not started,
      * and the refusal is reported beside theirs. A read that fails rejects with the read's own
-     * error, and no card is claimed.
+     * error, and no card is claimed. It first awaits the start's kill, as `killed` says.
      */
     take: async (limit) => {
+      await killed();
       const failures = [];
       try {
         record('trigger', { trigger: 'pull' });
@@ -119,8 +138,10 @@ function released(release, claim, failure) {
  * declared columns by key, and `readPriority()` answers the cards with their priority and the
  * declared order, which is what L0 hands L3 for the pull order. `decide` is L2's next action for a
  * card, and `l2` is L2's column changes. `dispatch({ card, kind })` is L1's, injected (the
- * architect's ruling 1, B5), and answers the dispatch's result or throws. `sink` is L5's, and L3
- * writes its own events through it under layer `L3`:
+ * architect's ruling 1, B5), and answers the dispatch's result or throws. `kill()` is L1's kill of
+ * recorded process groups, injected, and the first call on the handle awaits it before L3
+ * records or reads anything, as `claiming` says. `sink` is L5's, and L3 writes its own events
+ * through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
  * - `trigger`, with `trigger` naming which fired: `pull` each time the pull trigger fires, before
@@ -134,8 +155,8 @@ function released(release, claim, failure) {
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
  */
-export function loop({ config, board, decide, l2, dispatch, sink }) {
-  const { concurrency, claims, record, refused, take, start, release } = claiming({ config, board, decide, l2, sink });
+export function loop({ config, board, decide, l2, dispatch, sink, kill }) {
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, decide, l2, sink, kill });
 
   /**
    * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
@@ -211,8 +232,10 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
      *
      * A pull that fails stops no other. Once the run has ended, every failed pull is reported in
      * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
+     * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
     run: async () => {
+      await killed();
       record('run.start', { concurrency });
       idle = false;
       const failures = [];
@@ -229,9 +252,9 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
 
 /**
  * L3's claim-only call, over the board `config` names, handed everything `loop` is but a
- * dispatch: there is none to hand (the architect's ruling 1, B5). It is a separate export from
- * `loop`, so a verb outside `src/scheduling/` may call it without holding L3's dispatching entry
- * point (the boundary test's rule 8).
+ * dispatch, the start's kill included: there is no dispatch to hand (the architect's ruling 1,
+ * B5). It is a separate export from `loop`, so a verb outside `src/scheduling/` may call it
+ * without holding L3's dispatching entry point (the boundary test's rule 8).
  *
  * `claim(limit)` fires the pull trigger's read once and claims as many cards as there are free
  * slots, and no more than `limit` where one is given, which caps the limit at N (the architect's
@@ -248,8 +271,8 @@ export function loop({ config, board, decide, l2, dispatch, sink }) {
  * says, a transition L2 reported, passed on unchanged, and a trigger or release event, each
  * beside the others rather than in place of one (`ARCHITECTURE.md`, "Failure model").
  */
-export function claimOnly({ config, board, decide, l2, sink }) {
-  const { take, start, release } = claiming({ config, board, decide, l2, sink });
+export function claimOnly({ config, board, decide, l2, sink, kill }) {
+  const { take, start, release } = claiming({ config, board, decide, l2, sink, kill });
   return {
     claim: async (limit) => {
       if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {

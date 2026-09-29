@@ -116,6 +116,8 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  * handle, and `items` stands in for the board's writes. The sink writes to the state directory
  * `directory`, a new temporary one where none is given, under the run id `run`. A `fresh` given
  * as a function is L2's freshness input itself, answering for each Coding or Review card.
+ * `kill` is the start's kill L3 is handed, standing in for L1's kill of recorded groups, and
+ * kills nothing where none is given, since no process of this world outlives it.
  *
  * `handed` records every start the dispatch was handed, whole, and `decisions` every next action
  * L2 gave L3, as `{ card, action, pull }`, where `pull` counts the pull triggers fired so far.
@@ -135,12 +137,15 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = mkdtempSync(join(tmpdir(), 'rigger-loop-')),
+  kill = async () => {},
 } = {}) {
   const settings = { ...config, board: { ...config.board, columns } };
   delete settings.concurrency;
   if (concurrency !== undefined) settings.concurrency = concurrency;
   const sequence = [];
-  const recorded = {
+  // No stream is a stream holding no event: the sink writes the file at its first accepted append.
+  const recorded = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
+  const moving = {
     ...items,
     moveItem: async (id, column) => {
       await items.moveItem(id, column);
@@ -174,12 +179,11 @@ export function world({
       return sink.emitter(context);
     },
   };
-  const l2 = columnChanges({ config: settings, sink, items: recorded });
+  const l2 = columnChanges({ config: settings, sink, items: moving });
   const returned = new Set();
   const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
-  // No stream is a stream holding no event: the sink writes the file at its first accepted append.
-  const pulls = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []).filter((event) => event.run === run && event.trigger === 'pull').length;
+  const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
   const decide = (card) => {
     const action = nextAction(card, KINDS, undefined, { columns, fresh: freshness });
     decisions.push({ card: card.number, action, pull: pulls() });
@@ -206,12 +210,12 @@ export function world({
     /** Has the shared sink accept appends again. */
     acceptAppends: () => { refusing = null; },
     /** Every event the run has recorded so far, in the order recorded. */
-    events: () => readEvents(directory),
+    events: recorded,
     /** The events L3 recorded so far, in order. */
-    l3Events: () => readEvents(directory).filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink }),
+    l3Events: () => recorded().filter((event) => event.layer === 'L3'),
+    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink, kill }),
     /** L3's claim-only call over the same board, L2 and sink, handed no dispatch. */
-    claims: claimOnly({ config: settings, board, decide, l2, sink: l3Sink }),
+    claims: claimOnly({ config: settings, board, decide, l2, sink: l3Sink, kill }),
   };
 }
 

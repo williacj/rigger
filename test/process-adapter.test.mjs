@@ -71,6 +71,7 @@ function writing(directory, stream, length, step) {
   });
 }
 
+// proves R-STATE-14
 test('the result carries, as bytes, every byte a command wrote to standard output, past maxBuffer and not UTF-8', async (t) => {
   const directory = scratch(t);
   const written = bytes(MAX_BUFFER + 4099, 7);
@@ -84,6 +85,7 @@ test('the result carries, as bytes, every byte a command wrote to standard outpu
   assert.equal(result.stderr.length, 0, 'nothing written to standard output reaches standard error');
 });
 
+// proves R-STATE-14
 test('the result carries, as bytes and apart from standard output, every byte a command wrote to standard error', async (t) => {
   const directory = scratch(t);
   const written = bytes(MAX_BUFFER + 5003, 13);
@@ -164,6 +166,7 @@ test('two commands running at once through the adapter report different process 
 
 
 
+// proves R-STATE-14, R-STATE-15
 test('a command that exits 0 leaving a child alive that holds its standard output has exit code 0, and all its payload', async (t) => {
   const directory = holding(t);
   const payload = bytes(300_001, 11);
@@ -191,6 +194,7 @@ test('a child that writes to standard output and standard error before the comma
   assert.ok(result.stderr.equals(third), 'standard error holds every byte of the child\'s third payload');
 });
 
+// proves R-STATE-6, R-STATE-7
 test('a child a command leaves alive is not alive when the adapter\'s call settles', async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -221,6 +225,7 @@ async function recorded(directory, options) {
   return { result, events: eventsIn(state) };
 }
 
+// proves R-STATE-12
 test('a child left alive when its command exits is recorded under L0 as killed, by its process name and command line', async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -686,6 +691,7 @@ const DETACH = [
   'while [ ! -f "$here/left" ]; do :; done',
 ].join('\n');
 
+// proves R-STATE-14
 test('a command leaving a process outside its group that holds its standard output settles once the bound has passed, without waiting for that process', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);
@@ -1336,6 +1342,7 @@ for (const [what, failing, options] of [
   });
 }
 
+// proves R-STATE-12
 test('a census whose every read of the group exits 1 and prints nothing while the group holds a survivor records the group\'s kill, saying why', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill and the wait read it without, so the
@@ -1714,6 +1721,7 @@ test('the refusal of an invalid timeout names the value and its type', async (t)
   }
 });
 
+// proves R-STATE-16
 test('a command ended by a signal it does not handle has a non-zero integer exit code in the result', async (t) => {
   const directory = scratch(t);
   // The shell sends itself `SIGTERM`, which a non-interactive shell with no trap does not handle.
@@ -1723,6 +1731,7 @@ test('a command ended by a signal it does not handle has a non-zero integer exit
 });
 
 
+// proves R-STATE-6, R-STATE-8
 test('given a command and its child outliving its timeout, no process of the group is alive when the call settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
@@ -1799,6 +1808,7 @@ test('given a command that exits 3 on its own as its timeout fires, the process 
   assert.equal(result.exit, 3);
 });
 
+// proves R-STATE-14
 test('given a command that writes a payload and then outlives its timeout, the result holds every byte of it', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const payload = bytes(300_001, 23);
@@ -1829,6 +1839,7 @@ test('given a child that writes to standard output and standard error and outliv
   assert.ok(result.stderr.equals(err), 'standard error holds every byte of the child\'s payload to it');
 });
 
+// proves R-STATE-16
 test('given a command that outlives its timeout and exits 0 on SIGTERM, the result has a non-zero integer exit code', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // `wait` returns at once on a signal the shell traps, so SIGTERM would end the command with 0.
@@ -1847,6 +1858,7 @@ const timeoutKills = (directory) => [
   { layer: 'L0', event: 'timeout.killed', pid: Number(read(directory, 'child.pid')), name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
 ].sort((a, b) => a.pid - b.pid);
 
+// proves R-STATE-8, R-STATE-12
 test('given a command and its child outliving its timeout, the stream holds an L0 kill event for each, by process name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
