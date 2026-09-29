@@ -351,16 +351,22 @@ async function ended(group, ps, readTimeout) {
  * begun near that bound fails only where the read itself does. Only a read that found such a
  * member says it saw one.
  *
- * One case is left unrecorded, and nothing but the process table can close it (`D16` rule 3): a
- * table that leaves a live member of the group out of every read, of the census, the kill and this
- * one alike, while listing the group's zombies. Signal 0 reaches a zombie, and a group holding only
- * a zombie, as it reaches a live process: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
+ * So one class of read is left unrecorded, and nothing but the process table can close it (`D16`
+ * rule 3), as on the start-time read (`startsIn`), whose note records the same class: a read that
+ * exits 0 and consistently leaves out a live member of the group, whatever else it lists, of the
+ * census, the kill and this one alike. Such a read is taken as complete, so the group's kill ends
+ * that hidden member unrecorded. Two instances: a read that lists only the group's zombies, and one
+ * that lists only a member started after the leader while the leader has been reaped.
+ *
+ * No read of the table can find a member it consistently hides, because the table is the only
+ * thing that says which pids the group holds. Signal 0 to the group says only that some process is
+ * in it, live or a zombie, not which: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
  * `process.kill(pid, 0)` succeeded on a zombie, and a group left holding only a zombie its parent
- * outside the group never reaps kept answering signal 0 (`UNREAPED_BOUND`). So only the table
- * tells a zombie from a live process, and such a table reads exactly as a group holding only
- * zombies does. Recording the group's kill whenever signal 0 reaches the group would record the
- * kill of every group left holding only zombies, which L0 did not end, so the group's kill then
- * ends that hidden member unrecorded.
+ * outside the group never reaps kept answering signal 0 (`UNREAPED_BOUND`). So a read hiding a live
+ * member while listing zombies is exactly what the table gives for a group holding only zombies,
+ * and one hiding it while listing a later member is exactly what it gives for that member alone.
+ * Recording the group's kill whenever signal 0 reaches the group would record the kill of every
+ * group left holding only zombies, which L0 did not end.
  */
 async function outlived(group, ps, timeout) {
   const deadline = Date.now() + timeout;
@@ -779,7 +785,9 @@ function killsOf(group, survivors, unnamed, killed) {
  * The census's reads can fail the other way, agreeing on only some of the group's live members.
  * So each live member a read of the kill finds must be one the census named, and the kill fails
  * where it finds another, so the group is killed unnamed rather than that process ended
- * unrecorded. The kill reads the table at least once, even where the census named no one.
+ * unrecorded. The kill reads the table at least once, even where the census named no one. A read
+ * that exits 0 and consistently leaves out a live member, whatever else it lists, is the one class
+ * this cannot catch (`outlived` records it and says why no read can).
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
