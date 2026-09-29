@@ -128,11 +128,13 @@ export const LEFT_OUT = {
 };
 
 /**
- * Every group L0 holds, from the step that creates it until the call has emptied it, with what
- * the exit cleanup needs to end and record it: the call's `L0` emitter, its `ps` and read
- * timeout, and the step its caller handed it for the exit.
+ * Every call L0 has in flight, by its group, from the step that creates the group until a turn
+ * after the call settles, with what the exit cleanup needs to end and record it: the call's `L0`
+ * emitter, its `ps` and read timeout, the step its caller handed it for the exit, the command's
+ * child process, which says how the command ended where Node has reaped it, the kills the call has
+ * made and not yet recorded, and whether the call has emptied the group.
  */
-const groups = new Map();
+const calls = new Map();
 
 /** Every read of the process table a census has in flight, so the exit cleanup can end it. */
 const reads = new Set();
@@ -195,14 +197,15 @@ function onSignal(name) {
 
 /**
  * L0's exit cleanup, synchronous because Node runs an `exit` listener synchronously. It ends every
- * read of the process table still in flight; then, for every group it holds, it takes the census,
- * kills the group and confirms it; and only then records each kill, and writes to standard error
- * every kill the sink refused, since no caller is left to report it to. It then takes each
- * caller's step for its group, which is L1's removal of the group's entry, and last the steps
- * handed to `atExit`. A failure in any of these is written to standard error and never stops the
- * rest, nor changes how the process ends.
+ * read of the process table still in flight; then, for every call in flight whose group the call
+ * has not emptied, it takes the census, kills the group and confirms it; and only then records
+ * each kill, the call's own unrecorded kills first, and writes to standard error every kill the
+ * sink refused, since no caller is left to report it to. It then takes each caller's step for its
+ * group, handing it how the command ended (`endingOf`), which is L1's removal of the group's
+ * entry and its record of the dispatch's end; and last the steps handed to `atExit`. A failure in any of these is
+ * written to standard error and never stops the rest, nor changes how the process ends.
  *
- * It ends only the groups it holds when it runs, and lets each go, so a process that a signal
+ * It ends only the calls in flight when it runs, and lets each go, so a process that a signal
  * listener of its caller keeps running has the groups it starts later ended at its next ending.
  * So it can run more than once, and each step handed to `atExit` must bear being taken again, as
  * the sink's end does.
@@ -210,15 +213,44 @@ function onSignal(name) {
 function cleanup() {
   for (const read of reads) read.kill('SIGKILL');
   const ended = [];
-  for (const [group, call] of groups) {
-    groups.delete(group);
-    attempt(() => ended.push([group, call, containNow(group, call)]));
+  for (const [group, call] of calls) {
+    calls.delete(group);
+    attempt(() => ended.push([group, call, call.contained ? {} : containNow(group, call)]));
   }
-  const unrecorded = ended.flatMap(([, { emitter }, events]) => record(emitter, events));
+  const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
-  for (const [group, { onExit }] of ended) attempt(() => onExit?.(group));
+  for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, endingOf(child, look)));
   for (const step of steps) attempt(step);
 }
+
+/**
+ * How the command `child` ran ended, as the exit cleanup finds it: `{ exit }`, its exit code, or
+ * `{ unread }`, why its status could not be read. Where Node has reaped the command, Node says how
+ * it ended. Otherwise the command is a zombie, since Node reaps no child while the cleanup runs,
+ * and `leader` is the wait status `ps` read for it as `xstat` on the kill's last look: its own
+ * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer, a
+ * leader the census found `stopped` and alive was ended by the cleanup's kill. Otherwise `unread`
+ * says why, and nothing tells the command's own exit from the kill: the command may have exited
+ * before the cleanup ran, and where the census's reads failed too, even a command the cleanup
+ * killed cannot be told from one that exited.
+ */
+function endingOf(child, { leader, unread, stopped }) {
+  if (child.exitCode !== null) return { exit: child.exitCode };
+  if (child.signalCode !== null) return { exit: signalled(child.signalCode) };
+  if (leader === undefined && stopped) return { exit: signalled('SIGKILL') };
+  if (leader === undefined) return { unread: `the exit cleanup could not read the command's status: ${unread}` };
+  // `ps` prints the wait status in hexadecimal. Its low seven bits are the signal that ended the
+  // process, where one did, and the byte above them its exit code (wait(2): WTERMSIG, WEXITSTATUS).
+  const status = Number.parseInt(leader, 16);
+  const ending = status & 0x7f;
+  return { exit: ending === 0 ? (status >> 8) & 0xff : 128 + ending };
+}
+
+/**
+ * The exit code of a process signal `name` ended. It has none of its own, so it takes the one a
+ * shell gives it: 128 and the signal's number, which is never 0.
+ */
+const signalled = (name) => 128 + constants.signals[name];
 
 /** Takes `step`, writing to standard error why it failed, where it does. */
 function attempt(step) {
@@ -666,7 +698,7 @@ async function contain(group, { ps, readTimeout }, killed) {
  * then, and the cleanup goes on: it cannot wait longer on a process table it cannot read.
  */
 function containNow(group, { ps, readTimeout }) {
-  if (!occupied(group)) return [];
+  if (!occupied(group)) return { kills: [] };
   let survivors;
   let unnamed;
   try {
@@ -674,16 +706,24 @@ function containNow(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
+  let leader;
+  let unread;
   try {
-    readingNow(emptied(group), ps, readTimeout);
-  } catch {
+    leader = readingNow(emptied(group), ps, readTimeout);
+    if (leader === undefined) unread = 'the process table did not list it';
+  } catch (error) {
     // The kill was sent on every look, and nothing is left to wait on.
+    unread = error.message;
   }
-  return killsOf(group, survivors, unnamed, 'survivor.killed');
+  // A leader the census named was stopped and alive, and a stopped process cannot exit on its own,
+  // so the cleanup's kill is what ended it, whatever the last read could tell.
+  const stopped = survivors?.some(({ pid }) => pid === group) ?? false;
+  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader, unread, stopped };
 }
 
 /**
- * Kills every process left in `group` until it holds nothing but zombies, for the exit cleanup.
+ * Kills every process left in `group` until it holds nothing but zombies, for the exit cleanup,
+ * and hands back the wait status `ps` reads for the group's leader, where it is still there.
  * Node reaps no child while synchronous code runs, so a leader killed here stays in the group as a
  * zombie until this process exits, and the group never empties while the cleanup runs. So each
  * look reads the group's states, and a group of zombies is ended: none of them can run again.
@@ -691,9 +731,9 @@ function containNow(group, { ps, readTimeout }) {
 function* emptied(group) {
   for (;;) {
     signal(group, 'SIGKILL');
-    if (!occupied(group)) return;
-    const states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=']);
-    if ([...states.values()].every((state) => state.startsWith('Z'))) return;
+    if (!occupied(group)) return undefined;
+    const states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=,xstat=']);
+    if ([...states.values()].every((state) => state.startsWith('Z'))) return states.get(group)?.split(/\s+/)[1];
   }
 }
 
@@ -883,9 +923,14 @@ function refused(unrecorded, result, ending = '') {
  * Where `onGroup` throws, L0 ends and records the group, and the call rejects with what it threw,
  * or, where the sink refused a kill event, with the `EVENT_REFUSED` failure, caused by it.
  *
- * L0 holds the group from the step that creates it until the call has emptied it. Where the process
- * exits meanwhile, L0's exit cleanup kills and records it, and then hands the group to `onExit`,
- * where the caller gives one: a synchronous step, which is how L1 removes a dispatch's entry.
+ * L0 holds the call from the step that creates the group until a turn after the call settles. Where
+ * the process exits meanwhile, L0's exit cleanup kills the group where the call has not emptied
+ * it, records every kill, and then hands the group and how the command ended to `onExit`, where
+ * the caller gives one: `{ exit }`, its exit code, or `{ unread }`, why it could not be read.
+ * `onExit` is a synchronous step, which is how L1 removes a dispatch's entry and records its end.
+ * The step can come after the call has settled, in the turn it settled, and must then do
+ * nothing for a call its caller has finished. A process kept running past its ending still has the
+ * call settle, on the command's result.
  */
 export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
@@ -904,10 +949,15 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   install();
-  groups.set(child.pid, { emitter, ps, readTimeout, onExit });
-  // A group the exit cleanup took is one it has ended and recorded, so the call records a kill
-  // of it only where it still held it once the group was empty.
-  const held = () => groups.delete(child.pid);
+  const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
+  calls.set(child.pid, call);
+  // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
+  // more of it.
+  const taken = () => !calls.has(child.pid);
+  // The call is let go a turn after it settles, and not as it settles, because the caller's code
+  // after its await runs in the turn it settles: an ending in that turn still reaches the caller's
+  // step, which must then do nothing for a call it has finished.
+  const release = () => setImmediate(() => calls.get(child.pid) === call && calls.delete(child.pid)).unref();
   try {
     if (onGroup) onGroup(child.pid, startOf(ps, child.pid, readTimeout));
   } catch (refusal) {
@@ -915,27 +965,30 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
     // survivor would be, before the caller hears why.
     // Nothing reads the output of a command that runs no further, so its pipes are let go.
     const kills = await contain(child.pid, { ps, readTimeout }, 'survivor.killed');
-    const unrecorded = record(emitter, held() ? kills : []);
+    call.contained = true;
+    const unrecorded = record(emitter, taken() ? [] : kills);
+    release();
     child.stdout.destroy();
     child.stderr.destroy();
     if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
     throw refusal;
   }
+  const { events } = call;
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const killedAtTimeout = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  // The kills at the timeout wait among the call's unrecorded kills, so an exit meanwhile records
+  // them.
+  if (expired) events.push(...(await contain(child.pid, { ps, readTimeout }, 'timeout.killed')));
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
   const timedOut = expired && signal !== null;
   // A command that exited on its own did so before the containment stopped its group, because a
   // stopped process cannot exit, so every process that containment killed outlived the command.
-  const events = timedOut ? killedAtTimeout : killedAtTimeout.map(([event, fields]) => [event === 'timeout.killed' ? 'survivor.killed' : event, fields]);
-  // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
-  // 128 and the signal's number, which is never 0.
-  const exit = signal === null ? code : 128 + constants.signals[signal];
+  if (!timedOut) for (const kill of events) if (kill[0] === 'timeout.killed') kill[0] = 'survivor.killed';
+  const exit = signal === null ? code : signalled(signal);
   events.push(...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')));
-  if (!held()) events.splice(0);
+  call.contained = true;
   if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();
@@ -944,7 +997,8 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const [stdout, stderr] = await output;
   const result = { exit, timedOut, stdout, stderr };
-  const unrecorded = record(emitter, events);
+  const unrecorded = record(emitter, taken() ? [] : events.splice(0));
+  release();
   if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '');
   return result;
 }
