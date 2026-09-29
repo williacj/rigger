@@ -158,7 +158,12 @@ export function atExit(step) {
   steps.push(step);
 }
 
-/** Whether the exit cleanup is installed, which L0 does when it creates its first group. */
+/**
+ * Whether the exit cleanup is installed, which L0 does before it creates its first group. Before,
+ * because a signal with no listener ends the process by the signal's default action at once, so
+ * one that landed between the spawn and the install would leave the new group running, unkilled
+ * and unrecorded.
+ */
 let installed = false;
 
 /**
@@ -1009,11 +1014,11 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
+  install();
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  install();
   const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
