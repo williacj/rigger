@@ -219,9 +219,18 @@ export function world({
 export const columnsOf = async (fake) => Object.fromEntries((await fake.operations.readItems()).map((item) => [item.number, item.column]));
 
 /**
+ * The most rounds a run is driven before the test gives up on it. A judgment, whose premise is a
+ * measurement: with Node 26.5.0 on macOS 27.0 on 2026-09-28, each of the 27 drives and 3 runs to
+ * an end in `loop.test.mjs` and `restart.test.mjs` ended within 6 rounds. A round waits on nothing
+ * but steps already queued, so a run still going after this many never ends.
+ */
+export const DRIVEN_ROUNDS = 100;
+
+/**
  * Starts one run of `built`'s loop, and releases every held dispatch each time the loop has made
  * every start it can, until the run ends. Answers the run's own settling, so a run that fails
- * rejects here with its failure unchanged.
+ * rejects here with its failure unchanged. A run still going after `DRIVEN_ROUNDS` rounds rejects
+ * here, naming the dispatches it started.
  */
 export async function drive(built) {
   let ended = false;
@@ -229,7 +238,8 @@ export async function drive(built) {
     ended = true;
   });
   run.catch(() => {});
-  while (!ended) {
+  for (let round = 0; !ended; round += 1) {
+    if (round === DRIVEN_ROUNDS) throw new Error(`the run had not ended after ${DRIVEN_ROUNDS} rounds, having started dispatches ${built.dispatches.started}`);
     await quiesce();
     built.dispatches.releaseAll();
   }

@@ -14,7 +14,7 @@ import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
-import { alive, fixture, read, running, scratch, undrained } from './process-fixtures.mjs';
+import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -204,7 +204,7 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   if (signal !== undefined) process.kill(run.pid, signal);
   // A caller that ends without saying `heard` ends the wait, and the test then reads how it ended.
   if (whileHeard !== undefined) {
-    while (!stdout.includes('heard\n') && !closed) await new Promise((resolve) => setImmediate(resolve));
+    while (!stdout.includes('heard\n') && !closed) await turn(t);
     heard = whileHeard(directory);
   }
   if (again !== undefined && !closed) process.kill(run.pid, again);
@@ -436,8 +436,7 @@ async function answer(t, name, { listen = false, flags = [] } = {}) {
     if (ended === undefined) child.kill('SIGKILL');
     await closed;
   });
-  const turn = () => new Promise((resolve) => setImmediate(resolve));
-  while (!out.includes('ready\n') && ended === undefined) await turn();
+  while (!out.includes('ready\n') && ended === undefined) await turn(t);
   if (ended === undefined) {
     process.kill(child.pid, name);
     child.stdin.write('ping\n');
@@ -452,7 +451,7 @@ async function answer(t, name, { listen = false, flags = [] } = {}) {
     else if (pongs === pinged) {
       child.stdin.write('ping\n');
       pinged += 1;
-    } else await turn();
+    } else await turn(t);
   }
   if (outcome === 'survived') child.kill('SIGKILL');
   await closed;
