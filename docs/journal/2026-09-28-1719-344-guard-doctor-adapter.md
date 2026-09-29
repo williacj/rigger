@@ -25,6 +25,15 @@ sending through L0's process adapter, and every verb stopping at a kill its sink
   package from its own location, so a copy of `src/`, `templates/` and `package.json` committed
   into a fixture repository is a source tree whose own bin refuses it. Its
   `git status --porcelain --ignored` is then measured on a tree nothing else writes to.
+- **A listing of a fixture repository raced git's own maintenance.** At `5347dda`, CI's git
+  2.55.0 redded the per-verb tests for `setup-board` and `report` on one run, and for `report`
+  and `plan` on another. Each time, `.git/objects/maintenance.lock` was in the listing taken
+  before the run and gone from the one taken after (runs 36501236788 and 36501232935). The
+  fixture's commits start `git maintenance run --auto --detach`: `GIT_TRACE` on a commit in a
+  fixture repository shows it with this host's git 2.54.0, which takes no lock there, so the
+  race never showed locally. `repositoryAt` now sets `maintenance.auto false` and `gc.auto 0`.
+  A test holds this: the traced commit started maintenance before the change and starts none
+  after it.
 - **Mutations shown to discriminate.** Each was run on 2026-09-28, at the head after the merge of
   `origin/main` (`ca86596`) plus the items 24 and 25 tests, against `test/guard-probe-kill.test.mjs`
   through `npm test -- test/guard-probe-kill.test.mjs` with TMPDIR outside any checkout. Unmutated,

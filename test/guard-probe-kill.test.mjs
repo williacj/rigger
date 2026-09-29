@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -263,31 +263,68 @@ test('given a git stand-in for the guard that leaves a child alive, a target the
   assert.deepEqual(fake.sent(), []);
 });
 
+// A fixture repository's commit that starts git's background maintenance puts
+// `.git/objects/maintenance.lock` under the target and removes it on its own time, so a listing
+// of the target taken around a run races a process that is neither the verb nor Rigger. CI's git
+// 2.55.0 did exactly that at 5347dda. So the fixture turns it off, and this holds it off.
+test('a commit in a repository the fixture builds starts no git maintenance in the background', () => {
+  const where = repositoryIn('rigger-no-maintenance-', { 'a.txt': 'a\n' });
+  writeFileSync(join(where, 'b.txt'), 'b\n');
+  gitIn(where, 'add', '-A');
+
+  const traced = spawnSync('git', ['-C', where, 'commit', '-qm', 'traced'], { encoding: 'utf8', env: { ...gitEnvironment(), GIT_TRACE: '1' } });
+
+  assert.equal(traced.status, 0, traced.stderr);
+  assert.match(traced.stderr, /trace: built-in: git commit/, 'git traced nothing, so this proves nothing');
+  assert.doesNotMatch(traced.stderr, /maintenance run|\bgc --auto/, traced.stderr);
+});
+
 /** Every path under `directory`, however deep, sorted. */
 const everyPath = (directory) => readdirSync(directory, { recursive: true }).map(String).sort();
 
-for (const verb of ['once', 'run', 'plan', 'setup-board', 'report', 'doctor']) {
-  test(`given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, ${verb} exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and ${verb} writes no file under the target`, (t) => {
-    const directory = holding(t);
-    gitLeavingChild(directory);
-    // An agent CLI stand-in, so a doctor that went on past the guard would ask it rather than the host's.
-    claude(directory, false);
-    const fake = fakeGh(directory);
-    const { where, state } = consumer();
-    // The stream is a directory, which no append can open.
-    mkdirSync(join(state, 'events.jsonl'), { recursive: true });
-    const before = everyPath(where);
+/**
+ * Runs `verb` with a git stand-in for the guard that leaves a child alive, a target the guard
+ * accepts, and a state directory that refuses writes, and asserts it exits non-zero naming the
+ * unrecorded kill, sends the forge stand-in no call, and writes no file under the target.
+ */
+function stopsAtRefusedGuardKill(t, verb) {
+  const directory = holding(t);
+  gitLeavingChild(directory);
+  // An agent CLI stand-in, so a doctor that went on past the guard would ask it rather than the host's.
+  claude(directory, false);
+  const fake = fakeGh(directory);
+  const { where, state } = consumer();
+  // The stream is a directory, which no append can open.
+  mkdirSync(join(state, 'events.jsonl'), { recursive: true });
+  const before = everyPath(where);
 
-    const ran = runBin(verb, where, directory);
+  const ran = runBin(verb, where, directory);
 
-    const said = `exited ${ran.code}: ${ran.out}${ran.err}`;
-    assert.notEqual(ran.code, 0, said);
-    assert.match(ran.err, /went unrecorded/, said);
-    holdsChildKill(eventsIn(ran.err), directory, said);
-    assert.deepEqual(fake.sent(), [], said);
-    assert.deepEqual(everyPath(where), before, said);
-  });
+  const said = `exited ${ran.code}: ${ran.out}${ran.err}`;
+  assert.notEqual(ran.code, 0, said);
+  assert.match(ran.err, /went unrecorded/, said);
+  holdsChildKill(eventsIn(ran.err), directory, said);
+  assert.deepEqual(fake.sent(), [], said);
+  assert.deepEqual(everyPath(where), before, said);
 }
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, once exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and once writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'once'));
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, run exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and run writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'run'));
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, plan exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and plan writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'plan'));
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, setup-board exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and setup-board writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'setup-board'));
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, report exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and report writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'report'));
+
+// proves R-RECORD-9
+test('given a git stand-in for the guard that leaves a child alive, a target the guard accepts, and a state directory that refuses writes, doctor exits non-zero naming the unrecorded kill, the forge stand-in receives no call, and doctor writes no file under the target', (t) => stopsAtRefusedGuardKill(t, 'doctor'));
 
 /** What the agent CLI states when signed in, as Claude Code 2.1.281 printed it (`test/doctor.test.mjs`). */
 const SIGNED_IN = '{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}';
