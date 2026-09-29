@@ -731,6 +731,13 @@ async function contain(group, { ps, readTimeout }, killed) {
  * the kill of the group where a process joined the group after that last read and the
  * confirmation read it live, which it reads before its first kill (`emptied`).
  *
+ * The window #358's item 9 leaves open is left open for such a joiner too: one a confirmation read
+ * finds alive, and that exits on its own and is reaped before L0's next kill reaches the group, is
+ * recorded in the kill of the group. No read can tell its own exit from L0's kill once it has been
+ * reaped (`D16` rule 3): the table shows how a process ended only as its zombie's `xstat`, which
+ * `ps` shows until the parent reaps it and never after, and a joiner's parent outside the group
+ * can reap it before any read.
+ *
  * One window is also excluded, as in `contain`: a process that joins the group after L0's last
  * read of it and is ended by L0's next kill, or that joins while those reads fail, is ended
  * unrecorded. Here L0's last read is whichever of the confirmation's reads came before that kill.

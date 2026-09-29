@@ -220,7 +220,8 @@ function fixtures(directory) {
   // states and wait statuses, which is the cleanup's confirmation, but the first, so after its
   // first kill;
   // `ps-late` inside the read of the group's states the cleanup makes last before that kill,
-  // answering it as the table stood before the join.
+  // answering it as the table stood before the join; `ps-join-fails` inside the confirmation's
+  // first read, which it then fails as `ps` fails.
   const joiner = [
     'my ($here, $group) = @ARGV;',
     'setpgrp(0, 0) or die "leaving: $!";',
@@ -248,6 +249,12 @@ function fixtures(directory) {
     'case " $* " in',
     '  *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
     '    /bin/mkdir "$here/confirming" 2>/dev/null || { : > "$here/go-join"; while [ ! -f "$here/joined.pid" ]; do :; done; } ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  fixture(directory, 'ps-join-fails', [
+    'case " $* " in *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
+    '  /bin/mkdir "$here/failed" 2>/dev/null && { : > "$here/go-join"; while [ ! -f "$here/joined.pid" ]; do :; done; echo "ps: the test refuses this read" >&2; exit 2; } ;;',
     'esac',
     'exec /bin/ps "$@"',
   ].join('\n'));
@@ -802,6 +809,15 @@ test('a process that joins a group after the cleanup\'s last read before its kil
   const joined = Number(read(directory, 'joined.pid'));
   assert.equal(alive(joined), false, 'the process that joined the group is alive');
   assertRecorded(streamOf(directory), Number(read(directory, 'group.1')), [joined]);
+});
+
+test('a process that joins a group during the cleanup\'s first read of it after the last read before its kill, which fails, is killed before the caller ends', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join-fails' }, { signal: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  assert.ok(existsSync(join(directory, 'failed')), 'the stand-in never failed the confirmation\'s first read, so this proves nothing');
+  await assertNoneAlive(directory);
+  assert.equal(alive(Number(read(directory, 'joined.pid'))), false, 'the process that joined the group is alive');
 });
 
 test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded as the kill of the group, saying the read found it', ENDS_WITHIN, async (t) => {
