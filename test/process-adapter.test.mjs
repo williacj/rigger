@@ -691,7 +691,7 @@ const DETACH = [
   'while [ ! -f "$here/left" ]; do :; done',
 ].join('\n');
 
-// proves R-STATE-6, R-STATE-14
+// proves R-STATE-14
 test('a command leaving a process outside its group that holds its standard output settles once the bound has passed, without waiting for that process', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${DETACH}\nexit 0`);

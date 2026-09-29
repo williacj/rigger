@@ -264,3 +264,14 @@ export async function withoutLeader(t, started) {
   await until(() => !alive(started.leader), t);
   return started;
 }
+
+/**
+ * Settles once `child` has exited, killing it first where it has not: a process that has exited
+ * spawns nothing more.
+ */
+export function ended(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return undefined;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGKILL');
+  return exited;
+}

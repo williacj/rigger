@@ -15,7 +15,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
-import { childrenIn, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
+import { childrenIn, ended, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -70,17 +70,6 @@ function fakeLeavingChild(directory, board, { on = '*', then = ':' } = {}) {
     'exit $status',
   ].join('\n'));
   return fake;
-}
-
-/**
- * Settles once `child` has exited, killing it first where it has not: a process that has exited
- * spawns nothing more.
- */
-function ended(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return undefined;
-  const exited = new Promise((resolve) => child.once('exit', resolve));
-  child.kill('SIGKILL');
-  return exited;
 }
 
 /** The environment the bin runs under: `directory` first on PATH, ahead of the refusing `gh`. */
