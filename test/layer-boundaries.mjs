@@ -65,7 +65,7 @@ const SPAWNERS = ['src/substrate/process.mjs'];
 const CHILD_PROCESS = ['node:child_process', 'child_process'];
 
 /** The process methods reaching Node's internal bindings, among them `spawn_sync` and `process_wrap`. */
-const BINDINGS = ['binding'];
+const BINDINGS = ['binding', '_linkedBinding'];
 
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };

@@ -235,6 +235,12 @@ test('rule 7: a module other than the process adapter calling process.binding fa
   }
 });
 
+test('rule 7: a module other than the process adapter calling process._linkedBinding fails, however it spells the call', () => {
+  for (const template of BINDING_SPELLINGS) {
+    assertBreaks({ 'src/workflow/spawn.mjs': template.replaceAll('METHOD', '_linkedBinding') }, 'src/workflow/spawn.mjs', 'rule 7');
+  }
+});
+
 test('rule 7: a gh string literal outside the runners module fails in any quotes, and one in a comment does not', () => {
   for (const literal of ["'gh'", '"gh"', '`gh`', "'\\x67h'"]) {
     assertBreaks({ 'src/cli/doctor.mjs': `export const forge = ${literal};` }, 'src/cli/doctor.mjs', 'rule 7');
