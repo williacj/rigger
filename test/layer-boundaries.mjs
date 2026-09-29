@@ -134,10 +134,10 @@ const UNREAD = ', which runs code from a string or from a file that rules 7, 8 a
 
 /**
  * The built-ins that run code the rules never read, each refused however a module imports it, with
- * why. `node:vm` compiles and runs a string, and `node:inspector` and `node:repl` each evaluate
- * one they are handed. `node:worker_threads` runs a string as a module, with `eval: true`, or a
- * file outside src/'s import graph, with a path. The limit on keys the source does not fix, beside
- * `GENERATORS`, holds for these too.
+ * why. `node:vm` compiles and runs a string, and `node:inspector`, with its promises form, and
+ * `node:repl` each evaluate one they are handed. `node:worker_threads` runs a string as a module,
+ * with `eval: true`, or a file outside src/'s import graph, with a path. The limit on keys the
+ * source does not fix, beside `GENERATORS`, holds for these too.
  */
 const GENERATOR_MODULES = new Map([
   ['node:vm', UNSEEN],
@@ -146,6 +146,8 @@ const GENERATOR_MODULES = new Map([
   ['worker_threads', UNREAD],
   ['node:inspector', UNSEEN],
   ['inspector', UNSEEN],
+  ['node:inspector/promises', UNSEEN],
+  ['inspector/promises', UNSEEN],
   ['node:repl', UNSEEN],
   ['repl', UNSEEN],
 ]);

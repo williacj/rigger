@@ -1609,7 +1609,7 @@ test('the code-generation rule bars no key named dlopen: an object key or a clas
  * so the code-generation rule refuses `node:inspector` and `node:repl` as it refuses `node:vm`.
  */
 
-test('the code-generation rule: a module importing node:inspector, inspector, node:repl or repl fails, statically or by dynamic import()', () => {
+test('the code-generation rule: a module importing node:inspector, inspector, their promises form, node:repl or repl fails, statically or by dynamic import()', () => {
   const templates = [
     "import * as loaded from 'SPEC';\nexport const go = () => loaded;",
     "import loaded from 'SPEC';\nexport const go = () => loaded;",
@@ -1617,7 +1617,7 @@ test('the code-generation rule: a module importing node:inspector, inspector, no
     "export * from 'SPEC';",
     "export const go = async () => import('SPEC');",
   ];
-  for (const specifier of ['node:inspector', 'inspector', 'node:repl', 'repl']) {
+  for (const specifier of ['node:inspector', 'inspector', 'node:inspector/promises', 'inspector/promises', 'node:repl', 'repl']) {
     for (const template of templates) {
       assertBreaks({ 'src/workflow/evaluate.mjs': template.replace('SPEC', specifier) }, 'src/workflow/evaluate.mjs', 'the code-generation rule');
     }
