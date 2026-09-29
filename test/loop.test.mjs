@@ -17,7 +17,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import {
-  COLUMNS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
+  COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
 } from './loop-world.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
@@ -25,10 +25,11 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
- * dispatch, until a round starts nothing. Returns what `world` built.
+ * dispatch, until a round starts nothing. Returns what `world` built. Rounds still starting
+ * dispatches after `DRIVEN_ROUNDS` of them fail the test, naming those dispatches.
  */
 async function runToEnd(built) {
-  for (;;) {
+  for (let round = 0; round < DRIVEN_ROUNDS; round += 1) {
     const before = built.dispatches.started.length;
     const ticks = [built.loop.pull(), built.loop.pull()];
     await quiesce();
@@ -36,6 +37,7 @@ async function runToEnd(built) {
     await Promise.all(ticks);
     if (built.dispatches.started.length === before) return built;
   }
+  throw new Error(`rounds were still starting dispatches after ${DRIVEN_ROUNDS} of them, having started ${built.dispatches.started}`);
 }
 
 
