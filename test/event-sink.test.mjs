@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { productionFiles } from '../scripts/package-budget.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
-import { scratch, undrained } from './process-fixtures.mjs';
+import { scratch, turn, undrained } from './process-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
@@ -445,7 +445,7 @@ async function stuckChild(t, body, { touched = true } = {}) {
       take();
       writeFileSync(join(directory, 'draining'), '');
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await turn(t);
   }
   if (stdout.includes('drain\n')) take();
   const [status] = await ended;

@@ -151,7 +151,12 @@ export function atExit(step) {
   steps.push(step);
 }
 
-/** Whether the exit cleanup is installed, which L0 does when it creates its first group. */
+/**
+ * Whether the exit cleanup is installed, which L0 does before it creates its first group. Before,
+ * because a signal with no listener ends the process by the signal's default action at once, so
+ * one that landed between the spawn and the install would leave the new group running, unkilled
+ * and unrecorded.
+ */
 let installed = false;
 
 /**
@@ -625,7 +630,8 @@ const timedOut = (timeout) => new Error(`the process-table read timed out after 
  * matched.
  *
  * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
- * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`), and the
+ * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
@@ -944,11 +950,11 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
+  install();
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  install();
   const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
@@ -1092,21 +1098,89 @@ function startOf(ps, pid, timeout) {
  * The start time of each live process in `group`, by its pid, read as `startOf` reads one. A
  * zombie is left out: it has exited, though `ps` still lists it, with its start time, until its
  * parent reaps it. So a leader that has exited reads as dead whether or not it has been reaped.
+ *
+ * A read that lists no process is kept only where signal 0 no longer reaches the group, because a
+ * read that failed can list nothing, even one that exits 1 and prints nothing (`run`), and the
+ * leaderless rule would take that empty table as a group to kill (`recorded`). A read that leaves
+ * out the leader is kept only where signal 0 no longer reaches the leader's pid, which is the
+ * group's id: a leader that has exited and not been reaped is listed as a zombie, so a leader left
+ * out while its pid still answers was left out by a read that failed, and the leaderless rule
+ * would otherwise judge the group without the one start that can show it is not the one
+ * recorded. While either holds, it reads again, since a process that is exiting answers signal 0
+ * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
+ * group is killed. A leader that has left the group for another holds the read to `timeout` the
+ * same way, which kills nothing.
+ *
+ * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), as
+ * on the kill (`outlived`): a read that exits 0 and consistently leaves out a live member other
+ * than the leader, whatever else it lists. Such a read is taken as complete. Where the leader is
+ * dead, the leaderless rule then judges the group without that member's start, so the hidden
+ * member is killed even where it started before the recorded leader. Two instances: a read that
+ * lists only the group's zombies, its dead leader among them, and one that lists only a member
+ * started after the recorded leader while the leader has been reaped.
+ *
+ * No read of the table can find a member it consistently hides, because the table is the only
+ * thing that says which pids the group holds. The leader alone is known without it, since its pid
+ * is the group's id, and that is why a missing leader can be checked. Signal 0 to the group says
+ * only that some process is in it, live or a zombie, not which: it reaches a zombie, and a group
+ * holding only zombies, as it reaches a live process (`outlived`). So a read hiding a live member
+ * while listing zombies is exactly what the table gives for a group holding only zombies, and one
+ * hiding it while listing a later member is exactly what it gives for that member alone. Refusing
+ * every read that could be one of these would keep for ever the entry of every leaderless group a
+ * dead engine left, whether it holds zombies alone or live members of its own.
+ *
+ * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
+ * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
+ * with this read's arguments and `PS_ENV`: a group whose one process had exited and been reaped
+ * exited 1 and wrote nothing to either stream; a group `x` exited 1 and wrote `ps: Invalid process
+ * group: x` to standard error; a live group exited 0 and printed its row. So a read that failed
+ * and wrote nothing, as the stand-in for `ps` in `test/kill-recorded.test.mjs` does, gives the
+ * same answer as an empty group, and only signal 0 tells the two apart.
  */
 async function startsIn(ps, group, timeout) {
-  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], timeout, timeout));
-  const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
-  return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  const deadline = Date.now() + timeout;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`the reads of the group's start times left out a process signal 0 still reached, its leader or every member, for ${timeout} ms`);
+    const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+    if ((rows.size === 0 && occupied(group)) || (!rows.has(group) && answers(group))) continue;
+    const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
+    return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole seconds since the epoch. */
+/**
+ * A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole
+ * seconds since the epoch. Only a start that the second it names prints back as, byte for byte,
+ * is read, so a malformed one of any kind is refused: a wrong weekday, a day, hour, minute or
+ * second past its range, which `Date.UTC` would carry into the next, or padding `ps` never
+ * prints. Each could otherwise name a recorded start.
+ *
+ * How `ps` prints it, from the source of adv_cmds's `ps/print.c` (`lstarted`), on 2026-09-28:
+ * the C library's `%c`, left-justified in its column with spaces. Under `PS_ENV`'s locale `%c` is
+ * `%a %b %e %T %Y`, measured with `/bin/ps` from adv_cmds-240 and `/bin/date +%c` on macOS 27.0
+ * (26A428) on 2026-09-28: `ps` printed `Mon Sep 28 23:47:11 2026` and four spaces, and `date`
+ * printed `Tue Sep  1 00:00:00 2026` for a one-digit day, padded with a space. So the column's
+ * trailing spaces are its padding, and are not the time's own.
+ */
 function secondsOf(printed) {
-  const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
-  const month = MONTHS.indexOf(at?.[1]);
-  if (month < 0) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
-  return Date.UTC(Number(at[6]), month, Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000;
+  const text = printed.replace(/ +$/, '');
+  const at = /^\S+ (\S+) +(\d+) (\d+):(\d+):(\d+) (\d+)$/.exec(text);
+  const seconds = at ? Date.UTC(Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000 : NaN;
+  if (Number.isNaN(seconds) || lstartOf(seconds) !== text) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return seconds;
+}
+
+/** The second `seconds` as `ps` prints a start under `PS_ENV`, less its column's padding: `%a %b %e %T %Y` in UTC. */
+function lstartOf(seconds) {
+  const time = new Date(seconds * 1000);
+  const two = (field) => String(field).padStart(2, '0');
+  const clock = [time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()].map(two).join(':');
+  return `${WEEKDAYS[time.getUTCDay()]} ${MONTHS[time.getUTCMonth()]} ${String(time.getUTCDate()).padStart(2, ' ')} ${clock} ${time.getUTCFullYear()}`;
 }
 
 /**

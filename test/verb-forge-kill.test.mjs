@@ -1,11 +1,12 @@
 // ABOUTME: Tests the verbs that build a forge side as the real bin runs them, with a `gh` stand-in
 // that leaves a child alive or never exits: each kill ends and is recorded, a kill the sink refuses
-// stops the verb before its next forge call, and SIGTERM mid-read ends the verb by that signal.
+// stops the verb before its next forge call, and SIGTERM mid-read, even inside L0's spawn, ends the
+// verb by that signal.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -165,29 +166,71 @@ test('given a sink that refuses every append and a gh stand-in that leaves a chi
  */
 const hanging = (directory) => fixture(directory, 'gh', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/gh.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
+/**
+ * A module a verb's Node process loads first, with `--import`, that sends that process `SIGTERM`
+ * from inside L0's spawn of `gh`: once the stand-in in `directory` has marked `ready`, and before
+ * the spawn hands the child back to L0. It changes `node:child_process` itself, and
+ * `syncBuiltinESMExports` carries the change to L0's adapter, which imports `spawn` by name.
+ *
+ * So the signal lands where a loaded host can put it: the stand-in's group exists and holds its
+ * child, and the verb has not run a step past the spawn.
+ */
+function terminatingInSpawn(directory) {
+  const path = join(directory, 'terminate-in-spawn.mjs');
+  writeFileSync(path, [
+    "import childProcess from 'node:child_process';",
+    "import { existsSync } from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    `const ready = ${JSON.stringify(join(directory, 'ready'))};`,
+    'const { spawn } = childProcess;',
+    'childProcess.spawn = (command, ...rest) => {',
+    '  const child = spawn(command, ...rest);',
+    "  if (command === 'gh') {",
+    '    while (!existsSync(ready));',
+    "    process.kill(process.pid, 'SIGTERM');",
+    '  }',
+    '  return child;',
+    '};',
+    'syncBuiltinESMExports();',
+  ].join('\n'));
+  return path;
+}
+
+/**
+ * Runs the real bin's `verb` against a `gh` stand-in that never answers, has it receive `SIGTERM`
+ * while the stand-in runs, and asserts that the stand-in's child is dead, that its `L0` kill event
+ * is in the target's stream, and that the verb ended by `SIGTERM`. The test sends the signal once
+ * the stand-in is ready, or, where `inSpawn`, the verb sends it itself from inside L0's spawn
+ * (`terminatingInSpawn`).
+ */
+async function endsTheChildOnSigterm(t, verb, { inSpawn = false } = {}) {
+  const directory = holding(t);
+  hanging(directory);
+  const { where } = consumer();
+  const loaded = inSpawn ? ['--import', terminatingInSpawn(directory)] : [];
+  const running = spawn(process.execPath, [...loaded, bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => running.kill('SIGKILL'));
+  let said = '';
+  running.stdout.on('data', (chunk) => (said += chunk));
+  running.stderr.on('data', (chunk) => (said += chunk));
+  const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
+
+  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), ended]);
+  assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said}`);
+  if (!inSpawn) running.kill('SIGTERM');
+  const { code, signal } = await ended;
+
+  assert.equal(signal, 'SIGTERM', `exited ${code}: ${said}`);
+  const [child] = childrenIn(directory);
+  assert.equal(await gone(child), true, `child ${child} is alive`);
+  const kills = readEvents(join(where, '.rigger')).filter((event) => event.layer === 'L0' && event.pid === child);
+  assert.equal(kills.length, 1, said);
+  assert.equal(kills[0].name, 'tail');
+  assert.equal(kills[0].cmd, `/usr/bin/tail -f ${directory}/hold`);
+}
+
 for (const verb of ['once', 'run', 'plan', 'setup-board', 'doctor']) {
-  test(`given ${verb} receiving SIGTERM while a forge read's gh stand-in, which has started a child, is still running, the child is dead, its L0 kill event is in the target's stream, and ${verb} ends reporting SIGTERM`, { timeout: 30_000 }, async (t) => {
-    const directory = holding(t);
-    hanging(directory);
-    const { where } = consumer();
-    const running = spawn(process.execPath, [bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
-    t.after(() => running.kill('SIGKILL'));
-    let said = '';
-    running.stdout.on('data', (chunk) => (said += chunk));
-    running.stderr.on('data', (chunk) => (said += chunk));
-    const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
+  test(`given ${verb} receiving SIGTERM while a forge read's gh stand-in, which has started a child, is still running, the child is dead, its L0 kill event is in the target's stream, and ${verb} ends reporting SIGTERM`, { timeout: 30_000 }, (t) => endsTheChildOnSigterm(t, verb));
 
-    await Promise.race([until(() => existsSync(join(directory, 'ready'))), ended]);
-    assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said}`);
-    running.kill('SIGTERM');
-    const { code, signal } = await ended;
-
-    assert.equal(signal, 'SIGTERM', `exited ${code}: ${said}`);
-    const [child] = childrenIn(directory);
-    assert.equal(await gone(child), true, `child ${child} is alive`);
-    const kills = readEvents(join(where, '.rigger')).filter((event) => event.layer === 'L0' && event.pid === child);
-    assert.equal(kills.length, 1, said);
-    assert.equal(kills[0].name, 'tail');
-    assert.equal(kills[0].cmd, `/usr/bin/tail -f ${directory}/hold`);
-  });
+  test(`given ${verb} receiving SIGTERM inside L0's spawn of a forge read's gh stand-in, once the stand-in has started a child and before the spawn returns, the child is dead, its L0 kill event is in the target's stream, and ${verb} ends reporting SIGTERM`, { timeout: 30_000 }, (t) => endsTheChildOnSigterm(t, verb, { inSpawn: true }));
 }
