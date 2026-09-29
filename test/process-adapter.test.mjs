@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
-import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, turn } from './process-fixtures.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, turn, warmed } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -1443,8 +1443,9 @@ test('a kill whose every read of the group lists only its zombie, while its lead
     'exec /bin/ps "$@"',
   ].join('\n'));
   // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
-  // so the leader is alive when the timeout kills the group.
-  const command = unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', '');
+  // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
+  // ready within `OUTLIVED` of its spawn.
+  const command = warmed(unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', ''));
 
   const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
 

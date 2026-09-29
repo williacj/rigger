@@ -67,9 +67,11 @@ test('given a recorded group whose leader\'s start time matches, the stream reco
 
   await killIn(directory);
 
-  // `ps` names a script `/bin/sh` runs as `bash`, which is what runs it on macOS.
+  // `ps` names a script `/bin/sh` runs as `bash`, which is what runs it on macOS. The kills are
+  // put in the order of their names, which differ, and not of their pids: once pids wrap, the
+  // member can hold a lower pid than the leader it started under.
   const under = { layer: 'L0', dispatch: 'd-7f3a', card: 77 };
-  assert.deepEqual(killsIn(directory).sort((one, other) => one.pid - other.pid), [
+  assert.deepEqual(killsIn(directory).sort((one, other) => one.name.localeCompare(other.name)), [
     { ...under, pid: started.leader, name: 'bash', cmd: `/bin/sh ${join(directory, 'group')}` },
     { ...under, pid: started.member, name: 'tail', cmd: `/usr/bin/tail -f ${join(directory, 'hold')}` },
   ]);
