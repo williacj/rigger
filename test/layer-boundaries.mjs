@@ -66,14 +66,22 @@ const HELD = [
  * - naming `process.binding` or `process._linkedBinding`, which reach Node's internal
  *   `spawn_sync` and `process_wrap`, as a member, a key in brackets or a destructured binding
  *   (`BINDINGS`);
+ * - naming `process.execve`, which replaces the running process with another program, in the same
+ *   three spellings (`REPLACERS`);
  * - and, under the dynamic-import rule, the loaders that reach any of them unseen (`LOADERS`).
  *
- * The limit: a key the source does not fix, such as one built by joining strings, is outside the
- * rule, as #373 records for the code-generation rule beside `GENERATORS`.
+ * Rule 7 and the code-generation rule each refuse an enumerated list of routes, not every route
+ * there is. A Node API found to reach a spawn, or to run code these rules cannot read, must be
+ * added to its rule's list when it is found, because nothing else refuses it: rule 7's list is
+ * above, and the code-generation rule's is `GENERATORS`, `ADDON_LOADERS` and `GENERATOR_MODULES`.
+ *
+ * The limit: a key the source does not fix, such as one built by joining strings, is outside both
+ * lists, as #373 records for the code-generation rule beside `GENERATORS`.
  */
 const SPAWNERS = ['src/substrate/process.mjs'];
 const SPAWN_MODULES = ['node:child_process', 'child_process', 'node:cluster', 'cluster'];
 const BINDINGS = ['binding', '_linkedBinding'];
+const REPLACERS = ['execve'];
 
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };
@@ -111,20 +119,37 @@ const GENERATORS = ['eval', 'Function', 'constructor', 'getOwnPropertyDescriptor
 /** Why the code-generation rule refuses what it names. */
 const UNSEEN = ', which runs code built at run time or reaches what does, and what that code imports is out of rules 7, 8 and 9\'s sight';
 
+/**
+ * The process method that loads a native addon, refused wherever a module names it, the process
+ * adapter included, with why. The limit on keys the source does not fix, beside `GENERATORS`,
+ * holds for it too.
+ */
+const ADDON_LOADERS = ['dlopen'];
+
+/** Why the code-generation rule refuses a native addon's loader. */
+const UNPARSED = ', which loads a native addon, whose code rules 7, 8 and 9 never read';
+
 /** Why the code-generation rule refuses a worker's module. */
 const UNREAD = ', which runs code from a string or from a file that rules 7, 8 and 9 never read, since they read only src/\'s import graph';
 
 /**
  * The built-ins that run code the rules never read, each refused however a module imports it, with
- * why. `node:vm` compiles and runs a string. `node:worker_threads` runs a string as a module, with
- * `eval: true`, or a file outside src/'s import graph, with a path. The limit on keys the source
- * does not fix, beside `GENERATORS`, holds for these too.
+ * why. `node:vm` compiles and runs a string, and `node:inspector`, with its promises form, and
+ * `node:repl` each evaluate one they are handed. `node:worker_threads` runs a string as a module,
+ * with `eval: true`, or a file outside src/'s import graph, with a path. The limit on keys the
+ * source does not fix, beside `GENERATORS`, holds for these too.
  */
 const GENERATOR_MODULES = new Map([
   ['node:vm', UNSEEN],
   ['vm', UNSEEN],
   ['node:worker_threads', UNREAD],
   ['worker_threads', UNREAD],
+  ['node:inspector', UNSEEN],
+  ['inspector', UNSEEN],
+  ['node:inspector/promises', UNSEEN],
+  ['inspector/promises', UNSEEN],
+  ['node:repl', UNSEEN],
+  ['repl', UNSEEN],
 ]);
 
 /**
@@ -1448,6 +1473,7 @@ export function boundaryReport(tree) {
     // and 9's sight.
     for (const { value, line, key } of [...module.names, ...module.strings]) {
       if (GENERATORS.includes(value) && !key) report(file, line, 'the code-generation rule', `it names \`${value}\`${UNSEEN}`);
+      if (ADDON_LOADERS.includes(value) && !key) report(file, line, 'the code-generation rule', `it names \`${value}\`${UNPARSED}`);
     }
     for (const entry of loaded) {
       if (GENERATOR_MODULES.has(entry.from)) report(file, entry.line, 'the code-generation rule', `it imports \`${entry.from}\`${GENERATOR_MODULES.get(entry.from)}`);
@@ -1460,6 +1486,7 @@ export function boundaryReport(tree) {
       }
       for (const { value, line, key } of [...module.names, ...module.strings]) {
         if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method reaching Node's internal bindings and through them a spawn, and only the process adapter may spawn`);
+        if (REPLACERS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method replacing the running process with another program, and only the process adapter may spawn`);
       }
     }
     if (file !== RUNNERS) {

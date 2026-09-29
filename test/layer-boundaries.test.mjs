@@ -249,6 +249,35 @@ test('rule 7: a module other than the process adapter calling process._linkedBin
   }
 });
 
+test('rule 7 bars no key: an object key or a class member named binding, _linkedBinding or execve passes outside the process adapter', () => {
+  const keys = [
+    "export const options = { binding: 'card', 'binding': 1 };",
+    'export class Card { binding = 1; static binding() { return 1; } }',
+    "export const options = { _linkedBinding: 1, execve: 'no' };",
+    'export class Exec { execve() { return 1; } }',
+  ];
+  for (const source of keys) assert.deepEqual(messages({ 'src/workflow/spawn.mjs': source }), [], source);
+});
+
+/** The spellings of a call to `process.execve`: a member read, a key in brackets, and a destructured binding. */
+const EXECVE_SPELLINGS = [
+  "export const go = () => process.execve('/bin/sh', ['sh']);",
+  "export const go = () => process['execve']('/bin/sh', ['sh']);",
+  "const { execve } = process;\nexport const go = () => execve('/bin/sh', ['sh']);",
+];
+
+test('rule 7: a module other than the process adapter calling process.execve fails, however it spells the call', () => {
+  for (const file of ['src/workflow/spawn.mjs', 'src/cli/doctor.mjs', 'src/substrate/forge/runners.mjs']) {
+    for (const source of EXECVE_SPELLINGS) {
+      assertBreaks({ [file]: file in ADAPTER ? `${source}\n${ADAPTER[file]}` : source }, file, 'rule 7');
+    }
+  }
+});
+
+test('rule 7: the process adapter alone may call process.execve, however it spells the call', () => {
+  for (const source of EXECVE_SPELLINGS) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), [], source);
+});
+
 test('rule 7: the process adapter alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
   const sources = [
     "import cluster from 'node:cluster';\nexport const go = () => cluster.fork();",
@@ -1551,4 +1580,46 @@ test('the code-generation rule: a module importing node:worker_threads or worker
     "export const go = async (path) => new (await import('node:' + 'worker_threads')).Worker(path);",
   ];
   for (const source of imports) assertBreaks({ 'src/execution/build.mjs': source }, 'src/execution/build.mjs', 'the code-generation rule');
+});
+
+/*
+ * A native addon runs code the rules never read, so the code-generation rule refuses
+ * `process.dlopen`, which loads one, in every module under src/, the process adapter's included.
+ */
+
+test('the code-generation rule: a module calling process.dlopen fails, however it spells the call', () => {
+  const calls = [
+    "export const go = (module) => process.dlopen(module, '/tmp/addon.node');",
+    "export const go = (module) => process['dlopen'](module, '/tmp/addon.node');",
+    "const { dlopen } = process;\nexport const go = (module) => dlopen(module, '/tmp/addon.node');",
+  ];
+  for (const file of ['src/workflow/load.mjs', 'src/substrate/process.mjs']) {
+    for (const source of calls) assertBreaks({ [file]: source }, file, 'the code-generation rule');
+  }
+});
+
+test('the code-generation rule bars no key named dlopen: an object key or a class member of that name passes', () => {
+  for (const source of ['export const addon = { dlopen: false };', 'export class Addon { static dlopen() { return 1; } }']) {
+    assert.deepEqual(messages({ 'src/workflow/load.mjs': source }), [], source);
+  }
+});
+
+/*
+ * An inspector session and a REPL each evaluate code they are handed, which the rules never read,
+ * so the code-generation rule refuses `node:inspector` and `node:repl` as it refuses `node:vm`.
+ */
+
+test('the code-generation rule: a module importing node:inspector, inspector, their promises form, node:repl or repl fails, statically or by dynamic import()', () => {
+  const templates = [
+    "import * as loaded from 'SPEC';\nexport const go = () => loaded;",
+    "import loaded from 'SPEC';\nexport const go = () => loaded;",
+    "import 'SPEC';",
+    "export * from 'SPEC';",
+    "export const go = async () => import('SPEC');",
+  ];
+  for (const specifier of ['node:inspector', 'inspector', 'node:inspector/promises', 'inspector/promises', 'node:repl', 'repl']) {
+    for (const template of templates) {
+      assertBreaks({ 'src/workflow/evaluate.mjs': template.replace('SPEC', specifier) }, 'src/workflow/evaluate.mjs', 'the code-generation rule');
+    }
+  }
 });
