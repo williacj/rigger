@@ -26,7 +26,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
 /**
  * The caller: a Node process of its own that starts two commands through the adapter, or through
  * L1's function, waits until each group holds the command and its child, says `ready`, and then
- * ends as the test asks. Its arguments are its scratch directory and a JSON object of these options:
+ * ends as the test asks. Where a call settles before its command's child is up, it stops waiting,
+ * and throws, saying why. Its arguments are its scratch directory and a JSON object of these options:
  *
  * - `ending`: `exit 0`, `exit 1`, `throw`, `reject`, or `wait`, for a test that signals it.
  * - `sink`: `named`, the state directory in the scratch directory; `unnamed`, never named.
@@ -52,7 +53,8 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  *   a pipe is still the blocking descriptor it inherited when the cleanup writes to it.
  * - `before` and `after`: code of the test's own, which the caller runs before it starts its first
  *   group and once its groups are up. It can call `start(label)`, which starts a command as the
- *   caller starts its own, and settles once its child is up; `settled`, how many of its calls to
+ *   caller starts its own, and settles once its child is up, or rejects saying why where the call
+ *   settles first; `settled`, how many of its calls to
  *   the adapter have settled; and `turn()`, which settles a turn
  *   of the event loop later.
  */
@@ -85,6 +87,7 @@ const CALLER = [
   "if (!options.untouched) process.stderr.write('');",
   'const turn = () => new Promise((resolve) => setImmediate(resolve));',
   'let settled = 0;',
+  'const over = new Map();',
   'function begin(label) {',
   "  const command = join(directory, label === 1 && options.stopped ? 'leaving' : options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
@@ -92,11 +95,20 @@ const CALLER = [
   "  const started = options.dispatch?.includes(label)",
   "    ? dispatch({ id: `d-${label}`, card: label + 6, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, ending) => writeFileSync(join(directory, `exit.${label}`), JSON.stringify(ending))) });",
+  "  started.then(() => over.set(label, 'it resolved'), (error) => over.set(label, error.message));",
   "  started.catch(() => {}).finally(() => { settled += 1; if (options.exitOnSettle) process.exit(0); });",
+  '}',
+  // A call can settle before its command is up, as where L0 ends the group because a read of the
+  // process table did not answer. Its child then never comes up, so the wait ends and says why.
+  'async function up(label) {',
+  "  while (!existsSync(join(directory, `child.${label}`))) {",
+  "    if (over.has(label)) throw new Error(`the call starting command ${label} settled before its command was up: ${over.get(label)}`);",
+  '    await turn();',
+  '  }',
   '}',
   'async function start(label) {',
   '  begin(label);',
-  "  while (!existsSync(join(directory, `child.${label}`))) await turn();",
+  '  await up(label);',
   '}',
   'if (options.before) eval(options.before);',
   // The caller raises SIGTERM as the adapter starts waiting out its bound on a command's output,
@@ -113,7 +125,7 @@ const CALLER = [
   '}',
   'if (options.groups) {',
   '  for (const label of [1, 2]) begin(label);',
-  "  while (!existsSync(join(directory, 'child.1')) || !existsSync(join(directory, 'child.2'))) await turn();",
+  '  await Promise.all([up(1), up(2)]);',
   '  if (options.stopped) {',
   "    const child = readFileSync(join(directory, 'child.1'), 'utf8').trim();",
   "    const state = () => spawnSync('/bin/ps', ['-o', 'stat=', '-p', child], { encoding: 'utf8' }).stdout;",
@@ -168,14 +180,19 @@ function fixtures(directory) {
     'while [ ! -f "$here/release" ]; do :; done',
     'exit 3',
   ].join('\n'));
-  // Stand-ins for `ps` that answer every read as `ps` does, but the one read of a group's states
-  // and wait statuses the exit cleanup makes as its kill's last look, which `ps-status-fails`
-  // fails and `ps-status-hangs` never answers. `ps-log` answers every read as `ps` does and
-  // writes each one's arguments to `ps.log`.
-  const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) ${answer} ;; esac\nexec /bin/ps "$@"`;
+  // Stand-ins for `ps` that answer every read as `ps` does, but the one read of the first
+  // command's group's states and wait statuses the exit cleanup makes as its kill's last look,
+  // which `ps-status-fails` fails and `ps-status-hangs` never answers. `ps-log` answers every read
+  // as `ps` does and writes each one's arguments to `ps.log`.
+  const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) if [ "$2" = "$(/bin/cat "$here/group.1")" ]; then ${answer}; fi ;; esac\nexec /bin/ps "$@"`;
   fixture(directory, 'ps-status-fails', statusRead('echo "ps: the test refuses this read" >&2; exit 2'));
   fixture(directory, 'ps-status-hangs', statusRead('exec /usr/bin/tail -f "$here/ps-hold"'));
   fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec /bin/ps "$@"');
+  // `ps-start-hangs` answers every read as `ps` does, but never the read of a leader's start time.
+  // `unready` records its group and runs until killed, and never starts the child that would put
+  // it up, so a caller never finds it up.
+  fixture(directory, 'ps-start-hangs', 'case " $* " in *" -o lstart= "*) exec /usr/bin/tail -f "$here/ps-hold" ;; esac\nexec /bin/ps "$@"');
+  fixture(directory, 'unready', 'echo $$ > "$here/group.$1"\nexec /usr/bin/tail -f "$here/hold"');
   // `zombied` starts a process that leaves the group, holds the command's output open until
   // killed, and parents a child it never reaps, which joins the group and exits there. So the
   // group holds that zombie until the process is killed. `zombied` exits 3 once the caller writes
@@ -279,11 +296,12 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   let closed = false;
   const ended = once(run, 'close').finally(() => { closed = true; });
   await Promise.race([ready, ended]);
-  // What the process table says of each process, read while the caller still holds them.
-  const processes = options.groups ? described(directory) : [];
+  // What the process table says of each process, read while the caller still holds them. A caller
+  // that ended without saying `ready` holds none, and is sent nothing.
+  const processes = options.groups && !closed ? described(directory) : [];
   const seen = inspect?.(directory);
   let heard;
-  if (signal !== undefined) process.kill(run.pid, signal);
+  if (signal !== undefined && !closed) process.kill(run.pid, signal);
   // A caller that ends without saying `heard` ends the wait, and the test then reads how it ended.
   if (whileHeard !== undefined) {
     while (!stdout.includes('heard\n') && !closed) await new Promise((resolve) => setImmediate(resolve));
@@ -868,9 +886,12 @@ test('given a dispatch whose command has exited 3 and is not yet reaped when the
   assert.deepEqual(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1'), []);
 });
 
+// Each call reads the process table under L0's own bound. A call's bound holds every read it makes,
+// the read of its leader's start time among them, and one shorter than a loaded host needs has L0
+// end the dispatch before its command is up (#397).
 for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses this read/], ['ps-status-hangs', 'does not answer', /timed out/]]) {
   test(`given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), where the cleanup's read of its status ${how}, its one dispatch end carries no exit code and says why`, ENDS_WITHIN, async (t) => {
-    const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, ps, readTimeout: 300, after: EXIT_UNREAPED });
+    const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, ps, after: EXIT_UNREAPED });
 
     assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
     await assertNoneAlive(directory);
@@ -883,7 +904,7 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
   });
 
   test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries the killed command's non-zero exit code`, ENDS_WITHIN, async (t) => {
-    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], ps, readTimeout: 300 }, { signal: 'SIGTERM' });
+    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], ps }, { signal: 'SIGTERM' });
 
     assert.equal(signal, 'SIGTERM', stderr);
     await assertNoneAlive(directory);
@@ -892,6 +913,20 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
     assert.deepEqual(ends.map(({ exit, unread }) => ({ exit, unread })), [{ exit: 128 + constants.signals.SIGKILL, unread: undefined }]);
   });
 }
+
+// L0 ends a dispatch's group when the read of its leader's start time does not answer within the
+// call's read bound, which is how a loaded host once ended the dispatch above before its command
+// was up, and the caller then waited for it until the test's own bound ended the test (#397).
+test('given a dispatch that L0 ends before its command is up, because the read of its leader\'s start time does not answer, the caller stops waiting for it, says why and ends, and the dispatch\'s one end names the unread start time', ENDS_WITHIN, async (t) => {
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'unready' }, ps: 'ps-start-hangs', readTimeout: 300 }, { signal: 'SIGTERM' });
+
+  assert.deepEqual({ status, signal }, { status: 1, signal: null }, stderr);
+  assert.match(stderr, /the call starting command 1 settled before its command was up: .*could not read when the leader of group \d+ started/);
+  assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
+  const ends = endsOf(streamOf(directory), 'd-1');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.match(ends[0].reason ?? '', /could not read when the leader of group \d+ started, so it ended the group: .*ETIMEDOUT/, JSON.stringify(ends[0]));
+});
 
 test('the cleanup reads nothing of a group the call has already ended, though a zombie keeps it in being', ENDS_WITHIN, async (t) => {
   // The command leaves a zombie in its group, which the call ends once the bound on unreaped
