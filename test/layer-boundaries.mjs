@@ -58,10 +58,10 @@ const HELD = [
 ];
 
 /**
- * The modules that may import `node:child_process`: the runners, L0's process adapter, and two
- * local tool probes.
+ * The modules that may import `node:child_process`: L0's process adapter alone, through which
+ * every other module spawns (the architect's ruling on #214, §5).
  */
-const SPAWNERS = [RUNNERS, 'src/substrate/process.mjs', 'src/cli/doctor.mjs', 'src/cli/init.mjs'];
+const SPAWNERS = ['src/substrate/process.mjs'];
 const CHILD_PROCESS = ['node:child_process', 'child_process'];
 
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
@@ -1361,6 +1361,10 @@ export function boundaryReport(tree) {
           // Falls through to the refusal below, which names what could not be resolved.
         }
       }
+      // Rule 7 names who may spawn; the refusal below still names what this test cannot follow.
+      if (CHILD_PROCESS.includes(call.specifier) && !SPAWNERS.includes(file)) {
+        report(file, call.line, 'rule 7', `\`import(${call.argument})\` loads \`${call.specifier}\`, which only the process adapter may import`);
+      }
       if (GENERATOR_MODULES.has(call.specifier)) {
         report(file, call.line, 'the code-generation rule', `\`import(${call.argument})\` loads \`${call.specifier}\`${GENERATOR_MODULES.get(call.specifier)}`);
         continue;
@@ -1441,7 +1445,7 @@ export function boundaryReport(tree) {
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
-        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the forge runners, the process adapter, doctor.mjs and init.mjs may`);
+        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
       }
     }
     if (file !== RUNNERS) {
