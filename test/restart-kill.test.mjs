@@ -16,7 +16,7 @@ import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs
 import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt } from './git-repository.mjs';
-import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, until, withoutLeader } from './process-fixtures.mjs';
+import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -95,11 +95,12 @@ function dispatchedCommand(directory, { exits = false } = {}) {
 /**
  * Starts the engine that stands in for Rigger mid-dispatch, a Node process of its own running one
  * pull of L3's loop over `world`'s board, with the fake `gh` first on its PATH, whose dispatch
- * runs `command`. Its command line names the scratch directory, so the teardown ends it.
+ * runs `command` and reads the process table through `ps` where it is given. Its command line
+ * names the scratch directory, so the teardown ends it.
  */
-function startEngine(world, command) {
+function startEngine(world, command, { ps } = {}) {
   const harness = new URL('./mid-dispatch-engine.mjs', import.meta.url).href;
-  const given = { directory: world.directory, repository: world.repository, command };
+  const given = { directory: world.directory, repository: world.repository, command, ps };
   const code = `const { engine } = await import(${JSON.stringify(harness)});\nawait engine(${JSON.stringify(given)});`;
   const engine = spawn(process.execPath, ['--input-type=module', '-e', code], {
     cwd: world.repository,
@@ -113,15 +114,33 @@ function startEngine(world, command) {
 }
 
 /**
- * The engine killed outright mid-dispatch: started over `world` on `command`, and sent SIGKILL
- * once the command and its child have both signalled they are running. Settles once the engine
- * has exited, on the pids of the command and its child.
+ * Whether the command's group is recorded in `world`: the command has written its pid, and the
+ * record in the state directory holds an entry naming that pid as a group.
  */
-async function killedMidDispatch(t, world, command) {
-  const engine = startEngine(world, command);
+function groupRecorded(world) {
+  if (!existsSync(join(world.directory, 'command.pid'))) return false;
+  const group = Number(read(world.directory, 'command.pid'));
+  return readGroups(world.state).some((entry) => entry.group === group);
+}
+
+/**
+ * The engine killed outright mid-dispatch: started over `world` on `command`, reading the process
+ * table through `ps` where it is given, and sent SIGKILL once the command and its child have both
+ * signalled they are running and the record names the command's group. Settles once the engine
+ * has exited, on the pids of the command and its child.
+ *
+ * The kill waits on the record as well as on `ready`, because the two are not ordered. L1 records
+ * the group in the step after L0 spawns it, once L0 has read the command's start time, while the
+ * command runs on meanwhile. So on a loaded host the command can mark `ready` first, and a kill
+ * made then lands in the window `dispatch` leaves open, which leaves a group no entry names and
+ * no restart ends: the window the owner left open (round 4, and the architect's ruling 3, §6, on
+ * #332), as the note beside the entry's write in `src/execution/run.mjs` records.
+ */
+async function killedMidDispatch(t, world, command, { ps } = {}) {
+  const engine = startEngine(world, command, { ps });
   const exited = once(engine, 'exit');
-  await until(() => existsSync(join(world.directory, 'ready')) || engine.exitCode !== null, t);
-  assert.ok(existsSync(join(world.directory, 'ready')), `the engine ended before its dispatch ran: ${engine.said}`);
+  await until(() => (existsSync(join(world.directory, 'ready')) && groupRecorded(world)) || engine.exitCode !== null, t);
+  assert.ok(existsSync(join(world.directory, 'ready')) && groupRecorded(world), `the engine ended before its dispatch ran and was recorded: ${engine.said}`);
   engine.kill('SIGKILL');
   await exited;
   return { command: Number(read(world.directory, 'command.pid')), child: Number(read(world.directory, 'child.pid')) };
@@ -229,17 +248,14 @@ test('after that restart through rigger once, the stream holds each kill under t
 test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run started no dispatch of its own and printed what the base prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
 
 /**
- * The engine killed outright while its command and child run, then the command exiting on its own
- * while its child stays alive. Settles once the command is gone, on both pids.
+ * Opens the FIFO `name` in `directory` for writing, and closes it, which lets its reader go on. The
+ * open fails until the reader is there, so it is retried each turn until the test `t` ends.
  */
-async function leaderGoneAfterDeath(t, world) {
-  const pids = await killedMidDispatch(t, world, dispatchedCommand(world.directory, { exits: true }));
-  // The command waits in its open of the FIFO for a writer. Opening it without blocking fails
-  // until that reader is there, so the open is retried each turn.
+async function opened(t, directory, name) {
   let writer;
   await until(() => {
     try {
-      writer = openSync(join(world.directory, 'exit-now'), files.O_WRONLY | files.O_NONBLOCK);
+      writer = openSync(join(directory, name), files.O_WRONLY | files.O_NONBLOCK);
       return true;
     } catch (error) {
       if (error.code === 'ENXIO') return false;
@@ -247,6 +263,17 @@ async function leaderGoneAfterDeath(t, world) {
     }
   }, t);
   closeSync(writer);
+}
+
+/**
+ * The engine killed outright while its command and child run, then the command exiting on its own
+ * while its child stays alive. Settles once the command is gone, on both pids. `ps` is handed to
+ * the engine (`killedMidDispatch`).
+ */
+async function leaderGoneAfterDeath(t, world, { ps } = {}) {
+  const pids = await killedMidDispatch(t, world, dispatchedCommand(world.directory, { exits: true }), { ps });
+  // The command waits in its open of the FIFO for a writer.
+  await opened(t, world.directory, 'exit-now');
   await until(() => !alive(pids.command), t);
   assert.equal(alive(pids.child), true, 'the child outlived its command');
   return pids;
@@ -256,6 +283,40 @@ async function leaderGoneAfterDeath(t, world) {
 test('given the engine SIGKILLed while a dispatched command and its child run, and the command then exiting on its own while the child stays alive, rigger once started afterwards leaves the child not alive when its first board read reaches the forge stand-in', SETTLES_WITHIN, async (t) => {
   const world = consumerIn(t, [card(10)]);
   const pids = await leaderGoneAfterDeath(t, world);
+
+  const ran = await restart(world, 'once');
+
+  assert.deepEqual(atFirstCall(world).alive, [], ran.stderr);
+  assert.equal(alive(pids.child), false);
+});
+
+/**
+ * A stand-in for `ps` in `directory` whose reads of a start time, which L0 makes of a command it
+ * has just spawned before L1 records its group, mark `reading` and wait until the test opens the
+ * FIFO `release`. Every other read is `ps`'s own.
+ */
+function heldStartRead(directory) {
+  spawnSync('/usr/bin/mkfifo', [join(directory, 'release')]);
+  return fixture(directory, 'ps', [
+    'case "$*" in *lstart=*)',
+    '  : > "$here/reading"',
+    '  read line < "$here/release" ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+}
+
+// proves R-STATE-10
+test('given the engine\'s record of its dispatch\'s group held back until after the command has marked ready, then the engine SIGKILLed while the command and its child run, and the command exiting on its own while the child stays alive, rigger once started afterwards leaves the child not alive when its first board read reaches the forge stand-in', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const gone = leaderGoneAfterDeath(t, world, { ps: heldStartRead(world.directory) });
+  // The engine's read of the command's start, which it takes before it records the group, is held
+  // until the command has marked ready and a turn has passed: the turn in which a kill made on
+  // `ready` alone would already have been sent.
+  await until(() => existsSync(join(world.directory, 'ready')) && existsSync(join(world.directory, 'reading')), t);
+  await turn(t);
+  await opened(t, world.directory, 'release');
+  const pids = await gone;
 
   const ran = await restart(world, 'once');
 
