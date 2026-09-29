@@ -148,7 +148,7 @@ reports no gap of its own; the register carries the reason.
 | R-IMPROVE-4 | **gap** |
 | R-IMPROVE-5 | **gap** |
 | R-IMPROVE-6 | **gap** |
-| R-SAFE-1 | **gap** |
+| R-SAFE-1 | `test/init.test.mjs` given an origin remote whose userinfo is a user and a password, ahead of one path segment, init writes the placeholder and neither writes nor prints the userinfo<br>`test/init.test.mjs` given an origin remote whose userinfo is a token alone, ahead of one path segment, init writes the placeholder and neither writes nor prints the token<br>`test/init.test.mjs` given an origin remote whose userinfo is a user and a token, ahead of two path segments, init writes acme/widgets, without the userinfo<br>`test/init.test.mjs` given an origin remote whose userinfo is a token alone, ahead of two path segments, init writes acme/widgets, without the token<br>`test/init.test.mjs` given an scp-style origin remote whose userinfo holds a colon, init writes acme/widgets and neither writes nor prints the token |
 | R-SAFE-2 | **gap** |
 | R-SAFE-3 | **gap** |
 | R-SAFE-4 | **gap** |

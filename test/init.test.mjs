@@ -664,3 +664,72 @@ test('given an origin remote carrying a credential and ending in no owner and na
   assert.ok(!ran.text.includes(secret), ran.text);
   assert.match(ran.text, /git remote get-url origin/);
 });
+
+/**
+ * `init` run over a repository whose `origin` is `url`, as the report it printed, the text of the
+ * config it wrote, and the `repo` that config names once loaded.
+ */
+async function initOver(url) {
+  const consumer = repository(url);
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+  assert.equal(ran.code, 0, ran.text);
+  const path = join(consumer, CONFIG);
+  return { ran, text: readFileSync(path, 'utf8'), repo: (await import(pathToFileURL(path))).default.repo };
+}
+
+/**
+ * `init` run over a repository whose `origin` is `url` writes `expected` as its `repo`, and no
+ * text in `credentials` reaches the config it wrote or the report it printed.
+ *
+ * AGENTS.md: never log a secret, and a config the consumer commits is read by more people than a
+ * log. The failure message redacts every credential, and `ok` stands in for `equal`, so a red run
+ * prints only the redacted name, never what was read.
+ */
+async function initKeepsOut(url, expected, credentials) {
+  const { ran, text, repo } = await initOver(url);
+  const redacted = credentials.reduce((name, credential) => name.replaceAll(credential, '<credential>'), repo);
+
+  assert.ok(repo === expected, `the config names \`${redacted}\``);
+  for (const credential of credentials) {
+    assert.ok(!text.includes(credential), 'the written config carries the credential');
+    assert.ok(!ran.text.includes(credential), 'init printed the credential');
+  }
+}
+
+// The defect the next two catch is the owner and name read across the host, so the userinfo lands
+// in `repo`, as `s3cret-token@git.example.invalid/widgets` did.
+
+// proves R-SAFE-1
+test('given an origin remote whose userinfo is a user and a password, ahead of one path segment, init writes the placeholder and neither writes nor prints the userinfo', async () => {
+  await initKeepsOut('https://user:s3cret-token@git.example.invalid/widgets', PLACEHOLDER.repo, ['user:s3cret-token', 's3cret-token']);
+});
+
+// proves R-SAFE-1
+test('given an origin remote whose userinfo is a token alone, ahead of one path segment, init writes the placeholder and neither writes nor prints the token', async () => {
+  await initKeepsOut('https://s3cret-token@github.com/widgets', PLACEHOLDER.repo, ['s3cret-token']);
+});
+
+// proves R-SAFE-1
+test('given an origin remote whose userinfo is a user and a token, ahead of two path segments, init writes acme/widgets, without the userinfo', async () => {
+  await initKeepsOut('https://user:tok@github.com/acme/widgets.git', 'acme/widgets', ['user:tok', 'tok']);
+});
+
+// proves R-SAFE-1
+test('given an origin remote whose userinfo is a token alone, ahead of two path segments, init writes acme/widgets, without the token', async () => {
+  await initKeepsOut('https://tok@github.com/acme/widgets.git', 'acme/widgets', ['tok']);
+});
+
+// proves R-SAFE-1
+test('given an scp-style origin remote whose userinfo holds a colon, init writes acme/widgets and neither writes nor prints the token', async () => {
+  // Git reads everything before the last colon ahead of the first slash as `user@host`, so the
+  // colon in the userinfo is not where the path starts. The defect this catches is the token and
+  // host read as the owner, as `s3cret-token@github.com:acme/widgets` was.
+  await initKeepsOut('user:s3cret-token@github.com:acme/widgets.git', 'acme/widgets', ['s3cret-token']);
+});
+
+test('an ssh:// remote reads as the owner and name at the end of its path', async () => {
+  // Real repositories configured through git, as the other spellings are above, because a string
+  // parsed by the same pattern would agree with it by construction.
+  assert.equal(await slugOf(repository('ssh://git@github.com/acme/widgets.git')), 'acme/widgets');
+  assert.equal(await initOver('ssh://git@github.com/acme/widgets.git').then(({ repo }) => repo), 'acme/widgets');
+});

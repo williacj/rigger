@@ -32,8 +32,16 @@ export const PROVIDER_ASSETS = { claude: '.claude' };
  */
 export const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
 
-/** The owner and name at the end of a remote's URL, whichever spelling it arrived in. */
-const SLUG = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/;
+/**
+ * Where a remote names its host, and any userinfo with it: a URL's scheme and authority, or the
+ * `user@host:` a scp-style remote opens with, up to the last colon ahead of the first slash, so a
+ * colon inside the userinfo is not taken for the one that ends the host. It is dropped before the
+ * owner and name are read, so that neither the host nor a credential can be read as either.
+ */
+const HOST = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]*|[^/]*:)/i;
+
+/** The owner and name at the end of a remote's path. */
+const SLUG = /(?:^|\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
 
 /**
  * The `owner/name` git says this repository's `origin` remote points at, as `{ repo }`, or
@@ -55,7 +63,9 @@ const SLUG = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/;
  *   `git -C` walks up as every git command does, so `init` in a subdirectory names the repository
  *   above it;
  * - a remote carrying more path segments than GitHub uses — `host/group/sub/widgets.git` —
- *   yields the last two, which is not what a forge with a nested namespace would want read.
+ *   yields the last two, which is not what a forge with a nested namespace would want read;
+ * - a remote with one segment after its host — `https://host/widgets` — yields null, because the
+ *   host is never read as an owner, so a credential in front of it never reaches the config.
  *
  * Git is asked through L0 (`gitAnswer`), with `emitter` for L0's kills and `timeout` for the call.
  * A kill the sink refused rejects, as the adapter rejects.
@@ -63,7 +73,7 @@ const SLUG = /[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/;
 export async function repoSlug(dir, options) {
   const { stdout, why } = await gitAnswer(['-C', dir, 'remote', 'get-url', 'origin'], options);
   if (why !== undefined) return { repo: null, why };
-  const found = stdout.trim().match(SLUG);
+  const found = stdout.trim().replace(HOST, '').match(SLUG);
   // The remote is never quoted: a URL can carry a credential, and this line is printed.
   if (!found) return { repo: null, why: 'the remote it named ends in no owner and name; `git remote get-url origin` shows it' };
   return { repo: `${found[1]}/${found[2]}` };
