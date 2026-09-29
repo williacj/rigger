@@ -2,7 +2,10 @@
 // says so. It reads the board through L0, moves the card through L2, and records through L5.
 // `run` is the same verb with no claim limit, so what the two share is one function here.
 
+import { join } from 'node:path';
+
 import { validate } from '../config/validate.mjs';
+import { killRecordedGroups } from '../execution/run.mjs';
 import { claimOnly } from '../scheduling/loop.mjs';
 import { readSide } from '../substrate/forge/read.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
@@ -10,7 +13,7 @@ import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
-import { recording } from './recording.mjs';
+import { STATE, recording } from './recording.mjs';
 
 /**
  * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
@@ -23,12 +26,17 @@ const failuresIn = (failure) => (failure instanceof AggregateError ? failure.err
  * exits with. `limit` is the claim limit handed to the call, or undefined for none, in which case
  * the call claims until the slots are full: L3 reads N from the config it is handed.
  *
- * It records through the sink `recording` opens, in the repository the guard names.
+ * It records through the sink `recording` opens, in the repository the guard names. L3 is handed
+ * L1's kill of the process groups a dead engine recorded in that repository's state directory,
+ * and runs it before it records or reads anything. `ps` and `readTimeout` stand in for L0's own
+ * process-table read and its bound where a test gives them.
  */
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
 
 /** `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
-async function claiming(verb, limit, opened, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
+async function claiming(verb, limit, opened, {
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, ps, readTimeout,
+} = {}) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
   const { sink } = opened;
@@ -48,15 +56,18 @@ async function claiming(verb, limit, opened, { target = process.cwd(), packageRo
     if (next.action === 'refuse') refusals.push(next);
     return next;
   };
+  const kill = () => killRecordedGroups({ directory: join(named, STATE), sink, ps, readTimeout });
   // One handle per invocation: two over one board would each claim the same card.
   let claimed;
   try {
-    claimed = await claimOnly({ config, board, decide, l2, sink }).claim(limit);
+    claimed = await claimOnly({ config, board, decide, l2, sink, kill }).claim(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start
-    // it did not make, and either is loud by the owner's ruling (#277; `ARCHITECTURE.md`,
-    // "Failure model"). The record is not used to say so, because the record is what failed.
+    // it did not make, and so does a start's kill that failed, naming each unrecorded kill,
+    // unconfirmed group or unreadable record. Each is loud by the owner's ruling (#277;
+    // `ARCHITECTURE.md`, "Failure model"). The record is not used to say so, because the record
+    // is what failed.
     return { text: [...failuresIn(failure).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'), code: 1 };
   }
   const { project } = config.board;

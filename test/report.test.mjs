@@ -69,7 +69,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   });
   // A card whose dispatch returned has nothing more for L2 to do in this run.
   const decide = (card) => (returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS));
-  const running = loop({ config: settings, board, decide, l2, dispatch, sink })[entry]();
+  const running = loop({ config: settings, board, decide, l2, dispatch, sink, kill: async () => {} })[entry]();
   await quiesce();
   for (const [at, numbers] of releases) {
     minute = at;

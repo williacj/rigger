@@ -19,6 +19,7 @@ import { installFakeGh } from './fake-gh.mjs';
 import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
 } from './loop-world.mjs';
+import { claimOnly, loop } from '../src/scheduling/loop.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
@@ -1145,4 +1146,99 @@ test('given a sink that refuses every append, the claim-only call reports the pu
     ]);
     return true;
   });
+});
+
+// The start's kill (`ARCHITECTURE.md`, "Failure model"): L3 has L1 kill every recorded group
+// before it records or reads anything, so a handle is built with the kill injected.
+
+/** What `loop` and `claimOnly` are handed but the kill, over `built`'s board, L2 and a sink. */
+function withoutKill() {
+  const built = world({ cards: [1] });
+  const settings = { ...config, concurrency: 1 };
+  return { config: settings, board: handleOn(built.fake), decide: (card) => nextAction(card, KINDS), l2: built.l2, sink: { emitter: () => ({ emit: () => {} }) } };
+}
+
+test('a loop handle built without the injected kill throws when it is built, naming the kill', () => {
+  assert.throws(() => loop({ ...withoutKill(), dispatch: async () => ({ exit: 0 }) }), /\bkill\b/);
+});
+
+test('a claim-only handle built without the injected kill throws when it is built, naming the kill', () => {
+  assert.throws(() => claimOnly(withoutKill()), /\bkill\b/);
+});
+
+/**
+ * An injected kill that settles only once the test calls `release`, and counts how many times L3
+ * called it.
+ */
+function heldKill() {
+  let release;
+  const settled = new Promise((resolve) => { release = resolve; });
+  const held = { calls: 0, release: () => release() };
+  held.kill = () => {
+    held.calls += 1;
+    return settled;
+  };
+  return held;
+}
+
+/** L0's handle on `fake`, counting every read L3 makes of it. */
+function countingHandle(fake) {
+  const handle = handleOn(fake);
+  const counted = { reads: 0 };
+  counted.handle = {
+    readColumns: () => { counted.reads += 1; return handle.readColumns(); },
+    readPriority: () => { counted.reads += 1; return handle.readPriority(); },
+  };
+  return counted;
+}
+
+test('given a loop handle whose injected kill settles only when the test releases it, run() records no L3 event, run.start included, until the kill settles', async () => {
+  const held = heldKill();
+  const fake = boardOf([1]);
+  const built = world({ fake, concurrency: 1, kill: held.kill });
+
+  const running = built.loop.run();
+  await quiesce();
+  assert.equal(held.calls, 1, 'the kill was called');
+  assert.deepEqual(built.l3Events(), []);
+  held.release();
+  await quiesce();
+  assert.equal(built.l3Events()[0]?.event, 'run.start', JSON.stringify(built.l3Events()));
+  built.dispatches.releaseAll();
+  await quiesce();
+  built.dispatches.releaseAll();
+  await running;
+  assert.equal(held.calls, 1, 'the kill ran once for the handle');
+});
+
+test('given a loop handle whose injected kill settles only when the test releases it, the board receives no read until the kill settles', async () => {
+  const held = heldKill();
+  const fake = boardOf([1]);
+  const counted = countingHandle(fake);
+  const built = world({ fake, board: counted.handle, concurrency: 1, kill: held.kill });
+
+  const running = built.loop.run();
+  await quiesce();
+  assert.equal(counted.reads, 0);
+  held.release();
+  await quiesce();
+  assert.ok(counted.reads > 0, 'the run read the board once the kill settled');
+  built.dispatches.releaseAll();
+  await quiesce();
+  built.dispatches.releaseAll();
+  await running;
+});
+
+test('given a loop handle whose injected kill rejects, a pull reads nothing, records no L3 event, and rejects with the kill\'s failure', async () => {
+  // An empty board, so a pull that went on past the kill settles rather than holding a dispatch.
+  const fake = boardOf([]);
+  const counted = countingHandle(fake);
+  const refusal = new Error('the sink refused 1 kill(s) of recorded groups');
+  const built = world({ fake, board: counted.handle, kill: async () => { throw refusal; } });
+
+  await assert.rejects(built.loop.pull(), (failure) => failure === refusal);
+  await assert.rejects(built.claims.claim(1), (failure) => failure === refusal);
+
+  assert.equal(counted.reads, 0);
+  assert.deepEqual(built.l3Events(), []);
 });
