@@ -58,11 +58,22 @@ const HELD = [
 ];
 
 /**
- * The modules that may import `node:child_process`: L0's process adapter alone, through which
- * every other module spawns (the architect's ruling on #214, §5).
+ * The modules that may spawn a process: L0's process adapter alone, through which every other
+ * module spawns (the architect's ruling on #214, §5). Rule 7 refuses every other module each route
+ * to a spawn this test reads:
+ * - importing `node:child_process` or `node:cluster`, whose `fork()` spawns, bare or prefixed, by
+ *   any static form, a re-export or a dynamic `import()` of a fixed specifier (`SPAWN_MODULES`);
+ * - naming `process.binding` or `process._linkedBinding`, which reach Node's internal
+ *   `spawn_sync` and `process_wrap`, as a member, a key in brackets or a destructured binding
+ *   (`BINDINGS`);
+ * - and, under the dynamic-import rule, the loaders that reach any of them unseen (`LOADERS`).
+ *
+ * The limit: a key the source does not fix, such as one built by joining strings, is outside the
+ * rule, as #373 records for the code-generation rule beside `GENERATORS`.
  */
 const SPAWNERS = ['src/substrate/process.mjs'];
-const CHILD_PROCESS = ['node:child_process', 'child_process'];
+const SPAWN_MODULES = ['node:child_process', 'child_process', 'node:cluster', 'cluster'];
+const BINDINGS = ['binding', '_linkedBinding'];
 
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };
@@ -1362,7 +1373,7 @@ export function boundaryReport(tree) {
         }
       }
       // Rule 7 names who may spawn; the refusal below still names what this test cannot follow.
-      if (CHILD_PROCESS.includes(call.specifier) && !SPAWNERS.includes(file)) {
+      if (SPAWN_MODULES.includes(call.specifier) && !SPAWNERS.includes(file)) {
         report(file, call.line, 'rule 7', `\`import(${call.argument})\` loads \`${call.specifier}\`, which only the process adapter may import`);
       }
       if (GENERATOR_MODULES.has(call.specifier)) {
@@ -1445,7 +1456,10 @@ export function boundaryReport(tree) {
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
-        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
+        if (SPAWN_MODULES.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
+      }
+      for (const { value, line, key } of [...module.names, ...module.strings]) {
+        if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method reaching Node's internal bindings and through them a spawn, and only the process adapter may spawn`);
       }
     }
     if (file !== RUNNERS) {
