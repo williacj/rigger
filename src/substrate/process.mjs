@@ -358,25 +358,25 @@ async function ended(group, ps, readTimeout) {
  *
  * So one class of read is left unrecorded, and nothing but the process table can close it (`D16`
  * rule 3): a read that exits 0, lists at least one row, and consistently leaves out a live member of
- * the group, the leader included, of the census, the kill and this one alike. Such a read is taken
+ * the group other than the leader, of the census, the kill and this one alike. Such a read is taken
  * as complete, so the group's kill ends that hidden member unrecorded. Two instances: a read that
- * lists only the group's zombies, and one that lists only a member started after the leader while
- * the leader has been reaped.
+ * lists only the group's zombies while its leader is dead, and one that lists only a member started
+ * after the leader while the leader has been reaped.
  *
  * A read that lists no row is outside that class. The census and this read take an empty table
  * again while signal 0 still reaches the group, and where it stays empty the group's kill is
  * recorded, with why its processes went unnamed.
  *
- * The note beside the start-time read (`startsIn`) records a narrower class. That read catches a
- * hidden live leader through the recorded leader's pid, which is the group's id: a leader left out
- * while its pid still answers signal 0 is read again. So its class leaves the leader out. The
- * census, the kill and this read ask signal 0 of the group, and of a pid only once the census has
- * named it, so a live leader every read hides is hidden from them like any other member, and their
- * class includes it.
+ * The leader is left out of the class because the census asks signal 0 of the leader's pid, which
+ * is the group's id, and reads again while a read leaves out a leader that still answers
+ * (`census`).
+ * The start-time read catches a hidden live leader the same way, and the note beside it
+ * (`startsIn`) records this same class.
  *
- * No read of the table can find a member it consistently hides, because the table is the only
- * thing that says which pids the group holds. Signal 0 to the group says only that some process is
- * in it, live or a zombie, not which: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
+ * No read of the table can find another member it consistently hides, because the table is the
+ * only thing that says which pids the group holds. The leader alone is known without it, since its
+ * pid is the group's id. Signal 0 to the group says only that some process is in it, live or a
+ * zombie, not which: measured with Node 26.5.0 on macOS 27.0 on 2026-09-27,
  * `process.kill(pid, 0)` succeeded on a zombie, and a group left holding only a zombie its parent
  * outside the group never reaps kept answering signal 0 (`UNREAPED_BOUND`). So a read hiding a live
  * member while listing zombies is exactly what the table gives for a group holding only zombies,
@@ -448,6 +448,13 @@ function signal(group, name) {
  * While the group still answers, the census reads again, and where `timeout` passes first it fails
  * saying so, and the group is killed unnamed.
  *
+ * Reads that agree and leave out the group's leader are kept only where signal 0 no longer reaches
+ * the leader's pid, which is the group's id, as the start-time read holds (`startsIn`). A leader
+ * that has exited and not been reaped is listed as a zombie, so a leader left out while its pid
+ * still answers was left out by a read that failed. The census then reads again the same way, and
+ * where `timeout` passes first the group is killed unnamed, so a live leader every read hides is
+ * recorded as the kill of the group, not ended unrecorded.
+ *
  * A read of states or command lines holds the pid and that one column, so no field of varying
  * width comes before the one split it takes. `ps` pads a column by display width, and a name of
  * wide characters is padded to fewer characters than a narrow one, so splitting after it misread
@@ -502,13 +509,13 @@ function signal(group, name) {
  *   read fails (`run`).
  */
 function* census(group) {
-  // Whether the census's last reads that agreed named no process while the group still had one.
-  let unseen = false;
+  // Why the census's last reads that agreed were not kept: they left out what signal 0 reached.
+  let unseen;
   const read = function* (args) {
     try {
       return yield args;
     } catch (error) {
-      throw unseen ? new Error(`the census's reads named no process of the group while it still had one: ${error.message}`) : error;
+      throw unseen ? new Error(`the census's reads ${unseen}: ${error.message}`) : error;
     }
   };
   const column = function* (name) {
@@ -523,7 +530,9 @@ function* census(group) {
     const commands = yield* column('command');
     const after = yield* column('stat');
     if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
-    unseen = after.size === 0 && occupied(group);
+    unseen = after.size === 0 && occupied(group) ? 'named no process of the group while it still had one'
+      : !after.has(group) && answers(group) ? `left out the group's leader, ${group}, while signal 0 still reached its pid`
+      : undefined;
     if (unseen) continue;
     return [...after]
       .filter(([, state]) => state.startsWith('T'))
@@ -692,8 +701,8 @@ function runNow(ps, args, remaining, timeout) {
  * member that is not a zombie, or signal 0 reaches it and the read fails or lists nothing until
  * `readTimeout`, the kill of the group is handed back beside the processes the kill named, saying
  * which (`outlived`). A process that joins the group after that read is ended by the group's kill
- * unrecorded, and so is one the table hides from every read while listing the group's zombies
- * (`outlived` says why no read can find it).
+ * unrecorded, and so is a member other than the leader that the table hides from every read while
+ * listing the group's zombies (`outlived` says why no read can find it).
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
@@ -803,8 +812,8 @@ function killsOf(group, survivors, unnamed, killed) {
  * where it finds another, so the group is killed unnamed rather than that process ended
  * unrecorded. The kill reads the whole group at least once, in its first round, even where the
  * census named no one. A read that exits 0, lists at least one row, and consistently leaves out a
- * live member, the leader included, is the one class this cannot catch (`outlived` records it and
- * says why no read can).
+ * live member other than the leader, whom the census checks by its pid, is the one class this
+ * cannot catch (`outlived` records it and says why no read can).
  *
  * A chain of parent and child takes a round for each process in it, so a round reads no more of
  * the table than it must. The first reads the whole group. A later round with one survivor to
@@ -1184,13 +1193,17 @@ function startOf(ps, pid, timeout) {
  * group is killed. A leader that has left the group for another holds the read to `timeout` the
  * same way, which kills nothing.
  *
- * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), as
- * on the kill (`outlived`): a read that exits 0 and consistently leaves out a live member other
- * than the leader, whatever else it lists. Such a read is taken as complete. Where the leader is
- * dead, the leaderless rule then judges the group without that member's start, so the hidden
- * member is killed even where it started before the recorded leader. Two instances: a read that
- * lists only the group's zombies, its dead leader among them, and one that lists only a member
- * started after the recorded leader while the leader has been reaped.
+ * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), the
+ * same class as on the kill (`outlived`): a read that exits 0, lists at least one row, and
+ * consistently leaves out a live member other than the leader. Such a read is taken as complete.
+ * Where the leader is dead, the leaderless rule then judges the group without that member's start,
+ * so the hidden member is killed even where it started before the recorded leader. Two instances:
+ * a read that lists only the group's zombies, its dead leader among them, and one that lists only
+ * a member started after the recorded leader while the leader has been reaped.
+ *
+ * A read that lists no row is outside that class. This read takes an empty table again while
+ * signal 0 still reaches the group, and where it stays empty until `timeout` it fails, so nothing
+ * in the group is killed.
  *
  * No read of the table can find a member it consistently hides, because the table is the only
  * thing that says which pids the group holds. The leader alone is known without it, since its pid
