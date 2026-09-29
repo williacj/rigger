@@ -23,9 +23,10 @@ const UNREACHED = 600_000;
  * repository's state directory `.rigger/`, as `rigger once` records there. Each card it pulls is
  * dispatched through L1's function under an id this allocates, a UUID, so that no other dispatch
  * in that state directory, in this run or another, holds it. The dispatch runs `/bin/sh` on
- * `command` in `directory`. The start's kill L3 is handed is L1's, as a verb's is.
+ * `command` in `directory`, and reads the process table through `ps` where it is given. The
+ * start's kill L3 is handed is L1's, as a verb's is.
  */
-export async function engine({ directory, repository, command }) {
+export async function engine({ directory, repository, command, ps }) {
   const { default: config } = await import(pathToFileURL(join(repository, 'rigger.config.mjs')).href);
   const state = join(repository, '.rigger');
   const sink = openSink({ directory: state, run: randomUUID(), now: Date.now });
@@ -33,7 +34,7 @@ export async function engine({ directory, repository, command }) {
   const l2 = columnChanges({ config, sink });
   const decide = (card) => nextAction(card, config.kinds, config.epicLabel);
   const dispatching = ({ card }) => dispatch({
-    id: `d-${randomUUID()}`, card: card.number, directory: state, sink, command: '/bin/sh', args: [command], cwd: directory, env: { PATH: '/usr/bin:/bin' }, timeout: UNREACHED,
+    id: `d-${randomUUID()}`, card: card.number, directory: state, sink, command: '/bin/sh', args: [command], cwd: directory, env: { PATH: '/usr/bin:/bin' }, timeout: UNREACHED, ps,
   });
   const kill = () => killRecordedGroups({ directory: state, sink });
   await loop({ config, board, decide, l2, dispatch: dispatching, sink, kill }).pull();
