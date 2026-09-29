@@ -462,6 +462,25 @@ const holdingMany = [
 /** What the child writes to standard output once it has done `step`: how many milliseconds it took. */
 const timed = (step) => ['const began = performance.now();', step, "process.stdout.write(`${performance.now() - began}\\n`);"].join('\n');
 
+/** How far a `heldAtOpen` child's clock jumps: three tenths of the bound. */
+const HELD = UNDRAINED_BOUND * 0.3;
+
+/**
+ * Lines that move the child's clock `HELD` ms ahead at its next read of `process.stderr`, and at
+ * no later one, so the time passes inside the step that opens standard error and nowhere else.
+ */
+const heldAtOpen = [
+  'const real = performance.now.bind(performance);',
+  'let ahead = 0;',
+  'performance.now = () => real() + ahead;',
+  "const opened = Object.getOwnPropertyDescriptor(process, 'stderr');",
+  "Object.defineProperty(process, 'stderr', { ...opened, get() {",
+  "  Object.defineProperty(process, 'stderr', opened);",
+  `  ahead = ${HELD};`,
+  '  return opened.get.call(process);',
+  '} });',
+].join('\n');
+
 /** The milliseconds a `timed` step took, as the child wrote them. */
 const tookIn = (stdout) => Number(stdout.split('\n')[0]);
 
@@ -487,6 +506,18 @@ for (const touched of [true, false]) {
     const took = tookIn(stdout);
     assert.ok(took >= UNDRAINED_BOUND / 2, `the end and the event took ${took} ms, so the pipe never held them and this proves nothing`);
     assert.ok(took <= UNDRAINED_BOUND, `the end and the event took ${took} ms`);
+  });
+
+  // The time an end spends before its first write counts against the bound. The child's clock
+  // jumps `HELD` ms at the end's read of `process.stderr`, standing in for a loaded host holding
+  // the process there, as one did for 181.5 ms (#418).
+  test(`given a standard error ${which} that is never drained, and ${HELD} ms passing as a sink's end opens it, the end returns within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+    const { status, stdout } = await stuckChild(t, [holdingMany, heldAtOpen, timed('sink.end();')].join('\n'), { touched });
+
+    assert.equal(status, 0);
+    const took = tookIn(stdout);
+    assert.ok(took >= HELD + UNDRAINED_BOUND / 2, `the end took ${took} ms, so the pipe never held it and this proves nothing`);
+    assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
   });
 }
 

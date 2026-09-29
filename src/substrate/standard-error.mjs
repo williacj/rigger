@@ -77,26 +77,32 @@ let abandoned = false;
  * past 65,536 bytes at exit.
  *
  * There is nothing to wait on at exit, so a full pipe is waited on synchronously, a `PAUSE` at a
- * time. The wait runs from the last time the reader took anything, so a slow reader that keeps
- * draining gets every byte. A pause is begun only where it would end `SPARE` before the bound, so
+ * time. The wait runs from the call, or from the last time the reader took anything, so a slow
+ * reader that keeps draining gets every byte. Only a write into a pipe found full shows the reader
+ * took something: a write into room it had from the start shows nothing, so it leaves the wait
+ * running from the call, and what the call spent before it, opening `process.stderr` included,
+ * counts against the bound. A pause is begun only where it would end `SPARE` before the bound, so
  * the write gives up within the bound even where the host ends its last pause late by up to that.
  */
 export function writeWhole(text) {
+  let deadline = performance.now() + UNDRAINED_BOUND;
+  let full = false;
   // Opened for what it leaves the descriptor, not to write through.
   void process.stderr;
   let rest = Buffer.from(text);
-  let deadline = performance.now() + UNDRAINED_BOUND;
   while (rest.length > 0) {
     try {
       rest = rest.subarray(writeSync(2, rest));
       abandoned = false;
-      deadline = performance.now() + UNDRAINED_BOUND;
+      if (full) deadline = performance.now() + UNDRAINED_BOUND;
+      full = false;
     } catch (error) {
       if (error.code !== 'EAGAIN') throw error;
       if (abandoned || performance.now() + PAUSE + SPARE > deadline) {
         abandoned = true;
         return;
       }
+      full = true;
       Atomics.wait(idle, 0, 0, PAUSE);
     }
   }
