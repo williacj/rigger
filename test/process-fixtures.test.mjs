@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { scratch } from './process-fixtures.mjs';
+import { scratch, sweep } from './process-fixtures.mjs';
 
 /**
  * How long a test file of two tests, each ending while its wait is unmet, is given to exit. A
@@ -49,4 +49,21 @@ test('given a test file whose tests end, one failing and one timed out, while ea
   assert.equal(ran.signal, null, `the test file had not exited after ${EXITS_WITHIN} ms: ${ran.stdout}`);
   assert.equal(ran.status, 1, ran.stdout);
   assert.equal(ran.stdout.match(/^not ok \d+ - /gm)?.length, 2, ran.stdout);
+});
+
+test('given a process the teardown\'s pkill cannot kill, which pgrep lists however often it is killed, the teardown ends and fails naming it', (t) => {
+  // Nothing runs naming a fresh scratch directory, so the teardown's own pkill kills nothing here.
+  const directory = scratch(t);
+  let asked = 0;
+  const unkillable = () => {
+    asked += 1;
+    if (asked > 1_000) throw new Error(`the teardown asked for the processes left ${asked} times, and would never have ended`);
+    return ['4242'];
+  };
+
+  assert.throws(() => sweep(directory, unkillable), (error) => {
+    assert.match(error.message, /\b4242\b/);
+    assert.ok(error.message.includes(directory), error.message);
+    return true;
+  });
 });
