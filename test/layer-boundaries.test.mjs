@@ -214,6 +214,14 @@ test('rule 7: a module other than the process adapter reaching child_process fai
   }
 });
 
+test('rule 7: a module other than the process adapter importing cluster fails, statically or by dynamic import()', () => {
+  for (const specifier of ['node:cluster', 'cluster']) {
+    for (const source of [`import cluster from '${specifier}';\nexport const go = () => cluster.fork();`, `export const go = async () => (await import('${specifier}')).default.fork();`]) {
+      assertBreaks({ 'src/workflow/spawn.mjs': source }, 'src/workflow/spawn.mjs', 'rule 7');
+    }
+  }
+});
+
 test('rule 7: the process adapter alone imports node:child_process', () => {
   assert.deepEqual(messages({ 'src/substrate/process.mjs': 'import { spawnSync } from "node:child_process";' }), []);
   assert.deepEqual(messages({ 'src/substrate/process.mjs': "import { spawnSync } from 'child_process';" }), []);

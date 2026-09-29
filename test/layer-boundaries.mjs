@@ -62,7 +62,7 @@ const HELD = [
  * every other module spawns (the architect's ruling on #214, §5).
  */
 const SPAWNERS = ['src/substrate/process.mjs'];
-const CHILD_PROCESS = ['node:child_process', 'child_process'];
+const SPAWN_MODULES = ['node:child_process', 'child_process', 'node:cluster', 'cluster'];
 
 /** The process methods reaching Node's internal bindings, among them `spawn_sync` and `process_wrap`. */
 const BINDINGS = ['binding', '_linkedBinding'];
@@ -1365,7 +1365,7 @@ export function boundaryReport(tree) {
         }
       }
       // Rule 7 names who may spawn; the refusal below still names what this test cannot follow.
-      if (CHILD_PROCESS.includes(call.specifier) && !SPAWNERS.includes(file)) {
+      if (SPAWN_MODULES.includes(call.specifier) && !SPAWNERS.includes(file)) {
         report(file, call.line, 'rule 7', `\`import(${call.argument})\` loads \`${call.specifier}\`, which only the process adapter may import`);
       }
       if (GENERATOR_MODULES.has(call.specifier)) {
@@ -1448,7 +1448,7 @@ export function boundaryReport(tree) {
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
-        if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
+        if (SPAWN_MODULES.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
       }
       for (const { value, line, key } of [...module.names, ...module.strings]) {
         if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, which reaches Node's internal bindings, and so a spawn, which only the process adapter may`);
