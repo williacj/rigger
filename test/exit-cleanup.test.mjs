@@ -214,14 +214,18 @@ function fixtures(directory) {
     'exit 3',
   ].join('\n'));
   // `joining` is `command` with a joiner beside its child: a process that leaves the group at once,
-  // waits for the child to die, and then puts a process of its own into the group, which runs until
-  // killed. `ps-join` holds the first read of group 1's states and wait statuses, which is the
-  // cleanup's confirmation, until that process has joined.
+  // waits until the caller's directory holds `go-join`, and then puts a process of its own into the
+  // group, which runs until killed. Each stand-in below writes `go-join` inside one read of group 1
+  // and answers that read once the process has joined: `ps-join` inside each read of the group's
+  // states and wait statuses, which is the cleanup's confirmation, but the first, so after its
+  // first kill;
+  // `ps-late` inside the read of the group's states the cleanup makes last before that kill,
+  // answering it as the table stood before the join.
   const joiner = [
-    'my ($here, $group, $child) = @ARGV;',
+    'my ($here, $group) = @ARGV;',
     'setpgrp(0, 0) or die "leaving: $!";',
     'open my $ready, ">", "$here/joiner.ready" or die; close $ready;',
-    '1 while kill 0, $child;',
+    '1 until -e "$here/go-join";',
     'my $pid = fork // die "fork: $!";',
     'if (!$pid) {',
     '  setpgrp(0, $group) or die "joining: $!";',
@@ -235,14 +239,33 @@ function fixtures(directory) {
     "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
     'echo $! > "$here/child.$1.tmp"',
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
-    `/usr/bin/perl -e '${joiner}' "$here" $$ $! &`,
+    `/usr/bin/perl -e '${joiner}' "$here" $$ &`,
     'while [ ! -f "$here/joiner.ready" ]; do :; done',
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
     'wait',
   ].join('\n'));
   fixture(directory, 'ps-join', [
     'case " $* " in',
-    '  *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*) while [ ! -f "$here/joined.pid" ]; do :; done ;;',
+    '  *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
+    '    /bin/mkdir "$here/confirming" 2>/dev/null || { : > "$here/go-join"; while [ ! -f "$here/joined.pid" ]; do :; done; } ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  fixture(directory, 'ps-late', [
+    'if [ "$1 $2 $3 $4" = "-g $(/bin/cat "$here/group.1") -o pid=,stat=" ] && /bin/mkdir "$here/late" 2>/dev/null; then',
+    '  table=$(/bin/ps "$@")',
+    '  : > "$here/go-join"',
+    '  while [ ! -f "$here/joined.pid" ]; do :; done',
+    '  printf "%s\\n" "$table"',
+    '  exit 0',
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  // `ps-hides` answers every read of group 1's that the census and the kill make, those that
+  // begin `-ww` or read parents, leaving out the row of group 1's child.
+  fixture(directory, 'ps-hides', [
+    'case " $* " in *" -g $(/bin/cat "$here/group.1" 2>/dev/null) "*)',
+    '  case " $* " in *" -ww "*|*ppid=*) /bin/ps "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'; exit 0 ;; esac ;;',
     'esac',
     'exec /bin/ps "$@"',
   ].join('\n'));
@@ -768,6 +791,28 @@ test('a process that joins a group after the cleanup has killed it is killed bef
   assert.ok(existsSync(join(directory, 'joined.pid')), 'no process joined the group after its kill, so this proves nothing');
   await assertNoneAlive(directory);
   assert.equal(alive(Number(read(directory, 'joined.pid'))), false, 'the process that joined the group after its kill is alive');
+  assertRecorded(streamOf(directory), Number(read(directory, 'group.1')), [Number(read(directory, 'joined.pid'))]);
+});
+
+test('a process that joins a group after the cleanup\'s last read before its kill is recorded, by name or by the kill of the group', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-late' }, { signal: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  assert.ok(existsSync(join(directory, 'late')), 'the stand-in never held the last read before the kill, so this proves nothing');
+  await assertNoneAlive(directory);
+  const joined = Number(read(directory, 'joined.pid'));
+  assert.equal(alive(joined), false, 'the process that joined the group is alive');
+  assertRecorded(streamOf(directory), Number(read(directory, 'group.1')), [joined]);
+});
+
+test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded as the kill of the group, saying the read found it', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  await assertNoneAlive(directory);
+  const reasons = groupKills(streamOf(directory), Number(read(directory, 'group.1'))).map(({ census }) => census);
+  assert.equal(reasons.length, 1, JSON.stringify(reasons));
+  assert.match(reasons[0], /still held a live process the census and the kill had not named/);
 });
 
 // What the exit kill records (#374).

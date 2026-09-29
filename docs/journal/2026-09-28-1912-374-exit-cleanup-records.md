@@ -34,3 +34,14 @@ process its kill ended, and waits out a process table that never answers once, n
   read timeout of its own, as it had before.
 - The base suite, run once on a fresh clone at `f9d57f7`, cancelled one exit-cleanup test at its
   30 s bound under a load average near 24. It passed in three reruns of that file.
+
+## Round 2
+
+- Both judges found a process that joined the group after `outlived`'s read was killed by the
+  confirmation and recorded nowhere. The confirmation now reads the group once before its first
+  kill, and a live member any of its reads finds is recorded as the kill of the group.
+- Recording only what a read after the kill found was not enough. The confirmation's first kill
+  ended the joiner, and its parent outside the group reaped it before the read, so the read found
+  only zombies. So the read comes first.
+- `ps-join` now lets its joiner in during a confirmation read after the first kill, so the test
+  again fails where the confirmation kills only once. It also asserts the joiner is recorded.

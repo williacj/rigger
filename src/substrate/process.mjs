@@ -713,7 +713,12 @@ async function contain(group, { ps, readTimeout }, killed) {
  * item 9 leaves open: a survivor that exits on its own as the kill reaches it, and whose parent
  * outside the group reaps it before the next read, is counted as killed (`killedOf`). And it
  * records the kill of the group where a census or a kill left out a live member or its reads
- * failed (`outlived`), but for the one case no read can find.
+ * failed (`outlived`), but for the one case no read can find. Unlike `contain`, it also records
+ * the kill of the group where a process joined the group after that last read and the
+ * confirmation read it live, which it reads before its first kill (`emptied`). One that joins
+ * after a read of the confirmation and is killed before the next, or where its reads fail, goes
+ * unrecorded, as one that joins after the last read does in `contain`: a group left holding only
+ * zombies answers those reads as a group that held such a joiner does.
  *
  * Where the confirmation's reads fail or run out of time, the group has had the kill on every look
  * until then, and the cleanup goes on: it cannot wait longer on a process table it cannot read.
@@ -734,16 +739,23 @@ function containNow(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
-  const left = unnamed === undefined ? within((deadline) => outlived(group, readTimeout, deadline), readTimeout) : undefined;
+  let left = unnamed === undefined ? within((deadline) => outlived(group, readTimeout, deadline), readTimeout) : undefined;
+  // Where the group is already recorded as killed whole, the confirmation kills before it reads.
+  const seen = { live: false, first: unnamed === undefined && left === undefined };
   let leader;
   let unread;
   try {
-    leader = readingNow(emptied(group), ps, readTimeout);
+    leader = readingNow(emptied(group, seen), ps, readTimeout);
     if (leader === undefined) unread = 'the process table did not list it';
   } catch (error) {
-    // The kill was sent on every look, and nothing is left to wait on.
+    // The kill was sent on every look but one whose read failed before the first kill, so that
+    // kill is sent now, and nothing is left to wait on.
+    if (!seen.sent) signal(group, 'SIGKILL');
     unread = error.message;
   }
+  // Every member the census named had ended by the last read before the confirmation, so a live
+  // one the confirmation finds joined the group after that read, and the group's kill ended it.
+  if (unnamed === undefined && seen.live) left ??= 'the confirmation of the kill found a live process in the group that joined it after the last read before its kill, which the kill of the group ended';
   // A leader the census named was stopped and alive, and a stopped process cannot exit on its own,
   // so the cleanup's kill is what ended it, whatever the last read could tell.
   const stopped = survivors?.some(({ pid }) => pid === group) ?? false;
@@ -756,13 +768,24 @@ function containNow(group, { ps, readTimeout }) {
  * Node reaps no child while synchronous code runs, so a leader killed here stays in the group as a
  * zombie until this process exits, and the group never empties while the cleanup runs. So each
  * look reads the group's states, and a group of zombies is ended: none of them can run again.
+ *
+ * Where `seen.first` is set, it reads the group once before its first kill, so a process that
+ * joined the group after the reads before it is read live before the kill ends it. It sets
+ * `seen.sent` once it has sent a kill. Where a look
+ * finds a member that is not a zombie, it sets `seen.live`, even where a later read fails,
+ * because the kill of the group then ended a process that no read before it had named.
  */
-function* emptied(group) {
-  for (;;) {
-    signal(group, 'SIGKILL');
+function* emptied(group, seen) {
+  for (let sent = !seen.first; ; sent = true) {
+    if (sent) {
+      signal(group, 'SIGKILL');
+      seen.sent = true;
+    }
     if (!occupied(group)) return undefined;
     const states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=,xstat=']);
-    if ([...states.values()].every((state) => state.startsWith('Z'))) return states.get(group)?.split(/\s+/)[1];
+    const zombies = [...states.values()].every((state) => state.startsWith('Z'));
+    if (!zombies) seen.live = true;
+    else if (sent) return states.get(group)?.split(/\s+/)[1];
   }
 }
 
