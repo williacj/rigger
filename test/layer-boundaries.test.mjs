@@ -195,17 +195,28 @@ test('rule 4: a module under src/cli/ naming concurrency fails, and passing the 
   assert.deepEqual(messages({ 'src/cli/run.mjs': 'export const run = (config, start) => start(config);' }), []);
 });
 
-test('rule 7: node:child_process is imported only by the runners module, the process adapter, doctor.mjs and init.mjs', () => {
-  assertBreaks({ 'src/workflow/spawn.mjs': 'import { spawnSync } from "node:child_process";' }, 'src/workflow/spawn.mjs', 'rule 7');
-  assertBreaks({ 'src/cli/spawn.mjs': "import { spawnSync } from 'child_process';" }, 'src/cli/spawn.mjs', 'rule 7');
-  assertBreaks({ 'src/cli/spawn.mjs': 'export { spawnSync } from "node:child_process";' }, 'src/cli/spawn.mjs', 'rule 7');
-  const allowed = 'import { spawnSync } from "node:child_process";';
-  assert.deepEqual(messages({
-    'src/cli/doctor.mjs': allowed,
-    'src/cli/init.mjs': allowed,
-    'src/substrate/process.mjs': allowed,
-    'src/substrate/forge/runners.mjs': `${allowed}\n${ADAPTER['src/substrate/forge/runners.mjs']}`,
-  }), []);
+/** Each way a module can reach `child_process`, by static import, re-export and dynamic import(), with SPEC for its specifier. */
+const CHILD_PROCESS_ROUTES = [
+  'import { spawnSync } from "SPEC";',
+  'export { spawnSync } from "SPEC";',
+  "export const load = () => import('SPEC');",
+];
+
+test('rule 7: a module other than the process adapter reaching child_process fails, by static import, re-export or dynamic import()', () => {
+  const modules = ['src/workflow/spawn.mjs', 'src/cli/doctor.mjs', 'src/cli/init.mjs', 'src/substrate/forge/runners.mjs'];
+  for (const specifier of ['node:child_process', 'child_process']) {
+    for (const template of CHILD_PROCESS_ROUTES) {
+      for (const file of modules) {
+        const source = template.replace('SPEC', specifier);
+        assertBreaks({ [file]: file in ADAPTER ? `${source}\n${ADAPTER[file]}` : source }, file, 'rule 7');
+      }
+    }
+  }
+});
+
+test('rule 7: the process adapter alone imports node:child_process', () => {
+  assert.deepEqual(messages({ 'src/substrate/process.mjs': 'import { spawnSync } from "node:child_process";' }), []);
+  assert.deepEqual(messages({ 'src/substrate/process.mjs': "import { spawnSync } from 'child_process';" }), []);
 });
 
 test('rule 7: a gh string literal outside the runners module fails in any quotes, and one in a comment does not', () => {
