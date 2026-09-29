@@ -64,6 +64,9 @@ const HELD = [
 const SPAWNERS = ['src/substrate/process.mjs'];
 const CHILD_PROCESS = ['node:child_process', 'child_process'];
 
+/** The process methods reaching Node's internal bindings, among them `spawn_sync` and `process_wrap`. */
+const BINDINGS = ['binding'];
+
 /** The one dynamic import allowed an unresolvable specifier: doctor's load of the consumer's config. */
 const CONFIG_LOAD = { file: 'src/cli/doctor.mjs', argument: 'pathToFileURL(path)' };
 
@@ -1446,6 +1449,9 @@ export function boundaryReport(tree) {
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
         if (CHILD_PROCESS.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
+      }
+      for (const { value, line, key } of [...module.names, ...module.strings]) {
+        if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, which reaches Node's internal bindings, and so a spawn, which only the process adapter may`);
       }
     }
     if (file !== RUNNERS) {
