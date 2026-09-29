@@ -8,7 +8,7 @@ import { readSide } from '../substrate/forge/read.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, consumerConfig, sourceTreeGuard } from './doctor.mjs';
+import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { recording } from './recording.mjs';
 
@@ -27,11 +27,11 @@ const failuresIn = (failure) => (failure instanceof AggregateError ? failure.err
  */
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
 
-/** `claimVerb`'s work, recording through `sink` once `name` has named its state directory. */
-async function claiming(verb, limit, { sink, name }, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
-  const { named, refusal } = sourceTreeGuard(verb, { target, packageRoot, ask });
+/** `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
+async function claiming(verb, limit, opened, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
+  const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
-  name(named);
+  const { sink } = opened;
   const { config, problem } = await consumerConfig(named);
   if (problem) return { text: `rigger ${verb}: ${problem}`, code: 1 };
   const invalid = validate(config);
