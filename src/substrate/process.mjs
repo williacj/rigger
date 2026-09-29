@@ -151,7 +151,12 @@ export function atExit(step) {
   steps.push(step);
 }
 
-/** Whether the exit cleanup is installed, which L0 does when it creates its first group. */
+/**
+ * Whether the exit cleanup is installed, which L0 does before it creates its first group. Before,
+ * because a signal with no listener ends the process by the signal's default action at once, so
+ * one that landed between the spawn and the install would leave the new group running, unkilled
+ * and unrecorded.
+ */
 let installed = false;
 
 /**
@@ -625,7 +630,8 @@ const timedOut = (timeout) => new Error(`the process-table read timed out after 
  * matched.
  *
  * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
- * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`), and the
+ * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
@@ -752,9 +758,9 @@ function killsOf(group, survivors, unnamed, killed) {
  *
  * A survivor can exit on its own after any read of the table and before L0's kill lands, and its
  * parent, stopped, leaves it a zombie, which signal 0 still reaches. Its exit status tells the two
- * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the group, sorts out
+ * apart: `xstat` reads `9` for a process `SIGKILL` ended. So each round reads the table, sorts out
  * each survivor sent the kill since the round before, by that status, and sends the kill to each
- * live member none of whose children is live. Its parent is then alive, and stopped, until a later
+ * survivor none of whose children is left. Its parent is then alive, and stopped, until a later
  * round, so it stays a zombie until a read sees how it ended. A survivor that is gone, or a zombie,
  * before L0 sent it the kill exited on its own, and so does one the kill found gone (`ESRCH`),
  * reaped at once by a parent the group does not hold. One gone after the kill reached it is
@@ -778,7 +784,23 @@ function killsOf(group, survivors, unnamed, killed) {
  * The census's reads can fail the other way, agreeing on only some of the group's live members.
  * So each live member a read of the kill finds must be one the census named, and the kill fails
  * where it finds another, so the group is killed unnamed rather than that process ended
- * unrecorded. The kill reads the table at least once, even where the census named no one.
+ * unrecorded. The kill reads the whole group at least once, in its first round, even where the
+ * census named no one.
+ *
+ * A chain of parent and child takes a round for each process in it, so a round reads no more of
+ * the table than it must. The first reads the whole group. A later round with one survivor to
+ * look at, as each round of a chain has, reads that pid alone, and any other reads the group
+ * again. A row whose group is not this one is left out (`tableOf`). So a chain costs the kill one
+ * read of one process a level, where a read of the whole group every round costs, over the chain,
+ * the square of its depth. A read of several pids is no cheaper than one of the group: measured
+ * with `ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 200 reads each of one pid
+ * took 2.45 ms a read, of two pids 28.1 ms, and of the whole table 14.6 ms.
+ *
+ * A survivor whose last child the round's read found a zombie is sent the kill without a read of
+ * its own: that child's row names it as the parent, so it had not been reaped, and its pid is
+ * still the process the census named. One whose child the read left out is read before it is
+ * sent the kill. Where it had exited on its own meanwhile, the kill reaches its zombie, and a
+ * later read finds its own exit status, not `9`, so it is not recorded as killed.
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
@@ -788,7 +810,7 @@ function killsOf(group, survivors, unnamed, killed) {
  *
  * Room is the time left before the deadline after holding back, for each round still to come,
  * three times what a round has cost on average so far. The rounds still to come are taken as one
- * more than the depth of the live tree. Each pause is capped at its share of that room, so the pace
+ * more than the depth of the survivors left (`treeOf`). Each pause is capped at its share of that room, so the pace
  * tightens as the deadline nears. Where no room is left the cap is zero, and the rounds run back to
  * back, over the tenth. Close to the deadline, naming the group's processes takes precedence over
  * that bound, so a kill that reading alone could finish in time is not pushed past the deadline and
@@ -800,6 +822,8 @@ async function killedOf(survivors, group, ps, timeout) {
   const named = new Set(pending.keys());
   const sent = new Set();
   const killed = [];
+  let tree;
+  let watched = [...pending.keys()];
   const [began, used] = [performance.now(), process.cpuUsage()];
   let [rounds, paused] = [0, 0];
   for (let wait = 0; rounds === 0 || pending.size > 0; ) {
@@ -807,55 +831,91 @@ async function killedOf(survivors, group, ps, timeout) {
     paused += wait;
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`not every survivor had ended within ${timeout} ms`);
-    const table = tableOf(await run(ps, ['-g', String(group), '-o', 'pid=,ppid=,stat=,xstat='], remaining, timeout));
-    let moved = false;
-    for (const [pid, survivor] of pending) {
-      const row = table.get(pid);
-      if (row !== undefined && !row.state.startsWith('Z')) continue;
-      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
-      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(survivor);
-      pending.delete(pid);
-      moved = true;
-    }
+    const whom = rounds > 0 && watched.length === 1 ? ['-p', String(watched[0])] : ['-g', String(group)];
+    const table = tableOf(await run(ps, [...whom, '-o', 'pid=,ppid=,pgid=,stat=,xstat='], remaining, timeout), group);
     const living = [...table].filter(([, row]) => !row.state.startsWith('Z'));
     const unnamed = living.find(([pid]) => !named.has(pid));
     if (unnamed) throw new Error(`the kill found process ${unnamed[0]} in the group, which the census did not name`);
-    const parents = new Set(living.map(([, row]) => row.parent));
-    for (const [pid] of living) {
-      if (parents.has(pid) || sent.has(pid) || !end(pid)) continue;
+    tree ??= treeOf(new Map(living.map(([pid, row]) => [pid, row.parent])), [...pending.keys()]);
+    let moved = false;
+    for (const pid of watched) {
+      const row = table.get(pid);
+      if (row !== undefined && !row.state.startsWith('Z')) continue;
+      if (row === undefined && !sent.has(pid) && answers(pid)) continue;
+      if (sent.has(pid) && (row === undefined || row.status === '9')) killed.push(pending.get(pid));
+      pending.delete(pid);
+      tree.drop(pid);
+      moved = true;
+    }
+    const vouched = new Set([...table.values()].map((row) => row.parent));
+    for (const pid of tree.leaves) {
+      const row = table.get(pid);
+      if (sent.has(pid) || (row === undefined ? !vouched.has(pid) : row.state.startsWith('Z')) || !end(pid)) continue;
       sent.add(pid);
       moved = true;
     }
+    watched = [...tree.leaves];
     rounds += 1;
     const { user, system } = process.cpuUsage(used);
     const elapsed = performance.now() - began;
     const paced = moved ? (ROUND_SHARE * (user + system)) / 1000 - elapsed : longer(wait);
-    const left = depthOf(living) + 1;
+    const left = tree.deepest() + 1;
     const spare = deadline - Date.now() - 3 * left * ((elapsed - paused) / rounds);
     wait = Math.max(0, Math.min(paced, spare / left));
   }
   return killed;
 }
 
-/** The length of the longest line of parent and child among the `living` rows of a table. */
-function depthOf(living) {
-  const parents = new Map(living.map(([pid, row]) => [pid, row.parent]));
+/**
+ * The line of parent and child among `pids`, by `parents`, as the kill ends it from the bottom up.
+ * `leaves` holds each of `pids` none of whose children among them is left; `drop` takes one of
+ * them out, which a kill does only to a leaf; and `deepest` is the length of the longest line of
+ * parent and child left. Each costs no more than the pids it moves, so a chain thousands deep does
+ * not cost the kill a pass over every process it holds at every round.
+ */
+function treeOf(parents, pids) {
+  const held = new Set(pids);
+  const below = new Map();
+  for (const pid of pids) below.set(parents.get(pid), (below.get(parents.get(pid)) ?? 0) + 1);
+  const leaves = new Set(pids.filter((pid) => !below.has(pid)));
+  // A process's depth is one more than its parent's, where the parent is among `pids`. The kill
+  // ends a parent only once its children are gone, so the longest line left always runs from a
+  // process whose ancestors are all still held.
   const depths = new Map();
-  const depth = (pid) => {
-    if (!parents.has(pid)) return 0;
-    if (!depths.has(pid)) depths.set(pid, 1 + depth(parents.get(pid)));
+  const depthOf = (pid) => {
+    const line = [];
+    for (let at = pid; held.has(at) && !depths.has(at); at = parents.get(at)) line.push(at);
+    for (const at of line.reverse()) depths.set(at, 1 + (depths.get(parents.get(at)) ?? 0));
     return depths.get(pid);
   };
-  return [...parents.keys()].reduce((deepest, pid) => Math.max(deepest, depth(pid)), 0);
+  const counts = [];
+  for (const pid of pids) counts[depthOf(pid)] = (counts[depthOf(pid)] ?? 0) + 1;
+  let deepest = counts.length - 1;
+  return {
+    leaves,
+    drop(pid) {
+      held.delete(pid);
+      leaves.delete(pid);
+      counts[depths.get(pid)] -= 1;
+      while (deepest > 0 && !counts[deepest]) deepest -= 1;
+      const parent = parents.get(pid);
+      below.set(parent, below.get(parent) - 1);
+      if (below.get(parent) === 0 && held.has(parent)) leaves.add(parent);
+    },
+    deepest: () => Math.max(deepest, 0),
+  };
 }
 
-/** Each row of a read of `pid=,ppid=,stat=,xstat=`, by pid. */
-function tableOf(printed) {
+/**
+ * Each row of a read of `pid=,ppid=,pgid=,stat=,xstat=` whose process is in `group`, by pid. A row
+ * of another group is a pid the system has handed on to a process outside it, and is left out.
+ */
+function tableOf(printed, group) {
   const rows = new Map();
   for (const line of printed.split('\n').filter(Boolean)) {
-    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
+    const row = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$/.exec(line);
     if (!row) throw new Error(`the process table held a row the kill cannot read: ${JSON.stringify(line)}`);
-    rows.set(Number(row[1]), { parent: Number(row[2]), state: row[3], status: row[4] });
+    if (Number(row[3]) === group) rows.set(Number(row[1]), { parent: Number(row[2]), state: row[4], status: row[5] });
   }
   return rows;
 }
@@ -944,11 +1004,11 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
+  install();
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  install();
   const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
@@ -1092,21 +1152,89 @@ function startOf(ps, pid, timeout) {
  * The start time of each live process in `group`, by its pid, read as `startOf` reads one. A
  * zombie is left out: it has exited, though `ps` still lists it, with its start time, until its
  * parent reaps it. So a leader that has exited reads as dead whether or not it has been reaped.
+ *
+ * A read that lists no process is kept only where signal 0 no longer reaches the group, because a
+ * read that failed can list nothing, even one that exits 1 and prints nothing (`run`), and the
+ * leaderless rule would take that empty table as a group to kill (`recorded`). A read that leaves
+ * out the leader is kept only where signal 0 no longer reaches the leader's pid, which is the
+ * group's id: a leader that has exited and not been reaped is listed as a zombie, so a leader left
+ * out while its pid still answers was left out by a read that failed, and the leaderless rule
+ * would otherwise judge the group without the one start that can show it is not the one
+ * recorded. While either holds, it reads again, since a process that is exiting answers signal 0
+ * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
+ * group is killed. A leader that has left the group for another holds the read to `timeout` the
+ * same way, which kills nothing.
+ *
+ * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), as
+ * on the kill (`outlived`): a read that exits 0 and consistently leaves out a live member other
+ * than the leader, whatever else it lists. Such a read is taken as complete. Where the leader is
+ * dead, the leaderless rule then judges the group without that member's start, so the hidden
+ * member is killed even where it started before the recorded leader. Two instances: a read that
+ * lists only the group's zombies, its dead leader among them, and one that lists only a member
+ * started after the recorded leader while the leader has been reaped.
+ *
+ * No read of the table can find a member it consistently hides, because the table is the only
+ * thing that says which pids the group holds. The leader alone is known without it, since its pid
+ * is the group's id, and that is why a missing leader can be checked. Signal 0 to the group says
+ * only that some process is in it, live or a zombie, not which: it reaches a zombie, and a group
+ * holding only zombies, as it reaches a live process (`outlived`). So a read hiding a live member
+ * while listing zombies is exactly what the table gives for a group holding only zombies, and one
+ * hiding it while listing a later member is exactly what it gives for that member alone. Refusing
+ * every read that could be one of these would keep for ever the entry of every leaderless group a
+ * dead engine left, whether it holds zombies alone or live members of its own.
+ *
+ * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
+ * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
+ * with this read's arguments and `PS_ENV`: a group whose one process had exited and been reaped
+ * exited 1 and wrote nothing to either stream; a group `x` exited 1 and wrote `ps: Invalid process
+ * group: x` to standard error; a live group exited 0 and printed its row. So a read that failed
+ * and wrote nothing, as the stand-in for `ps` in `test/kill-recorded.test.mjs` does, gives the
+ * same answer as an empty group, and only signal 0 tells the two apart.
  */
 async function startsIn(ps, group, timeout) {
-  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], timeout, timeout));
-  const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
-  return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  const deadline = Date.now() + timeout;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`the reads of the group's start times left out a process signal 0 still reached, its leader or every member, for ${timeout} ms`);
+    const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+    if ((rows.size === 0 && occupied(group)) || (!rows.has(group) && answers(group))) continue;
+    const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
+    return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole seconds since the epoch. */
+/**
+ * A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole
+ * seconds since the epoch. Only a start that the second it names prints back as, byte for byte,
+ * is read, so a malformed one of any kind is refused: a wrong weekday, a day, hour, minute or
+ * second past its range, which `Date.UTC` would carry into the next, or padding `ps` never
+ * prints. Each could otherwise name a recorded start.
+ *
+ * How `ps` prints it, from the source of adv_cmds's `ps/print.c` (`lstarted`), on 2026-09-28:
+ * the C library's `%c`, left-justified in its column with spaces. Under `PS_ENV`'s locale `%c` is
+ * `%a %b %e %T %Y`, measured with `/bin/ps` from adv_cmds-240 and `/bin/date +%c` on macOS 27.0
+ * (26A428) on 2026-09-28: `ps` printed `Mon Sep 28 23:47:11 2026` and four spaces, and `date`
+ * printed `Tue Sep  1 00:00:00 2026` for a one-digit day, padded with a space. So the column's
+ * trailing spaces are its padding, and are not the time's own.
+ */
 function secondsOf(printed) {
-  const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
-  const month = MONTHS.indexOf(at?.[1]);
-  if (month < 0) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
-  return Date.UTC(Number(at[6]), month, Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000;
+  const text = printed.replace(/ +$/, '');
+  const at = /^\S+ (\S+) +(\d+) (\d+):(\d+):(\d+) (\d+)$/.exec(text);
+  const seconds = at ? Date.UTC(Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000 : NaN;
+  if (Number.isNaN(seconds) || lstartOf(seconds) !== text) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return seconds;
+}
+
+/** The second `seconds` as `ps` prints a start under `PS_ENV`, less its column's padding: `%a %b %e %T %Y` in UTC. */
+function lstartOf(seconds) {
+  const time = new Date(seconds * 1000);
+  const two = (field) => String(field).padStart(2, '0');
+  const clock = [time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()].map(two).join(':');
+  return `${WEEKDAYS[time.getUTCDay()]} ${MONTHS[time.getUTCMonth()]} ${String(time.getUTCDate()).padStart(2, ' ')} ${clock} ${time.getUTCFullYear()}`;
 }
 
 /**

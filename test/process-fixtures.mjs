@@ -1,7 +1,7 @@
 // ABOUTME: Fixtures for tests that start real processes: a scratch directory torn down with every
 // process naming it, shell scripts that live in it, children they leave alive or that outlive a
 // timeout, reads of what those scripts leave behind and of a process's start time, a standard error
-// nothing drains, and a wait on a condition.
+// nothing drains, and a wait on a condition that ends with its test.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -18,11 +18,29 @@ import { join } from 'node:path';
  */
 export function scratch(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
-  // Until none is left, because a fixture that forks can start one while `pkill` is at work.
-  t.after(() => {
-    while (running(directory).length > 0) spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(directory)]);
-  });
+  t.after(() => sweep(directory));
   return directory;
+}
+
+/**
+ * The most rounds of `pkill` a teardown makes. A judgment, whose premise is a measurement: over
+ * three runs of `npm test` with Node 26.5.0 on macOS 27.0 on 2026-09-28, the 795 teardowns took
+ * at most 2 rounds each. A process `find` still lists after this many is one `pkill` cannot kill.
+ */
+const SWEEPS = 10;
+
+/**
+ * Kills every process whose command line holds `text`, as `find` lists them, round after round
+ * until none is left, because a fixture that forks can start one while `pkill` is at work. After
+ * `SWEEPS` rounds it stops, and throws naming every process still left.
+ */
+export function sweep(text, find = running) {
+  for (let round = 0; round < SWEEPS; round += 1) {
+    if (find(text).length === 0) return;
+    spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(text)]);
+  }
+  const left = find(text);
+  if (left.length > 0) throw new Error(`${SWEEPS} rounds of pkill -KILL left these processes naming ${text} alive: ${left.join(', ')}`);
 }
 
 /**
@@ -73,9 +91,23 @@ export function startOf(pid) {
   return seconds;
 }
 
-/** Settles once `condition` holds, checked once per turn of the event loop. */
-export async function until(condition) {
-  while (!condition()) await new Promise((resolve) => setImmediate(resolve));
+/**
+ * One turn of the event loop, for a wait inside the test `t`. It throws once `t` has ended, passed,
+ * failed or timed out, so a wait whose condition never holds ends with its test rather than
+ * holding the test file's process open.
+ */
+export async function turn({ signal }) {
+  if (signal.aborted) throw new Error('the test ended before the condition this wait was on held', { cause: signal.reason });
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Settles once `condition` holds, checked once per turn of the event loop, and rejects once the
+ * test `t` has ended without it. `t` is read before `condition` is, so a call that names no test
+ * fails even where the condition already holds.
+ */
+export async function until(condition, { signal }) {
+  while (!condition()) await turn({ signal });
 }
 
 /** The pid of every child a fixture in `directory` left through `leave` as `child-<pid>`. */

@@ -209,7 +209,7 @@ test('given rigger once receiving SIGTERM while the guard\'s git stand-in, which
   running.stderr.on('data', (chunk) => (err += chunk));
   const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
 
-  await Promise.race([until(() => existsSync(join(directory, 'ready'))), ended]);
+  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), ended]);
   assert.ok(existsSync(join(directory, 'ready')), `once ended before its guard's git began: ${out}${err}`);
   const standIn = Number(read(directory, 'git.pid'));
   const [child] = childrenIn(directory);
