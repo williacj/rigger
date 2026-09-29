@@ -64,7 +64,8 @@ export async function repoSlug(dir, options) {
   const { stdout, why } = await gitAnswer(['-C', dir, 'remote', 'get-url', 'origin'], options);
   if (why !== undefined) return { repo: null, why };
   const found = stdout.trim().match(SLUG);
-  if (!found) return { repo: null, why: `git named \`${stdout.trim()}\`, which ends in no owner and name` };
+  // The remote is never quoted: a URL can carry a credential, and this line is printed.
+  if (!found) return { repo: null, why: 'the remote it named ends in no owner and name; `git remote get-url origin` shows it' };
   return { repo: `${found[1]}/${found[2]}` };
 }
 

@@ -650,3 +650,17 @@ test('given a state directory that refuses writes and a git stand-in for init\'s
   assert.equal(existsSync(join(target, CONFIG)), false, ran.text);
   assert.deepEqual(readdirSync(target).sort(), ['.git', STATE], ran.text);
 });
+
+test('given an origin remote carrying a credential and ending in no owner and name, init names the placeholder and never prints the remote', async () => {
+  // AGENTS.md: never log a secret. A remote git cannot be read an owner and name from is the one
+  // `init` reports on, so the report must say so without echoing what git answered.
+  const secret = 's3cret-token';
+  const consumer = repository(`https://user:${secret}@git.example.invalid`);
+  assert.equal(await slugOf(consumer), null, 'the remote was read an owner and name, so this proves nothing');
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(!ran.text.includes(secret), ran.text);
+  assert.match(ran.text, /git remote get-url origin/);
+});
