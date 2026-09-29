@@ -709,6 +709,18 @@ for (const [url, carrying] of [
   });
 }
 
+test('given an scp-style origin remote whose userinfo holds a colon, init writes acme/widgets and neither writes nor prints the token', async () => {
+  // Git reads everything before the last colon ahead of the first slash as `user@host`, so the
+  // colon in the userinfo is not where the path starts. The defect this catches is the token and
+  // host read as the owner, as `s3cret-token@github.com:acme/widgets` was.
+  const { ran, text, repo } = await initOver('user:s3cret-token@github.com:acme/widgets.git');
+
+  // `ok` rather than `equal`, so a failure prints only the redacted name, never what was read.
+  assert.ok(repo === 'acme/widgets', `the config names \`${repo.replaceAll('s3cret-token', '<credential>')}\``);
+  assert.ok(!text.includes('s3cret-token'), 'the written config carries the credential');
+  assert.ok(!ran.text.includes('s3cret-token'), 'init printed the credential');
+});
+
 test('an ssh:// remote reads as the owner and name at the end of its path', async () => {
   // Real repositories configured through git, as the other spellings are above, because a string
   // parsed by the same pattern would agree with it by construction.

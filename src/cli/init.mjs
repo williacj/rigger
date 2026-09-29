@@ -34,10 +34,11 @@ export const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '..', 
 
 /**
  * Where a remote names its host, and any userinfo with it: a URL's scheme and authority, or the
- * `user@host:` a scp-style remote opens with. It is dropped before the owner and name are read, so
- * that neither the host nor a credential can be read as either.
+ * `user@host:` a scp-style remote opens with, up to the last colon ahead of the first slash, so a
+ * colon inside the userinfo is not taken for the one that ends the host. It is dropped before the
+ * owner and name are read, so that neither the host nor a credential can be read as either.
  */
-const HOST = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]*|[^/:]*:)/i;
+const HOST = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]*|[^/]*:)/i;
 
 /** The owner and name at the end of a remote's path. */
 const SLUG = /(?:^|\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
