@@ -239,15 +239,23 @@ function fixtures(directory) {
   // `ps-late` inside the read of the group's states the cleanup makes last before that kill,
   // answering it as the table stood before the join; `ps-join-fails` inside the confirmation's
   // first read, which it then fails as `ps` fails.
+  //
+  // The joined process says it has joined by `joined.pid`, which it writes whole under another
+  // name and renames, so the file holds its pid from the moment it can be seen. It then holds
+  // until its caller has ended, so the cleanup's kill always lands straight after it says so.
+  // Written in place, the file could be seen before it held the pid, and a kill in between would
+  // leave it empty: `Number('')` is 0, which names the test's own process group to signal 0.
   const joiner = [
-    'my ($here, $group) = @ARGV;',
+    'my ($here, $group, $caller) = @ARGV;',
     'setpgrp(0, 0) or die "leaving: $!";',
     'open my $ready, ">", "$here/joiner.ready" or die; close $ready;',
     '1 until -e "$here/go-join";',
     'my $pid = fork // die "fork: $!";',
     'if (!$pid) {',
     '  setpgrp(0, $group) or die "joining: $!";',
-    '  open my $file, ">", "$here/joined.pid" or die; print $file $$; close $file;',
+    '  open my $file, ">", "$here/joined.pid.tmp" or die; print $file $$; close $file;',
+    '  rename "$here/joined.pid.tmp", "$here/joined.pid" or die;',
+    '  1 while kill 0, $caller;',
     '  exec "/usr/bin/tail", "-f", "$here/hold";',
     '}',
     'waitpid($pid, 0);',
@@ -257,7 +265,7 @@ function fixtures(directory) {
     "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
     'echo $! > "$here/child.$1.tmp"',
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
-    `/usr/bin/perl -e '${joiner}' "$here" $$ &`,
+    `/usr/bin/perl -e '${joiner}' "$here" $$ $PPID &`,
     'while [ ! -f "$here/joiner.ready" ]; do :; done',
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
     'wait',
