@@ -249,6 +249,31 @@ test('rule 7: a module other than the process adapter calling process._linkedBin
   }
 });
 
+test('rule 7: the process adapter alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
+  const sources = [
+    "import cluster from 'node:cluster';\nexport const go = () => cluster.fork();",
+    "import cluster from 'cluster';\nexport const go = () => cluster.fork();",
+    ...['binding', '_linkedBinding'].flatMap((method) => BINDING_SPELLINGS.map((template) => template.replaceAll('METHOD', method))),
+  ];
+  for (const source of sources) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), []);
+});
+
+/** The import forms of a module that bind nothing by name, or bind it whole, with SPEC for its specifier. */
+const WHOLE_MODULE_FORMS = [
+  "export * from 'SPEC';",
+  "import * as spawner from 'SPEC';\nexport const go = () => spawner.spawnSync('true');",
+  "import spawner from 'SPEC';\nexport const go = () => spawner.spawnSync('true');",
+  "import 'SPEC';",
+];
+
+test('rule 7: a module other than the process adapter reaching child_process fails by export *, namespace, default or side-effect import', () => {
+  for (const specifier of ['node:child_process', 'child_process']) {
+    for (const template of WHOLE_MODULE_FORMS) {
+      assertBreaks({ 'src/workflow/spawn.mjs': template.replace('SPEC', specifier) }, 'src/workflow/spawn.mjs', 'rule 7');
+    }
+  }
+});
+
 test('rule 7: a gh string literal outside the runners module fails in any quotes, and one in a comment does not', () => {
   for (const literal of ["'gh'", '"gh"', '`gh`', "'\\x67h'"]) {
     assertBreaks({ 'src/cli/doctor.mjs': `export const forge = ${literal};` }, 'src/cli/doctor.mjs', 'rule 7');
