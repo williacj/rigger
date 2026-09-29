@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { killRecordedGroups } from '../src/execution/run.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
-import { alive, fixture, scratch, startOf, until } from './process-fixtures.mjs';
+import { alive, fixture, scratch, startGroup, startOf, until, withoutLeader } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -36,43 +36,10 @@ test('given no record in the state directory, the call kills nothing, reports no
   assert.deepEqual(readdirSync(directory), before);
 });
 
-/**
- * Starts, outside Rigger, a process group named `name` in `directory`, as a dead engine leaves
- * one: its leader is no child of this process, so the system reaps it once it dies, as it does a
- * group whose engine was killed. The leader is a shell, which starts a `tail` that runs until
- * killed. Settles once the `tail` runs, on the group's id, which is its leader's pid, the
- * leader's start time, and the member's pid, or rejects once the test `t` ends first.
- */
-async function startGroup(t, directory, name) {
-  if (!existsSync(join(directory, 'hold'))) writeFileSync(join(directory, 'hold'), '');
-  const script = fixture(directory, name, [
-    '/usr/bin/tail -f "$here/hold" &',
-    'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
-    'echo $$ $! > "$0.tmp" && /bin/mv "$0.tmp" "$0.pids"',
-    'wait',
-  ].join('\n'));
-  // Perl forks, and the fork makes a group of its own and runs the script as its leader, while
-  // the process this spawned exits.
-  const launcher = spawn('/usr/bin/perl', ['-e', 'exit if fork; setpgrp(0, 0); exec @ARGV or die', script], { stdio: 'ignore' });
-  await once(launcher, 'exit');
-  await until(() => existsSync(`${script}.pids`), t);
-  const [leader, member] = readFileSync(`${script}.pids`, 'utf8').trim().split(' ').map(Number);
-  return { group: leader, leader, started: startOf(leader), member };
-}
-
-/**
- * Ends `started`'s leader alone, and settles once it is gone, leaving its member in the group, or
- * rejects once the test `t` ends first.
- */
-async function withoutLeader(t, started) {
-  process.kill(started.leader, 'SIGKILL');
-  await until(() => !alive(started.leader), t);
-  return started;
-}
-
 /** The record's entry for the group `started`, under dispatch `d-1` and card 1412 unless `extra` says otherwise. */
 const entryFor = ({ group, started }, extra = {}) => ({ group, started, dispatch: 'd-1', card: 1412, ...extra });
 
+// proves R-STATE-10
 test('given a recorded group whose leader is alive and whose start time matches the entry, the call kills every process in the group', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');
@@ -92,6 +59,7 @@ const killsIn = (directory) => (existsSync(streamPath(stateOf(directory))) ? rea
   .filter((event) => event.event === 'recorded.killed')
   .map(({ layer, dispatch, card, pid, name, cmd }) => ({ layer, dispatch, card, pid, name, cmd }));
 
+// proves R-STATE-10, R-STATE-12
 test('given a recorded group whose leader\'s start time matches, the stream records each kill by name and command line, under the entry\'s dispatch id and card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');
@@ -120,6 +88,7 @@ test('given a recorded group id whose live leader\'s start time differs from the
   assert.equal(alive(started.member), true, 'the member was killed');
 });
 
+// proves R-STATE-10
 test('given a recorded group whose leader is dead and every live member of which started no earlier than the entry\'s leader, the call kills every live member', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   // What a dead engine leaves when its dispatch's leader exits while it is down: the entry names
@@ -386,6 +355,7 @@ test('given a leftover partial record the call cannot remove and a sink that ref
   assert.ok(failure.message.includes('record.partial-kept') && failure.message.includes(join(state, 'groups.json.partial')), failure.message);
 });
 
+// proves R-STATE-11
 test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
   // A record torn part-way, JSON that is no list, entries missing a field or holding one of the
   // wrong type, a card that is no issue number, and a group id no dispatch's group can have: 1 is
@@ -424,6 +394,7 @@ test('given a record whose content cannot be read as entries, the call kills not
  */
 const silentPs = (directory) => fixture(directory, 'ps', 'exec /usr/bin/tail -f "$here/hold"');
 
+// proves R-STATE-11
 test('given a recorded group whose start-time read never answers, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');

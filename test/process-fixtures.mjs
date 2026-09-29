@@ -1,11 +1,12 @@
 // ABOUTME: Fixtures for tests that start real processes: a scratch directory torn down with every
 // process naming it, shell scripts that live in it, `git` stand-ins put first on PATH, children
-// they leave alive or that outlive a timeout, reads of what those scripts leave behind and of a
-// process's start time, a standard error nothing drains, and a wait on a condition that ends with
-// its test.
+// they leave alive or that outlive a timeout, process groups as a dead engine leaves them, reads
+// of what those scripts leave behind and of a process's start time, a standard error nothing
+// drains, and a wait on a condition that ends with its test.
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -229,3 +230,37 @@ export const gitRecording = (directory) => fixture(directory, 'git', ['printf \'
 
 /** Every call the recording stand-in in `directory` was sent, one line each. */
 export const gitCalls = (directory) => (existsSync(join(directory, 'git-calls')) ? read(directory, 'git-calls').split('\n') : []);
+
+/**
+ * Starts, outside Rigger, a process group named `name` in `directory`, as a dead engine leaves
+ * one: its leader is no child of this process, so the system reaps it once it dies, as it does a
+ * group whose engine was killed. The leader is a shell, which starts a `tail` that runs until
+ * killed. Settles once the `tail` runs, on the group's id, which is its leader's pid, the
+ * leader's start time, and the member's pid, or rejects once the test `t` ends first.
+ */
+export async function startGroup(t, directory, name) {
+  if (!existsSync(join(directory, 'hold'))) writeFileSync(join(directory, 'hold'), '');
+  const script = fixture(directory, name, [
+    '/usr/bin/tail -f "$here/hold" &',
+    'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
+    'echo $$ $! > "$0.tmp" && /bin/mv "$0.tmp" "$0.pids"',
+    'wait',
+  ].join('\n'));
+  // Perl forks, and the fork makes a group of its own and runs the script as its leader, while
+  // the process this spawned exits.
+  const launcher = spawn('/usr/bin/perl', ['-e', 'exit if fork; setpgrp(0, 0); exec @ARGV or die', script], { stdio: 'ignore' });
+  await once(launcher, 'exit');
+  await until(() => existsSync(`${script}.pids`), t);
+  const [leader, member] = readFileSync(`${script}.pids`, 'utf8').trim().split(' ').map(Number);
+  return { group: leader, leader, started: startOf(leader), member };
+}
+
+/**
+ * Ends `started`'s leader alone, and settles once it is gone, leaving its member in the group, or
+ * rejects once the test `t` ends first.
+ */
+export async function withoutLeader(t, started) {
+  process.kill(started.leader, 'SIGKILL');
+  await until(() => !alive(started.leader), t);
+  return started;
+}

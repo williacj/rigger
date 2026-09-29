@@ -797,3 +797,20 @@ test('given a state directory whose event stream exists and which refuses new en
 
   await assert.rejects(dispatchIn(directory, { id: 'd-1', card: 1412, command: startingCommand(directory) }), (failure) => failure.code === NOT_STARTED);
 });
+
+// proves R-STATE-6, R-STATE-7, R-STATE-12, R-STATE-15
+test('given a dispatch through L1 whose command starts a child that never exits on its own and then exits 0, the dispatch settles with exit code 0, the child is not alive when it settles, and the stream names the child\'s process name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const result = await dispatchIn(directory, { id: 'd-survivor', card: 1412, command: leavingTail(directory) });
+
+  const child = Number(read(directory, 'survivor.pid'));
+  assert.equal(alive(child), false, 'the child is alive when the dispatch has settled');
+  assert.equal(result.exit, 0);
+  // The name is the executable the fixture ran, and the command line the arguments it wrote,
+  // each read off the fixture rather than asked of `ps`.
+  const kills = eventsIn(stateOf(directory)).filter((each) => each.layer === 'L0' && each.pid === child);
+  assert.deepEqual(kills.map(({ event, name, cmd, dispatch: id, card }) => ({ event, name, cmd, id, card })), [
+    { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold`, id: 'd-survivor', card: 1412 },
+  ]);
+});
