@@ -879,7 +879,11 @@ test('given three groups held when the caller receives SIGTERM, and a process-ta
 
 for (const [ps, what, mark] of [['ps-partial', 'exits 0 listing only the leader on every read', 'hidden'], ['ps-silent', 'exits 1 and prints nothing on every read', 'silenced']]) {
   test(`given a group whose leader and child are alive, and a census that ${what}, the cleanup leaves neither alive and records each`, ENDS_WITHIN, async (t) => {
-    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 300 }, { signal: 'SIGTERM' });
+    // A read timeout long enough for the stand-in, a shell script, to start and mark its answer
+    // on a loaded host. At 300 ms, both tests failed their guard in one fresh-clone run at a load
+    // average near 30. A first read timed out before the stand-in marked it would explain that,
+    // but it was not measured.
+    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 2_000 }, { signal: 'SIGTERM' });
 
     assert.equal(signal, 'SIGTERM', stderr);
     assert.ok(existsSync(join(directory, mark)), 'the stand-in never answered a census read of the group, so the test proves nothing');
