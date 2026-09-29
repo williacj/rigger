@@ -19,9 +19,6 @@ process its kill ended, and waits out a process table that never answers once, n
 - A `/bin/sh` that `SIGSTOP` holds did not keep its exited child as a zombie in one run by hand on
   macOS 27.0 on 2026-09-28: the child was gone at once. The fixture for a survivor that exits on
   its own is perl, as the adapter's own tests already used.
-- `outlived`'s reads are now given up at its own deadline, where each read used to have a whole
-  read timeout of its own. Both still record the group's kill. Only the reason's wording differs
-  for a read begun just before the deadline.
 - The `ps-join` fixture held the first read of the group that was not the census's. That read is
   now the kill's, so the fixture holds the confirmation's read by its columns, as it meant to.
 
@@ -30,5 +27,10 @@ process its kill ended, and waits out a process table that never answers once, n
 - A cleanup-wide deadline was tried first. It bounded the delay, but a group read after the
   deadline was recorded with a reason of running out of time, not that the table never answered.
   The existing tests for a hung table require the second reason, so each group now says why.
+- Driving `outlived` through the shared reader first gave up its reads at its own deadline. On a
+  fresh clone at `5646285`, under a load average near 109, a read begun just before the deadline
+  timed out, and `test/process-adapter.test.mjs`'s test of reads that list nothing got the wrong
+  reason. Its reads now run up to a read timeout past that deadline, so each again has a whole
+  read timeout of its own, as it had before.
 - The base suite, run once on a fresh clone at `f9d57f7`, cancelled one exit-cleanup test at its
   30 s bound under a load average near 24. It passed in three reruns of that file.

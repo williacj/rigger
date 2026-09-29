@@ -358,9 +358,10 @@ async function ended(group, ps, readTimeout) {
  * while signal 0 still reaches the group is taken again, because a member that is exiting still
  * answers signal 0 (`occupied`) and may not be listed, until the group no longer answers or
  * `deadline`, `timeout` after it began, has passed, which counts as holding one. Its reads are
- * given up at that deadline too, and one that runs out of time there counts as failed. Only a
- * read that found such a member says it saw one. It yields each read and each pause, as `census`
- * does, so the call and the exit cleanup both take it.
+ * given up `timeout` after that deadline, so each has at least `timeout` of its own, and one begun
+ * near the deadline fails only where the read itself does. Only a read that found such a member
+ * says it saw one. It yields each read and each pause, as `census` does, so the call and the exit
+ * cleanup both take it.
  *
  * One case is left unrecorded, and nothing but the process table can close it (`D16` rule 3): a
  * table that leaves a live member of the group out of every read, of the census, the kill and this
@@ -686,10 +687,10 @@ function runNow(ps, args, remaining, timeout) {
  */
 async function contain(group, { ps, readTimeout }, killed) {
   if (!occupied(group)) return [];
-  // Each step's reads are given up `readTimeout` after the step begins.
-  const within = (step) => {
+  // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
+  const within = (step, spare = 0) => {
     const deadline = Date.now() + readTimeout;
-    return reading(step(deadline), ps, readTimeout, deadline);
+    return reading(step(deadline), ps, readTimeout, deadline + spare);
   };
   let dead;
   let unnamed;
@@ -699,7 +700,7 @@ async function contain(group, { ps, readTimeout }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
-  const left = unnamed === undefined ? await within((deadline) => outlived(group, readTimeout, deadline)) : undefined;
+  const left = unnamed === undefined ? await within((deadline) => outlived(group, readTimeout, deadline), readTimeout) : undefined;
   await ended(group, ps, readTimeout);
   return killsOf(group, { dead, unnamed, left }, killed);
 }
@@ -718,10 +719,10 @@ async function contain(group, { ps, readTimeout }, killed) {
  */
 function containNow(group, { ps, readTimeout }) {
   if (!occupied(group)) return { kills: [] };
-  // Each step's reads are given up `readTimeout` after the step begins.
-  const within = (step) => {
+  // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
+  const within = (step, spare = 0) => {
     const deadline = Date.now() + readTimeout;
-    return readingNow(step(deadline), ps, readTimeout, deadline);
+    return readingNow(step(deadline), ps, readTimeout, deadline + spare);
   };
   let survivors;
   let dead;
@@ -732,7 +733,7 @@ function containNow(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
-  const left = unnamed === undefined ? within((deadline) => outlived(group, readTimeout, deadline)) : undefined;
+  const left = unnamed === undefined ? within((deadline) => outlived(group, readTimeout, deadline), readTimeout) : undefined;
   let leader;
   let unread;
   try {
