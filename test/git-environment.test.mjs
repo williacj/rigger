@@ -18,6 +18,7 @@ import { trackedFiles } from '../scripts/ruled-out-word-check.mjs';
 import { source } from '../scripts/absorption-check.mjs';
 import { REDIRECTING, gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
+import { UNKILLED } from './process-fixtures.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -655,7 +656,7 @@ test('init reads the remote of the repository it was pointed at, not of one the 
   });
 });
 
-test('doctor still gets no repository for a directory that is none, whatever the environment names', () => {
+test('doctor still gets no repository for a directory that is none, whatever the environment names', async () => {
   // `repoRoot` answering a repository for a directory that is not one is what `doctor` reads
   // `R-SAFE-5` off, so this is the shape that matters rather than a named repository being
   // swapped for another. Measured with git 2.55.0: `GIT_DIR` alone does not move
@@ -665,13 +666,16 @@ test('doctor still gets no repository for a directory that is none, whatever the
   const victim = repositoryHolding('only-in-victim.txt');
   const plain = mkdtempSync(join(tmpdir(), 'rigger-gitenv-plain-'));
 
-  asALinkedWorktreeHook(join(victim, '.git'), () => {
+  // `repoRoot` asks through L0's process adapter, which spawns in the step it is called in, so
+  // the environment is read inside the hook's and the answer is awaited after it is put back.
+  const answered = asALinkedWorktreeHook(join(victim, '.git'), () => {
     // The premise: inside this environment git names a repository here, so the null below is
     // `repoRoot` refusing the inherited variable and not git declining anyway.
     assert.equal(askedAbout(plain, process.env, 'rev-parse', '--show-toplevel'), asGit(plain));
 
-    assert.equal(repoRoot(plain), null);
+    return repoRoot(plain, { emitter: UNKILLED });
   });
+  assert.equal((await answered).root, null);
 });
 
 test('the word check lists the tracked files of the repository it was pointed at', () => {

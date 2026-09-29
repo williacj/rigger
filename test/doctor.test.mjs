@@ -158,11 +158,11 @@ test('a tree git cannot name is refused rather than compared against the working
   assert.notEqual(declined.status, 0, 'git named a repository here, so there is nothing to measure');
 
   const noRepository = await doctor({ target: from, packageRoot: installed });
-  // The second way git says nothing, which is a different case: a host with no git at all
-  // answers a null status rather than a number, and neither may narrow what is compared.
-  const missing = spawnSync('rigger-no-such-command', ['rev-parse'], { encoding: 'utf8' });
-  assert.equal(missing.status, null, 'this host ran a command that is not there');
-  const noGit = await doctor({ target: from, packageRoot: installed, ask: () => missing });
+  // The second way git says nothing, which is a different case: a host with no git at all never
+  // starts it, which L0's process adapter answers with the failure it rejects with rather than a
+  // status, and neither may narrow what is compared.
+  const missing = await notStarted();
+  const noGit = await doctor({ target: from, packageRoot: installed, ask: () => Promise.reject(missing) });
 
   for (const ran of [noRepository, noGit]) {
     assert.notEqual(ran.code, 0, ran.text);
@@ -402,21 +402,18 @@ test('an authority this host cannot run at all is reported as unasked, never as 
   // — neither of which anybody measured.
   //
   // Measured rather than reasoned: each check is given what really answers a command that is not
-  // there, taken from a run below rather than written out. The agent CLI check spawns for itself,
-  // and is given `spawnSync`'s answer; the gh check sends through L0's process adapter, and is
-  // given the failure the adapter rejects with.
-  const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
-  assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
-  assert.ok(missing.error, 'the run answered no error, so there is nothing to report');
+  // there, taken from a run below rather than written out. Both checks send through L0's process
+  // adapter, the gh check by the forge read runner, and each is given the failure the adapter
+  // rejects with.
   const unstarted = await notStarted();
 
-  for (const said of [await ghAuth({ ask: () => Promise.reject(unstarted) }), agentAuth({ ask: () => missing })]) {
+  for (const said of [await ghAuth({ ask: () => Promise.reject(unstarted) }), await agentAuth({ ask: () => Promise.reject(unstarted) })]) {
     assert.equal(said.ok, null, said.detail);
     assert.match(said.detail, /could not be run|not there|no such/i, said.detail);
   }
 });
 
-test('the agent CLI check answers the `loggedIn` the CLI states, and asks every provider by name', () => {
+test('the agent CLI check answers the `loggedIn` the CLI states, and asks every provider by name', async () => {
   // `D16` rules 1 and 2: Claude Code owns whether Claude Code is signed in. The relation is
   // asserted against the real CLI rather than the answer it gives here today, and the expected
   // value is parsed in this test rather than taken from the check's own reader, which would
@@ -430,6 +427,9 @@ test('the agent CLI check answers the `loggedIn` the CLI states, and asks every 
   // git. It is asked under `gitEnvironment()` because the check it is compared against asks it
   // that way, and a relation measured under a different environment from the one production uses
   // is a relation between two different questions.
+  //
+  // The check asks it through L0's process adapter, so it is handed an emitter: `UNKILLED`, which
+  // fails the test on any kill, since the CLI answering this question leaves no process behind.
   const [command, ...args] = AGENT_CLI.claude;
   const tool = spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
   let stated;
@@ -439,20 +439,21 @@ test('the agent CLI check answers the `loggedIn` the CLI states, and asks every 
     stated = undefined;
   }
 
-  const here = agentAuth();
+  const here = await agentAuth({ emitter: UNKILLED });
 
   assert.equal(here.ok, typeof stated === 'boolean' ? stated : null, `${here.detail} against ${tool.stdout}`);
 
   const signedIn = answering(RECORDED.agentIn);
   const out = answering(RECORDED.agentOut);
-  assert.equal(agentAuth({ ask: signedIn }).ok, true);
-  assert.equal(agentAuth({ ask: out }).ok, false);
+  assert.equal((await agentAuth({ ask: signedIn })).ok, true);
+  assert.equal((await agentAuth({ ask: out })).ok, false);
   assert.deepEqual(signedIn.asked, ['claude auth status --json']);
 
   // An answer stating no `loggedIn` this can read is unread, never read as a refusal: a CLI that
   // reworded itself would otherwise have a signed-in consumer told they are signed out.
   const reworded = answering({ status: 0, stdout: '{\n  "authenticated": true\n}\n', stderr: '' });
-  assert.equal(agentAuth({ ask: reworded }).ok, null, agentAuth({ ask: reworded }).detail);
+  const unread = await agentAuth({ ask: reworded });
+  assert.equal(unread.ok, null, unread.detail);
 });
 
 test('every provider Rigger forks assets for has a CLI this check knows how to ask', () => {
@@ -677,10 +678,7 @@ test('a check that could not be asked does not count as passed, and the status s
   //
   // A `not asked` line above a zero exit is the defect the third verdict exists to prevent: a
   // consumer told Rigger is ready by a run that could not reach two of the tools it asks.
-  const missing = spawnSync('rigger-no-such-command', ['auth', 'status'], { encoding: 'utf8' });
-  assert.equal(missing.status, null, 'this host ran a command that is not there, so this proves nothing');
-
-  const ran = await doctor(against(checked(starter()), { gh: await notStarted(), claude: missing }));
+  const ran = await doctor(against(checked(starter()), { gh: await notStarted(), claude: await notStarted() }));
 
   // Two could not be asked and the other two passed, so nothing here failed: whatever makes the
   // status non-zero can only be the two that were never asked.

@@ -4,8 +4,8 @@
 import { join } from 'node:path';
 
 import { HOUR, report as derive } from '../observation/report.mjs';
-import { PACKAGE, sourceTreeGuard } from './doctor.mjs';
-import { STATE } from './recording.mjs';
+import { PACKAGE, settled } from './doctor.mjs';
+import { STATE, recording } from './recording.mjs';
 
 /** A figure as printed: to four decimal places at most, which states every value a test sets exactly. */
 const figure = (value) => String(Number(value.toFixed(4)));
@@ -27,9 +27,15 @@ function runLines({ run, from, to, releases, pulled, n, throughput, utilization 
   ];
 }
 
-/** What the command prints for a `report` run, and the status it exits with. */
-export async function report({ target = process.cwd(), packageRoot = PACKAGE, ask } = {}) {
-  const { named, refusal } = sourceTreeGuard('report', { target, packageRoot, ask });
+/**
+ * What the command prints for a `report` run, and the status it exits with. It writes nothing but
+ * what L0 records of a process it kills, through the sink `recording` opens.
+ */
+export const report = (options) => recording((opened) => reporting(opened, options));
+
+/** `report`'s work, recording through the sink `opened` holds once the guard has settled. */
+async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE, ask } = {}) {
+  const { named, refusal } = await settled('report', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
   let derived;
   try {

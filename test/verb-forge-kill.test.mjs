@@ -1,7 +1,7 @@
 // ABOUTME: Tests the verbs that build a forge side as the real bin runs them, with a `gh` stand-in
 // that leaves a child alive or never exits: each kill ends and is recorded, a kill the sink refuses
-// stops the verb before its next forge call, and SIGTERM mid-read, even inside L0's spawn, ends the
-// verb by that signal.
+// stops the verb before its next forge call, SIGTERM mid-read, even inside L0's spawn, ends the verb
+// by that signal, and a test's teardown ends its verb before it sweeps the verb's fixture.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
-import { alive, fixture, holding, leave, read, TAIL, until } from './process-fixtures.mjs';
+import { childrenIn, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -72,14 +72,15 @@ function fakeLeavingChild(directory, board, { on = '*', then = ':' } = {}) {
   return fake;
 }
 
-/** The pid of every child a stand-in in `directory` left. */
-const childrenIn = (directory) => readdirSync(directory).filter((name) => /^child-\d+\.pid$/.test(name)).map((name) => Number(read(directory, name)));
-
-/** Whether `pid` has gone within `within` ms, looked at once per turn of the event loop. */
-async function gone(pid, within = 10_000) {
-  const deadline = Date.now() + within;
-  while (alive(pid) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
-  return !alive(pid);
+/**
+ * Settles once `child` has exited, killing it first where it has not: a process that has exited
+ * spawns nothing more.
+ */
+function ended(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return undefined;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGKILL');
+  return exited;
 }
 
 /** The environment the bin runs under: `directory` first on PATH, ahead of the refusing `gh`. */
@@ -197,37 +198,70 @@ function terminatingInSpawn(directory) {
 }
 
 /**
- * Runs the real bin's `verb` against a `gh` stand-in that never answers, has it receive `SIGTERM`
- * while the stand-in runs, and asserts that the stand-in's child is dead, that its `L0` kill event
- * is in the target's stream, and that the verb ended by `SIGTERM`. The test sends the signal once
- * the stand-in is ready, or, where `inSpawn`, the verb sends it itself from inside L0's spawn
- * (`terminatingInSpawn`).
+ * Starts the real bin's `verb` against a `gh` stand-in in a fresh scratch directory that never
+ * answers, and its output so far. Where `inSpawn`, the verb sends itself `SIGTERM` from inside L0's
+ * spawn (`terminatingInSpawn`).
+ *
+ * Teardown hooks run in the order they are registered. The verb's end is registered before
+ * `holding`'s sweep, so a verb the test left running is dead before the sweep looks for its
+ * fixture's processes, and cannot spawn a stand-in after it.
  */
-async function endsTheChildOnSigterm(t, verb, { inSpawn = false } = {}) {
+function startedAgainstHanging(t, verb, { inSpawn = false } = {}) {
+  let child;
+  t.after(() => child && ended(child));
   const directory = holding(t);
   hanging(directory);
   const { where } = consumer();
   const loaded = inSpawn ? ['--import', terminatingInSpawn(directory)] : [];
-  const running = spawn(process.execPath, [...loaded, bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => running.kill('SIGKILL'));
+  child = spawn(process.execPath, [...loaded, bin, verb], { cwd: where, env: withFirst(directory), stdio: ['ignore', 'pipe', 'pipe'] });
   let said = '';
-  running.stdout.on('data', (chunk) => (said += chunk));
-  running.stderr.on('data', (chunk) => (said += chunk));
-  const ended = new Promise((resolve) => running.on('exit', (code, signal) => resolve({ code, signal })));
+  child.stdout.on('data', (chunk) => (said += chunk));
+  child.stderr.on('data', (chunk) => (said += chunk));
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  return { directory, where, child, exited, said: () => said };
+}
 
-  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), ended]);
-  assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said}`);
+/**
+ * Runs the real bin's `verb` against a `gh` stand-in that never answers, has it receive `SIGTERM`
+ * while the stand-in runs, and asserts that the stand-in's child is dead, that its `L0` kill event
+ * is in the target's stream, and that the verb ended by `SIGTERM`. The test sends the signal once
+ * the stand-in is ready, or, where `inSpawn`, the verb sends it itself from inside L0's spawn.
+ */
+async function endsTheChildOnSigterm(t, verb, { inSpawn = false } = {}) {
+  const { directory, where, child: running, exited, said } = startedAgainstHanging(t, verb, { inSpawn });
+
+  await Promise.race([until(() => existsSync(join(directory, 'ready')), t), exited]);
+  assert.ok(existsSync(join(directory, 'ready')), `${verb} ended before its forge read began: ${said()}`);
   if (!inSpawn) running.kill('SIGTERM');
-  const { code, signal } = await ended;
+  const { code, signal } = await exited;
 
-  assert.equal(signal, 'SIGTERM', `exited ${code}: ${said}`);
+  assert.equal(signal, 'SIGTERM', `exited ${code}: ${said()}`);
   const [child] = childrenIn(directory);
   assert.equal(await gone(child), true, `child ${child} is alive`);
   const kills = readEvents(join(where, '.rigger')).filter((event) => event.layer === 'L0' && event.pid === child);
-  assert.equal(kills.length, 1, said);
+  assert.equal(kills.length, 1, said());
   assert.equal(kills[0].name, 'tail');
   assert.equal(kills[0].cmd, `/usr/bin/tail -f ${directory}/hold`);
 }
+
+test('given a test whose verb is still running when it ends, the teardown that test registered leaves no process naming its scratch directory alive, even where the verb spawns its gh stand-in the moment any teardown hook returns', async (t) => {
+  // The test's teardown hooks are collected rather than run by the runner, then run in order. After
+  // each one, this waits until the verb has exited or its stand-in is ready, so a verb a hook left
+  // alive spawns its stand-in before the next hook runs, on every run.
+  const hooks = [];
+  const { directory, child, exited } = startedAgainstHanging({ after: (hook) => hooks.push(hook) }, 'doctor');
+  t.after(() => ended(child));
+  t.after(() => sweep(directory));
+  let over = false;
+  exited.then(() => (over = true));
+
+  for (const hook of hooks) {
+    await hook();
+    await until(() => over || existsSync(join(directory, 'ready')), t);
+  }
+
+  assert.deepEqual(naming(directory), [], `the teardown left processes naming ${directory} alive`);
+});
 
 for (const verb of ['once', 'run', 'plan', 'setup-board', 'doctor']) {
   test(`given ${verb} receiving SIGTERM while a forge read's gh stand-in, which has started a child, is still running, the child is dead, its L0 kill event is in the target's stream, and ${verb} ends reporting SIGTERM`, { timeout: 30_000 }, (t) => endsTheChildOnSigterm(t, verb));
