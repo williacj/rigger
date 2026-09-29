@@ -128,11 +128,13 @@ export const LEFT_OUT = {
 };
 
 /**
- * Every group L0 holds, from the step that creates it until the call has emptied it, with what
- * the exit cleanup needs to end and record it: the call's `L0` emitter, its `ps` and read
- * timeout, and the step its caller handed it for the exit.
+ * Every call L0 has in flight, by its group, from the step that creates the group until a turn
+ * after the call settles, with what the exit cleanup needs to end and record it: the call's `L0`
+ * emitter, its `ps` and read timeout, the step its caller handed it for the exit, the command's
+ * child process, which says how the command ended where Node has reaped it, the kills the call has
+ * made and not yet recorded, and whether the call has emptied the group.
  */
-const groups = new Map();
+const calls = new Map();
 
 /** Every read of the process table a census has in flight, so the exit cleanup can end it. */
 const reads = new Set();
@@ -195,14 +197,15 @@ function onSignal(name) {
 
 /**
  * L0's exit cleanup, synchronous because Node runs an `exit` listener synchronously. It ends every
- * read of the process table still in flight; then, for every group it holds, it takes the census,
- * kills the group and confirms it; and only then records each kill, and writes to standard error
- * every kill the sink refused, since no caller is left to report it to. It then takes each
- * caller's step for its group, which is L1's removal of the group's entry, and last the steps
- * handed to `atExit`. A failure in any of these is written to standard error and never stops the
- * rest, nor changes how the process ends.
+ * read of the process table still in flight; then, for every call in flight whose group the call
+ * has not emptied, it takes the census, kills the group and confirms it; and only then records
+ * each kill, the call's own unrecorded kills first, and writes to standard error every kill the
+ * sink refused, since no caller is left to report it to. It then takes each caller's step for its
+ * group, handing it how the command ended (`endingOf`), which is L1's removal of the group's
+ * entry and its record of the dispatch's end; and last the steps handed to `atExit`. A failure in any of these is
+ * written to standard error and never stops the rest, nor changes how the process ends.
  *
- * It ends only the groups it holds when it runs, and lets each go, so a process that a signal
+ * It ends only the calls in flight when it runs, and lets each go, so a process that a signal
  * listener of its caller keeps running has the groups it starts later ended at its next ending.
  * So it can run more than once, and each step handed to `atExit` must bear being taken again, as
  * the sink's end does.
@@ -210,15 +213,44 @@ function onSignal(name) {
 function cleanup() {
   for (const read of reads) read.kill('SIGKILL');
   const ended = [];
-  for (const [group, call] of groups) {
-    groups.delete(group);
-    attempt(() => ended.push([group, call, containNow(group, call)]));
+  for (const [group, call] of calls) {
+    calls.delete(group);
+    attempt(() => ended.push([group, call, call.contained ? {} : containNow(group, call)]));
   }
-  const unrecorded = ended.flatMap(([, { emitter }, events]) => record(emitter, events));
+  const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
-  for (const [group, { onExit }] of ended) attempt(() => onExit?.(group));
+  for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, endingOf(child, look)));
   for (const step of steps) attempt(step);
 }
+
+/**
+ * How the command `child` ran ended, as the exit cleanup finds it: `{ exit }`, its exit code, or
+ * `{ unread }`, why its status could not be read. Where Node has reaped the command, Node says how
+ * it ended. Otherwise the command is a zombie, since Node reaps no child while the cleanup runs,
+ * and `leader` is the wait status `ps` read for it as `xstat` on the kill's last look: its own
+ * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer, a
+ * leader the census found `stopped` and alive was ended by the cleanup's kill. Otherwise `unread`
+ * says why, and nothing tells the command's own exit from the kill: the command may have exited
+ * before the cleanup ran, and where the census's reads failed too, even a command the cleanup
+ * killed cannot be told from one that exited.
+ */
+function endingOf(child, { leader, unread, stopped }) {
+  if (child.exitCode !== null) return { exit: child.exitCode };
+  if (child.signalCode !== null) return { exit: signalled(child.signalCode) };
+  if (leader === undefined && stopped) return { exit: signalled('SIGKILL') };
+  if (leader === undefined) return { unread: `the exit cleanup could not read the command's status: ${unread}` };
+  // `ps` prints the wait status in hexadecimal. Its low seven bits are the signal that ended the
+  // process, where one did, and the byte above them its exit code (wait(2): WTERMSIG, WEXITSTATUS).
+  const status = Number.parseInt(leader, 16);
+  const ending = status & 0x7f;
+  return { exit: ending === 0 ? (status >> 8) & 0xff : 128 + ending };
+}
+
+/**
+ * The exit code of a process signal `name` ended. It has none of its own, so it takes the one a
+ * shell gives it: 128 and the signal's number, which is never 0.
+ */
+const signalled = (name) => 128 + constants.signals[name];
 
 /** Takes `step`, writing to standard error why it failed, where it does. */
 function attempt(step) {
@@ -593,7 +625,8 @@ const timedOut = (timeout) => new Error(`the process-table read timed out after 
  * matched.
  *
  * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
- * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`).
+ * nor the kill takes a process as gone because a read left it out (`census`, `killedOf`), and the
+ * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
  */
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
@@ -666,7 +699,7 @@ async function contain(group, { ps, readTimeout }, killed) {
  * then, and the cleanup goes on: it cannot wait longer on a process table it cannot read.
  */
 function containNow(group, { ps, readTimeout }) {
-  if (!occupied(group)) return [];
+  if (!occupied(group)) return { kills: [] };
   let survivors;
   let unnamed;
   try {
@@ -674,16 +707,24 @@ function containNow(group, { ps, readTimeout }) {
   } catch (error) {
     unnamed = error.message;
   }
+  let leader;
+  let unread;
   try {
-    readingNow(emptied(group), ps, readTimeout);
-  } catch {
+    leader = readingNow(emptied(group), ps, readTimeout);
+    if (leader === undefined) unread = 'the process table did not list it';
+  } catch (error) {
     // The kill was sent on every look, and nothing is left to wait on.
+    unread = error.message;
   }
-  return killsOf(group, survivors, unnamed, 'survivor.killed');
+  // A leader the census named was stopped and alive, and a stopped process cannot exit on its own,
+  // so the cleanup's kill is what ended it, whatever the last read could tell.
+  const stopped = survivors?.some(({ pid }) => pid === group) ?? false;
+  return { kills: killsOf(group, survivors, unnamed, 'survivor.killed'), leader, unread, stopped };
 }
 
 /**
- * Kills every process left in `group` until it holds nothing but zombies, for the exit cleanup.
+ * Kills every process left in `group` until it holds nothing but zombies, for the exit cleanup,
+ * and hands back the wait status `ps` reads for the group's leader, where it is still there.
  * Node reaps no child while synchronous code runs, so a leader killed here stays in the group as a
  * zombie until this process exits, and the group never empties while the cleanup runs. So each
  * look reads the group's states, and a group of zombies is ended: none of them can run again.
@@ -691,9 +732,9 @@ function containNow(group, { ps, readTimeout }) {
 function* emptied(group) {
   for (;;) {
     signal(group, 'SIGKILL');
-    if (!occupied(group)) return;
-    const states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=']);
-    if ([...states.values()].every((state) => state.startsWith('Z'))) return;
+    if (!occupied(group)) return undefined;
+    const states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=,xstat=']);
+    if ([...states.values()].every((state) => state.startsWith('Z'))) return states.get(group)?.split(/\s+/)[1];
   }
 }
 
@@ -883,9 +924,14 @@ function refused(unrecorded, result, ending = '') {
  * Where `onGroup` throws, L0 ends and records the group, and the call rejects with what it threw,
  * or, where the sink refused a kill event, with the `EVENT_REFUSED` failure, caused by it.
  *
- * L0 holds the group from the step that creates it until the call has emptied it. Where the process
- * exits meanwhile, L0's exit cleanup kills and records it, and then hands the group to `onExit`,
- * where the caller gives one: a synchronous step, which is how L1 removes a dispatch's entry.
+ * L0 holds the call from the step that creates the group until a turn after the call settles. Where
+ * the process exits meanwhile, L0's exit cleanup kills the group where the call has not emptied
+ * it, records every kill, and then hands the group and how the command ended to `onExit`, where
+ * the caller gives one: `{ exit }`, its exit code, or `{ unread }`, why it could not be read.
+ * `onExit` is a synchronous step, which is how L1 removes a dispatch's entry and records its end.
+ * The step can come after the call has settled, in the turn it settled, and must then do
+ * nothing for a call its caller has finished. A process kept running past its ending still has the
+ * call settle, on the command's result.
  */
 export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
@@ -904,10 +950,15 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   install();
-  groups.set(child.pid, { emitter, ps, readTimeout, onExit });
-  // A group the exit cleanup took is one it has ended and recorded, so the call records a kill
-  // of it only where it still held it once the group was empty.
-  const held = () => groups.delete(child.pid);
+  const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
+  calls.set(child.pid, call);
+  // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
+  // more of it.
+  const taken = () => !calls.has(child.pid);
+  // The call is let go a turn after it settles, and not as it settles, because the caller's code
+  // after its await runs in the turn it settles: an ending in that turn still reaches the caller's
+  // step, which must then do nothing for a call it has finished.
+  const release = () => setImmediate(() => calls.get(child.pid) === call && calls.delete(child.pid)).unref();
   try {
     if (onGroup) onGroup(child.pid, startOf(ps, child.pid, readTimeout));
   } catch (refusal) {
@@ -915,27 +966,30 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
     // survivor would be, before the caller hears why.
     // Nothing reads the output of a command that runs no further, so its pipes are let go.
     const kills = await contain(child.pid, { ps, readTimeout }, 'survivor.killed');
-    const unrecorded = record(emitter, held() ? kills : []);
+    call.contained = true;
+    const unrecorded = record(emitter, taken() ? [] : kills);
+    release();
     child.stdout.destroy();
     child.stderr.destroy();
     if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
     throw refusal;
   }
+  const { events } = call;
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout);
-  const killedAtTimeout = expired ? await contain(child.pid, { ps, readTimeout }, 'timeout.killed') : [];
+  // The kills at the timeout wait among the call's unrecorded kills, so an exit meanwhile records
+  // them.
+  if (expired) events.push(...(await contain(child.pid, { ps, readTimeout }, 'timeout.killed')));
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
   const timedOut = expired && signal !== null;
   // A command that exited on its own did so before the containment stopped its group, because a
   // stopped process cannot exit, so every process that containment killed outlived the command.
-  const events = timedOut ? killedAtTimeout : killedAtTimeout.map(([event, fields]) => [event === 'timeout.killed' ? 'survivor.killed' : event, fields]);
-  // A process a signal ended has no exit code of its own, so it takes the one a shell gives it:
-  // 128 and the signal's number, which is never 0.
-  const exit = signal === null ? code : 128 + constants.signals[signal];
+  if (!timedOut) for (const kill of events) if (kill[0] === 'timeout.killed') kill[0] = 'survivor.killed';
+  const exit = signal === null ? code : signalled(signal);
   events.push(...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')));
-  if (!held()) events.splice(0);
+  call.contained = true;
   if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();
@@ -944,7 +998,8 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const [stdout, stderr] = await output;
   const result = { exit, timedOut, stdout, stderr };
-  const unrecorded = record(emitter, events);
+  const unrecorded = record(emitter, taken() ? [] : events.splice(0));
+  release();
   if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : '');
   return result;
 }
@@ -1038,21 +1093,89 @@ function startOf(ps, pid, timeout) {
  * The start time of each live process in `group`, by its pid, read as `startOf` reads one. A
  * zombie is left out: it has exited, though `ps` still lists it, with its start time, until its
  * parent reaps it. So a leader that has exited reads as dead whether or not it has been reaped.
+ *
+ * A read that lists no process is kept only where signal 0 no longer reaches the group, because a
+ * read that failed can list nothing, even one that exits 1 and prints nothing (`run`), and the
+ * leaderless rule would take that empty table as a group to kill (`recorded`). A read that leaves
+ * out the leader is kept only where signal 0 no longer reaches the leader's pid, which is the
+ * group's id: a leader that has exited and not been reaped is listed as a zombie, so a leader left
+ * out while its pid still answers was left out by a read that failed, and the leaderless rule
+ * would otherwise judge the group without the one start that can show it is not the one
+ * recorded. While either holds, it reads again, since a process that is exiting answers signal 0
+ * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
+ * group is killed. A leader that has left the group for another holds the read to `timeout` the
+ * same way, which kills nothing.
+ *
+ * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), as
+ * on the kill (`outlived`): a read that exits 0 and consistently leaves out a live member other
+ * than the leader, whatever else it lists. Such a read is taken as complete. Where the leader is
+ * dead, the leaderless rule then judges the group without that member's start, so the hidden
+ * member is killed even where it started before the recorded leader. Two instances: a read that
+ * lists only the group's zombies, its dead leader among them, and one that lists only a member
+ * started after the recorded leader while the leader has been reaped.
+ *
+ * No read of the table can find a member it consistently hides, because the table is the only
+ * thing that says which pids the group holds. The leader alone is known without it, since its pid
+ * is the group's id, and that is why a missing leader can be checked. Signal 0 to the group says
+ * only that some process is in it, live or a zombie, not which: it reaches a zombie, and a group
+ * holding only zombies, as it reaches a live process (`outlived`). So a read hiding a live member
+ * while listing zombies is exactly what the table gives for a group holding only zombies, and one
+ * hiding it while listing a later member is exactly what it gives for that member alone. Refusing
+ * every read that could be one of these would keep for ever the entry of every leaderless group a
+ * dead engine left, whether it holds zombies alone or live members of its own.
+ *
+ * How `ps` reports a group with no process in it, against a read that failed (`D16` rule 3),
+ * measured with `/bin/ps` from adv_cmds-240 on macOS 27.0 (26A428) on 2026-09-28, 20 times each,
+ * with this read's arguments and `PS_ENV`: a group whose one process had exited and been reaped
+ * exited 1 and wrote nothing to either stream; a group `x` exited 1 and wrote `ps: Invalid process
+ * group: x` to standard error; a live group exited 0 and printed its row. So a read that failed
+ * and wrote nothing, as the stand-in for `ps` in `test/kill-recorded.test.mjs` does, gives the
+ * same answer as an empty group, and only signal 0 tells the two apart.
  */
 async function startsIn(ps, group, timeout) {
-  const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], timeout, timeout));
-  const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
-  return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  const deadline = Date.now() + timeout;
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) await pause(wait);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`the reads of the group's start times left out a process signal 0 still reached, its leader or every member, for ${timeout} ms`);
+    const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+    if ((rows.size === 0 && occupied(group)) || (!rows.has(group) && answers(group))) continue;
+    const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
+    return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
+  }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole seconds since the epoch. */
+/**
+ * A start time as `ps` prints it under `PS_ENV`, such as `Mon Sep 28 03:50:08 2026`, in whole
+ * seconds since the epoch. Only a start that the second it names prints back as, byte for byte,
+ * is read, so a malformed one of any kind is refused: a wrong weekday, a day, hour, minute or
+ * second past its range, which `Date.UTC` would carry into the next, or padding `ps` never
+ * prints. Each could otherwise name a recorded start.
+ *
+ * How `ps` prints it, from the source of adv_cmds's `ps/print.c` (`lstarted`), on 2026-09-28:
+ * the C library's `%c`, left-justified in its column with spaces. Under `PS_ENV`'s locale `%c` is
+ * `%a %b %e %T %Y`, measured with `/bin/ps` from adv_cmds-240 and `/bin/date +%c` on macOS 27.0
+ * (26A428) on 2026-09-28: `ps` printed `Mon Sep 28 23:47:11 2026` and four spaces, and `date`
+ * printed `Tue Sep  1 00:00:00 2026` for a one-digit day, padded with a space. So the column's
+ * trailing spaces are its padding, and are not the time's own.
+ */
 function secondsOf(printed) {
-  const at = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4}) *$/.exec(printed);
-  const month = MONTHS.indexOf(at?.[1]);
-  if (month < 0) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
-  return Date.UTC(Number(at[6]), month, Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000;
+  const text = printed.replace(/ +$/, '');
+  const at = /^\S+ (\S+) +(\d+) (\d+):(\d+):(\d+) (\d+)$/.exec(text);
+  const seconds = at ? Date.UTC(Number(at[6]), MONTHS.indexOf(at[1]), Number(at[2]), Number(at[3]), Number(at[4]), Number(at[5])) / 1000 : NaN;
+  if (Number.isNaN(seconds) || lstartOf(seconds) !== text) throw new Error(`the process table held a start time L0 cannot read: ${JSON.stringify(printed)}`);
+  return seconds;
+}
+
+/** The second `seconds` as `ps` prints a start under `PS_ENV`, less its column's padding: `%a %b %e %T %Y` in UTC. */
+function lstartOf(seconds) {
+  const time = new Date(seconds * 1000);
+  const two = (field) => String(field).padStart(2, '0');
+  const clock = [time.getUTCHours(), time.getUTCMinutes(), time.getUTCSeconds()].map(two).join(':');
+  return `${WEEKDAYS[time.getUTCDay()]} ${MONTHS[time.getUTCMonth()]} ${String(time.getUTCDate()).padStart(2, ' ')} ${clock} ${time.getUTCFullYear()}`;
 }
 
 /**
