@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
-import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf } from './process-fixtures.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, turn } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -1249,7 +1249,7 @@ test('while the call kills a group that takes many rounds, it uses less than a t
   ]);
   let sample;
   const started = (async () => {
-    while (!existsSync(join(directory, 'rounds'))) await new Promise(setImmediate);
+    while (!existsSync(join(directory, 'rounds'))) await turn(t);
     sample = { cpu: process.cpuUsage(), at: performance.now() };
     writeFileSync(join(directory, 'measure'), '');
   })();
@@ -1541,8 +1541,10 @@ test('a delay past the largest one Node timer keeps elapses over timers each wit
 
   whenElapsed(total, () => { done = true; }, timers);
 
+  // One fire past the three the delay takes, at most, so a delay that never elapses fails here
+  // rather than holding the test file's process in this loop.
   const delays = [];
-  while (!done) delays.push(timers.fire());
+  while (!done && delays.length <= 3) delays.push(timers.fire());
   assert.deepEqual(delays, [TIMER_MAX, TIMER_MAX, 5]);
   assert.equal(timers.armed.size, 0);
 });
@@ -1921,4 +1923,31 @@ test('a chain 250 deep is killed and named in full within the default read timeo
 
   assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
   assert.equal(events.length, 251);
+});
+
+test('a kill of a chain reads a number of rows of the table that grows with the chain\'s depth, not with its square', SETTLES_WITHIN, async (t) => {
+  const depth = 200;
+  const directory = holding(t);
+  // The stand-in answers every read as `ps` does, and adds the rows each of the kill's reads, the
+  // reads that ask for `ppid`, printed to `$here/rows`, one line per read.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *ppid=*)',
+    '  table=$(/bin/ps "$@"); status=$?',
+    '  [ -n "$table" ] && printf "%s\\n" "$table"',
+    '  printf "%s\\n" "$table" | /usr/bin/grep -c . >> "$here/rows"',
+    '  exit $status ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const { events } = await recorded(directory, { command: chain(directory, depth), ps, readTimeout: 10_000 });
+
+  assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
+  assert.equal(events.length, depth + 1);
+  const rows = read(directory, 'rows').split('\n').map(Number).reduce((sum, each) => sum + each, 0);
+  t.diagnostic(`${rows} rows over the kill's reads of a chain ${depth + 1} processes long`);
+  // A kill that reads the whole group every round reads about half the chain's length squared,
+  // 20,301 rows here. Four rows a process is a bound linear in the depth, with room for the first
+  // read, which holds the whole group.
+  assert.ok(rows <= 4 * (depth + 1), `the kill read ${rows} rows of the table for a chain ${depth + 1} processes long`);
 });

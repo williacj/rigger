@@ -77,12 +77,12 @@ function readInAnotherProcess(state) {
 
 /**
  * Starts the holding command in `directory` through `start`, a dispatch by default, waits until it
- * runs, hands `whileRunning` the group it reported, then releases it and answers what the call
- * settled on.
+ * runs or the test `t` ends, hands `whileRunning` the group it reported, then releases it and
+ * answers what the call settled on.
  */
-async function whileHeld(directory, options, whileRunning, start = dispatchIn) {
+async function whileHeld(t, directory, options, whileRunning, start = dispatchIn) {
   const settled = start(directory, { command: holdingCommand(directory), ...options });
-  await until(() => existsSync(join(directory, 'group')));
+  await until(() => existsSync(join(directory, 'group')), t);
   await whileRunning(Number(read(directory, 'group')));
   writeFileSync(join(directory, 'release'), '');
   return settled;
@@ -90,35 +90,35 @@ async function whileHeld(directory, options, whileRunning, start = dispatchIn) {
 
 test('while a dispatch runs, a second process reading the state directory finds its process group in the record', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  await whileHeld(directory, { id: 'd-1', card: 1412 }, (group) => {
+  await whileHeld(t, directory, { id: 'd-1', card: 1412 }, (group) => {
     assert.deepEqual(readInAnotherProcess(stateOf(directory)).map((entry) => entry.group), [group]);
   });
 });
 
 test('while a dispatch runs, its record entry carries the dispatch id it was handed', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  await whileHeld(directory, { id: 'd-7f3a', card: 1412 }, (group) => {
+  await whileHeld(t, directory, { id: 'd-7f3a', card: 1412 }, (group) => {
     assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group).map((entry) => entry.dispatch), ['d-7f3a']);
   });
 });
 
 test('while a dispatch with a card runs, its record entry carries that card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  await whileHeld(directory, { id: 'd-1', card: 1412 }, (group) => {
+  await whileHeld(t, directory, { id: 'd-1', card: 1412 }, (group) => {
     assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group).map((entry) => entry.card), [1412]);
   });
 });
 
 test('while a dispatch with no card runs, its record entry carries its dispatch id and no card', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  await whileHeld(directory, { id: 'd-report' }, (group) => {
+  await whileHeld(t, directory, { id: 'd-report' }, (group) => {
     assert.deepEqual(readInAnotherProcess(stateOf(directory)), [{ group, started: startOf(group), dispatch: 'd-report' }]);
   });
 });
 
 test('while a dispatch runs, its record entry carries its group leader\'s start time as ps reads it', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
-  await whileHeld(directory, { id: 'd-1', card: 1412 }, (group) => {
+  await whileHeld(t, directory, { id: 'd-1', card: 1412 }, (group) => {
     assert.deepEqual(readInAnotherProcess(stateOf(directory)).filter((entry) => entry.group === group).map((entry) => entry.started), [startOf(group)]);
   });
 });
@@ -126,7 +126,7 @@ test('while a dispatch runs, its record entry carries its group leader\'s start 
 test('once a dispatch has settled and its group holds no live process, the record no longer holds that group', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   let recorded;
-  await whileHeld(directory, { id: 'd-1', card: 1412 }, (group) => {
+  await whileHeld(t, directory, { id: 'd-1', card: 1412 }, (group) => {
     recorded = group;
     assert.deepEqual(readInAnotherProcess(stateOf(directory)).map((entry) => entry.group), [group], 'the group was recorded while it ran');
   });
@@ -243,7 +243,7 @@ test('given a dispatch L0 rejects for any reason but a refused event, the record
   // The pid of a group the test holds, so L0 reads a start time for it, as it does for every
   // group it hands over. The entry is only read, and nothing is signalled; the teardown ends it.
   const held = spawn(holdingCommand(directory), [], { detached: true, stdio: 'ignore', env: {} });
-  await until(() => existsSync(join(directory, 'group')));
+  await until(() => existsSync(join(directory, 'group')), t);
   const { pid } = held;
   const error = new Error('the child failed after its spawn');
   failingAfterSpawn(t, pid, error);
@@ -311,7 +311,7 @@ test('a command run through L0\'s adapter and not through L1\'s function leaves 
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
   const adapter = (_, options) => runCommand({ args: [], cwd: directory, env: {}, timeout: UNREACHED, emitter: sink.emitter({ layer: 'L0' }), ...options });
 
-  await whileHeld(directory, {}, () => {
+  await whileHeld(t, directory, {}, () => {
     assert.deepEqual(readInAnotherProcess(state), [], 'the record held an entry while the command ran');
   }, adapter);
 
@@ -341,7 +341,7 @@ test('every path the record writes is under the state directory of the repositor
   const touched = [];
   const { release } = watchingWrites(t, (path) => touched.push(path));
 
-  await whileHeld(directory, { id: 'd-1', card: 1412, directory: state, sink, cwd: repository }, () => {});
+  await whileHeld(t, directory, { id: 'd-1', card: 1412, directory: state, sink, cwd: repository }, () => {});
   release();
 
   const outside = (paths) => paths.filter((path) => !path.startsWith(`${state}/`) && path !== state);
@@ -421,7 +421,7 @@ test('a call to L1\'s function with an id or card its record cannot hold starts 
     }, what);
 
     assertNeverRan(directory);
-    await whileHeld(directory, { id: 'd-next', card: 1412 }, (group) => {
+    await whileHeld(t, directory, { id: 'd-next', card: 1412 }, (group) => {
       assert.deepEqual(readInAnotherProcess(stateOf(directory)).map((entry) => entry.group), [group], what);
     });
   }
@@ -468,7 +468,7 @@ test('a partial record a stopped writer left in the state directory is gone once
   writeFileSync(join(state, 'groups.json'), '[]');
   writeFileSync(join(state, 'groups.json.partial'), '[{"group":');
 
-  await whileHeld(directory, { id: 'd-1', card: 1412 }, () => {});
+  await whileHeld(t, directory, { id: 'd-1', card: 1412 }, () => {});
 
   assert.deepEqual(readdirSync(state).filter((file) => file !== 'events.jsonl'), ['groups.json']);
 });
