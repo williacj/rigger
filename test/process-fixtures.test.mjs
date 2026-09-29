@@ -46,7 +46,9 @@ test('given a test file whose tests end, one failing and one timed out, while ea
   const { NODE_TEST_CONTEXT, ...env } = process.env;
   const ran = spawnSync(process.execPath, ['--test', '--test-reporter=tap', file], { encoding: 'utf8', env, timeout: EXITS_WITHIN });
 
-  assert.equal(ran.signal, null, `the test file had not exited after ${EXITS_WITHIN} ms: ${ran.stdout}`);
+  // `spawnSync` sets `ETIMEDOUT` where the bound ended the file, which Node's runner may meet by
+  // exiting with a code of its own rather than by the signal.
+  assert.equal(ran.error?.code, undefined, `the test file had not exited after ${EXITS_WITHIN} ms: ${ran.stdout}`);
   assert.equal(ran.status, 1, ran.stdout);
   assert.equal(ran.stdout.match(/^not ok \d+ - /gm)?.length, 2, ran.stdout);
 });
