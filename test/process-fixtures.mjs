@@ -71,11 +71,27 @@ export const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(te
 
 /**
  * A shell script named `name` in `directory`, executable, whose body reads that directory as
- * `$here`. Its path, and so the directory, is in the command line of the shell running it.
+ * `$here`. Its path, and so the directory, is in the command line of the shell running it. Run
+ * with `RIGGER_FIXTURE_WARMING` set, it exits 0 before its body (`warmed`).
  */
 export function fixture(directory, name, body) {
   const path = join(directory, name);
-  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${body}\n`, { mode: 0o755 });
+  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0\n${body}\n`, { mode: 0o755 });
+  return path;
+}
+
+/**
+ * The fixture at `path`, run once to its exit before its body, so the next run of it starts at
+ * once. The system holds the first exec of a file just written until it has assessed it: measured
+ * with Node 26.5.0 on macOS 27.0 (26A428) on 2026-09-29, the first exec of a fresh three-line
+ * script reached its first line a median 42 ms after the spawn, and a second exec of the same file
+ * 3 ms after. Beside whole suites, at a load average of about 33, 1 of 150 first execs took 1,058 ms,
+ * while 150 second execs took at most 20 ms. So a fixture that must be ready within `OUTLIVED` of
+ * its spawn is warmed first, and the assessment is paid outside that window.
+ */
+export function warmed(path) {
+  const run = spawnSync(path, [], { env: { RIGGER_FIXTURE_WARMING: '1' }, encoding: 'utf8' });
+  assert.equal(run.status, 0, `warming ${path} failed: ${run.error?.message ?? run.stderr}`);
   return path;
 }
 
@@ -218,9 +234,10 @@ export async function withFirstOnPath(directory, body) {
 
 /**
  * A `git` stand-in in `directory` that never answers: it leaves a child alive, writes its own pid
- * to `git.pid`, marks `ready`, and waits on the child, which runs until killed.
+ * to `git.pid`, marks `ready`, and waits on the child, which runs until killed. It is `warmed`,
+ * because it must be ready within `OUTLIVED` of its spawn.
  */
-export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+export const gitHanging = (directory) => warmed(fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n')));
 
 /**
  * A `git` stand-in in `directory` that records each call it is sent in `git-calls` and hands it on
