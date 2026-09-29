@@ -860,9 +860,10 @@ test('two survivors, one whose executable\'s name ends in a newline and one with
  * outside the group and never reaps it. The parent leaves the group, forks a child that joins the
  * group and exits, then becomes a `tail` of its own, which never reaps it. The zombie's pid is in
  * `$here/zombie.pid`, the group's in `$here/group`, and the `tail`'s in `$here/tail.pid`. The
- * command runs `more`, shell, last.
+ * command runs `more`, shell, last. Given `left` as `''`, it leaves no `tail`, and the group holds
+ * the zombie beside its command alone.
  */
-function unreaped(directory, more = '') {
+function unreaped(directory, more = '', left = leave(TAIL, 'tail')) {
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'parent'), [
     'my ($here, $group) = @ARGV;',
@@ -876,7 +877,7 @@ function unreaped(directory, more = '') {
   // Its output goes to /dev/null and a file, so it holds neither of the command's pipes.
   return fixture(directory, 'command', [
     'echo $$ > "$here/group"',
-    leave(TAIL, 'tail'),
+    left,
     '/usr/bin/perl "$here/parent" "$here" $$ >/dev/null 2>"$here/parent.err" &',
     'until [ -f "$here/zombie.pid" ] && /bin/ps -o stat=,pgid= -p "$(/bin/cat "$here/zombie.pid")" | /usr/bin/grep -q "^Z.* $$\\$"; do :; done',
     more,
@@ -1420,6 +1421,45 @@ test('a census and a kill whose every read leaves out one of two survivors still
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
   }
+});
+
+test('a kill whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded, by name or by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // Every read of the group, by the census, the kill and the reads after it, is cut down to the
+  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it.
+  const ps = fixture(directory, 'ps', [
+    'case "$*" in *"-g "*)',
+    '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
+    '  [ -n "$rows" ] && : > "$here/cut" && echo "$rows"',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
+  // so the leader is alive when the timeout kills the group.
+  const command = unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', '');
+
+  const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
+
+  ready(directory);
+  const group = Number(read(directory, 'group'));
+  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the group listed the zombie, so the test proves nothing');
+  assert.equal(alive(group), false);
+  assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
+  const leader = events.some(({ event }) => event === 'group.killed') || events.some(({ event, pid }) => event === 'timeout.killed' && pid === group);
+  assert.equal(leader, true, `the leader's kill was not recorded: ${JSON.stringify(events)}`);
+});
+
+test('a group whose leader is dead and which holds only a zombie its parent outside the group never reaps is recorded with no kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = unreaped(directory, '', '');
+
+  const { events } = await recorded(directory, { command, readTimeout: 1_000 });
+
+  const zombie = Number(read(directory, 'zombie.pid'));
+  assert.equal(spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(zombie)], { encoding: 'utf8' }).stdout[0], 'Z', 'the zombie was reaped, so the test proves nothing');
+  assert.deepEqual(statesIn(Number(read(directory, 'group'))), ['Z'], 'a process of the command\'s group other than the zombie is left');
+  assert.deepEqual(events, []);
 });
 
 /**
