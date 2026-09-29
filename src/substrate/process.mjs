@@ -352,11 +352,18 @@ async function ended(group, ps, readTimeout) {
  * member says it saw one.
  *
  * So one class of read is left unrecorded, and nothing but the process table can close it (`D16`
- * rule 3), as on the start-time read (`startsIn`), whose note records the same class: a read that
- * exits 0 and consistently leaves out a live member of the group, whatever else it lists, of the
- * census, the kill and this one alike. Such a read is taken as complete, so the group's kill ends
- * that hidden member unrecorded. Two instances: a read that lists only the group's zombies, and one
- * that lists only a member started after the leader while the leader has been reaped.
+ * rule 3): a read that exits 0 and consistently leaves out a live member of the group, the leader
+ * included, whatever else it lists, of the census, the kill and this one alike. Such a read is
+ * taken as complete, so the group's kill ends that hidden member unrecorded. Two instances: a read
+ * that lists only the group's zombies, and one that lists only a member started after the leader
+ * while the leader has been reaped.
+ *
+ * The note beside the start-time read (`startsIn`) records a narrower class. That read catches a
+ * hidden live leader through the recorded leader's pid, which is the group's id: a leader left out
+ * while its pid still answers signal 0 is read again. So its class leaves the leader out. The
+ * census, the kill and this read ask signal 0 of the group, and of a pid only once the census has
+ * named it, so a live leader every read hides is hidden from them like any other member, and their
+ * class includes it.
  *
  * No read of the table can find a member it consistently hides, because the table is the only
  * thing that says which pids the group holds. Signal 0 to the group says only that some process is
@@ -786,8 +793,8 @@ function killsOf(group, survivors, unnamed, killed) {
  * So each live member a read of the kill finds must be one the census named, and the kill fails
  * where it finds another, so the group is killed unnamed rather than that process ended
  * unrecorded. The kill reads the table at least once, even where the census named no one. A read
- * that exits 0 and consistently leaves out a live member, whatever else it lists, is the one class
- * this cannot catch (`outlived` records it and says why no read can).
+ * that exits 0 and consistently leaves out a live member, the leader included, whatever else it
+ * lists, is the one class this cannot catch (`outlived` records it and says why no read can).
  *
  * After a round that sees a survivor end, or sends the kill, the next begins once `ROUND_SHARE`
  * times the processor time the kill has used has passed since it began, and after one that sees
