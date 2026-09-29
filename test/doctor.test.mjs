@@ -741,7 +741,7 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
   // check and the config check run for real against this package and this clone.
   const clone = freshClone();
 
-  const forked = init({ target: clone });
+  const forked = await init({ target: clone, packageRoot: repositoryIn('rigger-package-root-') });
   const ran = await doctor({
     target: clone,
     packageRoot: root,

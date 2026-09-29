@@ -11,7 +11,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
 import { CONFIG, PROVIDER_ASSETS, TEMPLATES, init, plan, repoSlug } from '../src/cli/init.mjs';
-import { gitIn, repositoryIn } from './git-repository.mjs';
+import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
+import { OUTLIVED, TAIL, UNKILLED, alive, childrenIn, fixture, gitCalls, gitHanging, gitLeavingChild, gitRecording, gone, holding, leave, read, ready, withFirstOnPath } from './process-fixtures.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
+import { STATE } from '../src/cli/recording.mjs';
 import riggerConfig from '../rigger.config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +31,19 @@ function repository(url) {
   if (url) gitIn(dir, 'remote', 'add', 'origin', url);
   return dir;
 }
+
+/**
+ * A temporary git repository standing in for the running package, so no `init` here can write into
+ * this checkout. It is built by the real git, so a test with a `git` stand-in first on PATH builds
+ * it before putting one there.
+ */
+const elsewhere = () => repositoryIn('rigger-package-root-', { 'package.json': '{}\n' });
+
+/**
+ * What git says `origin` points at in `dir`, as `repoSlug` reads it, through an `L0` emitter that
+ * refuses every kill, because the real git leaves no process behind.
+ */
+const slugOf = async (dir) => (await repoSlug(dir, { emitter: UNKILLED })).repo;
 
 /**
  * Every file git says a repository holds under a directory, as repository-relative paths.
@@ -157,7 +173,7 @@ test('every role the written config names reads its prompt out of the consumer r
   // What this does not prove is the dispatch. Nothing reads a role prompt yet — L1 lands at M2 —
   // so what is shown is the path a config hands it, not a read that has happened.
   const consumer = repository('https://github.com/acme/widgets.git');
-  init({ target: consumer });
+  await init({ target: consumer, packageRoot: elsewhere() });
   const config = (await import(pathToFileURL(join(consumer, CONFIG)))).default;
 
   assert.ok(Object.keys(config.roles).length > 0, 'the starter config declares no roles');
@@ -228,45 +244,43 @@ test('a provider named after anything `Object.prototype` carries is refused like
   }
 });
 
-test('the repository a config names is the one git says the origin remote points at', () => {
+test('the repository a config names is the one git says the origin remote points at', async () => {
   // Git owns what `origin` is, so it is asked rather than restated (`D16`). Both spellings are
   // real repositories here, created and configured through git itself, because a fixture string
   // parsed by the same regex would agree with it by construction. The defect this catches is a
   // consumer cloned over ssh getting `git@github.com:acme` as its repository name.
-  assert.equal(repoSlug(repository('https://github.com/acme/widgets.git')), 'acme/widgets');
-  assert.equal(repoSlug(repository('git@github.com:acme/widgets.git')), 'acme/widgets');
-  assert.equal(repoSlug(repository('https://github.com/acme/widgets')), 'acme/widgets');
+  assert.equal(await slugOf(repository('https://github.com/acme/widgets.git')), 'acme/widgets');
+  assert.equal(await slugOf(repository('git@github.com:acme/widgets.git')), 'acme/widgets');
+  assert.equal(await slugOf(repository('https://github.com/acme/widgets')), 'acme/widgets');
 });
 
-test('a repository with no origin remote gets the placeholder, and init says so', () => {
+test('a repository with no origin remote gets the placeholder, and init says so', async () => {
   // A repository not yet pushed anywhere has no remote to read, and refusing to write anything
   // over it would leave a consumer with no assets either. The placeholder stays, and the report
   // names it: the defect this catches is a config that silently names `undefined/undefined`.
   const consumer = repository(null);
 
-  assert.equal(repoSlug(consumer), null);
-  assert.match(planned(plan({ repo: repoSlug(consumer) }), CONFIG).content, new RegExp(PLACEHOLDER.repo));
+  assert.equal(await slugOf(consumer), null);
+  assert.match(planned(plan({ repo: await slugOf(consumer) }), CONFIG).content, new RegExp(PLACEHOLDER.repo));
 });
 
-test('a host with no git to ask answers with the placeholder rather than a crash', () => {
-  // Measured rather than reasoned: `spawnSync` answers a command it could not run at all with a
-  // null status and no output at all, where git run and refusing answers 128 or 2 with an empty
-  // stdout. Only the first throws on being read, so the two are not one case. Git is off the PATH
-  // here because that is the only seam there is — `repoSlug` spawns git itself, by design, so
-  // there is no collaborator to substitute.
+test('a host with no git to ask answers with the placeholder rather than a crash', async () => {
+  // A git L0 could not start is no result at all: the adapter rejects rather than answering with a
+  // status, where git run and refusing answers 128 or 2 with an empty stdout. So the two are not
+  // one case. Git is off the PATH here so that the real adapter is what fails to start it.
   const consumer = repository('https://github.com/acme/widgets.git');
   const path = process.env.PATH;
   try {
     process.env.PATH = '';
-    assert.equal(repoSlug(consumer), null);
+    assert.equal(await slugOf(consumer), null);
   } finally {
     process.env.PATH = path;
   }
 
-  assert.equal(repoSlug(consumer), 'acme/widgets');
+  assert.equal(await slugOf(consumer), 'acme/widgets');
 });
 
-test('init writes every file it planned, and names each one it wrote', () => {
+test('init writes every file it planned, and names each one it wrote', async () => {
   // The defect this catches is a fork that reports what it meant to do rather than what it did:
   // a directory it never created, a file it wrote empty, or a path missing from the report that
   // a consumer then never looks at.
@@ -278,7 +292,7 @@ test('init writes every file it planned, and names each one it wrote', () => {
   const written = plan({ repo: 'acme/widgets' });
   for (const path of FORKED) planned(written, path);
 
-  const ran = init({ target: consumer });
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
 
   assert.equal(ran.code, 0, ran.text);
   for (const file of written) {
@@ -287,7 +301,7 @@ test('init writes every file it planned, and names each one it wrote', () => {
   }
 });
 
-test('init names the board number as the one thing it left for the consumer, and only where it wrote the config', () => {
+test('init names the board number as the one thing it left for the consumer, and only where it wrote the config', async () => {
   // `init` fills `repo` and can fill nothing else, so naming a board is the one thing a consumer
   // has to do before anything runs. The defect this catches is the silent hand-off: a config
   // written with a name where the number belongs, a report that never mentions it, and a first
@@ -298,8 +312,8 @@ test('init names the board number as the one thing it left for the consumer, and
   // did not read.
   const consumer = repository('https://github.com/acme/widgets.git');
 
-  const first = init({ target: consumer });
-  const second = init({ target: consumer });
+  const first = await init({ target: consumer, packageRoot: elsewhere() });
+  const second = await init({ target: consumer, packageRoot: elsewhere() });
 
   assert.match(first.text, /`board\.project`/);
   assert.match(first.text, /PROJECT_NUMBER/);
@@ -320,8 +334,8 @@ test('init names the board number as the one thing it left for the consumer, and
  * will ask GitHub. What is asserted is that this repository has answered it at all, because a
  * checkout still holding the name would otherwise compare clean against the template.
  */
-function forThisRepository() {
-  const repo = repoSlug(root);
+async function forThisRepository() {
+  const repo = await slugOf(root);
   assert.ok(repo, 'this checkout has no `origin` remote, so there is no repository name to compare against');
   assert.notEqual(
     riggerConfig.board.project,
@@ -331,7 +345,7 @@ function forThisRepository() {
   return plan({ repo, project: riggerConfig.board.project });
 }
 
-test('this repository holds exactly what init produces for it, and nothing else', () => {
+test('this repository holds exactly what init produces for it, and nothing else', async () => {
   // `templates/` is the source and this repository's own assets are what `init` forked from it,
   // so the two are one artifact rather than two copies, and this is what refuses a divergence.
   // The defect it catches is the ordinary one: a role prompt, a skill or a hook edited under
@@ -340,13 +354,13 @@ test('this repository holds exactly what init produces for it, and nothing else'
   //
   // Read rather than run. `init` against this checkout is what `R-SAFE-5` forbids, and it is not
   // needed: `plan` answers what `init` would write without writing it.
-  const files = forThisRepository();
+  const files = await forThisRepository();
 
   assert.ok(files.length > 0, 'nothing is planned, so this compares nothing');
   assert.deepEqual(divergences(root, files), []);
 });
 
-test('a file under .claude that this repository does not hold is nobody\'s asset', () => {
+test('a file under .claude that this repository does not hold is nobody\'s asset', async () => {
   // `.claude/settings.local.json` is written by Claude Code when a permission is approved for
   // the project, and it is nobody's template. The defect this catches is the check above reading
   // the directory rather than asking git: that file would red the suite, and a red suite is a
@@ -364,20 +378,20 @@ test('a file under .claude that this repository does not hold is nobody\'s asset
       'git holds that file after all, so it is an asset and wants a template',
     );
 
-    assert.deepEqual(divergences(root, forThisRepository()), []);
+    assert.deepEqual(divergences(root, await forThisRepository()), []);
   } finally {
     if (ours) rmSync(local, { force: true });
   }
 });
 
-test('an asset a repository holds with no template behind it is still found', () => {
+test('an asset a repository holds with no template behind it is still found', async () => {
   // The other half of the fix: asking git rather than walking must not cost the reverse
   // direction its bite. Measured against a scratch repository rather than this one, so nothing
   // here is mutated — `init` forks into it, git is given the result to hold, and then the two
   // divergences that only the index can show are introduced.
   const consumer = repository('https://github.com/acme/widgets.git');
   const files = plan({ repo: 'acme/widgets' });
-  init({ target: consumer });
+  await init({ target: consumer, packageRoot: elsewhere() });
   gitIn(consumer, 'add', '-A');
   assert.deepEqual(divergences(consumer, files), []);
 
@@ -405,7 +419,7 @@ test('the config init writes is accepted once the consumer names its board, and 
   // `PROJECT_NUMBER` is written out here rather than read from the table the validator uses, so
   // this fails if the template and that table ever name different placeholders.
   const consumer = repository('https://github.com/acme/widgets.git');
-  init({ target: consumer });
+  await init({ target: consumer, packageRoot: elsewhere() });
 
   const written = (await import(pathToFileURL(join(consumer, CONFIG)))).default;
 
@@ -466,14 +480,14 @@ test('the command forks the assets into the repository it is run in, from the pa
   }
 });
 
-test('a second run leaves an edited template alone, and names everything it skipped', () => {
+test('a second run leaves an edited template alone, and names everything it skipped', async () => {
   // Measured by running it twice with an edit in between rather than argued from the code. The
   // defect this catches is the fork a consumer cannot trust: `init` run again — by a person, or
   // by a later card's provisioning step — overwriting a role prompt that repository had made its
   // own. Silence would be nearly as bad, so the report has to name each file it left.
   const consumer = repository('https://github.com/acme/widgets.git');
   const files = plan({ repo: 'acme/widgets' });
-  const first = init({ target: consumer });
+  const first = await init({ target: consumer, packageRoot: elsewhere() });
   assert.match(first.text, new RegExp(`wrote ${files.length} of ${files.length} files`));
 
   const ours = '.claude/agents/engineer.md';
@@ -481,7 +495,7 @@ test('a second run leaves an edited template alone, and names everything it skip
   writeFileSync(join(consumer, ours), edited);
   const before = files.map((file) => readFileSync(join(consumer, file.path), 'utf8'));
 
-  const second = init({ target: consumer });
+  const second = await init({ target: consumer, packageRoot: elsewhere() });
 
   assert.equal(readFileSync(join(consumer, ours), 'utf8'), edited);
   assert.equal(second.code, 0, second.text);
@@ -492,4 +506,147 @@ test('a second run leaves an edited template alone, and names everything it skip
     assert.equal(readFileSync(join(consumer, file.path), 'utf8'), before[index], file.path);
     assert.ok(second.text.includes(file.path), `the second run never names \`${file.path}\`:\n${second.text}`);
   });
+});
+
+/**
+ * Runs `init` against `target`, as the package at `packageRoot`, with a recording `git` stand-in
+ * first on PATH, and asserts it refuses naming `R-SAFE-5`, sends git nothing, and leaves
+ * `git status --porcelain --ignored` in the package's tree as it found it.
+ */
+async function refusesSourceTree(t, target, packageRoot) {
+  const directory = holding(t);
+  gitRecording(directory);
+  const before = gitIn(packageRoot, 'status', '--porcelain', '--ignored');
+
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot }));
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /`R-SAFE-5`/, ran.text);
+  assert.deepEqual(gitCalls(directory), [], ran.text);
+  assert.equal(gitIn(packageRoot, 'status', '--porcelain', '--ignored'), before, ran.text);
+}
+
+// proves R-SAFE-5
+test('given a target that is the running package\'s source tree, init exits non-zero naming R-SAFE-5, asks git nothing, and leaves the tree\'s git status as it was', async (t) => {
+  const packageRoot = repositoryIn('rigger-package-root-', { 'package.json': '{}\n' });
+  await refusesSourceTree(t, packageRoot, packageRoot);
+});
+
+test('given a target in a subdirectory of the running package\'s source tree, init exits non-zero naming R-SAFE-5, asks git nothing, and leaves the tree\'s git status as it was', async (t) => {
+  const packageRoot = repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'docs/a.md': 'a\n' });
+  await refusesSourceTree(t, join(packageRoot, 'docs'), packageRoot);
+});
+
+test('given a running package installed under the target\'s node_modules, init exits non-zero naming R-SAFE-5, asks git nothing, and leaves the package\'s git status as it was', async (t) => {
+  const target = repository('https://github.com/acme/widgets.git');
+  const packageRoot = repositoryAt(join(target, 'node_modules', '@williacj', 'rigger'), { 'package.json': '{}\n' });
+  await refusesSourceTree(t, target, packageRoot);
+  assert.equal(existsSync(join(target, CONFIG)), false, 'init wrote its config into the target');
+});
+
+/** The `L0` events the stream under `<target>/.rigger` holds for the process `pid`, by event name. */
+const killsOf = (target, pid) => readEvents(join(target, STATE)).filter((event) => event.layer === 'L0' && event.pid === pid).map((event) => event.event);
+
+/** The one child the stand-in in `directory` left, asserted to be there. */
+function leftChild(directory) {
+  const children = childrenIn(directory);
+  assert.equal(children.length, 1, 'the stand-in left no child, so this proves nothing');
+  return children[0];
+}
+
+// proves R-STATE-7, R-STATE-12
+test('given a git stand-in for init\'s origin read that leaves a child alive and prints the remote, init writes the config it writes for one that leaves none, the child is dead when init returns, and its kill is in the stream under the target', async (t) => {
+  const [leaving, quiet] = [holding(t), holding(t)];
+  gitLeavingChild(leaving);
+  gitRecording(quiet);
+  const [left, alone] = [repository('https://github.com/acme/widgets.git'), repository('https://github.com/acme/widgets.git')];
+
+  const packageRoot = elsewhere();
+  const ranLeft = await withFirstOnPath(leaving, () => init({ target: left, packageRoot }));
+  const ranAlone = await withFirstOnPath(quiet, () => init({ target: alone, packageRoot }));
+
+  assert.equal(ranLeft.code, 0, ranLeft.text);
+  assert.deepEqual(gitCalls(quiet), [`-C ${alone} remote get-url origin`], 'the quiet stand-in was not asked, so the configs compare nothing');
+  assert.match(readFileSync(join(alone, CONFIG), 'utf8'), /repo: 'acme\/widgets'/);
+  assert.equal(readFileSync(join(left, CONFIG), 'utf8'), readFileSync(join(alone, CONFIG), 'utf8'));
+  const child = leftChild(leaving);
+  assert.equal(await gone(child, 0), true, `child ${child} is alive`);
+  assert.deepEqual(killsOf(left, child), ['survivor.killed']);
+});
+
+// proves R-STATE-12
+test('given init run in a subdirectory of a repository, with a git stand-in for its origin read that leaves a child alive, the kill is in the stream under the target, and nothing is written under the repository\'s own .rigger', async (t) => {
+  const directory = holding(t);
+  gitLeavingChild(directory);
+  const outer = repository('https://github.com/acme/widgets.git');
+  const target = join(outer, 'sub');
+  mkdirSync(target);
+
+  const packageRoot = elsewhere();
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot }));
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.deepEqual(killsOf(target, leftChild(directory)), ['survivor.killed']);
+  assert.equal(existsSync(join(outer, STATE)), false, `init wrote under ${join(outer, STATE)}`);
+});
+
+// proves R-STATE-12
+test('given a git stand-in for init\'s origin read that leaves a child alive and then fails, the kill is in the stream under the target', async (t) => {
+  const directory = holding(t);
+  fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'exit 1'].join('\n'));
+  const target = repository('https://github.com/acme/widgets.git');
+
+  const packageRoot = elsewhere();
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot }));
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.deepEqual(killsOf(target, leftChild(directory)), ['survivor.killed']);
+});
+
+// proves R-STATE-8
+test('given a git stand-in for init\'s origin read that never exits, the read settles, init reports that the timeout ended it, no process of its group is alive, and each kill is in the stream under the target', async (t) => {
+  const directory = holding(t);
+  gitHanging(directory);
+  const target = repository('https://github.com/acme/widgets.git');
+
+  const packageRoot = elsewhere();
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot, timeout: OUTLIVED }));
+
+  ready(directory);
+  assert.match(ran.text, new RegExp(`timeout of ${OUTLIVED} ms ended \`git `), ran.text);
+  const group = Number(read(directory, 'git.pid'));
+  assert.equal(alive(-group), false, `a process of group ${group} is alive`);
+  for (const pid of [group, leftChild(directory)]) assert.deepEqual(killsOf(target, pid), ['timeout.killed'], `process ${pid}`);
+});
+
+// proves R-STATE-12
+test('an init run in which no process is killed by force creates no file under the target\'s .rigger', async (t) => {
+  const directory = holding(t);
+  gitRecording(directory);
+  const target = repository('https://github.com/acme/widgets.git');
+
+  const packageRoot = elsewhere();
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot }));
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.equal(gitCalls(directory).length, 1, 'init asked git nothing, so this proves nothing');
+  assert.equal(existsSync(join(target, STATE)), false);
+});
+
+// proves R-RECORD-9
+test('given a state directory that refuses writes and a git stand-in for init\'s origin read that leaves a child alive, init writes no config, and exits non-zero naming the unrecorded kill', async (t) => {
+  const directory = holding(t);
+  gitLeavingChild(directory);
+  const target = repository('https://github.com/acme/widgets.git');
+  // The stream is a directory, which no append can open.
+  mkdirSync(join(target, STATE, 'events.jsonl'), { recursive: true });
+
+  const packageRoot = elsewhere();
+  const ran = await withFirstOnPath(directory, () => init({ target, packageRoot }));
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /went unrecorded/, ran.text);
+  assert.ok(ran.text.includes(`/usr/bin/tail -f ${directory}/hold`), ran.text);
+  assert.equal(existsSync(join(target, CONFIG)), false, ran.text);
+  assert.deepEqual(readdirSync(target).sort(), ['.git', STATE], ran.text);
 });

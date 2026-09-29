@@ -641,19 +641,20 @@ function repositoryRemoting(url) {
   return root;
 }
 
-test('init reads the remote of the repository it was pointed at, not of one the environment names', () => {
+test('init reads the remote of the repository it was pointed at, not of one the environment names', async () => {
   const victim = repositoryRemoting('https://github.com/elsewhere/victim.git');
   const named = repositoryRemoting('https://github.com/acme/widgets.git');
 
-  asALinkedWorktreeHook(join(victim, '.git'), () => {
+  const read = asALinkedWorktreeHook(join(victim, '.git'), () => {
     // The premise, measured inside the hostile environment: git itself is redirected here, so the
     // slug below is `repoSlug` resisting it rather than a variable that never bit.
     assert.equal(
       execFileSync('git', ['-C', named, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: process.env }).trim(),
       'https://github.com/elsewhere/victim.git',
     );
-    assert.equal(repoSlug(named), 'acme/widgets');
+    return repoSlug(named, { emitter: UNKILLED });
   });
+  assert.equal((await read).repo, 'acme/widgets');
 });
 
 test('doctor still gets no repository for a directory that is none, whatever the environment names', async () => {

@@ -220,3 +220,12 @@ export async function withFirstOnPath(directory, body) {
  * to `git.pid`, marks `ready`, and waits on the child, which runs until killed.
  */
 export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+
+/**
+ * A `git` stand-in in `directory` that records each call it is sent in `git-calls` and hands it on
+ * to the real git, so a test reads whether the code under it asked git anything at all.
+ */
+export const gitRecording = (directory) => fixture(directory, 'git', ['printf \'%s\\n\' "$*" >> "$here/git-calls"', `exec '${GIT}' "$@"`].join('\n'));
+
+/** Every call the recording stand-in in `directory` was sent, one line each. */
+export const gitCalls = (directory) => (existsSync(join(directory, 'git-calls')) ? read(directory, 'git-calls').split('\n') : []);

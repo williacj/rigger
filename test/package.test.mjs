@@ -1,12 +1,12 @@
 // ABOUTME: Tests the package contract: the Node floor and what an install below it does, what the
-// tarball holds and that it runs once installed, that every script the repository defines is
-// reachable from `npm run`, and that CI runs them.
+// tarball holds, that it runs once installed and that its `init` refuses its own tree, that every
+// script the repository defines is reachable from `npm run`, and that CI runs them.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync,
+  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -16,6 +16,7 @@ import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
 import { installFromTarball as installRigger } from './installed-rigger.mjs';
+import { gitCalls, gitRecording, holding } from './process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -206,6 +207,48 @@ test('the installed tarball runs init and then doctor in a scratch repository ou
   assert.equal(realpathSync(heading[2]), realpathSync(scratch));
   const lines = said.split('\n').filter((line) => /^ {2}(ok|failed|not asked) {2}/.test(line));
   assert.equal(lines.length, Number(heading[1]), said);
+});
+
+/** Every file under `directory`, however deep, as its path, size and content, sorted by path. */
+const everyFile = (directory) => readdirSync(directory, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => {
+    const path = join(entry.parentPath, entry.name);
+    return { path, size: statSync(path).size, content: readFileSync(path).toString('base64') };
+  })
+  .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+/**
+ * The installed `rigger init` run in `target`, with no package root passed, under the narrow path
+ * with a recording `git` stand-in first on it, and asserted to refuse naming `R-SAFE-5`, send that
+ * git nothing, and leave every file under `untouched` with the same path, size and content.
+ */
+function initRefusesInstalled(t, target, untouched) {
+  const { rigger, path } = installFromTarball();
+  const directory = holding(t);
+  gitRecording(directory);
+  const before = everyFile(untouched);
+
+  const ran = spawnSync(rigger, ['init'], { cwd: target, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${directory}:${path}` } });
+
+  const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+  assert.equal(ran.error, undefined, said);
+  assert.notEqual(ran.status, 0, said);
+  assert.match(ran.stderr, /`R-SAFE-5`/, said);
+  assert.deepEqual(gitCalls(directory), [], said);
+  assert.deepEqual(everyFile(untouched), before, said);
+}
+
+// proves R-SAFE-5
+test('the installed rigger init, run against a target inside the installed package, exits non-zero naming R-SAFE-5, asks git nothing, and changes no file under the package', (t) => {
+  const installedAt = realpathSync(join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger'));
+  initRefusesInstalled(t, join(installedAt, 'src'), installedAt);
+});
+
+// proves R-SAFE-5
+test('the installed rigger init, run against the target whose node_modules it is installed under, exits non-zero naming R-SAFE-5, asks git nothing, and changes no file under the target', (t) => {
+  const { consumer } = installFromTarball();
+  initRefusesInstalled(t, consumer, consumer);
 });
 
 test('every script the repository defines is reachable from npm run', () => {
