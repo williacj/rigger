@@ -9,9 +9,9 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
 import { dirname, join } from 'node:path';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { workspaces } from '../src/substrate/worktrees.mjs';
+import { FETCH_TRIES, workspaces } from '../src/substrate/worktrees.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
-import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, scratch, withFirstOnPath } from './process-fixtures.mjs';
+import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -292,4 +292,153 @@ test('the branch-name question runs git check-ref-format --branch through the pr
   assert.equal(args, 'check-ref-format --branch rigger-1');
   assert.equal(gitDir, 'unset');
   assert.equal(pgid, pid);
+});
+
+/**
+ * A `git` stand-in in `directory` that hands each call on to the real git, and appends to
+ * `git-times` the wall-clock seconds at which that git started and ended, and the call's
+ * arguments. The times bracket the real git's whole run, so two calls whose times overlap ran at once.
+ */
+function gitTiming(directory) {
+  const now = '/usr/bin/perl -MTime::HiRes=time -e \'printf "%.6f", time\'';
+  return fixture(directory, 'git', [
+    `started=$(${now})`,
+    `'${GIT}' "$@"`,
+    'status=$?',
+    `ended=$(${now})`,
+    'printf \'%s %s %s\\n\' "$started" "$ended" "$*" >> "$here/git-times"',
+    'exit $status',
+  ].join('\n'));
+}
+
+/** Each call the timing stand-in in `directory` recorded, in the order they started. */
+const timings = (directory) => read(directory, 'git-times').split('\n').map((line) => {
+  const [started, ended, ...args] = line.split(' ');
+  return { started: Number(started), ended: Number(ended), args: args.join(' ') };
+}).sort((a, b) => a.started - b.started);
+
+test('two git calls on one repository never run at once, for every git operation the module makes, as a git stand-in\'s start and end times show', async (t) => {
+  const { directory, repository, push } = world(t);
+  const timing = gitTiming(scratch(t));
+  const made = worktreeAt(repository, join(directory, 'made'), 'made');
+  push('after the clone');
+  // Two adapters over one repository, so the queue is the repository's and not the adapter's.
+  const one = workspaces({ repository, emitter: recorder(), git: timing });
+  const two = workspaces({ repository, emitter: recorder(), git: timing });
+
+  await Promise.all([
+    one.make(join(directory, 'rigger-1'), 'rigger-1'),
+    two.make(join(directory, 'rigger-2'), 'rigger-2'),
+    one.remove(made),
+    two.isWorktree(made),
+    one.acceptsBranch('rigger-3'),
+    two.fetchMainLine(),
+  ]);
+
+  const calls = timings(dirname(timing));
+  for (const operation of ['ls-remote', 'fetch', 'worktree add', 'worktree remove', 'worktree prune', 'worktree list', 'check-ref-format']) {
+    assert.ok(calls.some((call) => call.args.startsWith(operation)), `no ${operation} was recorded, so the test does not cover it:\n${calls.map((call) => call.args).join('\n')}`);
+  }
+  for (let i = 1; i < calls.length; i += 1) {
+    assert.ok(calls[i].started >= calls[i - 1].ended, `\`${calls[i].args}\` started at ${calls[i].started}, before \`${calls[i - 1].args}\` ended at ${calls[i - 1].ended}`);
+  }
+});
+
+/**
+ * A `git` stand-in in `directory` that fails a fetch as git fails one another process's fetch beat
+ * to `refs/remotes/origin/main`, `times` times, and hands every other call, and every later fetch,
+ * on to the real git. The words are git's own: the stand-in asks the real git to move that ref from
+ * a value it does not hold, which git refuses through the same lock check a fetch meets, and
+ * prints that refusal as a fetch prints it.
+ */
+function gitRaced(directory, times) {
+  return fixture(directory, 'git', [
+    'tries=$(/bin/cat "$here/raced" 2>/dev/null || echo 0)',
+    `if [ "$1" = fetch ] && [ "$tries" -lt ${times} ]; then`,
+    '  echo $((tries + 1)) > "$here/raced"',
+    `  words=$('${GIT}' update-ref refs/remotes/origin/main HEAD ${'1'.repeat(40)} 2>&1)`,
+    '  printf \'%s\\n\' "$words" | /usr/bin/sed \'s/.*\\(cannot lock ref\\)/error: \\1/\' >&2',
+    '  exit 1',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+}
+
+/** How many calls the stand-in in `directory` failed as a lost fetch race. */
+const raced = (directory) => (existsSync(join(directory, 'raced')) ? Number(read(directory, 'raced')) : 0);
+
+test('a fetch whose first try another fetch beat to the remote-tracking ref is retried, the call succeeds, and the retry is an L0 event naming the ref', async (t) => {
+  const { directory, repository, push } = world(t);
+  const standIn = gitRaced(scratch(t), 1);
+  const pushed = push('after the clone');
+  const emitter = recorder();
+
+  await workspaces({ repository, emitter, git: standIn }).make(join(directory, 'rigger-1'), 'rigger-1');
+
+  assert.equal(raced(dirname(standIn)), 1);
+  assert.equal(headOf(join(directory, 'rigger-1')), pushed);
+  assert.deepEqual(emitter.events.filter(({ event }) => event === 'fetch.retried').map(({ ref }) => ref), ['refs/remotes/origin/main']);
+});
+
+test('a fetch whose every try another fetch beat to the remote-tracking ref rejects after the count the code names, naming the ref and the count', async (t) => {
+  const { directory, repository } = world(t);
+  const standIn = gitRaced(scratch(t), FETCH_TRIES + 1);
+
+  await assert.rejects(
+    workspaces({ repository, emitter: recorder(), git: standIn }).make(join(directory, 'rigger-1'), 'rigger-1'),
+    (error) => error.message.includes('refs/remotes/origin/main') && error.message.includes(`${FETCH_TRIES} tries`),
+  );
+  assert.equal(raced(dirname(standIn)), FETCH_TRIES);
+});
+
+test('a fetch failing with any other standard error is not retried', async (t) => {
+  const { directory, repository } = world(t);
+  const failing = fixture(scratch(t), 'git', [
+    'if [ "$1" = fetch ]; then echo fetched >> "$here/fetches"; echo "fatal: could not read from remote repository" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: failing }).fetchMainLine(), /could not read from remote repository/);
+  assert.equal(read(dirname(failing), 'fetches'), 'fetched');
+});
+
+test('no operation but fetch is retried, whatever its standard error says', async (t) => {
+  const { directory, repository } = world(t);
+  const made = worktreeAt(repository, join(directory, 'made'), 'made');
+  const words = 'error: cannot lock ref \'refs/remotes/origin/main\': is at 1111111111111111111111111111111111111111 but expected 2222222222222222222222222222222222222222';
+  // The call whose arguments begin with what `fail` holds fails with the words a lost fetch race
+  // prints. Every call is logged, and every other call is handed on to the real git.
+  const standIn = fixture(scratch(t), 'git', [
+    'echo "$*" >> "$here/calls"',
+    'case "$*" in "$(/bin/cat "$here/fail")"*)',
+    `  echo "${words}" >&2`,
+    '  exit 1',
+    'esac',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  const here = dirname(standIn);
+  const adapter = workspaces({ repository, emitter: recorder(), git: standIn });
+  const operations = [
+    ['ls-remote', () => adapter.make(join(directory, 'rigger-1'), 'rigger-1')],
+    ['worktree prune', () => adapter.make(join(directory, 'rigger-1'), 'rigger-1')],
+    ['worktree add', () => adapter.make(join(directory, 'rigger-1'), 'rigger-1')],
+    ['worktree remove', () => adapter.remove(made)],
+    ['worktree list', () => adapter.isWorktree(made)],
+  ];
+
+  const calls = () => (existsSync(join(here, 'calls')) ? read(here, 'calls').split('\n') : []);
+  /** How many calls beginning with `operation` `action` made, having failed on the first. */
+  const triesOf = async (operation, action) => {
+    writeFileSync(join(here, 'fail'), operation);
+    const before = calls().length;
+    await action();
+    return calls().slice(before).filter((call) => call.startsWith(operation)).length;
+  };
+
+  for (const [operation, action] of operations) {
+    assert.equal(await triesOf(operation, () => assert.rejects(action(), (error) => error.message.includes(words))), 1, operation);
+  }
+  assert.equal(await triesOf('check-ref-format', async () => {
+    assert.deepEqual(await adapter.acceptsBranch('rigger-1'), { accepted: false, why: words });
+  }), 1);
 });

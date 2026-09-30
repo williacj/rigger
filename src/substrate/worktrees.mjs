@@ -17,6 +17,28 @@ import { runCommand } from './process.mjs';
  */
 export const GIT_TIMEOUT = 300_000;
 
+/**
+ * How many times L0 tries a fetch that another process's fetch beats to the remote-tracking ref,
+ * before it gives up (architect ruling 7, section 5). A judgment, not a measurement. Its premise is
+ * #426 (M3-S1)'s report: in every round of fetches at once, at least one succeeded, and the loser
+ * failed because the winner had already moved the ref, so a second try finds nothing left to race
+ * unless a third fetch starts meanwhile. Three tries allow for that third.
+ */
+export const FETCH_TRIES = 3;
+
+/**
+ * Git's words for a fetch another process's fetch beat to a remote-tracking ref, and the ref.
+ *
+ * A copy of git's answer (`D16` rule 2), tied to git by `test/worktrees.test.mjs`, which has the
+ * real git print the refusal. Measured with git 2.54.0 and the `files` ref backend: a fetch that
+ * lost the race exits 1 with `error: cannot lock ref 'refs/remotes/origin/main': is at <sha> but
+ * expected <sha>` (#426 (M3-S1)'s report, "Failures, quoted"), and `git update-ref` moving a ref
+ * from a value it does not hold prints the same clause after `fatal: update_ref failed for ref
+ * '<ref>': `. Where git words it otherwise, such as under the `reftable` backend, which was not
+ * measured, the race is not retried and the fetch rejects with git's own words.
+ */
+const RACED = /cannot lock ref '(refs\/remotes\/[^']+)': is at \S+ but expected \S+/;
+
 /** The remote whose default branch is the main line. */
 const ORIGIN = 'origin';
 
@@ -57,6 +79,28 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
   };
 
   /**
+   * Fetches `branch` from `origin`, trying again, up to `FETCH_TRIES` tries in all, where another
+   * process's fetch beat this one to the remote-tracking ref, and recording each retry.
+   *
+   * Naming the branch still updates its remote-tracking ref where the remote's fetch refspec
+   * covers it, measured with git 2.54.0, so an agent's own fetch in its worktree races this one on
+   * that ref, which no queue here can hold. `--no-write-fetch-head` leaves `FETCH_HEAD` alone.
+   */
+  const fetched = async (branch) => {
+    const args = ['fetch', '--no-write-fetch-head', ORIGIN, `refs/heads/${branch}`];
+    for (let tries = 1; ; tries += 1) {
+      const result = await call(args);
+      if (result.exit === 0 && !result.timedOut) return;
+      const ref = result.timedOut ? undefined : RACED.exec(result.stderr)?.[1];
+      if (ref === undefined) throw failed(git, result, timeout);
+      if (tries === FETCH_TRIES) {
+        throw new Error(`\`${[git, ...args].join(' ')}\` lost the race for ${ref} to another process's fetch on all ${FETCH_TRIES} tries: ${firstLine(result.stderr)}`);
+      }
+      emitter.emit('fetch.retried', { ref, tries });
+    }
+  };
+
+  /**
    * The main line: the branch `origin`'s `HEAD` names as the call begins, and the commit it holds,
    * fetched into this repository.
    *
@@ -69,7 +113,7 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     const held = /^([0-9a-f]+)\tHEAD$/m.exec(printed);
     if (!named || !held) throw new Error(`\`${git} ls-remote --symref ${ORIGIN} HEAD\` named no branch for ${ORIGIN}'s HEAD, so there is no main line: ${JSON.stringify(printed)}`);
     const branch = named[1];
-    await answer(['fetch', '--no-write-fetch-head', ORIGIN, `refs/heads/${branch}`]);
+    await fetched(branch);
     return { branch, commit: held[1] };
   };
 
