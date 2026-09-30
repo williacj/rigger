@@ -2,7 +2,7 @@
 // the workspace fresh from the main line for an attempt, through L0's workspace adapter.
 
 import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
@@ -30,10 +30,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  *
  * Whatever is at the workspace's path, asked of what is there now through any symbolic link, is
  * replaced only where L0 finds it a linked worktree of the repository, not its main working tree,
- * with exactly the card's branch checked out, and not the worktree whose top level git reports for
- * `repository`, the worktree L1 was handed. Anything else there fails the attempt naming the path,
- * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
- * `R-WORK-16`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
+ * with exactly the card's branch checked out, not the worktree whose top level git reports for
+ * `repository`, the worktree L1 was handed, and holding inside it, by real path, no other worktree
+ * git lists for the repository, the handed one included. Anything else there fails the attempt
+ * naming the path, before any git call that could write, so neither it nor the branch is changed
+ * (`R-WORK-13` to `R-WORK-17`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
  * accepts the card's own derived name as a literal branch name. A workspace that passes is made
  * removable, as `writable` says, and removed; where nothing is at the path, a stale registration
  * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the
@@ -41,10 +42,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
- * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
- * refuses the record of a workspace made or removed rejects with `EVENT_REFUSED` instead, naming
- * the event as unrecorded, though the workspace was made or removed: a refused event is the halt,
- * not a workspace L1 could not make, so L2 spends no attempt on it (the owner's O4 on #423).
+ * recorded the same. Where the sink refused any event on the way, L0's, L1's record of the
+ * failure, or its record of a workspace made or removed, though the workspace was made or
+ * removed, it rejects with `EVENT_REFUSED` instead, naming each such event as unrecorded: a
+ * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
+ * owner's O4 on #423).
  */
 export async function makeWorkspace({ root, topic, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
@@ -91,6 +93,11 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (held?.branch !== branch) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
     throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+  }
+  const own = realpathSync.native(path);
+  const nested = (await adapter.registered()).find((listed) => within(path, own, listed));
+  if (nested !== undefined) {
+    throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
   writable(real);
   await adapter.remove(real);
@@ -167,6 +174,29 @@ function writable(path) {
   for (const name of readdirSync(path)) writable(join(path, name));
 }
 
+/**
+ * Whether the worktree git lists at `listed` lies inside the card's workspace at `path`, whose real
+ * path is `real`, compared by the file system's own real path, `realpath(3)`, whatever spelling git
+ * lists it under. On a volume that folds case, Node's JavaScript `realpathSync` keeps the case it
+ * was handed, so two spellings of one directory would compare as two.
+ *
+ * A worktree reached only through a symbolic link inside the workspace lies where the link points,
+ * and a registration whose directory is gone, `ENOENT`, has no real path and lies nowhere. Any
+ * other failure to resolve it, such as a directory on the way that cannot be searched, fails the
+ * attempt naming the path, since L1 cannot tell that it lies outside.
+ */
+function within(path, real, listed) {
+  let there;
+  try {
+    there = realpathSync.native(listed);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw new Error(`${path} may hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
+  }
+  const from = relative(real, there);
+  return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
+}
+
 /** Whether anything is at `path`, a symbolic link to nothing included. */
 function present(path) {
   try {
@@ -180,13 +210,20 @@ function present(path) {
 /**
  * The failure for card `card`'s workspace at `path`, which `cause` kept L1 from making, once L1
  * has recorded it through `events`, or has added to it that the sink refused the record.
+ *
+ * Where the sink refused an event, L0's that `cause` carries or L1's `workspace.failed`, the
+ * failure has the code `EVENT_REFUSED` and carries each such event in `unrecorded`: a refused
+ * event is the halt, not a workspace L1 could not make (the owner's O4 on #423).
  */
 function notMade(events, card, path, cause) {
   const failure = Object.assign(new Error(`L1 could not make card #${card}'s workspace at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
+  const unrecorded = cause.code === EVENT_REFUSED ? [...cause.unrecorded] : [];
   try {
     events.emit('workspace.failed', { path, reason: cause.message });
   } catch (refusal) {
     failure.message += `\nand the sink refused L1's workspace.failed, so it went unrecorded: ${refusal.message}`;
+    unrecorded.push({ event: 'workspace.failed', path, reason: cause.message, cause: refusal });
   }
+  if (unrecorded.length > 0) Object.assign(failure, { code: EVENT_REFUSED, unrecorded });
   return failure;
 }

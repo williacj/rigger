@@ -21,6 +21,8 @@ import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
 import { previousCheckout } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
+import { lstatSync } from 'node:fs';
+import { childrenIn, gitLeavingChild, gitRacingOnce } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -858,4 +860,242 @@ test('given a sink that refuses workspace.removed, makeWorkspace rejects with a 
   assert.equal(typeof failure.code, 'string', failure.stack);
   assert.match(failure.message, /workspace\.removed/);
   assert.match(failure.message, /unrecorded/);
+});
+
+/**
+ * A world whose card 42 workspace path, `root/rigger-42`, holds card 42's own linked worktree on
+ * `rigger-42`, with a linked worktree of the repository on `owner-work` registered inside it at
+ * `rigger-42/engine`, holding an uncommitted file, which L1 is handed as the repository.
+ */
+function nestedHandedWorld(t) {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'rigger-42');
+  const handed = worktreeAt(here.repository, join(path, 'engine'), 'owner-work');
+  writeFileSync(join(handed, 'uncommitted'), 'the engine\'s own work\n');
+  const state = () => ({ files: contents(handed), worktrees: worktreeList(here.repository) });
+  return { ...here, path, handed, state, attempt: () => here.make(42, { repository: handed }) };
+}
+
+/** The real path of what git answers for `args` of `rev-parse --path-format=absolute`, asked in `path`. */
+const revParsed = (path, ...args) => realpathSync(gitIn(path, 'rev-parse', '--path-format=absolute', ...args).trim());
+
+// proves R-WORK-13, R-WORK-17
+test('given card 42\'s own linked worktree on rigger-42 at its workspace path, with L1 handed as the repository a linked worktree registered at rigger-42/engine holding an uncommitted file, an attempt at card 42 fails naming the path, though the directory there meets every other condition', async (t) => {
+  const here = nestedHandedWorld(t);
+  const common = revParsed(here.repository, '--git-common-dir');
+  // R-WORK-14 holds: the directory is a worktree of the repository, and not its main worktree.
+  assert.equal(revParsed(here.path, '--show-toplevel'), realpathSync(here.path));
+  assert.equal(revParsed(here.path, '--git-common-dir'), common);
+  assert.notEqual(revParsed(here.path, '--git-dir'), common);
+  // R-WORK-15 holds: it holds exactly card 42's line of work.
+  assert.equal(branchOf(here.path), 'rigger-42');
+  // R-WORK-16 holds: the handed worktree's own top level is the engine, not the card's directory.
+  assert.equal(revParsed(here.handed, '--show-toplevel'), realpathSync(here.handed));
+  assert.notEqual(revParsed(here.handed, '--show-toplevel'), realpathSync(here.path));
+  // R-WORK-17 fails: another worktree of the repository, the handed one, lies inside it.
+  assert.ok(worktreeList(here.repository).includes(`worktree ${realpathSync(here.handed)}\n`), worktreeList(here.repository));
+  await refusedNaming(here.attempt(), here.path);
+  // The failure is L1's refusal, not what is left once the engine went with the card's directory.
+  assert.equal(existsSync(join(here.handed, 'uncommitted')), true);
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given L1 handed a linked worktree registered at rigger-42/engine inside card 42\'s own workspace, after the attempt at card 42 fails, its uncommitted file is byte-identical, and git worktree list --porcelain prints the same as before', async (t) => {
+  const here = nestedHandedWorld(t);
+  const before = here.state();
+  await here.attempt().catch(() => {});
+  assert.deepEqual(here.state(), before);
+  assert.equal(readFileSync(join(here.handed, 'uncommitted'), 'utf8'), 'the engine\'s own work\n');
+});
+
+/** The mode bits of every file, directory and link under `directory`, by its path relative to it. */
+function modes(directory) {
+  const found = {};
+  for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    const path = join(entry.parentPath, entry.name);
+    found[relative(directory, path)] = lstatSync(path).mode;
+  }
+  return found;
+}
+
+/**
+ * A world with the main working tree as the repository, card 42's own linked worktree on
+ * `rigger-42` at its workspace path, and an owner's linked worktree on `owner` registered inside
+ * it at `rigger-42/<at>`, holding an uncommitted file, a read-only one, and a read-only directory.
+ */
+function nestedOwnerWorld(t, at = 'owner') {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'rigger-42');
+  mkdirSync(dirname(join(path, at)), { recursive: true });
+  const owner = worktreeAt(here.repository, join(path, at), 'owner');
+  writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
+  writeFileSync(join(owner, 'read-only'), 'the owner\'s\n');
+  chmodSync(join(owner, 'read-only'), 0o444);
+  mkdirSync(join(owner, 'read-only-directory'));
+  chmodSync(join(owner, 'read-only-directory'), 0o555);
+  const state = () => ({ files: contents(owner), worktrees: worktreeList(here.repository) });
+  return { ...here, path, owner, state };
+}
+
+// proves R-WORK-13, R-WORK-17
+test('given the main worktree as the repository, and an owner\'s linked worktree registered at rigger-42/owner inside card 42\'s own workspace on rigger-42, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
+  const here = nestedOwnerWorld(t);
+  await refusedNaming(here.make(42), here.path);
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given an owner\'s linked worktree registered at rigger-42/owner inside card 42\'s own workspace, after the attempt at card 42 fails, its uncommitted file is byte-identical, and git worktree list --porcelain prints the same as before', async (t) => {
+  const here = nestedOwnerWorld(t);
+  const before = here.state();
+  await here.make(42).catch(() => {});
+  assert.deepEqual(here.state(), before);
+  assert.equal(readFileSync(join(here.owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given an owner\'s linked worktree registered at rigger-42/owner inside card 42\'s own workspace, holding a read-only file, after the attempt at card 42 fails, that file\'s mode bits are unchanged, and so are those of every file in card 42\'s workspace', async (t) => {
+  const here = nestedOwnerWorld(t);
+  const mode = statSync(join(here.owner, 'read-only')).mode;
+  const before = modes(here.path);
+  await here.make(42).catch(() => {});
+  assert.equal(statSync(join(here.owner, 'read-only')).mode, mode);
+  assert.deepEqual(modes(here.path), before);
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given a worktree of the repository registered two directories deep inside card 42\'s own workspace, at rigger-42/a/b, an attempt at card 42 fails naming the path', async (t) => {
+  const here = nestedOwnerWorld(t, join('a', 'b'));
+  await refusedNaming(here.make(42), here.path);
+  assert.equal(existsSync(join(here.owner, 'uncommitted')), true);
+});
+
+// proves R-WORK-13
+test('given card 42\'s own workspace on rigger-42 holding a plain directory that is no worktree, node_modules, and no nested worktree, an attempt at card 42 replaces the workspace', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  mkdirSync(join(first.path, 'node_modules', 'left'), { recursive: true });
+  writeFileSync(join(first.path, 'node_modules', 'left', 'index.js'), 'an earlier attempt\'s install\n');
+  const made = await here.make(42);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(existsSync(join(made.path, 'node_modules')), false);
+});
+
+/**
+ * Card 42's own workspace on rigger-42, holding a symbolic link `owner` that points at an owner's
+ * linked worktree elsewhere, on `owner`, holding an uncommitted file.
+ */
+async function linkedOwnerWorld(t) {
+  const here = world(t);
+  const first = await here.make(42);
+  const owner = worktreeAt(here.repository, join(here.directory, 'elsewhere'), 'owner');
+  writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
+  symlinkSync(owner, join(first.path, 'owner'));
+  return { ...here, path: first.path, owner };
+}
+
+// proves R-WORK-13
+test('given card 42\'s own workspace on rigger-42 holding a symbolic link that points at an owner\'s linked worktree elsewhere, holding an uncommitted file, an attempt at card 42 replaces card 42\'s workspace', async (t) => {
+  const here = await linkedOwnerWorld(t);
+  const made = await here.make(42);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(existsSync(join(made.path, 'owner')), false);
+});
+
+test('given card 42\'s own workspace holding a symbolic link to an owner\'s linked worktree elsewhere, after the attempt at card 42, the owner\'s worktree still exists, its uncommitted file is byte-identical, and git worktree list --porcelain still lists it', async (t) => {
+  const here = await linkedOwnerWorld(t);
+  await here.make(42);
+  assert.equal(branchOf(here.owner), 'owner');
+  assert.equal(readFileSync(join(here.owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+  assert.ok(worktreeList(here.repository).includes(`worktree ${realpathSync(here.owner)}\n`), worktreeList(here.repository));
+});
+
+// proves R-WORK-13
+test('given a registration inside card 42\'s own workspace whose directory is gone, which git worktree list --porcelain marks prunable, an attempt at card 42 replaces the workspace', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  const gone = worktreeAt(here.repository, join(first.path, 'gone'), 'gone');
+  rmSync(gone, { recursive: true, force: true });
+  const listed = worktreeList(here.repository).split('\n\n').find((record) => record.startsWith(`worktree ${realpathSync(first.path)}/gone\n`));
+  assert.match(listed ?? '', /\nprunable /, worktreeList(here.repository));
+  const made = await here.make(42);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(realpathSync(made.path), realpathSync(first.path));
+});
+
+/** Asserts that `attempt` rejects with `EVENT_REFUSED`, and hands back its failure. */
+async function refusedEvent(attempt) {
+  let failure;
+  await attempt.then(() => assert.fail('the attempt settled'), (thrown) => { failure = thrown; });
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  assert.match(failure.message, /unrecorded/);
+  return failure;
+}
+
+test('given a sink that refuses workspace.failed, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names workspace.failed as unrecorded and the workspace failure\'s own reason', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(path, { recursive: true });
+  const failure = await refusedEvent(here.make(42, { sink: refusing(here.sink, 'workspace.failed') }));
+  assert.match(failure.message, /workspace\.failed/);
+  assert.ok(failure.message.includes(`${path} holds something that is not a workspace of the repository`), failure.message);
+});
+
+test('given a git stand-in that leaves a child during each git call, and a sink that refuses the L0 kill event for that child, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names the kill event as unrecorded', async (t) => {
+  const here = world(t);
+  const stand = scratch(t);
+  writeFileSync(join(stand, 'hold'), '');
+  gitLeavingChild(stand);
+  const failure = await withFirstOnPath(stand, () => refusedEvent(here.make(42, { sink: refusing(here.sink, 'survivor.killed') })));
+  assert.match(failure.message, /survivor\.killed/);
+  assert.ok(failure.unrecorded.some(({ event, pid }) => event === 'survivor.killed' && childrenIn(stand).includes(pid)), failure.message);
+});
+
+test('given a sink that refuses fetch.retried, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names fetch.retried as unrecorded', async (t) => {
+  const here = world(t);
+  const stand = scratch(t);
+  gitRacingOnce(stand);
+  const failure = await withFirstOnPath(stand, () => refusedEvent(here.make(42, { sink: refusing(here.sink, 'fetch.retried') })));
+  assert.equal(existsSync(join(stand, 'raced')), true);
+  assert.match(failure.message, /fetch\.retried/);
+  assert.deepEqual(failure.unrecorded.map(({ event }) => event), ['fetch.retried']);
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given a worktree of the repository registered at rigger-42/a/b inside card 42\'s own workspace, with a of mode 0000, an attempt at card 42 fails naming the path, and afterwards a\'s mode, the worktree\'s uncommitted file and git worktree list --porcelain are unchanged', async (t) => {
+  const here = nestedOwnerWorld(t, join('a', 'b'));
+  const between = join(here.path, 'a');
+  chmodSync(between, 0o000);
+  const before = { mode: statSync(between).mode, worktrees: worktreeList(here.repository) };
+  const failure = await here.make(42).then(() => undefined, (thrown) => thrown);
+  const after = existsSync(between) ? { mode: statSync(between).mode, worktrees: worktreeList(here.repository) } : 'gone';
+  // Search permission back, so the test can read what the worktree holds.
+  if (existsSync(between)) chmodSync(between, 0o755);
+  assert.ok(failure !== undefined, 'the attempt made a workspace');
+  assert.equal(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.ok(failure.message.includes(here.path), failure.message);
+  assert.deepEqual(after, before);
+  assert.equal(readFileSync(join(here.owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given an owner\'s worktree registered inside card 42\'s own workspace through a spelling of its path in another case, on a volume that folds case, an attempt at card 42 fails naming the path, and afterwards the worktree\'s uncommitted file and git worktree list --porcelain are unchanged', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  const variant = join(here.directory, 'Worktrees');
+  if (!existsSync(variant)) {
+    t.skip('this volume does not fold case, so no spelling in another case names card 42\'s workspace');
+    return;
+  }
+  const owner = worktreeAt(here.repository, join(variant, 'rigger-42', 'owner'), 'owner');
+  writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
+  // Git lists the worktree under the spelling it was added through, not the card's.
+  assert.ok(worktreeList(here.repository).includes(`worktree ${join(realpathSync(here.directory), 'Worktrees', 'rigger-42', 'owner')}\n`), worktreeList(here.repository));
+  const before = { files: contents(owner), worktrees: worktreeList(here.repository) };
+  await refusedNaming(here.make(42), first.path);
+  assert.deepEqual({ files: contents(owner), worktrees: worktreeList(here.repository) }, before);
+  assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
 });
