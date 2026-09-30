@@ -33,8 +33,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * with exactly the card's branch checked out, and not the worktree whose top level git reports for
  * `repository`, the worktree L1 was handed. Anything else there fails the attempt naming the path,
  * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
- * `R-WORK-16`; the architect's ruling 9 on #423). L0 then makes the workspace on the branch at the
- * main line's commit as `origin` holds it, resetting the branch where it exists.
+ * `R-WORK-16`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
+ * accepts the card's own derived name as a literal branch name. A workspace that passes is made
+ * owner-writable and removed; where nothing is at the path, a stale registration there locked by
+ * `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the workspace on the
+ * branch at the main line's commit as `origin` holds it, resetting the branch where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
@@ -114,11 +117,12 @@ function recorded(events, card, event, fields) {
  * function L3 is handed, which makes a card's workspace as `makeWorkspace` does (the architect's
  * ruling 5, P4, on #423).
  *
- * Building it asks L0 whether git accepts the name the topic derives for card 1 as a branch, and
- * rejects naming the topic and git's first line of standard error where it does not, before any
- * directory is made (ruling 6, Q-B). A topic is a constant with digits put in place of
- * `{number}`, which neither makes nor unmakes anything git refuses in a branch name, so one card
- * answers for every card; an attempt asks again all the same.
+ * Building it asks L0 whether git accepts the name the topic derives for card 1 as a literal
+ * branch name, and rejects naming the topic and why where it does not, before any directory is
+ * made. That is a fast refusal of a topic bad for every card, not the guard: `@{-1}` and `@{-3}`
+ * name different previous checkouts, so card 1's answer does not stand for card 3's, and every
+ * attempt asks again about its own name before any git call that changes a ref or a directory
+ * (ruling 6, Q-B, as the architect's ruling 9 on #423 corrects it).
  */
 export async function workspaceHandle({ root, topic, repository, sink }) {
   const name = topicFor(topic, 1);
