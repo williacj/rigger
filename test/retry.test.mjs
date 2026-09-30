@@ -18,6 +18,7 @@ import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.
 import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { worktreeAt } from './git-repository.mjs';
+import { gitLeavingChild, gitRacingOnce, withFirstOnPath } from './process-fixtures.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
@@ -505,3 +506,80 @@ test('given a card whose earlier workspace\'s workspace.removed event the sink r
   assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
   assert.deepEqual(built.makerCalls, []);
 });
+
+/**
+ * A world whose card's kind selects the step `a`, with a maker stand-in injected, pulled once with
+ * `stand`'s git first on the path where one is given, whose attempt meets the refusal `refuse`
+ * names. `before` is handed the world and the call, as `retryWorld`'s is. Hands back the world and
+ * the pull's failure.
+ */
+async function refusedWorld(t, { refuse, stand, before = () => {} }) {
+  let built;
+  built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse, before: (call) => before(built, call) });
+  const pull = () => built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
+  const failure = stand === undefined ? await pull() : await withFirstOnPath(stand, pull);
+  return { ...built, failure };
+}
+
+/** The messages of every failure the pull's `failure` holds, one per line. */
+const said = (failure) => (failure.errors ?? [failure]).map((each) => each.message).join('\n');
+
+/** A world whose attempt meets a refused L0 `fetch.retried`, the first fetch having lost a race. */
+function refusedFetchRetried(t) {
+  const stand = scratch(t);
+  gitRacingOnce(stand);
+  return refusedWorld(t, { stand, refuse: (context, event) => context.layer === 'L0' && event === 'fetch.retried' });
+}
+
+/** Refuses the first append `refused` answers for, and no other, so a second attempt would meet no refusal. */
+const onlyFirst = (refused) => {
+  let met = false;
+  return (context, event, fields) => {
+    if (met || !refused(context, event, fields)) return false;
+    met = true;
+    return true;
+  };
+};
+
+/**
+ * A world whose attempt meets a refused L0 kill event for a child a git stand-in left during a git
+ * call. The stand-in leaves one on every call, and only the first kill event is refused.
+ */
+function refusedKill(t) {
+  const stand = scratch(t);
+  writeFileSync(join(stand, 'hold'), '');
+  gitLeavingChild(stand);
+  return refusedWorld(t, { stand, refuse: onlyFirst((context, event) => context.layer === 'L0' && event === 'survivor.killed') });
+}
+
+/**
+ * A world whose attempt meets a refused L1 `workspace.failed`, a plain directory standing at the
+ * card's workspace path as the first attempt begins and gone before any second one.
+ */
+function refusedWorkspaceFailed(t) {
+  return refusedWorld(t, {
+    refuse: refusingL1('workspace.failed'),
+    before: (built, call) => (call === 1 ? mkdirSync(built.path, { recursive: true }) : rmSync(built.path, { recursive: true, force: true })),
+  });
+}
+
+for (const [name, world] of [['fetch.retried', refusedFetchRetried], ['L0 kill event during a git call', refusedKill], ['workspace.failed', refusedWorkspaceFailed]]) {
+  const event = name.startsWith('L0 kill') ? 'survivor.killed' : name;
+  test(`given a card whose attempt meets a refused ${name}, the card is not attempted a second time`, SETTLES_WITHIN, async (t) => {
+    const built = await world(t);
+
+    assert.ok(said(built.failure).includes(event), said(built.failure));
+    assert.deepEqual(built.made, [1]);
+    assert.deepEqual(named(built.events(), 'L2', 'attempt.failed'), []);
+  });
+
+  test(`given a card whose kind selects a step, with a maker stand-in injected, whose attempt meets a refused ${name}, neither the step nor the maker stand-in starts`, SETTLES_WITHIN, async (t) => {
+    const built = await world(t);
+
+    const events = built.events();
+    assert.ok(said(built.failure).includes(event), said(built.failure));
+    assert.deepEqual(named(events, 'L3', 'dispatch'), []);
+    assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
+    assert.deepEqual(built.makerCalls, []);
+  });
+}

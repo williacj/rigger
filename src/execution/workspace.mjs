@@ -201,13 +201,20 @@ function present(path) {
 /**
  * The failure for card `card`'s workspace at `path`, which `cause` kept L1 from making, once L1
  * has recorded it through `events`, or has added to it that the sink refused the record.
+ *
+ * Where the sink refused an event, L0's that `cause` carries or L1's `workspace.failed`, the
+ * failure has the code `EVENT_REFUSED` and carries each such event in `unrecorded`: a refused
+ * event is the halt, not a workspace L1 could not make (the owner's O4 on #423).
  */
 function notMade(events, card, path, cause) {
   const failure = Object.assign(new Error(`L1 could not make card #${card}'s workspace at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
+  const unrecorded = cause.code === EVENT_REFUSED ? [...cause.unrecorded] : [];
   try {
     events.emit('workspace.failed', { path, reason: cause.message });
   } catch (refusal) {
     failure.message += `\nand the sink refused L1's workspace.failed, so it went unrecorded: ${refusal.message}`;
+    unrecorded.push({ event: 'workspace.failed', path, reason: cause.message, cause: refusal });
   }
+  if (unrecorded.length > 0) Object.assign(failure, { code: EVENT_REFUSED, unrecorded });
   return failure;
 }

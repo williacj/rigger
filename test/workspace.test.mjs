@@ -22,6 +22,7 @@ import { previousCheckout } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
+import { childrenIn, gitLeavingChild, gitRacingOnce } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -1021,4 +1022,42 @@ test('given a registration inside card 42\'s own workspace whose directory is go
   const made = await here.make(42);
   assert.equal(branchOf(made.path), 'rigger-42');
   assert.equal(realpathSync(made.path), realpathSync(first.path));
+});
+
+/** Asserts that `attempt` rejects with `EVENT_REFUSED`, and hands back its failure. */
+async function refusedEvent(attempt) {
+  let failure;
+  await attempt.then(() => assert.fail('the attempt settled'), (thrown) => { failure = thrown; });
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  assert.match(failure.message, /unrecorded/);
+  return failure;
+}
+
+test('given a sink that refuses workspace.failed, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names workspace.failed as unrecorded and the workspace failure\'s own reason', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(path, { recursive: true });
+  const failure = await refusedEvent(here.make(42, { sink: refusing(here.sink, 'workspace.failed') }));
+  assert.match(failure.message, /workspace\.failed/);
+  assert.ok(failure.message.includes(`${path} holds something that is not a workspace of the repository`), failure.message);
+});
+
+test('given a git stand-in that leaves a child during each git call, and a sink that refuses the L0 kill event for that child, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names the kill event as unrecorded', async (t) => {
+  const here = world(t);
+  const stand = scratch(t);
+  writeFileSync(join(stand, 'hold'), '');
+  gitLeavingChild(stand);
+  const failure = await withFirstOnPath(stand, () => refusedEvent(here.make(42, { sink: refusing(here.sink, 'survivor.killed') })));
+  assert.match(failure.message, /survivor\.killed/);
+  assert.ok(failure.unrecorded.some(({ event, pid }) => event === 'survivor.killed' && childrenIn(stand).includes(pid)), failure.message);
+});
+
+test('given a sink that refuses fetch.retried, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names fetch.retried as unrecorded', async (t) => {
+  const here = world(t);
+  const stand = scratch(t);
+  gitRacingOnce(stand);
+  const failure = await withFirstOnPath(stand, () => refusedEvent(here.make(42, { sink: refusing(here.sink, 'fetch.retried') })));
+  assert.equal(existsSync(join(stand, 'raced')), true);
+  assert.match(failure.message, /fetch\.retried/);
+  assert.deepEqual(failure.unrecorded.map(({ event }) => event), ['fetch.retried']);
 });

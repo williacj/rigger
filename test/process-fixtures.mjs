@@ -292,3 +292,18 @@ export function ended(child) {
   child.kill('SIGKILL');
   return exited;
 }
+
+/**
+ * A `git` stand-in in `directory` that fails the first fetch it is sent with the words git prints
+ * for a fetch another process's fetch beat to `refs/remotes/origin/main`, and hands every other
+ * call, and every later fetch, on to the real git. The words are the ones #426 (M3-S1)'s report
+ * quotes; `test/worktrees.test.mjs` ties L0's reading of them to the real git.
+ */
+export const gitRacingOnce = (directory) => fixture(directory, 'git', [
+  'if [ "$1" = fetch ] && [ ! -e "$here/raced" ]; then',
+  '  : > "$here/raced"',
+  `  echo "error: cannot lock ref 'refs/remotes/origin/main': is at ${'1'.repeat(40)} but expected ${'2'.repeat(40)}" >&2`,
+  '  exit 1',
+  'fi',
+  `exec '${GIT}' "$@"`,
+].join('\n'));
