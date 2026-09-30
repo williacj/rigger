@@ -146,7 +146,10 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-9 | Rigger refuses a configuration whose rule could derive one workspace, or one line of work, for two different cards. The refusal names the rule. | the config validator | the test suite | |
 | R-WORK-10 | An attempt that starts a card's work from the beginning runs in a workspace holding the repository's main line as the forge held it when the workspace was made. That workspace holds nothing an earlier attempt left. | the engine | the test suite | D1 |
 | R-WORK-12 | No two dispatches use one workspace at once, whether they work one card or two. | the engine | the event record, by two dispatches naming one workspace over overlapping intervals | |
-| R-WORK-13 | Rigger replaces a directory at a card's workspace path only when git reports it is a linked worktree of the repository whose checked-out branch is exactly the card's line of work. Rigger never replaces the worktree it was handed as the repository. Finding any other directory there, including a worktree on another branch or with a detached `HEAD`, Rigger fails the attempt, names the path, and changes nothing. | the engine | the test suite | |
+| R-WORK-13 | Rigger replaces a directory at a card's workspace path only when all of these hold. Where any of them does not, Rigger fails the attempt, names the path, and changes nothing there: | the engine | the test suite | |
+| R-WORK-14 | — the directory is a checkout of the repository Rigger works; | the engine | the test suite | |
+| R-WORK-15 | — the line of work checked out there is exactly the card's; | the engine | the test suite | |
+| R-WORK-16 | — it is not the checkout Rigger was handed as the repository, whatever line of work that checkout holds. | the engine | the test suite | |
 
 ## R-LOOP — maker, judges, and rounds
 

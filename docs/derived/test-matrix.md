@@ -76,6 +76,9 @@ reports no gap of its own; the register carries the reason.
 | R-WORK-10 | `test/workspace.test.mjs` given an earlier attempt's workspace for card 42 holding an uncommitted file, the workspace of an attempt that starts card 42's work from the beginning holds no file at that path<br>`test/workspace.test.mjs` given an earlier attempt's workspace for card 42 whose branch holds a commit the main line does not, the workspace of an attempt that starts card 42's work from the beginning has its HEAD at the main line's commit<br>`test/workspace.test.mjs` given a commit pushed to origin between two attempts at card 42, the second attempt's workspace has its HEAD at that commit |
 | R-WORK-12 | **gap** |
 | R-WORK-13 | **gap** |
+| R-WORK-14 | **gap** |
+| R-WORK-15 | **gap** |
+| R-WORK-16 | **gap** |
 | R-LOOP-1 | **gap** |
 | R-LOOP-2 | **gap** |
 | R-LOOP-3 | `test/config.test.mjs` a kind naming one role as both its maker and a judge is refused, and the refusal names it |
