@@ -1,5 +1,5 @@
 // ABOUTME: Parses every module under src/ and reports each boundary it crosses: the forge adapter's
-// sides a directory may not import, the facts a layer may not touch, what may spawn, who may hold
+// sides a directory may not import, who may import the workspace adapter, the facts a layer may not touch, what may spawn, who may hold
 // L3's dispatching entry point or L1's dispatching function, and any code built at run time or
 // run in a worker.
 
@@ -33,6 +33,14 @@ const IMPORTERS = [
   { rule: 'rule 5', sides: ['item-write'], barred: (file) => !file.startsWith('src/workflow/'), says: 'only src/workflow/ imports the item-write side' },
   { rule: 'rule 6', sides: ['schema-write'], barred: (file) => !file.startsWith('src/cli/'), says: 'only src/cli/ imports the schema-write side' },
 ];
+
+/**
+ * L0's workspace adapter, and the one directory that may import it, under rule 10: only L1 changes
+ * a workspace (`ARCHITECTURE.md`, boundary rule 2; the M3 architect's ruling, A3, on #423). A
+ * binding imports it where any definition it holds is the adapter's, through the same hand-on
+ * steps a write side is followed through.
+ */
+const WORKSPACES = { rule: 'rule 10', file: 'src/substrate/worktrees.mjs', importer: 'src/execution/' };
 
 /** The write sides a module may never hand on, whichever directory it is in. */
 const GUARDED = ['schema-write', 'item-write'];
@@ -1432,6 +1440,19 @@ export function boundaryReport(tree) {
       for (const { rule, sides: ruled, barred, says } of IMPORTERS) {
         for (const side of ruled) {
           if (sides.has(side) && barred(file) && !ownModule(file, side)) report(file, line, rule, `it imports \`${name}\`, which is the ${side} side's, and ${says}`);
+        }
+      }
+    }
+    if (!file.startsWith(WORKSPACES.importer) && file !== WORKSPACES.file) {
+      // An import binding no name still runs the adapter's module, so it is an import all the same.
+      for (const entry of module.imports.filter((each) => each.imported === null)) {
+        attempt(entry.line, () => {
+          if (target(file, entry.from) === WORKSPACES.file) report(file, entry.line, WORKSPACES.rule, `it imports ${WORKSPACES.file}, binding no name, and only ${WORKSPACES.importer} imports it`);
+        });
+      }
+      for (const { line, name, definitions } of bindings) {
+        if (definitions.some((definition) => definition.file === WORKSPACES.file)) {
+          report(file, line, WORKSPACES.rule, `it imports \`${name}\`, which is the workspace adapter's, and only ${WORKSPACES.importer} imports ${WORKSPACES.file}`);
         }
       }
     }
