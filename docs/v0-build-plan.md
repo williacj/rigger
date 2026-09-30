@@ -48,7 +48,7 @@ loop is last, because it needs the execution core and the roles beneath it:
 | M1 | `rigger plan` prints this repository's real pull order; read-only, so it is safe long before the loop exists |
 | M1 | `rigger report` over whatever events exist by then |
 | M3 | worktrees and provisioning steps run against this repository's own cards |
-| M4 | the first dispatch Rigger makes itself, under the installation rule below |
+| M4 | the first dispatch of a role Rigger makes itself, under the installation rule below |
 | M5 | the first merge through the gate |
 | M6 | `rigger pause` and `rigger resume` against this repository's own run |
 | M6 | this repository's own runs supervised by launchd, governable with `pause` and `resume` |
@@ -259,13 +259,16 @@ Exit:
   labels that select it, and whether the work requires it (D12).
 - Rigger's config: `npm ci` for every card, and `vhs` only for cards labelled `area:demo`, which
   are the ones that re-record the demo tape.
+- Until M6's hold exists, a card whose second attempt also fails stays in Coding, and its slot is
+  released. The verb names both failures and exits non-zero, and nothing pulls the card again in
+  that invocation.
 
 Exit:
 
 - A card whose labels select no step beyond the first provisions with that step only.
 - An optional step exiting non-zero logs, and the card proceeds (`R-PROV-2`).
 - A required step exiting non-zero dispatches no maker, and the card retries once in a fresh
-  worktree (`R-FAIL-1`, `R-FAIL-2`).
+  worktree (`R-PROV-3`, `R-FAIL-1`, `R-FAIL-2`).
 
 **M4. Roles.**
 
@@ -273,7 +276,7 @@ Exit:
   Claude Code adapter as the default.
 - Role names, prompts, and skills owned by the consumer; model tier per role from the card's label.
 - `once` and `run` dispatch the maker for each card they claim. M4 is the first milestone in which
-  either verb dispatches a card.
+  either verb dispatches a role for a card.
 - The judges for a card run concurrently, each in its own dispatch, and none receives the maker's
   session or another judge's output. Each writes its own findings, named by head SHA and judge
   role; M5 fixes the schema they are written into.
@@ -333,9 +336,6 @@ Exit, against a fixture configured with three agent judges:
 
 - The configured escalation set routes to the owner's column, with a comment carrying the reason
   and the evidence.
-- Infrastructure-class failures — a required provisioning step, a spawn failure, a worktree that
-  cannot be created — retry the same card once. A worktree that cannot be created is retried in
-  place rather than in a fresh one.
 - A second identical failure in one run pauses admission with a logged reason and one telemetry
   event, leaving every card in its column.
 - Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason.

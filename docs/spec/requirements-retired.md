@@ -29,4 +29,5 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-CARD-15 | — a fenced code block opens at a line indented at most three spaces that opens with three or more backticks or three or more tildes; | D2 | 2026-09-25 | R-CARD-35 |
 | R-CARD-16 | — a fenced code block closes at the next line indented at most three spaces that holds only a run of at least as many of the same character; | D2 | 2026-09-25 | R-CARD-26 |
 | R-CARD-25 | — a task-list item, whose text opens with `[ ]`, `[x]` or `[X]`, and a bullet whose text is empty or only whitespace, are never items. | D2 | 2026-09-25 | R-CARD-37, R-CARD-38 |
+| R-WORK-1 | A card's work happens in a workspace nothing else is using. No two dispatches share one, whether they are working one card or two. | | 2026-09-29 | R-WORK-12 |
 | R-STATE-5 | Rigger ends every process it started, and records any it had to end by force. A process that outlives its dispatch never changes a result. | | 2026-09-27 | R-STATE-6, R-STATE-7, R-STATE-8, R-STATE-9, R-STATE-10, R-STATE-11, R-STATE-12, R-STATE-13, R-STATE-14, R-STATE-15, R-STATE-16 |
