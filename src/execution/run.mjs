@@ -2,7 +2,11 @@
 // process adapter while recording the command's process group, and records the dispatch's end.
 // And L1's kill of recorded groups, which on a start ends what a dead engine's dispatches left.
 
+import { realpathSync } from 'node:fs';
+import { sep } from 'node:path';
+
 import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
+import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
 /**
@@ -20,6 +24,12 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
  * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
  * test gives one. `ps` and `readTimeout` stand in for L0's own where the caller gives them.
+ *
+ * `workspace`, where the caller gives one, is the card's workspace the dispatch runs in, and `cwd`
+ * is then its working directory there. `dispatch.start` names the workspace, the command's
+ * environment is `env` less every variable that redirects git (`gitEnvironment`), and a `cwd`
+ * whose real path lies outside the workspace starts nothing, as a command that never started
+ * (the architect's ruling 1, A7 and A8, on #423). Every `dispatch.start` carries the timeout.
  *
  * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
  * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
@@ -55,7 +65,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, env, timeout, ps, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, cwd, workspace, env, timeout, ps, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -64,10 +74,11 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   if (!holdsDispatch(id, card)) throw new Error(`L1's record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`);
   const events = sink.emitter({ layer: 'L1', card, dispatch: id });
   const began = clock();
+  const start = { command, timeout, ...(workspace === undefined ? {} : { workspace }) };
   try {
-    events.emit('dispatch.start', { command });
+    events.emit('dispatch.start', start);
   } catch (cause) {
-    throw refused(id, card, [{ event: 'dispatch.start', command, cause }]);
+    throw refused(id, card, [{ event: 'dispatch.start', ...start, cause }]);
   }
   let recorded;
   let result;
@@ -82,11 +93,15 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     } catch (cause) {
       throw Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED });
     }
+    const escape = workspace === undefined ? undefined : escapes(cwd, workspace);
+    if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED });
     result = await runCommand({
       command,
       args,
       cwd,
-      env,
+      // In a card's workspace, an inherited redirecting variable would send the command's git to
+      // another repository, which is #151's fault (the architect's ruling 1, A7, on #423).
+      env: workspace === undefined ? env : gitEnvironment(env),
       timeout,
       ps,
       readTimeout,
@@ -177,6 +192,27 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   if (unrecorded.length > 0) failure = alongside(failure, refused(id, card, unrecorded, result));
   if (failure !== undefined) throw failure;
   return result;
+}
+
+/**
+ * Why `cwd` is no directory in `workspace`, or nothing where it is one: its real path is the
+ * workspace's, or lies under it. Paths are compared by real path, so a symbolic link out of the
+ * workspace is caught, and so is macOS's `/tmp` read as `/private/tmp`.
+ *
+ * The check and the spawn read the directory at two moments, so a link made between them is not
+ * caught, as `unusable` in L0's process adapter says of its own check.
+ */
+function escapes(cwd, workspace) {
+  let real;
+  let root;
+  try {
+    real = realpathSync(cwd);
+    root = realpathSync(workspace);
+  } catch (cause) {
+    return `its working directory ${cwd} in the workspace ${workspace} cannot be read: ${cause.message}`;
+  }
+  if (real === root || real.startsWith(`${root}${sep}`)) return undefined;
+  return `its working directory ${cwd} is ${real}, which lies outside the workspace ${workspace}`;
 }
 
 /**
