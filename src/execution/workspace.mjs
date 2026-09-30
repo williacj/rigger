@@ -85,9 +85,7 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (!(await adapter.isWorktree(path))) {
     throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
   }
-  // The file system's own real path, which on a volume that folds case is also spelt as the
-  // directory is, where Node's JavaScript `realpathSync` keeps the case it was handed.
-  const real = realpathSync.native(path);
+  const real = realpathSync(path);
   if (real === (await adapter.topLevel())) {
     throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
   }
@@ -96,7 +94,8 @@ async function cleared({ adapter, card, branch, path, repository }) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
     throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
   }
-  const nested = (await adapter.registered()).find((listed) => within(path, real, listed));
+  const own = realpathSync.native(path);
+  const nested = (await adapter.registered()).find((listed) => within(path, own, listed));
   if (nested !== undefined) {
     throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
@@ -177,8 +176,11 @@ function writable(path) {
 
 /**
  * Whether the worktree git lists at `listed` lies inside the card's workspace at `path`, whose real
- * path is `real`, compared by the file system's own real path, whatever spelling git lists it
- * under: a worktree reached only through a symbolic link inside it lies where the link points,
+ * path is `real`, compared by the file system's own real path, `realpath(3)`, whatever spelling git
+ * lists it under. On a volume that folds case, Node's JavaScript `realpathSync` keeps the case it
+ * was handed, so two spellings of one directory would compare as two.
+ *
+ * A worktree reached only through a symbolic link inside the workspace lies where the link points,
  * and a registration whose directory is gone, `ENOENT`, has no real path and lies nowhere. Any
  * other failure to resolve it, such as a directory on the way that cannot be searched, fails the
  * attempt naming the path, since L1 cannot tell that it lies outside.
