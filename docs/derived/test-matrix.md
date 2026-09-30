@@ -133,10 +133,10 @@ reports no gap of its own; the register carries the reason.
 | R-FAIL-3 | **gap** |
 | R-FAIL-4 | **gap** |
 | R-PROV-1 | `test/config.test.mjs` a provisioning step that declares nothing is read as optional |
-| R-PROV-2 | **gap** |
+| R-PROV-2 | `test/step-selection.test.mjs` given an optional step's outcome of exit 3 and a later selected step, L2's next action is that later step<br>`test/step-selection.test.mjs` given an optional step's outcome of exit 3, the event stream holds an L2 event under the card naming the step, the exit code 3, and that the step is optional<br>`test/step-selection.test.mjs` given an optional step's outcome of exit 3 as the last selected step, L2's next action is the maker<br>`test/step-selection.test.mjs` given an optional step's outcome that it never started and a later selected step, L2's next action is that later step<br>`test/step-selection.test.mjs` given an optional step's outcome that it never started, the event stream holds an L2 event under the card naming the step, why it did not start, and that the step is optional<br>`test/step-selection.test.mjs` given an optional step's outcome that its timeout ended it, L2's next action is the next selected step or the maker, and the event stream records the step as failed, naming its time |
 | R-PROV-3 | **gap** |
 | R-PROV-4 | **gap** |
-| R-PROV-5 | **gap** |
+| R-PROV-5 | `test/step-selection.test.mjs` given an optional step's outcome that its timeout ended it, L2's next action is the next selected step or the maker, and the event stream records the step as failed, naming its time<br>`test/step-selection.test.mjs` given a required step's outcome that its timeout ended it, L2 classifies the failure as its environment's, naming the step and its time |
 | R-CONFLICT-1 | **gap** |
 | R-RECORD-1 | **gap** |
 | R-RECORD-2 | **gap** |
