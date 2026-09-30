@@ -36,9 +36,11 @@ const step = (run, required = true) => ({ run, required });
  *
  * `made` records each call L3 made on the workspace handle, in order. `before(call)` runs as each
  * call begins, numbered from 1, before L1 makes anything. `refuse(context, event, fields)` answers
- * whether the sink refuses that append, which it then refuses with an error naming it.
+ * whether the sink refuses that append, which it then refuses with an error naming it. `altered`
+ * is handed each of L2's answers and answers what L3 is given in its place, the answer itself
+ * where none is given.
  */
-async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, refuse = () => false, before = () => {} } = {}) {
+async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, refuse = () => false, before = () => {}, altered = (answer) => answer } = {}) {
   const directory = scratch(t);
   const source = repositoryAt(join(directory, 'source'), { README: 'one\n' });
   gitIn(source, 'branch', '-M', 'main');
@@ -73,7 +75,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   };
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const declared = typeof provisioning === 'function' ? provisioning(directory) : provisioning;
-  const decide = (held, outcomes, attempt) => nextAction(held, kinds, undefined, { columns: COLUMNS, provisioning: declared, outcomes, sink, ...attempt });
+  const decide = (held, outcomes, attempt) => altered(nextAction(held, kinds, undefined, { columns: COLUMNS, provisioning: declared, outcomes, sink, ...attempt }));
   const handle = await workspaceHandle({ root, topic: 'rigger-{number}', repository, sink });
   const made = [];
   const workspace = async (number) => {
@@ -295,7 +297,7 @@ test('given a workspace that cannot be made on either attempt, the card is attem
   assert.equal(named(built.events(), 'L1', 'workspace.failed').length, 2);
 });
 
-// proves R-PROV-3
+// proves R-FAIL-2
 test('given a workspace that cannot be made on either attempt, the injected maker stand-in is never called', SETTLES_WITHIN, async (t) => {
   const built = await neverMade(t);
 
@@ -324,6 +326,17 @@ test('given a workspace that cannot be made on either attempt, the call\'s failu
     const line = lines.find((each) => each.startsWith(`attempt ${number}: `));
     assert.ok(line && line.includes(built.path) && /workspace/.test(line), said);
   }
+});
+
+test('given an answer to attempt a card again that names an attempt other than the next, L3 makes no further attempt, and its failure names the card and L2\'s answer', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, {
+    steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }), altered: (answer) => (answer.action === 'again' ? { ...answer, attempt: 3 } : answer),
+  });
+
+  await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /card #1\b/.test(each.message) && each.message.includes('"attempt":3')));
+
+  assert.deepEqual(built.made, [1]);
+  assert.deepEqual(built.makerCalls, []);
 });
 
 /** A refusal of L1's `dispatch.end` for the dispatch L3 started of the step named `name`, on its first attempt. */
@@ -393,7 +406,6 @@ async function bothFail(t) {
   return { ...built, failure };
 }
 
-// proves R-FAIL-1
 test('given a card whose attempts both fail, the board stand-in shows no move of that card to the owner column, and the event stream holds no escalation for it', SETTLES_WITHIN, async (t) => {
   const built = await bothFail(t);
 
