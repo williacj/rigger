@@ -1,7 +1,8 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
-// before any await, has L2 move each claimed card, dispatches it, and hands L2 its outcome, and
-// the run that fires that trigger again each time a slot frees; the drain trigger; L3's events;
-// and L3's claim-only call, which claims up to a limit capped at N and dispatches nothing.
+// before any await, has L2 move each claimed card, and drives its attempt: L1 makes the workspace,
+// L3 dispatches each step L2 names one at a time, then the maker; the run that fires that trigger
+// again each time a slot frees; the drain trigger; L3's events; and L3's claim-only call, which
+// claims up to a limit capped at N and dispatches nothing.
 
 import { randomUUID } from 'node:crypto';
 
@@ -155,11 +156,17 @@ function released(release, claim, failure) {
  * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
  * declared columns by key, and `readPriority()` answers the cards with their priority and the
  * declared order, which is what L0 hands L3 for the pull order. `decide` is L2's next action for a
- * card, and `l2` is L2's column changes. `dispatch({ card, kind })` is L1's, injected (the
- * architect's ruling 1, B5), and answers the dispatch's result or throws. `kill()` is L1's kill of
- * recorded process groups, injected, and the first call on the handle awaits it before L3
- * records or reads anything, as `claiming` says. `sink` is L5's, and L3 writes its own events
- * through it under layer `L3`:
+ * card, which L3 asks once at the pull and again with the attempt's outcomes after each step, and
+ * which alone names the steps L3 dispatches (the architect's ruling 6, Q-A and Q-D, on #423). `l2`
+ * is L2's column changes, whose `settled` takes the maker's outcome alone. `dispatch({ card, kind })`
+ * is the maker, injected, and answers its result or throws; where none is injected, a card that
+ * reaches it ends there (ruling 1, A1). `workspace(card)` is L1's workspace handle, injected, and
+ * answers the attempt's workspace as `{ path }` (ruling 5, P4). `state` is the state directory
+ * L1 records each step's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
+ * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
+ * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
+ * is built where the workspace handle is not a function, or `state` not a non-empty string.
+ * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
  * - `trigger`, with `trigger` naming which fired: `pull` each time the pull trigger fires, before
@@ -169,6 +176,8 @@ function released(release, claim, failure) {
  *   waiting, and `inFlight`, the cards in flight with this one. It follows the card's claim and
  *   comes before L2 moves the card, as `ARCHITECTURE.md`, "Failure model", orders a start.
  * - `slot.release`, under the card, as its slot is released, however its work ended.
+ * - `dispatch`, under a step's dispatch id and the card, with the `step`'s name and the `attempt`
+ *   number, before L1 acts on the step (ruling 1, A8).
  *
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
@@ -220,7 +229,7 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
       answer = decide(card, [...outcomes]);
     }
     if (answer.action !== 'dispatch') {
-      throw Object.assign(new Error(`card #${card.number}'s attempt stopped: ${JSON.stringify(answer)}`), { stop: answer });
+      throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
     }
     if (dispatch === undefined) return { card: card.number, workspace: path };
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
