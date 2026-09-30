@@ -184,18 +184,27 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     },
 
     /**
-     * Whether git accepts `name` as a branch name, and where it does not, git's first line of
-     * standard error saying why (`D16` rule 1: git owns what a valid branch name is).
+     * Whether git accepts `name` as a literal branch name, and where it does not, why (`D16` rule
+     * 1: git owns what a valid branch name is). A literal name is one git accepts and prints back
+     * unchanged: this compares git's printed name with the name asked, and copies no rule of git's
+     * (the architect's ruling 9 on #423).
      *
-     * Measured with git 2.54.0: `rigger-1` exits 0, and `rigger-1.lock` exits 128 with
-     * `fatal: 'rigger-1.lock' is not a valid branch name`. Any non-zero exit is read as a refusal,
-     * so a git that fails for another reason answers no with its own words, where git may differ
-     * from this reading; one the timeout ended rejects.
+     * Measured with git 2.54.0, run in the repository: `rigger-1` exits 0 printing `rigger-1`, and
+     * `rigger-1.lock` exits 128 with `fatal: 'rigger-1.lock' is not a valid branch name`. Git's
+     * answer differs from the name asked where it expands previous-checkout syntax: `@{-1}`, with
+     * `owner-feature` the previous checkout, exits 0 printing `owner-feature`, and `@{-3}`, with
+     * fewer previous checkouts, exits 128. `@` exits 0 printing `@`, so it is a literal name there,
+     * which `git worktree add -B @` makes as `refs/heads/@`. Any non-zero exit is read as a refusal,
+     * so a git that fails for another reason answers no with its own words; one the timeout ended
+     * rejects.
      */
     async acceptsBranch(name) {
       const result = await call(['check-ref-format', '--branch', name]);
       if (result.timedOut) throw failed(git, result, timeout);
-      return result.exit === 0 ? { accepted: true } : { accepted: false, why: firstLine(result.stderr) };
+      if (result.exit !== 0) return { accepted: false, why: firstLine(result.stderr) };
+      const printed = result.stdout.replace(/\n$/, '');
+      if (printed !== name) return { accepted: false, why: `git expands ${name} to ${printed}, so it is not a literal branch name` };
+      return { accepted: true };
     },
   };
 }

@@ -13,6 +13,8 @@ import { FETCH_TRIES, workspaces } from '../src/substrate/worktrees.mjs';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
+// Imported apart from the line above, which this card's grant leaves unchanged (#450).
+import { previousCheckout } from './git-repository.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -310,6 +312,45 @@ test('asked whether git accepts a name as a branch, the answer is yes for rigger
 
   assert.deepEqual(await adapter.acceptsBranch('rigger-1'), { accepted: true });
   assert.deepEqual(await adapter.acceptsBranch('rigger-1.lock'), { accepted: false, why: refused.first });
+});
+
+/** What git prints to `git check-ref-format --branch <name>` in the repository at `repository`, and its exit code. */
+function gitPrintsBranch(name, repository) {
+  const { status, stdout } = spawnSync('git', ['-C', repository, 'check-ref-format', '--branch', name], { encoding: 'utf8', env: gitEnvironment() });
+  return { status, stdout };
+}
+
+test('given a repository whose previous checkout is owner-feature, holding a commit not on the main line, L0 answers no to @{-1}, naming @{-1} and the name git expanded it to', async (t) => {
+  const { repository } = world(t);
+  previousCheckout(repository, 'owner-feature');
+  const printed = gitPrintsBranch('@{-1}', repository);
+  assert.equal(printed.status, 0, 'git refuses @{-1}, so this test proves nothing');
+  assert.equal(printed.stdout, 'owner-feature\n');
+
+  const { accepted, why } = await workspaces({ repository, emitter: recorder() }).acceptsBranch('@{-1}');
+
+  assert.equal(accepted, false);
+  assert.ok(why.includes('@{-1}') && why.includes('owner-feature'), why);
+});
+
+test('for each name git check-ref-format --branch accepts here, L0 answers no where git prints it back changed, naming both, and yes where git prints it back unchanged', async (t) => {
+  const { repository } = world(t);
+  previousCheckout(repository, 'owner-feature');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  let changed = 0;
+  for (const name of ['@{-1}', '@', 'rigger-1', 'a/b', 'owner-feature']) {
+    const printed = gitPrintsBranch(name, repository);
+    assert.equal(printed.status, 0, `git refuses ${name}, so it is no case of this test`);
+    const answer = await adapter.acceptsBranch(name);
+    if (printed.stdout === `${name}\n`) {
+      assert.deepEqual(answer, { accepted: true }, name);
+    } else {
+      changed += 1;
+      assert.equal(answer.accepted, false, name);
+      assert.ok(answer.why.includes(name) && answer.why.includes(printed.stdout.trim()), answer.why);
+    }
+  }
+  assert.ok(changed > 0, 'git printed back every name unchanged, so the test proves nothing of a changed one');
 });
 
 test('the branch-name question runs git check-ref-format --branch through the process adapter under gitEnvironment(), as a git stand-in first on PATH records', async (t) => {
