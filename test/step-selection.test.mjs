@@ -137,13 +137,13 @@ test('given an optional step\'s outcome that it never started, the event stream 
 
 test('given a required step\'s outcome of exit 3, L2 classifies the failure as its environment\'s, naming the step and the exit code 3', (t) => {
   const { kinds, provisioning } = twoSteps(true);
-  const next = nextAction(card(26), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink });
+  const next = nextAction(card(26), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 26, failure: { class: 'environment', step: 'first', exit: 3 } });
 });
 
 test('given a required step\'s outcome that it never started, L2 classifies the failure as its environment\'s, naming the step and why it did not start', (t) => {
   const { kinds, provisioning } = twoSteps(true);
-  const next = nextAction(card(27), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor(t).sink });
+  const next = nextAction(card(27), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor(t).sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 27, failure: { class: 'environment', step: 'first', reason: WHY } });
 });
 
@@ -169,7 +169,7 @@ test('given an optional step\'s outcome that its timeout ended it, L2\'s next ac
 test('given a required step\'s outcome that its timeout ended it, L2 classifies the failure as its environment\'s, naming the step and its time', (t) => {
   // The step declares no timeout, so its time is the 1,800,000 ms `ARCHITECTURE.md` gives one that declares none.
   const provisioning = { first: { run: 'sleep 60', required: true }, later: { run: 'true' } };
-  const next = nextAction(card(29), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink: sinkFor(t).sink });
+  const next = nextAction(card(29), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink: sinkFor(t).sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 29, failure: { class: 'environment', step: 'first', timeout: 1_800_000 } });
 });
 

@@ -1159,7 +1159,7 @@ function withoutKill() {
 }
 
 test('a loop handle built without the injected kill throws when it is built, naming the kill', () => {
-  assert.throws(() => loop({ ...withoutKill(), dispatch: async () => ({ exit: 0 }) }), /\bkill\b/);
+  assert.throws(() => loop({ ...withoutKill(), dispatch: async () => ({ exit: 0 }), workspace: async () => ({ path: '/nowhere' }) }), /\bkill\b/);
 });
 
 test('a claim-only handle built without the injected kill throws when it is built, naming the kill', () => {

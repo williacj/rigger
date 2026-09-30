@@ -1,8 +1,10 @@
 // ABOUTME: L2's next action for a ready card, or an unclaimed Coding or Review card no fresh
 // verdict covers: ignore it, refuse it with a reason, or dispatch it under the one kind that selects it.
-// Within an attempt at it: the next provisioning step it selected, the maker, or the card stopped.
+// Within an attempt at it: the next provisioning step it selected, the maker, the card attempted
+// again, or the card stopped.
 
 import { sameLabel, stepTimeout, workRequires } from '../config/validate.mjs';
+import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { checkAcceptanceForm } from './form-check.mjs';
 
@@ -37,11 +39,14 @@ const selecting = (card, kinds) =>
  *
  * Handed `provisioning`, a config's provisioning steps by name, L2 answers within an attempt at the
  * card, from `outcomes`, the outcomes L3 has handed it of the attempt's steps so far, none by
- * default, as `within` says. `sink` is L5's, through which L2 records an optional step's failure.
- * Without `provisioning`, L2 answers as above, whatever `outcomes` and `sink` are
- * (the architect's ruling 6, Q-D, on #423).
+ * default, as `within` says. `sink` is L5's, through which L2 records an optional step's failure,
+ * and an attempt's failure with what follows it. `attempt` is the attempt's number, 1 by default,
+ * which L3 hands L2 with each outcome, so L2 keeps no count of its own (the architect's ruling 1,
+ * A1). `workspace` is the outcome of L1's making the attempt's workspace, where L1 could not make it.
+ * Without `provisioning`, L2 answers as above, whatever `outcomes`, `sink`, `attempt` and
+ * `workspace` are (the architect's ruling 6, Q-D, on #423).
  */
-export function nextAction(card, kinds, epicLabel, { columns, fresh, provisioning, outcomes = [], sink } = {}) {
+export function nextAction(card, kinds, epicLabel, { columns, fresh, provisioning, outcomes = [], sink, attempt = 1, workspace } = {}) {
   if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
   if (fresh && [columns.coding, columns.review].includes(card.column) && fresh(card)) return { action: 'ignore' };
   const names = carries(card, epicLabel) ? [] : selecting(card, kinds);
@@ -53,22 +58,23 @@ export function nextAction(card, kinds, epicLabel, { columns, fresh, provisionin
   const form = checkAcceptanceForm(card);
   if (!form.admitted) return { action: 'refuse', card: form.card, reason: form.reason };
   if (provisioning === undefined) return { action: 'dispatch', kind };
-  return within(card, kind, kinds[kind], provisioning, outcomes, sink);
+  return within(card, kind, kinds[kind], { provisioning, outcomes, sink, attempt, workspace });
 }
 
 /**
  * What L2 answers within an attempt at `card` under the kind named `kind`, declared as `declared`, once L3 has handed it `outcomes`, the
  * outcomes of the attempt's steps so far, in order: `{ step }`, the next step it selected, with
  * its name and what L1 runs; `{ maker }`, the kind's maker, once every selected step has an
- * outcome and no required one failed; or `{ action: 'stop', card, failure }` for a required step
- * that failed, naming the card's number and the step, with the failure classified as the environment's (`ARCHITECTURE.md`, "Failure model").
+ * outcome and no required one failed; or, for a required step that failed, or a `workspace` L1
+ * could not make, the card attempted again or stopped, as `failedAttempt` says.
  *
  * An optional step's failure is recorded through `sink` as an L2 `step.failed` event under the card,
  * and the attempt goes on (`R-PROV-2`). L3 asks again after each outcome, so only the newest
  * outcome's failure is recorded, and each is recorded once. A sink that refuses it has L2 answer
  * no action, naming the card, the step and the refusal.
  */
-function within(card, kind, declared, provisioning, outcomes, sink) {
+function within(card, kind, declared, { provisioning, outcomes, sink, attempt, workspace }) {
+  if (workspace !== undefined) return failedAttempt(card, attempt, unmade(workspace, card), sink);
   const steps = selectedSteps(card, declared, provisioning);
   if (outcomes.length > steps.length) {
     throw new Error(`card #${card.number} has ${outcomes.length} outcome(s) and L2 selected ${steps.length} step(s) for it, so L2 answers no action`);
@@ -77,7 +83,7 @@ function within(card, kind, declared, provisioning, outcomes, sink) {
     const name = steps[at];
     const failure = failed(outcome, provisioning[name], card, name);
     if (failure === undefined) continue;
-    if (workRequires(provisioning[name])) return { action: 'stop', card: card.number, failure: { class: 'environment', step: name, ...failure } };
+    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, { step: name, ...failure }, sink);
     if (at === outcomes.length - 1) {
       try {
         sink.emitter({ layer: 'L2', card: card.number }).emit('step.failed', { step: name, ...failure, optional: true });
@@ -90,6 +96,46 @@ function within(card, kind, declared, provisioning, outcomes, sink) {
   const name = steps[outcomes.length];
   const { run, cwd, timeout } = provisioning[name];
   return { action: 'dispatch', kind, step: { name, run, ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) } };
+}
+
+/** How many times L2 has a card attempted before it stops it: the first attempt and one more (`R-FAIL-2`). */
+const ATTEMPTS = 2;
+
+/**
+ * What L2 answers for `card`'s attempt numbered `attempt`, which failed before the maker as `what`
+ * says, once it has recorded the failure and its decision through `sink`. Every such failure is
+ * the environment's (`ARCHITECTURE.md`, "Failure model"). An attempt before the last is followed
+ * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next; the last is
+ * `{ action: 'stop', card, failure }` (the owner's O4 and O5 on #423).
+ *
+ * L2 records an `attempt.failed` event under the card, naming the attempt, what failed and why,
+ * and the failure's class, then an `attempt.decided` event naming the attempt and whether the card
+ * is attempted `again` or `stop`ped. A sink that refuses either has L2 answer no action, naming the
+ * card, the attempt and the refusal: the refusal is the halt, and spends no attempt.
+ */
+function failedAttempt(card, attempt, what, sink) {
+  const failure = { class: 'environment', ...what };
+  const again = attempt < ATTEMPTS;
+  const events = sink.emitter({ layer: 'L2', card: card.number });
+  try {
+    events.emit('attempt.failed', { attempt, ...failure });
+    events.emit('attempt.decided', { attempt, decision: again ? 'again' : 'stop' });
+  } catch (refusal) {
+    throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
+  }
+  return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure } : { action: 'stop', card: card.number, failure };
+}
+
+/**
+ * How L1 failed to make `card`'s workspace, as `outcome`, its rejection, says: the path and why.
+ * Any other outcome is no workspace's failure, so L2 answers no action for it, naming the card.
+ */
+function unmade(outcome, card) {
+  if (outcome?.status !== 'rejected' || outcome.reason?.code !== WORKSPACE_NOT_MADE) {
+    const read = outcome?.status === 'rejected' ? outcome.reason?.message : JSON.stringify(outcome);
+    throw new Error(`card #${card.number}'s workspace has an outcome that is not L1's failure to make it, so L2 answers no action for it: ${read}`, { cause: outcome?.reason });
+  }
+  return { workspace: outcome.reason.path, reason: outcome.reason.message };
 }
 
 /**
