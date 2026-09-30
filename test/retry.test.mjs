@@ -17,6 +17,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.mjs';
 import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
+import { worktreeAt } from './git-repository.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
@@ -456,4 +457,51 @@ test('given a workspace outcome that is not L1\'s failure to make it, L2 answers
 test('given a failed attempt whose record the sink refuses, L2 answers no action, naming the card, the attempt and the refusal, rather than an attempt again', () => {
   const exited = { status: 'fulfilled', value: { exit: 3, timedOut: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } };
   assert.throws(() => answerFor({ outcomes: [exited] }, refusing), (failure) => /#7\b/.test(failure.message) && /attempt 1\b/.test(failure.message) && /the disk is full/.test(failure.message));
+});
+
+/** A refusal of L1's event named `name`. */
+const refusingL1 = (name) => (context, event) => context.layer === 'L1' && event === name;
+
+test('given a card whose attempt\'s workspace.made event the sink refuses, the card is not attempted a second time: the refusal is the halt, and spends no retry', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse: refusingL1('workspace.made') });
+
+  await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /workspace\.made/.test(each.message)));
+
+  assert.deepEqual(built.made, [1]);
+  assert.deepEqual(named(built.events(), 'L2', 'attempt.failed'), []);
+});
+
+test('given a card whose kind selects a step, with a maker stand-in injected, where the sink refuses the attempt\'s workspace.made event, neither the step nor the maker stand-in starts', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse: refusingL1('workspace.made') });
+
+  await assert.rejects(built.loop.pull());
+
+  const events = built.events();
+  assert.deepEqual(named(events, 'L3', 'dispatch'), []);
+  assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
+  assert.deepEqual(built.makerCalls, []);
+});
+
+test('given a card whose earlier workspace\'s workspace.removed event the sink refuses, the card is not attempted a second time, and no step starts', SETTLES_WITHIN, async (t) => {
+  let built;
+  built = await retryWorld(t, {
+    steps: ['a'],
+    provisioning: { a: step('true') },
+    maker: async () => ({ exit: 0 }),
+    refuse: refusingL1('workspace.removed'),
+    // The card's earlier workspace, on its own branch, stands at its path when the first attempt begins.
+    before: (call) => {
+      if (call !== 1) return;
+      mkdirSync(built.root, { recursive: true });
+      worktreeAt(join(built.directory, 'repository'), built.path, 'rigger-1');
+    },
+  });
+
+  await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /workspace\.removed/.test(each.message)));
+
+  const events = built.events();
+  assert.deepEqual(built.made, [1]);
+  assert.deepEqual(named(events, 'L3', 'dispatch'), []);
+  assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
+  assert.deepEqual(built.makerCalls, []);
 });

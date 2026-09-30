@@ -1,8 +1,10 @@
 // ABOUTME: L0's workspace adapter: makes a git worktree on a branch from the main line, removes one,
-// answers whether a path is a worktree of the repository, and whether git accepts a branch name.
+// answers whether a path is a worktree of the repository and what git lists for it, unlocks one,
+// and answers whether git accepts a name as a literal branch name.
 // Every git call it makes runs one at a time.
 
 import { realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { gitEnvironment } from './git-environment.mjs';
 import { runCommand } from './process.mjs';
@@ -38,6 +40,20 @@ export const FETCH_TRIES = 3;
  * measured, the race is not retried and the fetch rejects with git's own words.
  */
 const RACED = /cannot lock ref '(refs\/remotes\/[^']+)': is at \S+ but expected \S+/;
+
+/**
+ * The lock reason `git worktree add` writes while it makes a worktree, and takes away once it has.
+ *
+ * A copy of git's answer (`D16` rule 2), tied to git by `test/worktrees.test.mjs`, which has git
+ * list a worktree while `git worktree add` is making it. Measured with git 2.54.0 (Apple Git-157)
+ * on 2026-09-30, by a smudge filter reading the worktree's administrative files mid-add: the file
+ * `.git/worktrees/<name>/locked` held the 13 bytes `initializing\n`, under `LANG` `en_US.UTF-8` and
+ * again under `de_DE.UTF-8`, and `git worktree list --porcelain` printed `locked initializing`. That
+ * build printed its own messages in English under `de_DE.UTF-8` too, so whether a git that
+ * translates its messages writes other words is unmeasured. Where it does, the lock reads as a
+ * person's, and the attempt fails naming it rather than unlocking it.
+ */
+export const ADDING = 'initializing';
 
 /** The remote whose default branch is the main line. */
 const ORIGIN = 'origin';
@@ -184,18 +200,66 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     },
 
     /**
-     * Whether git accepts `name` as a branch name, and where it does not, git's first line of
-     * standard error saying why (`D16` rule 1: git owns what a valid branch name is).
+     * What git lists for the worktree registered at `path`, compared by real path, or nothing
+     * where it lists none: the branch it has checked out, whether its `HEAD` is detached, and the
+     * reason it is locked, an empty one for a lock given none, or nothing where it is not locked.
      *
-     * Measured with git 2.54.0: `rigger-1` exits 0, and `rigger-1.lock` exits 128 with
-     * `fatal: 'rigger-1.lock' is not a valid branch name`. Any non-zero exit is read as a refusal,
-     * so a git that fails for another reason answers no with its own words, where git may differ
-     * from this reading; one the timeout ended rejects.
+     * Read from `git worktree list --porcelain -z`, which git lists whether or not the directory
+     * is still there. Measured with git 2.54.0: each worktree is a run of NUL-ended fields, `worktree
+     * <path>`, `HEAD <sha>`, then `branch refs/heads/<name>` or `detached`, then `locked` or
+     * `locked <reason>` where it is locked and `prunable <reason>` where its directory is gone, the
+     * run ended by a second NUL. The path is git's absolute one, which a registration whose
+     * directory is gone keeps, so both are compared by the real path of what is left of them.
+     */
+    async registration(path) {
+      const listed = await answer(['worktree', 'list', '--porcelain', '-z']);
+      const wanted = realOrLeft(path);
+      for (const record of listed.split('\0\0')) {
+        const fields = record.split('\0').filter((field) => field !== '');
+        const at = fields.find((field) => field.startsWith('worktree '))?.slice('worktree '.length);
+        if (at === undefined || realOrLeft(at) !== wanted) continue;
+        const branch = fields.find((field) => field.startsWith('branch refs/heads/'))?.slice('branch refs/heads/'.length);
+        const lock = fields.find((field) => field === 'locked' || field.startsWith('locked '));
+        return { branch, detached: fields.includes('detached'), locked: lock === undefined ? undefined : lock.slice('locked '.length) };
+      }
+      return undefined;
+    },
+
+    /** Takes away the lock on the worktree registered at `path`, whether or not its directory is there. */
+    async unlock(path) {
+      await answer(['worktree', 'unlock', path]);
+    },
+
+    /**
+     * The real path of the top of the working tree git finds for the path this adapter was handed,
+     * which, for a directory below a worktree, is the worktree's, not the directory's.
+     */
+    async topLevel() {
+      return realpathSync((await answer(['rev-parse', '--path-format=absolute', '--show-toplevel'])).replace(/\n$/, ''));
+    },
+
+    /**
+     * Whether git accepts `name` as a literal branch name, and where it does not, why (`D16` rule
+     * 1: git owns what a valid branch name is). A literal name is one git accepts and prints back
+     * unchanged: this compares git's printed name with the name asked, and copies no rule of git's
+     * (the architect's ruling 9 on #423).
+     *
+     * Measured with git 2.54.0, run in the repository: `rigger-1` exits 0 printing `rigger-1`, and
+     * `rigger-1.lock` exits 128 with `fatal: 'rigger-1.lock' is not a valid branch name`. Git's
+     * answer differs from the name asked where it expands previous-checkout syntax: `@{-1}`, with
+     * `owner-feature` the previous checkout, exits 0 printing `owner-feature`, and `@{-3}`, with
+     * fewer previous checkouts, exits 128. `@` exits 0 printing `@`, so it is a literal name there,
+     * which `git worktree add -B @` makes as `refs/heads/@`. Any non-zero exit is read as a refusal,
+     * so a git that fails for another reason answers no with its own words; one the timeout ended
+     * rejects.
      */
     async acceptsBranch(name) {
       const result = await call(['check-ref-format', '--branch', name]);
       if (result.timedOut) throw failed(git, result, timeout);
-      return result.exit === 0 ? { accepted: true } : { accepted: false, why: firstLine(result.stderr) };
+      if (result.exit !== 0) return { accepted: false, why: firstLine(result.stderr) };
+      const printed = result.stdout.replace(/\n$/, '');
+      if (printed !== name) return { accepted: false, why: `git expands ${name} to ${printed}, so it is not a literal branch name` };
+      return { accepted: true };
     },
   };
 }
@@ -207,6 +271,15 @@ function realOrNothing(path) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * `path`'s real path, or, where nothing is there, the real path of its parent joined to its name,
+ * or `path` itself where neither resolves: so a path whose directory is gone still compares by the
+ * real path of what is left of it.
+ */
+function realOrLeft(path) {
+  return realOrNothing(path) ?? (realOrNothing(dirname(path)) === undefined ? path : join(realOrNothing(dirname(path)), basename(path)));
 }
 
 /** The failure for a git call that exited non-zero or that its timeout ended. */

@@ -107,5 +107,19 @@ export function worktreeAt(repository, path, branch, ...flags) {
   return path;
 }
 
+/**
+ * Makes `branch` the previous checkout in the repository at `repository`, holding a commit its
+ * current branch does not, and checks the current branch out again, so `@{-1}` names `branch`.
+ * Hands back the commit `branch` holds.
+ */
+export function previousCheckout(repository, branch) {
+  const current = gitIn(repository, 'symbolic-ref', '--short', 'HEAD').trim();
+  gitIn(repository, 'switch', '-q', '-c', branch);
+  gitIn(repository, '-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', 'commit', '-q', '--allow-empty', '-m', `${branch}'s own commit`);
+  const held = gitIn(repository, 'rev-parse', 'HEAD').trim();
+  gitIn(repository, 'switch', '-q', current);
+  return held;
+}
+
 /** What `git worktree list --porcelain` prints in the repository at `repository`. */
 export const worktreeList = (repository) => gitIn(repository, 'worktree', 'list', '--porcelain');
