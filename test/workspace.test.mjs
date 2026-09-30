@@ -793,3 +793,37 @@ test('given a removal that still fails after L1 made the card\'s workspace writa
   assert.equal(readFileSync(join(stand, 'seen'), 'utf8'), 'writable\n');
   assert.equal(readFileSync(join(here.path, 'ro', 'file'), 'utf8'), 'read-only\n');
 });
+
+/** `sink`, but refusing every append of the event named `refused`, with an error naming it. */
+const refusing = (sink, refused) => ({
+  emitter: (context) => {
+    const inner = sink.emitter(context);
+    return {
+      emit: (event, fields) => {
+        if (event === refused) throw new Error(`the sink refuses ${event}`);
+        inner.emit(event, fields);
+      },
+    };
+  },
+});
+
+test('given a sink that refuses workspace.made, makeWorkspace rejects with a code other than WORKSPACE_NOT_MADE, and the failure names workspace.made as unrecorded', async (t) => {
+  const here = world(t);
+  let failure;
+  await here.make(42, { sink: refusing(here.sink, 'workspace.made') }).then(() => assert.fail('the attempt settled'), (thrown) => { failure = thrown; });
+  assert.notEqual(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.equal(typeof failure.code, 'string', failure.stack);
+  assert.match(failure.message, /workspace\.made/);
+  assert.match(failure.message, /unrecorded/);
+});
+
+test('given a sink that refuses workspace.removed, makeWorkspace rejects with a code other than WORKSPACE_NOT_MADE, and the failure names workspace.removed as unrecorded', async (t) => {
+  const here = world(t);
+  await here.make(42);
+  let failure;
+  await here.make(42, { sink: refusing(here.sink, 'workspace.removed') }).then(() => assert.fail('the attempt settled'), (thrown) => { failure = thrown; });
+  assert.notEqual(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.equal(typeof failure.code, 'string', failure.stack);
+  assert.match(failure.message, /workspace\.removed/);
+  assert.match(failure.message, /unrecorded/);
+});

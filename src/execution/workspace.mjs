@@ -4,6 +4,7 @@
 import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
+import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
 
 /**
@@ -37,45 +38,75 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
- * refuses the record of a workspace made or removed fails the attempt the same way, though the
- * workspace was made or removed; the next attempt's workspace replaces it.
+ * refuses the record of a workspace made or removed rejects with `EVENT_REFUSED` instead, naming
+ * the event as unrecorded, though the workspace was made or removed: a refused event is the halt,
+ * not a workspace L1 could not make, so L2 spends no attempt on it (the owner's O4 on #423).
  */
 export async function makeWorkspace({ root, topic, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
   const branch = topicFor(topic, card);
   const path = join(root, branch);
   const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
-  try {
+  /** Runs `work`, rejecting as a workspace L1 could not make where it rejects. */
+  const step = async (work) => {
+    try {
+      return await work();
+    } catch (cause) {
+      throw notMade(events, card, path, cause);
+    }
+  };
+  const removed = await step(async () => {
     if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path, and L1 is handed the root the verb resolved`);
     const { accepted, why } = await adapter.acceptsBranch(branch);
     if (!accepted) throw new Error(`card #${card}'s topic \`${topic}\` derives ${branch}, which git refuses as a branch name: ${why}`);
-    if (present(path)) {
-      if (!(await adapter.isWorktree(path))) {
-        throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
-      }
-      const real = realpathSync(path);
-      if (real === (await adapter.topLevel())) {
-        throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
-      }
-      const held = await adapter.registration(real);
-      if (held?.branch !== branch) {
-        const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
-        throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
-      }
-      writable(real);
-      await adapter.remove(real);
-      // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
-      if (present(path)) unlinkSync(path);
-      events.emit('workspace.removed', { path: real });
-    } else {
-      await unlockedIfAdding(adapter, path, branch);
-    }
-    await adapter.make(path, branch);
-    events.emit('workspace.made', { path, branch });
-  } catch (cause) {
-    throw notMade(events, card, path, cause);
-  }
+    return cleared({ adapter, card, branch, path, repository });
+  });
+  if (removed !== undefined) recorded(events, card, 'workspace.removed', { path: removed });
+  await step(() => adapter.make(path, branch));
+  recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch };
+}
+
+/**
+ * Clears card `card`'s workspace path, `path`, for a workspace on `branch`, under the replace rule
+ * above, and hands back the real path of the workspace it removed, or nothing where none was there.
+ */
+async function cleared({ adapter, card, branch, path, repository }) {
+  if (!present(path)) {
+    await unlockedIfAdding(adapter, path, branch);
+    return undefined;
+  }
+  if (!(await adapter.isWorktree(path))) {
+    throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
+  }
+  const real = realpathSync(path);
+  if (real === (await adapter.topLevel())) {
+    throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
+  }
+  const held = await adapter.registration(real);
+  if (held?.branch !== branch) {
+    const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
+    throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+  }
+  writable(real);
+  await adapter.remove(real);
+  // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
+  if (present(path)) unlinkSync(path);
+  return real;
+}
+
+/**
+ * Records L1's `event` of card `card`, with `fields`, through `events`, or, where the sink refuses
+ * it, rejects with an `EVENT_REFUSED` failure naming the event as unrecorded, carrying it in
+ * `unrecorded` as L0's and L1's other refusals do.
+ */
+function recorded(events, card, event, fields) {
+  try {
+    events.emit(event, fields);
+  } catch (cause) {
+    const failure = new Error(`the sink refused L1's ${event} of card #${card} ${JSON.stringify(fields)}, so it went unrecorded: ${cause.message}`, { cause });
+    throw Object.assign(failure, { code: EVENT_REFUSED, unrecorded: [{ event, ...fields, cause }] });
+  }
 }
 
 /**
