@@ -294,7 +294,7 @@ every read, so no card state is kept.
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more
 things outlive a restart outside it: a card's workspace and the verdict markers in the repository.
 Nothing reads a workspace back. An attempt that starts a card's work from the beginning replaces
-it, as `R-WORK-10` and `R-WORK-11` require. Rigger writes no other state. Recovery machinery
+it, as `R-WORK-10` and `R-WORK-13` require. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
 The result of a command is its exit code and captured output. The direct child decides the exit
