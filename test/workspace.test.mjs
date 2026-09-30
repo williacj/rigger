@@ -1063,3 +1063,39 @@ test('given a sink that refuses fetch.retried, making card 42\'s workspace rejec
   assert.match(failure.message, /fetch\.retried/);
   assert.deepEqual(failure.unrecorded.map(({ event }) => event), ['fetch.retried']);
 });
+
+// proves R-WORK-13, R-WORK-17
+test('given a worktree of the repository registered at rigger-42/a/b inside card 42\'s own workspace, with a of mode 0000, an attempt at card 42 fails naming the path, and afterwards a\'s mode, the worktree\'s uncommitted file and git worktree list --porcelain are unchanged', async (t) => {
+  const here = nestedOwnerWorld(t, join('a', 'b'));
+  const between = join(here.path, 'a');
+  chmodSync(between, 0o000);
+  const before = { mode: statSync(between).mode, worktrees: worktreeList(here.repository) };
+  const failure = await here.make(42).then(() => undefined, (thrown) => thrown);
+  const after = existsSync(between) ? { mode: statSync(between).mode, worktrees: worktreeList(here.repository) } : 'gone';
+  // Search permission back, so the test can read what the worktree holds.
+  if (existsSync(between)) chmodSync(between, 0o755);
+  assert.ok(failure !== undefined, 'the attempt made a workspace');
+  assert.equal(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.ok(failure.message.includes(here.path), failure.message);
+  assert.deepEqual(after, before);
+  assert.equal(readFileSync(join(here.owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+// proves R-WORK-13, R-WORK-17
+test('given an owner\'s worktree registered inside card 42\'s own workspace through a spelling of its path in another case, on a volume that folds case, an attempt at card 42 fails naming the path, and afterwards the worktree\'s uncommitted file and git worktree list --porcelain are unchanged', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  const variant = join(here.directory, 'Worktrees');
+  if (!existsSync(variant)) {
+    t.skip('this volume does not fold case, so no spelling in another case names card 42\'s workspace');
+    return;
+  }
+  const owner = worktreeAt(here.repository, join(variant, 'rigger-42', 'owner'), 'owner');
+  writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
+  // Git lists the worktree under the spelling it was added through, not the card's.
+  assert.ok(worktreeList(here.repository).includes(`worktree ${join(realpathSync(here.directory), 'Worktrees', 'rigger-42', 'owner')}\n`), worktreeList(here.repository));
+  const before = { files: contents(owner), worktrees: worktreeList(here.repository) };
+  await refusedNaming(here.make(42), first.path);
+  assert.deepEqual({ files: contents(owner), worktrees: worktreeList(here.repository) }, before);
+  assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});

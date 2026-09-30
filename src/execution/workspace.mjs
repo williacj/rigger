@@ -42,10 +42,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
- * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
- * refuses the record of a workspace made or removed rejects with `EVENT_REFUSED` instead, naming
- * the event as unrecorded, though the workspace was made or removed: a refused event is the halt,
- * not a workspace L1 could not make, so L2 spends no attempt on it (the owner's O4 on #423).
+ * recorded the same. Where the sink refused any event on the way, L0's, L1's record of the
+ * failure, or its record of a workspace made or removed, though the workspace was made or
+ * removed, it rejects with `EVENT_REFUSED` instead, naming each such event as unrecorded: a
+ * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
+ * owner's O4 on #423).
  */
 export async function makeWorkspace({ root, topic, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
@@ -84,7 +85,9 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (!(await adapter.isWorktree(path))) {
     throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
   }
-  const real = realpathSync(path);
+  // The file system's own real path, which on a volume that folds case is also spelt as the
+  // directory is, where Node's JavaScript `realpathSync` keeps the case it was handed.
+  const real = realpathSync.native(path);
   if (real === (await adapter.topLevel())) {
     throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
   }
@@ -93,7 +96,7 @@ async function cleared({ adapter, card, branch, path, repository }) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
     throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
   }
-  const nested = (await adapter.registered()).find((listed) => within(real, listed));
+  const nested = (await adapter.registered()).find((listed) => within(path, real, listed));
   if (nested !== undefined) {
     throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
@@ -173,16 +176,20 @@ function writable(path) {
 }
 
 /**
- * Whether the worktree git lists at `listed` lies inside the directory whose real path is `real`,
- * compared by real path: a worktree reached only through a symbolic link inside it lies where the
- * link points, and a registration whose directory is gone has no real path and lies nowhere.
+ * Whether the worktree git lists at `listed` lies inside the card's workspace at `path`, whose real
+ * path is `real`, compared by the file system's own real path, whatever spelling git lists it
+ * under: a worktree reached only through a symbolic link inside it lies where the link points,
+ * and a registration whose directory is gone, `ENOENT`, has no real path and lies nowhere. Any
+ * other failure to resolve it, such as a directory on the way that cannot be searched, fails the
+ * attempt naming the path, since L1 cannot tell that it lies outside.
  */
-function within(real, listed) {
+function within(path, real, listed) {
   let there;
   try {
-    there = realpathSync(listed);
-  } catch {
-    return false;
+    there = realpathSync.native(listed);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw new Error(`${path} may hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
   }
   const from = relative(real, there);
   return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
