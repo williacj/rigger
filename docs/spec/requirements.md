@@ -136,7 +136,6 @@ reads both files. A group with no requirements yet is not written until it has o
 
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
-| R-WORK-1 | A card's work happens in a workspace nothing else is using. No two dispatches share one, whether they are working one card or two. | the engine | the event record, by two dispatches naming one workspace | |
 | R-WORK-2 | At most one actor mutates a card's board state or its workspace at any moment. | the engine | the event record, by two writers on one card | D11 |
 | R-WORK-3 | A card's workspace and its line of work are derivable from the card, so the same card always yields the same ones. The rule that derives them is the consumer's. | the engine | the test suite | |
 | R-WORK-4 | One engine at a time has sole control of a repository's board and its workspaces. Two engines never work one repository. | the consumer's configuration | nothing yet | |
@@ -144,6 +143,10 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-6 | A card's work is delivered as a change a judge can read and rule on before it lands, never as a change already in place. | the engine | the repository's history, against the record | |
 | R-WORK-7 | Rigger works the board the consumer's configuration names, and no other, whichever user or organisation owns it. | the engine | the test suite | |
 | R-WORK-8 | Two engines never share one board. A board Rigger works holds no issue or pull request of any repository but the one Rigger works, whether or not an engine works that other repository. | the consumer's configuration | `rigger doctor`, by an issue or pull request of another repository on the board | |
+| R-WORK-9 | Rigger refuses a configuration whose rule could derive one workspace, or one line of work, for two different cards. The refusal names the rule. | the config validator | the test suite | |
+| R-WORK-10 | An attempt that starts a card's work from the beginning runs in a workspace holding the repository's main line as the forge held it when the workspace was made. That workspace holds nothing an earlier attempt left. | the engine | the test suite | D1 |
+| R-WORK-11 | Rigger never removes or changes a directory at a card's workspace path unless that directory is a workspace of the repository Rigger works. Finding one that is not, it fails the attempt and names the path. | the engine | the test suite | |
+| R-WORK-12 | No two dispatches use one workspace at once, whether they work one card or two. | the engine | the event record, by two dispatches naming one workspace over overlapping intervals | |
 
 ## R-LOOP — maker, judges, and rounds
 
@@ -243,6 +246,8 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-PROV-1 | A provisioning step declares whether the work requires it. A step that does not declare it is optional. | the consumer's configuration | the config validator | D12 |
 | R-PROV-2 | An optional step that fails is recorded, and the work proceeds. | the engine | the event record | D12 |
 | R-PROV-3 | A required step that fails stops the card before any maker runs, so it is the environment that failed and not the work. | the engine | the event record, by whether a maker emitted anything | D12 |
+| R-PROV-4 | Rigger runs a card's provisioning steps one at a time, in the order its kind of work lists them, each in the card's workspace. Every one of them ends before the maker that follows them starts. | the engine | the test suite | D12 |
+| R-PROV-5 | A provisioning step that runs past its time has failed, as a step exiting non-zero has. | the engine | the test suite | D12 |
 
 ## R-CONFLICT — two cards touching one thing
 

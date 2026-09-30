@@ -65,7 +65,6 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-12 | `test/next-action.test.mjs` a ready card two kinds select and the form check admits is refused with a reason naming both kinds<br>`test/next-action.test.mjs` a ready card two kinds select and the form check would refuse is refused with a reason naming both kinds<br>`test/next-action.test.mjs` a card two kinds select under different letter cases is refused naming both, in the config's order |
 | R-SCHED-13 | `test/next-action.test.mjs` a two-label kind selects a card carrying either one of its labels without the other<br>`test/next-action.test.mjs` a ready card no kind selects is ignored, not refused<br>`test/next-action.test.mjs` a card carrying a kind's label under another letter case is dispatched under that kind |
 | R-SCHED-14 | `test/config.test.mjs` a kind whose select.labels is empty is refused, and the refusal names that kind<br>`test/config.test.mjs` a kind selecting one label or two is accepted |
-| R-WORK-1 | **gap** |
 | R-WORK-2 | **gap** |
 | R-WORK-3 | **gap** |
 | R-WORK-4 | nothing yet |
@@ -73,6 +72,10 @@ reports no gap of its own; the register carries the reason.
 | R-WORK-6 | **gap** |
 | R-WORK-7 | `test/forge-board-owner.test.mjs` every request a full read sends that addresses the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request moveItem sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createField sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` the request createColumn sends to find the board names the declared board owner, and never the repository's owner<br>`test/forge-board-owner.test.mjs` with no board owner declared, every request that addresses the board names the owner of the repository repo names |
 | R-WORK-8 | `test/doctor.test.mjs` given a board holding items from two other repositories, doctor prints one board-sharing line, which fails and names exactly those two<br>`test/doctor.test.mjs` given a board holding only the repository's issues and pull requests and draft issues, doctor's board-sharing line passes<br>`test/doctor.test.mjs` given a board holding an item from another repository, doctor exits non-zero, where the same board without it exits zero |
+| R-WORK-9 | **gap** |
+| R-WORK-10 | **gap** |
+| R-WORK-11 | **gap** |
+| R-WORK-12 | **gap** |
 | R-LOOP-1 | **gap** |
 | R-LOOP-2 | **gap** |
 | R-LOOP-3 | `test/config.test.mjs` a kind naming one role as both its maker and a judge is refused, and the refusal names it |
@@ -132,6 +135,8 @@ reports no gap of its own; the register carries the reason.
 | R-PROV-1 | `test/config.test.mjs` a provisioning step that declares nothing is read as optional |
 | R-PROV-2 | **gap** |
 | R-PROV-3 | **gap** |
+| R-PROV-4 | **gap** |
+| R-PROV-5 | **gap** |
 | R-CONFLICT-1 | **gap** |
 | R-RECORD-1 | **gap** |
 | R-RECORD-2 | **gap** |
