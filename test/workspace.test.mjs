@@ -157,7 +157,6 @@ async function refusedNaming(attempt, path) {
   return failure;
 }
 
-// proves R-WORK-11
 test('given a plain directory holding a file at card 42\'s workspace path, under a root outside every repository, the attempt fails naming that path', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -166,7 +165,6 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   await refusedNaming(here.make(42), path);
 });
 
-// proves R-WORK-11
 test('given a plain directory holding a file at card 42\'s workspace path, under a root outside every repository, the file is byte-identical after the attempt, and nothing is added to or removed from the directory', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -178,7 +176,6 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
-// proves R-WORK-11
 test('given a plain directory holding a file at card 42\'s workspace path, under a root inside the repository\'s working tree, the attempt fails naming that path, and the file is byte-identical afterwards', async (t) => {
   const here = world(t);
   const root = join(here.repository, 'worktrees');
@@ -189,7 +186,6 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
-// proves R-WORK-11
 test('given a directory that is not a workspace of the repository at card 42\'s workspace path, the branch rigger-42 afterwards points where it did before, or does not exist where it did not', async (t) => {
   for (const existing of [false, true]) {
     const here = world(t);
@@ -205,7 +201,6 @@ test('given a directory that is not a workspace of the repository at card 42\'s 
   }
 });
 
-// proves R-WORK-11
 test('given a worktree of a different repository at card 42\'s workspace path, the attempt fails naming the path, and git worktree list --porcelain in that repository is byte-identical afterwards', async (t) => {
   const here = world(t);
   const other = repositoryAt(join(here.directory, 'other'), { README: 'other\n' });
@@ -218,7 +213,6 @@ test('given a worktree of a different repository at card 42\'s workspace path, t
   assert.equal(existsSync(join(path, 'README')), true);
 });
 
-// proves R-WORK-11
 test('given card 42\'s workspace path named through a symbolic link to a worktree of the repository, L1 recognises it as the card\'s workspace and replaces it', async (t) => {
   const here = world(t);
   const elsewhere = worktreeAt(here.repository, join(here.directory, 'elsewhere'), 'elsewhere');
@@ -256,13 +250,11 @@ function mainTreeWorld(t) {
   return { within, w, repository, make, state };
 }
 
-// proves R-WORK-11
 test('given a repository whose main working tree is W/app-7, with root W and topic app-{number}, an attempt at card 7 fails naming that path', async (t) => {
   const here = mainTreeWorld(t);
   await refusedNaming(here.make(), join(here.w, 'app-7'));
 });
 
-// proves R-WORK-11
 test('given a repository whose main working tree is W/app-7, with root W and topic app-{number}, after the attempt at card 7 fails, every file in the main working tree is byte-identical, and git status --porcelain --ignored and git worktree list --porcelain print what they printed before', async (t) => {
   const here = mainTreeWorld(t);
   const before = here.state();
@@ -270,7 +262,6 @@ test('given a repository whose main working tree is W/app-7, with root W and top
   assert.deepEqual(here.state(), before);
 });
 
-// proves R-WORK-11
 test('given a root named through a symbolic link, so that the path derived for card 7 resolves to the repository\'s main working tree, an attempt at card 7 fails naming that path', async (t) => {
   const here = mainTreeWorld(t);
   const link = join(here.within, 'link');
@@ -397,7 +388,6 @@ test('L1\'s dispatch runs its command in the directory its caller hands it, and 
 
 // A directory L1 must leave alone is found so by asking, never by trying: git's own refusals of a
 // removal are not what keeps it, so no git call that could write is sent at all.
-// proves R-WORK-11
 test('given a plain directory, a worktree of another repository, or the main working tree at the workspace path, L1 sends git only questions: no fetch, no worktree call, no branch call', async (t) => {
   const here = world(t);
   const plain = join(here.root, 'rigger-42');
