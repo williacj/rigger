@@ -744,3 +744,27 @@ test('a worktree topic holding a / is refused, and the refusal names the topic',
     assert.ok(refused.includes(`\`${topic}\``), `the refusal does not name \`${topic}\`: ${refused}`);
   }
 });
+
+// L2 reads a kind's steps as a list of names, so a string would be read a character at a time,
+// each character a step nobody declared (engineer 15).
+test('a kind whose provisioning is not a list of step names is refused, and the refusal names the kind', () => {
+  for (const provisioning of ['npm-ci', 3, null, { 'npm-ci': true }, ['npm-ci', 3], [''], ['  '], ['npm-ci', , 'vhs']]) {
+    assert.match(refusal(withKind({ provisioning })), /`kinds\.change/, JSON.stringify(provisioning));
+  }
+});
+
+// A step the config does not declare is one Rigger has no command for, so the kind names
+// something Rigger does not offer. A name every object inherits is declared by nobody either.
+// proves R-SCHED-10
+test('a kind whose provisioning names a step provisioning does not declare is refused, and the refusal names the kind and the step', () => {
+  for (const step of ['lint', 'toString', '__proto__']) {
+    const refused = refusal(withKind({ provisioning: ['npm-ci', step] }));
+    assert.match(refused, /`kinds\.change`/, step);
+    assert.ok(refused.includes(`\`${step}\``), `the refusal does not name \`${step}\`: ${refused}`);
+  }
+  const { provisioning, ...undeclared } = withKind({ provisioning: ['npm-ci'] });
+  const kinds = Object.fromEntries(Object.entries(undeclared.kinds).map(([name, kind]) => [name, name === 'change' ? kind : { ...kind, provisioning: [] }]));
+  const refused = refusal({ ...undeclared, kinds });
+  assert.match(refused, /`kinds\.change`/);
+  assert.match(refused, /`npm-ci`/);
+});

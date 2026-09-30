@@ -352,6 +352,32 @@ function readProvisioning(provisioning, refusals) {
 }
 
 /**
+ * What a kind's provisioning may be: the steps it runs, as a list of step names. A kind that
+ * declares none runs no step, so only a declared list has anything to read.
+ */
+function readKindSteps(config, refusals) {
+  // Kinds or provisioning that are no set of declarations earned their refusal where the shape
+  // was read. A config that declares no provisioning declares no step.
+  const declared = Object.hasOwn(config, 'provisioning') ? config.provisioning : {};
+  if (!declares(config.kinds) || !declares(declared)) return;
+  for (const [name, kind] of Object.entries(config.kinds)) {
+    if (!declares(kind) || !Object.hasOwn(kind, 'provisioning')) continue;
+    const steps = kind.provisioning;
+    // L2 reads the steps as a list of names, so a string would be read a character at a time.
+    if (!Array.isArray(steps) || holdsUnnamed(steps)) {
+      refusals.push(`\`kinds.${name}.provisioning\` must be a list of step names`);
+      continue;
+    }
+    // A step the config does not declare is one Rigger has no command for (`R-SCHED-10`).
+    for (const step of steps) {
+      if (!Object.hasOwn(declared, step)) {
+        refusals.push(`\`kinds.${name}\` names the step \`${step}\`, which \`provisioning\` does not declare`);
+      }
+    }
+  }
+}
+
+/**
  * What a declared worktree root may be: a path, which names a directory. A config that declares
  * none takes the default the Engine settings row states, so only a declared one has anything to read.
  */
@@ -412,6 +438,7 @@ export function validate(config) {
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
+  readKindSteps(config, refusals);
   readEpicLabel(config, refusals);
   readConcurrency(config, refusals);
   readWorktrees(config.worktrees, refusals);
