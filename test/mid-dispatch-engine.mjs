@@ -1,4 +1,4 @@
-// ABOUTME: What stands in for Rigger mid-dispatch until a verb dispatches (M4): L3's loop over a
+// ABOUTME: What stands in for Rigger mid-dispatch until a verb dispatches a maker (M4): L3's loop over a
 // consumer's board through the `gh` on PATH, whose dispatch allocates an id and calls L1's function.
 
 import { randomUUID } from 'node:crypto';
@@ -32,10 +32,10 @@ export async function engine({ directory, repository, command, ps }) {
   const sink = openSink({ directory: state, run: randomUUID(), now: Date.now });
   const board = readSide({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
   const l2 = columnChanges({ config, sink });
-  const decide = (card) => nextAction(card, config.kinds, config.epicLabel);
+  const decide = (card, outcomes) => nextAction(card, Object.fromEntries(Object.entries(config.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])), config.epicLabel, { provisioning: config.provisioning ?? {}, outcomes, sink });
   const dispatching = ({ card }) => dispatch({
     id: `d-${randomUUID()}`, card: card.number, directory: state, sink, command: '/bin/sh', args: [command], cwd: directory, env: { PATH: '/usr/bin:/bin' }, timeout: UNREACHED, ps,
   });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, l2, dispatch: dispatching, sink, kill }).pull();
+  await loop({ config, board, decide, l2, dispatch: dispatching, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
 }
