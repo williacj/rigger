@@ -1,7 +1,7 @@
 // ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, and makes
 // the workspace fresh from the main line for an attempt, through L0's workspace adapter.
 
-import { lstatSync, realpathSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
@@ -62,6 +62,7 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
         const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
         throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
       }
+      writable(real);
       await adapter.remove(real);
       // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
       if (present(path)) unlinkSync(path);
@@ -111,6 +112,20 @@ async function unlockedIfAdding(adapter, path, branch) {
     throw new Error(`${path} is registered as a worktree whose directory is gone, on ${on}, locked with the reason ${JSON.stringify(held.locked)}, so L1 leaves its lock in place`);
   }
   await adapter.unlock(path);
+}
+
+/**
+ * Makes `path` and everything under it owner-writable, `u+w`, following no symbolic link, so that
+ * `git worktree remove --force` can delete what an attempt left read-only. Git otherwise drops the
+ * registration and then fails to delete the directory, exiting 255 with `failed to delete '<path>':
+ * Permission denied` (measured with git 2.54.0, j448-10), and every later attempt refuses the plain
+ * directory left behind. Called only once the card's own workspace has passed the replace rule.
+ */
+function writable(path) {
+  const held = lstatSync(path);
+  if (held.isSymbolicLink()) return;
+  chmodSync(path, held.mode | 0o200);
+  if (held.isDirectory()) for (const name of readdirSync(path)) writable(join(path, name));
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */
