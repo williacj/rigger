@@ -700,3 +700,47 @@ test('a config with no provisioning selects the labels its kinds select', () => 
 
   assert.deepEqual(selectedLabels({ ...config, kinds }), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike']);
 });
+
+/** This repository's config with its `worktrees` declaration holding this instead. */
+const placedAt = (worktrees) => holding(rigger, ['worktrees'], worktrees);
+
+test('a worktree root that is not a string holding something other than whitespace is refused, and the refusal names worktrees.root', () => {
+  for (const root of ['', '  ', '\t', 3, null, true, ['../rigger-worktrees'], { path: '../rigger-worktrees' }]) {
+    assert.match(refusal(placedAt({ root, topic: 'rigger-{number}' })), /`worktrees\.root`/, JSON.stringify(root));
+  }
+});
+
+test('a worktree topic that is not a string is refused, and the refusal names worktrees.topic', () => {
+  for (const topic of [42, null, true, ['rigger-{number}'], { rule: 'rigger-{number}' }]) {
+    assert.match(refusal(placedAt({ topic })), /`worktrees\.topic`/, JSON.stringify(topic));
+  }
+});
+
+// Every card's issue number is what tells its workspace and its branch from another's, so a topic
+// that never places it derives one name for every card.
+// proves R-WORK-9
+test('a worktree topic holding no {number} is refused, and the refusal names the topic', () => {
+  for (const topic of ['rigger', 'rigger-number', 'rigger-{Number}', 'rigger-{num}', 'rigger-{ number }']) {
+    const refused = refusal(placedAt({ topic }));
+    assert.match(refused, /`worktrees\.topic`/, topic);
+    assert.ok(refused.includes(`\`${topic}\``), `the refusal does not name \`${topic}\`: ${refused}`);
+  }
+});
+
+// An empty topic places no number either, so every card would share the root itself.
+// proves R-WORK-9
+test('a worktree topic that is empty is refused, and the refusal names the topic', () => {
+  assert.match(refusal(placedAt({ topic: '' })), /`worktrees\.topic`/);
+});
+
+// A topic holding `/` makes directories under the root that Rigger never removes, and a branch
+// that git refuses wherever a branch holds the part before the slash. An absolute topic and one
+// holding a `..` segment are each such a topic, since each holds `{number}` too (ruling 3, P2).
+// proves R-SCHED-10
+test('a worktree topic holding a / is refused, and the refusal names the topic', () => {
+  for (const topic of ['cards/{number}', 'rigger-{number}/', '/tmp/rigger-{number}', '../rigger-{number}', 'a/../rigger-{number}', '{number}/..']) {
+    const refused = refusal(placedAt({ topic }));
+    assert.match(refused, /`worktrees\.topic`/, topic);
+    assert.ok(refused.includes(`\`${topic}\``), `the refusal does not name \`${topic}\`: ${refused}`);
+  }
+});

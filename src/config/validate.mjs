@@ -352,6 +352,35 @@ function readProvisioning(provisioning, refusals) {
 }
 
 /**
+ * What a declared worktree root may be: a path, which names a directory. A config that declares
+ * none takes the default the Engine settings row states, so only a declared one has anything to read.
+ */
+function readWorktrees(worktrees, refusals) {
+  // A declaration that is no set of declarations earned its refusal where the shape was read.
+  if (!declares(worktrees)) return;
+  if (Object.hasOwn(worktrees, 'root') && !names(worktrees.root)) {
+    refusals.push('`worktrees.root` must be a path: a string holding something other than whitespace');
+  }
+  if (!Object.hasOwn(worktrees, 'topic')) return;
+  const { topic } = worktrees;
+  if (typeof topic !== 'string') {
+    refusals.push(`\`worktrees.topic\` must be a string, and the config gives ${inspect(topic)}`);
+    return;
+  }
+  // The issue number is what tells one card's workspace and branch from another's, so a topic
+  // that never places it names one of each for every card (`R-WORK-9`).
+  if (!topic.includes('{number}')) {
+    refusals.push(`\`worktrees.topic\` is \`${topic}\`, which holds no \`{number}\`, so it names one workspace for every card`);
+  }
+  // A workspace sits directly under the root. A `/` would make directories there that Rigger never
+  // removes, and a branch git refuses wherever one holds the part before it. An absolute topic and
+  // a `..` segment are each such a topic (ruling 3, P2).
+  if (topic.includes('/')) {
+    refusals.push(`\`worktrees.topic\` is \`${topic}\`, which holds a \`/\`, and a workspace sits directly under the root`);
+  }
+}
+
+/**
  * What a priority declaration's options may be: the ranking itself, highest first, so it names at
  * least one option.
  */
@@ -385,6 +414,7 @@ export function validate(config) {
   readKinds(config, refusals);
   readEpicLabel(config, refusals);
   readConcurrency(config, refusals);
+  readWorktrees(config.worktrees, refusals);
   readProvisioning(config.provisioning, refusals);
   readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);
