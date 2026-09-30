@@ -1,6 +1,6 @@
 // ABOUTME: L0's workspace adapter: makes a git worktree on a branch from the main line, removes one,
 // answers whether a path is a worktree of the repository, and whether git accepts a branch name.
-// Every git call it makes on one repository runs one at a time.
+// Every git call it makes runs one at a time.
 
 import { realpathSync } from 'node:fs';
 
@@ -43,21 +43,21 @@ const RACED = /cannot lock ref '(refs\/remotes\/[^']+)': is at \S+ but expected 
 const ORIGIN = 'origin';
 
 /**
- * The tail of each repository's queue, by the real path of the repository its caller names. A
- * call waits for the one before it to settle, however it settled.
+ * The tail of the one queue every git call this module makes waits in, whatever repository it is
+ * on. A call waits for the one before it to settle, however it settled.
  *
- * The key is the path the caller names, not git's common directory, so two paths naming one
- * repository, such as its main working tree and one of its worktrees, would get a queue each. L1
- * names the repository by one path, so within one engine (`D11`) that does not arise.
+ * One queue for the process, rather than one per repository, because a repository has as many
+ * paths as it has working trees, and asking git which repository a path belongs to, by its common
+ * directory, is itself a git call no queue would yet hold. One engine runs per repository (`D11`),
+ * so the one queue holds that repository's calls alone. It reverses on a process serving several
+ * repositories, whose calls would then wait on one another's.
  */
-const queues = new Map();
+let tail = Promise.resolve();
 
-/** Runs `step` once every call queued before it on `key` has settled, and settles as it does. */
-function queued(key, step) {
-  const ran = (queues.get(key) ?? Promise.resolve()).then(step);
-  const tail = ran.then(() => {}, () => {});
-  queues.set(key, tail);
-  tail.then(() => queues.get(key) === tail && queues.delete(key));
+/** Runs `step` once every call queued before it has settled, and settles as it does. */
+function queued(step) {
+  const ran = tail.then(step);
+  tail = ran.then(() => {}, () => {});
   return ran;
 }
 
@@ -67,10 +67,8 @@ function queued(key, step) {
  * most `timeout` milliseconds, with its kills recorded through `emitter`.
  */
 export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT }) {
-  const key = realpathSync(repository);
-
-  /** Runs git with `args`, one call at a time on this repository, and hands back its result. */
-  const call = (args) => queued(key, async () => {
+  /** Runs git with `args`, one call at a time, and hands back its result. */
+  const call = (args) => queued(async () => {
     const { exit, timedOut, stdout, stderr } = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });
     return { args, exit, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
   });
@@ -158,19 +156,26 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
 
     /**
      * Whether `path` is a linked worktree of this repository: whether its real path is the real
-     * path of a worktree git lists for it, other than the main working tree.
+     * path of a worktree git lists for it, other than the main working tree, and that git does
+     * not mark `prunable`.
      *
-     * Git lists the main working tree first, and it is never a card's workspace (`R-WORK-11`), so
-     * the first entry is left out. `-z` ends each field with a NUL, so a path holding a newline
-     * is read whole; without it git quotes such a path. A directory inside a worktree, where git
-     * would answer with that worktree's own repository, is not listed, so it is not one.
+     * Measured with git 2.54.0. `-z` ends each field with a NUL and each entry with a second one,
+     * so a path holding a newline is read whole; without it git quotes such a path. Git lists the
+     * main working tree first, and it is never a card's workspace (`R-WORK-11`), so the first
+     * entry is left out. An entry whose directory was deleted, or whose `.git` file was, carries
+     * `prunable gitdir file points to non-existent location`, and git no longer treats what is
+     * at that path as the worktree: `git worktree remove` refuses it. So a plain directory made
+     * where a worktree was deleted is not one. A directory inside a worktree, where git would
+     * answer with that worktree's own repository, is not listed, so it is not one either.
      */
     async isWorktree(path) {
       const real = realOrNothing(path);
       if (real === undefined) return false;
-      const fields = (await answer(['worktree', 'list', '--porcelain', '-z'])).split('\0');
-      const paths = fields.filter((field) => field.startsWith('worktree ')).map((field) => field.slice('worktree '.length));
-      return paths.slice(1).some((listed) => realOrNothing(listed) === real);
+      const printed = await answer(['worktree', 'list', '--porcelain', '-z']);
+      const entries = printed.split('\0\0').filter(Boolean).map((entry) => entry.split('\0'));
+      return entries.slice(1).some((fields) => fields[0].startsWith('worktree ')
+        && !fields.some((field) => field === 'prunable' || field.startsWith('prunable '))
+        && realOrNothing(fields[0].slice('worktree '.length)) === real);
     },
 
     /**

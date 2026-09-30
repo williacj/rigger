@@ -1444,6 +1444,12 @@ export function boundaryReport(tree) {
       }
     }
     if (!file.startsWith(WORKSPACES.importer) && file !== WORKSPACES.file) {
+      // An import binding no name still runs the adapter's module, so it is an import all the same.
+      for (const entry of module.imports.filter((each) => each.imported === null)) {
+        attempt(entry.line, () => {
+          if (target(file, entry.from) === WORKSPACES.file) report(file, entry.line, WORKSPACES.rule, `it imports ${WORKSPACES.file}, binding no name, and only ${WORKSPACES.importer} imports it`);
+        });
+      }
       for (const { line, name, definitions } of bindings) {
         if (definitions.some((definition) => definition.file === WORKSPACES.file)) {
           report(file, line, WORKSPACES.rule, `it imports \`${name}\`, which is the workspace adapter's, and only ${WORKSPACES.importer} imports ${WORKSPACES.file}`);

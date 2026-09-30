@@ -191,6 +191,27 @@ test('the repository\'s own main working tree is not a worktree of the repositor
   assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(repository), false);
 });
 
+test('a plain directory holding a file, where a worktree of the repository was deleted without git, is not a worktree of the repository, although git still lists it', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  rmSync(path, { recursive: true, force: true });
+  plainDirectory(path);
+
+  assert.ok(listed(repository).includes(realpathSync(path)), 'git worktree list does not list the stale registration, so this test proves nothing');
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
+test('an adapter handed the repository through a symbolic link answers no for its main working tree and yes for its worktree', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  const link = join(directory, 'repository-link');
+  symlinkSync(repository, link);
+  const adapter = workspaces({ repository: link, emitter: recorder() });
+
+  assert.equal(await adapter.isWorktree(repository), false);
+  assert.equal(await adapter.isWorktree(path), true);
+});
+
 test('the repository\'s main working tree named through a symbolic link is not a worktree of the repository, compared by real path', async (t) => {
   const { directory, repository } = world(t);
   const link = join(directory, 'link');
@@ -320,14 +341,16 @@ const timings = (directory) => read(directory, 'git-times').split('\n').map((lin
   return { started: Number(started), ended: Number(ended), args: args.join(' ') };
 }).sort((a, b) => a.started - b.started);
 
-test('two git calls on one repository never run at once, for every git operation the module makes, as a git stand-in\'s start and end times show', async (t) => {
+test('two git calls on one repository never run at once, for every git operation the module makes, through two adapters naming it by its main working tree and by a linked worktree, as a git stand-in\'s start and end times show', async (t) => {
   const { directory, repository, push } = world(t);
   const timing = gitTiming(scratch(t));
   const made = worktreeAt(repository, join(directory, 'made'), 'made');
+  const linked = worktreeAt(repository, join(directory, 'linked'), 'linked');
   push('after the clone');
-  // Two adapters over one repository, so the queue is the repository's and not the adapter's.
+  // Two adapters naming one repository by two paths, its main working tree and a linked worktree,
+  // so the queue is the repository's and not the path's or the adapter's.
   const one = workspaces({ repository, emitter: recorder(), git: timing });
-  const two = workspaces({ repository, emitter: recorder(), git: timing });
+  const two = workspaces({ repository: linked, emitter: recorder(), git: timing });
 
   await Promise.all([
     one.make(join(directory, 'rigger-1'), 'rigger-1'),
@@ -478,12 +501,13 @@ test('only src/execution/ imports the workspace adapter: an import from any othe
   assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;" }), []);
 });
 
-test('rule 10 follows a namespace import, a dynamic import, and a re-export relayed through src/execution/', () => {
+test('rule 10 follows a namespace import, an import binding no name, a dynamic import, and a re-export relayed through src/execution/', () => {
   const breaks = (modules, file) => {
     const found = boundaryMessages(modules);
     assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
   };
   breaks({ 'src/cli/all.mjs': "import * as adapter from '../substrate/worktrees.mjs';\nexport const all = adapter;" }, 'src/cli/all.mjs');
+  breaks({ 'src/cli/bare.mjs': "import '../substrate/worktrees.mjs';" }, 'src/cli/bare.mjs');
   breaks({ 'src/workflow/late.mjs': "export const late = () => import('../substrate/worktrees.mjs');" }, 'src/workflow/late.mjs');
   breaks({
     'src/execution/relay.mjs': "export { workspaces } from '../substrate/worktrees.mjs';",
