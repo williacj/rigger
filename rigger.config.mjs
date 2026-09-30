@@ -31,7 +31,7 @@ export default {
       select: { labels: ['type:change'] },
       maker: 'engineer',
       judges: ['reviewer'],
-      provisioning: ['npm-ci'],
+      provisioning: ['npm-ci', 'vhs'],
     },
     // The panel case: three agent judges concurrently, the owner last. The architect rules on a
     // proposed requirement here, which is the gate `D18` rule 5 puts before the cards are cut.
@@ -40,14 +40,14 @@ export default {
       maker: 'pm',
       judges: ['reviewer', 'engineer', 'architect', 'owner'],
       rounds: 2,
-      provisioning: ['npm-ci'],
+      provisioning: ['npm-ci', 'vhs'],
     },
     // The architect makes every delta to `ARCHITECTURE.md` (`D18` rule 1).
     structure: {
       select: { labels: ['type:structure'] },
       maker: 'architect',
       judges: ['reviewer', 'owner'],
-      provisioning: ['npm-ci'],
+      provisioning: ['npm-ci', 'vhs'],
     },
     // Decomposition: the PM cuts larger work into cards (`D18` rule 4). A kind no role makes is
     // never dispatched, so the role that decomposes needs a row of its own.
@@ -55,13 +55,13 @@ export default {
       select: { labels: ['type:intake'] },
       maker: 'pm',
       judges: ['reviewer', 'owner'],
-      provisioning: ['npm-ci'],
+      provisioning: ['npm-ci', 'vhs'],
     },
     spike: {
       select: { labels: ['type:spike'] },
       maker: 'spikeEngineer',
       judges: ['reviewer'],
-      provisioning: ['npm-ci'],
+      provisioning: ['npm-ci', 'vhs'],
     },
   },
   // A card carrying this label is an epic: no kind selects it, whatever else it carries, so Rigger
