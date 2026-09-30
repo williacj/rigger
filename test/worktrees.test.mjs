@@ -13,7 +13,6 @@ import { FETCH_TRIES, workspaces } from '../src/substrate/worktrees.mjs';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
-// Imported apart from the line above, which this card's grant leaves unchanged (#450).
 import { previousCheckout } from './git-repository.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 

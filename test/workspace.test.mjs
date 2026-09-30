@@ -17,8 +17,7 @@ import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
 import rigger from '../rigger.config.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
-// Imported apart from the lines above, which this card's grant leaves unchanged (#450).
-import { chmodSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
 import { previousCheckout } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
@@ -755,14 +754,17 @@ test('given a live worktree at card 44\'s workspace path on rigger-44, locked wi
   assert.ok(listedAt(here.repository, path)?.includes(`\nlocked ${ADDING}`), worktreeList(here.repository));
 });
 
-/** Card 42's own earlier workspace on rigger-42, made by L1, holding a read-only directory `ro` with a read-only file in it. */
-async function readOnlyWorld(t) {
+/**
+ * Card 42's own earlier workspace on rigger-42, made by L1, holding a directory `ro` whose mode is
+ * `mode`, read-only and searchable unless the caller names another, with a read-only file in it.
+ */
+async function readOnlyWorld(t, mode = 0o555) {
   const here = world(t);
   const first = await here.make(42);
   mkdirSync(join(first.path, 'ro'));
   writeFileSync(join(first.path, 'ro', 'file'), 'read-only\n');
   chmodSync(join(first.path, 'ro', 'file'), 0o444);
-  chmodSync(join(first.path, 'ro'), 0o555);
+  chmodSync(join(first.path, 'ro'), mode);
   return { ...here, path: first.path };
 }
 
@@ -774,15 +776,45 @@ test('given card 42\'s own earlier workspace on rigger-42 holding a read-only di
   assert.equal(existsSync(join(made.path, 'ro')), false);
 });
 
+// proves R-WORK-13
+test('given card 42\'s own earlier workspace on rigger-42 holding a directory of mode 0444 with a read-only file in it, an attempt at card 42 makes a fresh workspace there holding no such directory', async (t) => {
+  const here = await readOnlyWorld(t, 0o444);
+  const made = await here.make(42);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(existsSync(join(made.path, 'ro')), false);
+});
+
+// proves R-WORK-13
+test('given card 42\'s own earlier workspace on rigger-42 holding a directory of mode 0000, an attempt at card 42 makes a fresh workspace there holding no such directory', async (t) => {
+  const here = await readOnlyWorld(t, 0o000);
+  const made = await here.make(42);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(existsSync(join(made.path, 'ro')), false);
+});
+
+test('given card 42\'s own earlier workspace holding a hard link to a read-only file outside it, after an attempt at card 42 replaces the workspace, the file outside keeps its mode bits', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  const outside = join(here.directory, 'outside');
+  writeFileSync(outside, 'not the workspace\'s\n');
+  chmodSync(outside, 0o444);
+  linkSync(outside, join(first.path, 'linked'));
+  const mode = statSync(outside).mode;
+  const made = await here.make(42);
+  assert.equal(existsSync(join(made.path, 'linked')), false);
+  assert.equal(statSync(outside).mode, mode);
+});
+
 test('given a removal that still fails after L1 made the card\'s workspace writable, forced by the test, the attempt fails naming the path and git\'s error, and the directory remains', async (t) => {
   const here = await readOnlyWorld(t);
   const stand = scratch(t);
   const refusal = 'fatal: the stand-in refuses to remove this worktree';
-  // The stand-in records whether the read-only file was writable when L1 asked for the removal.
+  // The stand-in records whether the read-only directory was writable and searchable when L1 asked
+  // for the removal, which is what removing the file in it needs.
   fixture(stand, 'git', [
     'if [ "$1 $2" = "worktree remove" ]; then',
     '  for last; do :; done',
-    '  if [ -w "$last/ro/file" ] && [ -w "$last/ro" ]; then echo writable > "$here/seen"; else echo read-only > "$here/seen"; fi',
+    '  if [ -w "$last/ro" ] && [ -x "$last/ro" ]; then echo writable > "$here/seen"; else echo read-only > "$here/seen"; fi',
     `  echo '${refusal}' >&2`,
     '  exit 128',
     'fi',

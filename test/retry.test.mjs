@@ -17,7 +17,6 @@ import { createFakeBoard } from './fake-board.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.mjs';
 import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
-// Imported apart from the line naming the fixture's other functions, which #450 leaves unchanged.
 import { worktreeAt } from './git-repository.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds

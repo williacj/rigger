@@ -35,9 +35,10 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
  * `R-WORK-16`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
  * accepts the card's own derived name as a literal branch name. A workspace that passes is made
- * owner-writable and removed; where nothing is at the path, a stale registration there locked by
- * `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the workspace on the
- * branch at the main line's commit as `origin` holds it, resetting the branch where it exists.
+ * removable, as `writable` says, and removed; where nothing is at the path, a stale registration
+ * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the
+ * workspace on the branch at the main line's commit as `origin` holds it, resetting the branch
+ * where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
@@ -150,17 +151,20 @@ async function unlockedIfAdding(adapter, path, branch) {
 }
 
 /**
- * Makes `path` and everything under it owner-writable, `u+w`, following no symbolic link, so that
- * `git worktree remove --force` can delete what an attempt left read-only. Git otherwise drops the
- * registration and then fails to delete the directory, exiting 255 with `failed to delete '<path>':
- * Permission denied` (measured with git 2.54.0, j448-10), and every later attempt refuses the plain
- * directory left behind. Called only once the card's own workspace has passed the replace rule.
+ * Makes `path` and every directory under it owner-readable, -writable and -searchable, `u+rwx`,
+ * each before descending into it, so that `git worktree remove --force` can delete what an attempt
+ * left. Removing an entry needs write and search permission on its parent directory, not on the
+ * entry, so no file's mode is changed, and a hard link to a file outside the workspace keeps its
+ * mode. A symbolic link is not followed. Git otherwise drops the registration and then fails to
+ * delete the directory, exiting 255 with `failed to delete '<path>': Permission denied` (measured
+ * with git 2.54.0, j448-10), and every later attempt refuses the plain directory left behind.
+ * Called only once the card's own workspace has passed the replace rule.
  */
 function writable(path) {
   const held = lstatSync(path);
-  if (held.isSymbolicLink()) return;
-  chmodSync(path, held.mode | 0o200);
-  if (held.isDirectory()) for (const name of readdirSync(path)) writable(join(path, name));
+  if (!held.isDirectory()) return;
+  chmodSync(path, held.mode | 0o700);
+  for (const name of readdirSync(path)) writable(join(path, name));
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */
