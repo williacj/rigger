@@ -25,10 +25,14 @@ Two deltas say "add" without saying where in the sentence.
 - Delta 10 goes straight after the sentence it names. That puts it between the sentence allocating a
   dispatch's id and the sentence on why no two ids repeat, which the ruling asked for.
 
-## What to watch
+## Round 1: ruling 8
 
-The Engine settings row's first sentence is now 35 words, under rule 2's ceiling of 40 but past its
-aim of about 25. The words are delta 3's, so a shorter form is the architect's to propose.
+The reviewer's round 1 found one blocking breach, B1. Delta 8's three environment failures were a
+rule with three conditions carried in one sentence, against spec-style rule 4. Architect ruling 8
+on #423 gave the text for two changes, and they are applied as given.
 
-Delta 8's three environment failures sit in one sentence, not a list. Spec-style rule 4 asks for a
-list at three conditions or more. The words are ruled, so this too is left to the architect.
+- Delta 8's paragraph is now a lead sentence ending in a colon, the three failures as a list, and
+  its last sentence as a paragraph of its own. The words are unchanged.
+- Delta 3's clause ", as `worktrees` in the form given below the table" had attached to the topic
+  rule alone, though `worktrees` declares the root too. The Engine settings row's Declared-by cell
+  is reordered so the clause covers both, and the long sentence it made is split in two.

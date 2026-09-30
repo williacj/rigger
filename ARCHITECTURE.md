@@ -122,7 +122,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the worktree root, the state directory (`.rigger/` by default), the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table, and whether telemetry pushes. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner; L1 for the worktree root, which the verb resolves and hands it, and the topic rule; L3 for N; L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner; L1 for the worktree root, which the verb resolves and hands it, and the topic rule; L3 for N; L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop and the gate | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
@@ -315,9 +315,13 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies three failures as
-the environment's: a workspace L1 could not make, a step that never started, and a required step
-that failed. L2 decides whether the card is attempted again, and L3 attempts it under the same
-claim.
+the environment's:
+
+- a workspace L1 could not make;
+- a step that never started;
+- a required step that failed.
+
+L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 
 L0's workspace adapter runs every git operation it makes on one repository one at a time. It
 retries, a bounded number of times, a fetch that another process's fetch beat to the
