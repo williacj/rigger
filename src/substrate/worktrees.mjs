@@ -2,7 +2,7 @@
 // answers whether a path is a worktree of the repository, and whether git accepts a branch name.
 // Every git call it makes runs one at a time.
 
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 
 import { gitEnvironment } from './git-environment.mjs';
 import { runCommand } from './process.mjs';
@@ -155,27 +155,32 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     },
 
     /**
-     * Whether `path` is a linked worktree of this repository: whether its real path is the real
-     * path of a worktree git lists for it, other than the main working tree, and that git does
-     * not mark `prunable`.
+     * Whether `path` is a linked worktree of this repository: whether git, asked in `path`, finds
+     * `path` the top of a working tree whose common directory is this repository's, and whose own
+     * git directory is not that common directory, which is how the main working tree answers.
      *
-     * Measured with git 2.54.0. `-z` ends each field with a NUL and each entry with a second one,
-     * so a path holding a newline is read whole; without it git quotes such a path. Git lists the
-     * main working tree first, and it is never a card's workspace (`R-WORK-11`), so the first
-     * entry is left out. An entry whose directory was deleted, or whose `.git` file was, carries
-     * `prunable gitdir file points to non-existent location`, and git no longer treats what is
-     * at that path as the worktree: `git worktree remove` refuses it. So a plain directory made
-     * where a worktree was deleted is not one. A directory inside a worktree, where git would
-     * answer with that worktree's own repository, is not listed, so it is not one either.
+     * Asked of what is at the path now, never read off `git worktree list`: git keeps listing a
+     * worktree whose directory was deleted, and a locked one is never marked `prunable`, so a
+     * plain directory, or another repository's worktree, made at a listed path would read as one.
+     *
+     * Measured with git 2.54.0, `git rev-parse --path-format=absolute --show-toplevel --git-dir
+     * --git-common-dir` prints the three paths a line each. In the main working tree the git
+     * directory and the common directory are one; in a linked worktree the git directory is
+     * `<common>/worktrees/<name>`; in a directory below either, the top level is the worktree's,
+     * not the directory's; outside every repository git exits 128 with `fatal: not a git
+     * repository (or any of the parent directories): .git`. Every non-zero exit there is read as
+     * no, so a path git cannot answer for is never taken for a workspace; a timeout rejects. A
+     * path holding a newline would split the answer, and so is read as no.
      */
     async isWorktree(path) {
       const real = realOrNothing(path);
-      if (real === undefined) return false;
-      const printed = await answer(['worktree', 'list', '--porcelain', '-z']);
-      const entries = printed.split('\0\0').filter(Boolean).map((entry) => entry.split('\0'));
-      return entries.slice(1).some((fields) => fields[0].startsWith('worktree ')
-        && !fields.some((field) => field === 'prunable' || field.startsWith('prunable '))
-        && realOrNothing(fields[0].slice('worktree '.length)) === real);
+      if (real === undefined || !statSync(real).isDirectory()) return false;
+      const own = (await answer(['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
+      const there = await call(['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
+      if (there.timedOut) throw failed(git, there, timeout);
+      if (there.exit !== 0) return false;
+      const [top, gitDirectory, common] = there.stdout.split('\n').map(realOrNothing);
+      return top === real && common === realOrNothing(own) && common !== undefined && gitDirectory !== common;
     },
 
     /**

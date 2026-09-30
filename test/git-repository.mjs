@@ -99,10 +99,11 @@ export function bareCloneInto(from, into) {
 
 /**
  * A worktree of the repository at `repository`, made at `path` on a new branch `branch` by git
- * itself, for a test whose subject is what it finds there rather than how it was made.
+ * itself, for a test whose subject is what it finds there rather than how it was made. `flags`
+ * go to `git worktree add` as they are, such as `--lock`.
  */
-export function worktreeAt(repository, path, branch) {
-  gitIn(repository, 'worktree', 'add', '--quiet', '-b', branch, path);
+export function worktreeAt(repository, path, branch, ...flags) {
+  gitIn(repository, 'worktree', 'add', '--quiet', ...flags, '-b', branch, path);
   return path;
 }
 

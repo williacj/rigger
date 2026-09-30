@@ -201,6 +201,27 @@ test('a plain directory holding a file, where a worktree of the repository was d
   assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
 });
 
+test('a plain directory holding a file, where a locked worktree of the repository was deleted without git, is not a worktree of the repository', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1', '--lock');
+  rmSync(path, { recursive: true, force: true });
+  plainDirectory(path);
+
+  assert.ok(listed(repository).includes(realpathSync(path)), 'git worktree list does not list the locked registration, so this test proves nothing');
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
+test('a worktree of a different repository, made where a worktree of the repository was deleted without git, is not a worktree of the repository', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  rmSync(path, { recursive: true, force: true });
+  const other = repositoryAt(join(directory, 'other'), { README: 'other\n' });
+  worktreeAt(other, path, 'other-1');
+
+  assert.ok(listed(repository).includes(realpathSync(path)), 'git worktree list does not list the stale registration, so this test proves nothing');
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
 test('an adapter handed the repository through a symbolic link answers no for its main working tree and yes for its worktree', async (t) => {
   const { directory, repository } = world(t);
   const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
@@ -226,7 +247,7 @@ test('a git call its timeout ends rejects, naming the git command and the timeou
 
   await assert.rejects(
     workspaces({ repository, emitter: recorder(), git: hanging, timeout: OUTLIVED }).isWorktree(repository),
-    (error) => error.message.includes(`${hanging} worktree list`) && error.message.includes(`${OUTLIVED} ms`),
+    (error) => error.message.includes(`${hanging} rev-parse`) && error.message.includes(`${OUTLIVED} ms`),
   );
 });
 
@@ -362,7 +383,7 @@ test('two git calls on one repository never run at once, for every git operation
   ]);
 
   const calls = timings(dirname(timing));
-  for (const operation of ['ls-remote', 'fetch', 'worktree add', 'worktree remove', 'worktree prune', 'worktree list', 'check-ref-format']) {
+  for (const operation of ['ls-remote', 'fetch', 'worktree add', 'worktree remove', 'worktree prune', 'rev-parse', '-C', 'check-ref-format']) {
     assert.ok(calls.some((call) => call.args.startsWith(operation)), `no ${operation} was recorded, so the test does not cover it:\n${calls.map((call) => call.args).join('\n')}`);
   }
   for (let i = 1; i < calls.length; i += 1) {
@@ -449,7 +470,7 @@ test('no operation but fetch is retried, whatever its standard error says', asyn
     ['worktree prune', () => adapter.make(join(directory, 'rigger-1'), 'rigger-1')],
     ['worktree add', () => adapter.make(join(directory, 'rigger-1'), 'rigger-1')],
     ['worktree remove', () => adapter.remove(made)],
-    ['worktree list', () => adapter.isWorktree(made)],
+    ['rev-parse', () => adapter.isWorktree(made)],
   ];
 
   const calls = () => (existsSync(join(here, 'calls')) ? read(here, 'calls').split('\n') : []);
