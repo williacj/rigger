@@ -500,6 +500,12 @@ export function validate(config) {
 export const workRequires = (step) => step?.required === true;
 
 /**
+ * The milliseconds a provisioning step may run: its own `timeout`, or 1,800,000, which is 30
+ * minutes, where it declares none (`ARCHITECTURE.md`, "Extension points").
+ */
+export const stepTimeout = (step) => step.timeout ?? 1_800_000;
+
+/**
  * Every label an accepted config's kinds and provisioning steps select, each once, kinds first and
  * each in the order declared: the labels a card carries to be selected. The epic label is not
  * among them, because no selector names it.
