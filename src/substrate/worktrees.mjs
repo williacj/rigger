@@ -85,7 +85,44 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       await answer(['worktree', 'prune']);
       await answer(['worktree', 'add', '--quiet', '--no-track', '-B', branch, path, commit]);
     },
+
+    /**
+     * Removes the workspace at `path`, its directory and its registration, whatever an attempt
+     * left in it. `--force` removes a worktree holding changes or untracked files, which git
+     * otherwise refuses. Git itself refuses the repository's main working tree, exiting 128 with
+     * `fatal: '<path>' is a main working tree`, and forgets a registered worktree whose directory
+     * is already gone, exiting 0.
+     */
+    async remove(path) {
+      await answer(['worktree', 'remove', '--force', path]);
+    },
+
+    /**
+     * Whether `path` is a linked worktree of this repository: whether its real path is the real
+     * path of a worktree git lists for it, other than the main working tree.
+     *
+     * Git lists the main working tree first, and it is never a card's workspace (`R-WORK-11`), so
+     * the first entry is left out. `-z` ends each field with a NUL, so a path holding a newline
+     * is read whole; without it git quotes such a path. A directory inside a worktree, where git
+     * would answer with that worktree's own repository, is not listed, so it is not one.
+     */
+    async isWorktree(path) {
+      const real = realOrNothing(path);
+      if (real === undefined) return false;
+      const fields = (await answer(['worktree', 'list', '--porcelain', '-z'])).split('\0');
+      const paths = fields.filter((field) => field.startsWith('worktree ')).map((field) => field.slice('worktree '.length));
+      return paths.slice(1).some((listed) => realOrNothing(listed) === real);
+    },
   };
+}
+
+/** `path`'s real path, or nothing where no file is there to resolve. */
+function realOrNothing(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The failure for a git call that exited non-zero or that its timeout ended. */

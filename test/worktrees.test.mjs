@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { workspaces } from '../src/substrate/worktrees.mjs';
@@ -115,4 +115,81 @@ test('given the branch checked out in a registered worktree whose directory is g
 
   assert.equal(branchOf(path), 'rigger-1');
   assert.equal(listed(repository).filter((each) => each === real).length, 1);
+});
+
+test('removing a workspace the module made leaves no directory at its path, and no entry for its real path in git worktree list', async (t) => {
+  const { directory, repository } = world(t);
+  const path = join(directory, 'rigger-1');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  await adapter.make(path, 'rigger-1');
+  const real = realpathSync(path);
+  writeFileSync(join(path, 'uncommitted'), 'left by an attempt\n');
+
+  await adapter.remove(path);
+
+  assert.equal(existsSync(path), false);
+  assert.deepEqual(listed(repository).filter((each) => each === real), []);
+});
+
+/** A directory at `path` holding one file, made by the test rather than by git. */
+function plainDirectory(path) {
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'file'), 'not a worktree\n');
+  return path;
+}
+
+test('a plain directory holding a file, outside every repository, is not a worktree of the repository', async (t) => {
+  const { directory, repository } = world(t);
+  const path = plainDirectory(join(directory, 'plain'));
+
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
+test('a plain directory holding a file, inside the repository\'s own working tree, is not a worktree of the repository', async (t) => {
+  const { repository } = world(t);
+  const path = plainDirectory(join(repository, 'plain'));
+
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
+test('a worktree of the repository is one, and a subdirectory of it is not', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  const below = plainDirectory(join(path, 'below'));
+  const adapter = workspaces({ repository, emitter: recorder() });
+
+  assert.equal(await adapter.isWorktree(path), true);
+  assert.equal(await adapter.isWorktree(below), false);
+});
+
+test('a worktree of a different repository is not a worktree of the repository', async (t) => {
+  const { directory, repository } = world(t);
+  const other = repositoryAt(join(directory, 'other'), { README: 'other\n' });
+  const path = worktreeAt(other, join(directory, 'rigger-1'), 'rigger-1');
+
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(path), false);
+});
+
+test('a worktree of the repository named through a symbolic link is a worktree of the repository', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  const link = join(directory, 'link');
+  symlinkSync(path, link);
+
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(link), true);
+});
+
+test('the repository\'s own main working tree is not a worktree of the repository, although git worktree list lists it', async (t) => {
+  const { repository } = world(t);
+
+  assert.ok(listed(repository).includes(realpathSync(repository)), 'git worktree list does not list the main working tree, so this test proves nothing');
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(repository), false);
+});
+
+test('the repository\'s main working tree named through a symbolic link is not a worktree of the repository, compared by real path', async (t) => {
+  const { directory, repository } = world(t);
+  const link = join(directory, 'link');
+  symlinkSync(repository, link);
+
+  assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(link), false);
 });
