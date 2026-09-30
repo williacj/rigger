@@ -4,7 +4,7 @@
 import { lstatSync, realpathSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
-import { workspaces } from '../substrate/worktrees.mjs';
+import { ADDING, workspaces } from '../substrate/worktrees.mjs';
 
 /**
  * The `code` of the failure L1 rejects with when it could not make a card's workspace, so its
@@ -66,6 +66,8 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
       // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
       if (present(path)) unlinkSync(path);
       events.emit('workspace.removed', { path: real });
+    } else {
+      await unlockedIfAdding(adapter, path, branch);
     }
     await adapter.make(path, branch);
     events.emit('workspace.made', { path, branch });
@@ -91,6 +93,24 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
   const { accepted, why } = await workspaces({ repository, emitter: sink.emitter({ layer: 'L0' }) }).acceptsBranch(name);
   if (!accepted) throw new Error(`the worktree topic \`${topic}\` derives ${name} for card #1, which git refuses as a branch name: ${why}`);
   return (card) => makeWorkspace({ root, topic, card, repository, sink });
+}
+
+/**
+ * Takes away the lock on a registration at `path`, whose directory is gone, where git lists it on
+ * exactly `branch` and locked with `ADDING`, the reason `git worktree add` writes while it makes a
+ * worktree: what an engine killed during that command leaves, which fails every later attempt
+ * until unlocked (the architect's ruling 9 on #423, observation 6). L0's make then prunes it.
+ * Locked on another branch, or with another reason, a person's lock, it fails the attempt naming
+ * the path and the reason, and changes nothing.
+ */
+async function unlockedIfAdding(adapter, path, branch) {
+  const held = await adapter.registration(path);
+  if (held?.locked === undefined) return;
+  if (held.branch !== branch || held.locked !== ADDING) {
+    const on = held.detached ? 'a detached HEAD' : `the branch ${held.branch}`;
+    throw new Error(`${path} is registered as a worktree whose directory is gone, on ${on}, locked with the reason ${JSON.stringify(held.locked)}, so L1 leaves its lock in place`);
+  }
+  await adapter.unlock(path);
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */

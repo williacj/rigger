@@ -18,7 +18,7 @@ import rigger from '../rigger.config.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 // Imported apart from the lines above, which this card's grant leaves unchanged (#450).
-import { chmodSync, statSync } from 'node:fs';
+import { chmodSync, rmSync, statSync } from 'node:fs';
 import { previousCheckout } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
@@ -698,4 +698,59 @@ test('given a separate clone at card 7\'s workspace path holding a read-only fil
   const before = here.state();
   await here.make(7).catch(() => {});
   assert.deepEqual(here.state(), before);
+});
+
+/**
+ * A registration at card 44's workspace path on `branch` whose directory is gone, locked with
+ * `reason`, as an engine killed while `git worktree add` made it leaves one where the reason is
+ * the one that command writes.
+ */
+function staleLockWorld(t, branch, reason) {
+  const here = world(t);
+  const path = join(here.root, 'rigger-44');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, branch, '--lock', '--reason', reason);
+  rmSync(path, { recursive: true, force: true });
+  return { ...here, path };
+}
+
+/** The record `git worktree list --porcelain` prints for the worktree at `path`, or nothing. */
+const listedAt = (repository, path) => worktreeList(repository).split('\n\n').find((record) => record.startsWith(`worktree ${realpathSync(dirname(path))}/`) && record.split('\n')[0].endsWith(`/${path.split('/').pop()}`));
+
+test('given a registration at card 44\'s workspace path on branch rigger-44, whose directory is gone and which is locked with the reason git worktree add writes, an attempt at card 44 makes the workspace', async (t) => {
+  const here = staleLockWorld(t, 'rigger-44', ADDING);
+  const made = await here.make(44);
+  assert.equal(branchOf(made.path), 'rigger-44');
+  assert.equal(realpathSync(made.path), realpathSync(here.path));
+});
+
+test('given a registration at card 44\'s workspace path on branch rigger-44, whose directory is gone and which is locked with any other reason, an attempt at card 44 fails naming the path and the reason', async (t) => {
+  const here = staleLockWorld(t, 'rigger-44', 'kept by a person');
+  const failure = await refusedNaming(here.make(44), here.path);
+  assert.ok(failure.message.includes('kept by a person'), failure.message);
+});
+
+test('given a registration at card 44\'s workspace path on branch rigger-44, whose directory is gone and which is locked with another reason, after the attempt fails, the registration and its lock are still listed by git worktree list --porcelain', async (t) => {
+  const here = staleLockWorld(t, 'rigger-44', 'kept by a person');
+  const before = listedAt(here.repository, here.path);
+  assert.ok(before?.includes('\nlocked kept by a person'), before);
+  await here.make(44).catch(() => {});
+  assert.equal(listedAt(here.repository, here.path), before);
+});
+
+test('given a registration at card 44\'s workspace path on a branch other than rigger-44, whose directory is gone and which is locked with the reason git worktree add writes, an attempt at card 44 fails naming the path, and the registration is still listed afterwards', async (t) => {
+  const here = staleLockWorld(t, 'owner-44', ADDING);
+  const before = listedAt(here.repository, here.path);
+  assert.ok(before?.includes(`\nlocked ${ADDING}`), before);
+  await refusedNaming(here.make(44), here.path);
+  assert.equal(listedAt(here.repository, here.path), before);
+});
+
+test('given a live worktree at card 44\'s workspace path on rigger-44, locked with the reason git worktree add writes, an attempt at card 44 leaves the lock in place', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-44');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'rigger-44', '--lock', '--reason', ADDING);
+  await here.make(44).catch(() => {});
+  assert.ok(listedAt(here.repository, path)?.includes(`\nlocked ${ADDING}`), worktreeList(here.repository));
 });
