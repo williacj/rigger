@@ -1,10 +1,11 @@
 // ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, and makes
 // the workspace fresh from the main line for an attempt, through L0's workspace adapter.
 
-import { lstatSync, realpathSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
-import { workspaces } from '../substrate/worktrees.mjs';
+import { EVENT_REFUSED } from '../substrate/process.mjs';
+import { ADDING, workspaces } from '../substrate/worktrees.mjs';
 
 /**
  * The `code` of the failure L1 rejects with when it could not make a card's workspace, so its
@@ -27,43 +28,89 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * Rigger works, which L0's adapter runs git in, and `sink` L5's, through which L1 records under
  * the card a workspace made, one removed, and one that could not be made (ruling 1, A8).
  *
- * Whatever is at the workspace's path is replaced only where L0 finds it a linked worktree of the
- * repository, asked of what is there now, through any symbolic link. Anything else there fails
- * the attempt naming the path, before any git call that could write, so neither it nor the
- * branch is changed (`R-WORK-11`). The repository's main working tree is never a linked worktree,
- * so a path whose real path is it fails the same way. L0 then makes the workspace on the branch at
- * the main line's commit as `origin` holds it, resetting the branch where it exists.
+ * Whatever is at the workspace's path, asked of what is there now through any symbolic link, is
+ * replaced only where L0 finds it a linked worktree of the repository, not its main working tree,
+ * with exactly the card's branch checked out, and not the worktree whose top level git reports for
+ * `repository`, the worktree L1 was handed. Anything else there fails the attempt naming the path,
+ * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
+ * `R-WORK-16`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
+ * accepts the card's own derived name as a literal branch name. A workspace that passes is made
+ * removable, as `writable` says, and removed; where nothing is at the path, a stale registration
+ * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the
+ * workspace on the branch at the main line's commit as `origin` holds it, resetting the branch
+ * where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
- * refuses the record of a workspace made or removed fails the attempt the same way, though the
- * workspace was made or removed; the next attempt's workspace replaces it.
+ * refuses the record of a workspace made or removed rejects with `EVENT_REFUSED` instead, naming
+ * the event as unrecorded, though the workspace was made or removed: a refused event is the halt,
+ * not a workspace L1 could not make, so L2 spends no attempt on it (the owner's O4 on #423).
  */
 export async function makeWorkspace({ root, topic, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
   const branch = topicFor(topic, card);
   const path = join(root, branch);
   const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
-  try {
+  /** Runs `work`, rejecting as a workspace L1 could not make where it rejects. */
+  const step = async (work) => {
+    try {
+      return await work();
+    } catch (cause) {
+      throw notMade(events, card, path, cause);
+    }
+  };
+  const removed = await step(async () => {
     if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path, and L1 is handed the root the verb resolved`);
     const { accepted, why } = await adapter.acceptsBranch(branch);
     if (!accepted) throw new Error(`card #${card}'s topic \`${topic}\` derives ${branch}, which git refuses as a branch name: ${why}`);
-    if (present(path)) {
-      if (!(await adapter.isWorktree(path))) {
-        throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
-      }
-      const real = realpathSync(path);
-      await adapter.remove(real);
-      // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
-      if (present(path)) unlinkSync(path);
-      events.emit('workspace.removed', { path: real });
-    }
-    await adapter.make(path, branch);
-    events.emit('workspace.made', { path, branch });
-  } catch (cause) {
-    throw notMade(events, card, path, cause);
-  }
+    return cleared({ adapter, card, branch, path, repository });
+  });
+  if (removed !== undefined) recorded(events, card, 'workspace.removed', { path: removed });
+  await step(() => adapter.make(path, branch));
+  recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch };
+}
+
+/**
+ * Clears card `card`'s workspace path, `path`, for a workspace on `branch`, under the replace rule
+ * above, and hands back the real path of the workspace it removed, or nothing where none was there.
+ */
+async function cleared({ adapter, card, branch, path, repository }) {
+  if (!present(path)) {
+    await unlockedIfAdding(adapter, path, branch);
+    return undefined;
+  }
+  if (!(await adapter.isWorktree(path))) {
+    throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
+  }
+  const real = realpathSync(path);
+  if (real === (await adapter.topLevel())) {
+    throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
+  }
+  const held = await adapter.registration(real);
+  if (held?.branch !== branch) {
+    const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
+    throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+  }
+  writable(real);
+  await adapter.remove(real);
+  // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
+  if (present(path)) unlinkSync(path);
+  return real;
+}
+
+/**
+ * Records L1's `event` of card `card`, with `fields`, through `events`, or, where the sink refuses
+ * it, rejects with an `EVENT_REFUSED` failure naming the event as unrecorded, carrying it in
+ * `unrecorded` as L0's and L1's other refusals do.
+ */
+function recorded(events, card, event, fields) {
+  try {
+    events.emit(event, fields);
+  } catch (cause) {
+    const failure = new Error(`the sink refused L1's ${event} of card #${card} ${JSON.stringify(fields)}, so it went unrecorded: ${cause.message}`, { cause });
+    throw Object.assign(failure, { code: EVENT_REFUSED, unrecorded: [{ event, ...fields, cause }] });
+  }
 }
 
 /**
@@ -71,17 +118,53 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
  * function L3 is handed, which makes a card's workspace as `makeWorkspace` does (the architect's
  * ruling 5, P4, on #423).
  *
- * Building it asks L0 whether git accepts the name the topic derives for card 1 as a branch, and
- * rejects naming the topic and git's first line of standard error where it does not, before any
- * directory is made (ruling 6, Q-B). A topic is a constant with digits put in place of
- * `{number}`, which neither makes nor unmakes anything git refuses in a branch name, so one card
- * answers for every card; an attempt asks again all the same.
+ * Building it asks L0 whether git accepts the name the topic derives for card 1 as a literal
+ * branch name, and rejects naming the topic and why where it does not, before any directory is
+ * made. That is a fast refusal of a topic bad for every card, not the guard: `@{-1}` and `@{-3}`
+ * name different previous checkouts, so card 1's answer does not stand for card 3's, and every
+ * attempt asks again about its own name before any git call that changes a ref or a directory
+ * (ruling 6, Q-B, as the architect's ruling 9 on #423 corrects it).
  */
 export async function workspaceHandle({ root, topic, repository, sink }) {
   const name = topicFor(topic, 1);
   const { accepted, why } = await workspaces({ repository, emitter: sink.emitter({ layer: 'L0' }) }).acceptsBranch(name);
   if (!accepted) throw new Error(`the worktree topic \`${topic}\` derives ${name} for card #1, which git refuses as a branch name: ${why}`);
   return (card) => makeWorkspace({ root, topic, card, repository, sink });
+}
+
+/**
+ * Takes away the lock on a registration at `path`, whose directory is gone, where git lists it on
+ * exactly `branch` and locked with `ADDING`, the reason `git worktree add` writes while it makes a
+ * worktree: what an engine killed during that command leaves, which fails every later attempt
+ * until unlocked (the architect's ruling 9 on #423, observation 6). L0's make then prunes it.
+ * Locked on another branch, or with another reason, a person's lock, it fails the attempt naming
+ * the path and the reason, and changes nothing.
+ */
+async function unlockedIfAdding(adapter, path, branch) {
+  const held = await adapter.registration(path);
+  if (held?.locked === undefined) return;
+  if (held.branch !== branch || held.locked !== ADDING) {
+    const on = held.detached ? 'a detached HEAD' : `the branch ${held.branch}`;
+    throw new Error(`${path} is registered as a worktree whose directory is gone, on ${on}, locked with the reason ${JSON.stringify(held.locked)}, so L1 leaves its lock in place`);
+  }
+  await adapter.unlock(path);
+}
+
+/**
+ * Makes `path` and every directory under it owner-readable, -writable and -searchable, `u+rwx`,
+ * each before descending into it, so that `git worktree remove --force` can delete what an attempt
+ * left. Removing an entry needs write and search permission on its parent directory, not on the
+ * entry, so no file's mode is changed, and a hard link to a file outside the workspace keeps its
+ * mode. A symbolic link is not followed. Git otherwise drops the registration and then fails to
+ * delete the directory, exiting 255 with `failed to delete '<path>': Permission denied` (measured
+ * with git 2.54.0, j448-10), and every later attempt refuses the plain directory left behind.
+ * Called only once the card's own workspace has passed the replace rule.
+ */
+function writable(path) {
+  const held = lstatSync(path);
+  if (!held.isDirectory()) return;
+  chmodSync(path, held.mode | 0o700);
+  for (const name of readdirSync(path)) writable(join(path, name));
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */
