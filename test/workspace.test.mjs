@@ -16,7 +16,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
 import rigger from '../rigger.config.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
-import { scratch } from './process-fixtures.mjs';
+import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -393,4 +393,27 @@ test('L1\'s dispatch runs its command in the directory its caller hands it, and 
   // Nothing derived from card 42 appears beside the directory handed, and no root is made.
   assert.deepEqual(readdirSync(here.directory).filter((name) => name !== '.rigger').sort(), before.filter((name) => name !== '.rigger'));
   assert.equal(existsSync(here.root), false);
+});
+
+// A directory L1 must leave alone is found so by asking, never by trying: git's own refusals of a
+// removal are not what keeps it, so no git call that could write is sent at all.
+// proves R-WORK-11
+test('given a plain directory, a worktree of another repository, or the main working tree at the workspace path, L1 sends git only questions: no fetch, no worktree call, no branch call', async (t) => {
+  const here = world(t);
+  const plain = join(here.root, 'rigger-42');
+  mkdirSync(plain, { recursive: true });
+  const other = repositoryAt(join(here.directory, 'other'), { README: 'other\n' });
+  worktreeAt(other, join(here.root, 'rigger-43'), 'rigger-43');
+  const main = mainTreeWorld(t);
+  const stand = scratch(t);
+  gitRecording(stand);
+  await withFirstOnPath(stand, async () => {
+    await refusedNaming(here.make(42), plain);
+    await refusedNaming(here.make(43), join(here.root, 'rigger-43'));
+    await refusedNaming(main.make(), join(main.w, 'app-7'));
+  });
+  const calls = gitCalls(stand);
+  assert.ok(calls.length > 0, 'the stand-in recorded no call');
+  const questions = /^(check-ref-format --branch |rev-parse |-C \S+ rev-parse )/;
+  assert.deepEqual(calls.filter((call) => !questions.test(call)), []);
 });
