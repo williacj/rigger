@@ -3,6 +3,10 @@
 // the run that fires that trigger again each time a slot frees; the drain trigger; L3's events;
 // and L3's claim-only call, which claims up to a limit capped at N and dispatches nothing.
 
+import { randomUUID } from 'node:crypto';
+
+import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
+import { stepDispatch } from '../execution/step.mjs';
 import { pullOrder } from './pull-order.mjs';
 
 /** N when the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
@@ -72,11 +76,17 @@ function claiming({ config, board, decide, l2, sink, kill }) {
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
       const unclaimed = items.filter((item) => !claims.has(item.number));
-      const { pulls } = pullOrder({ items: unclaimed, columns, declared }, decide);
+      // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
+      const answers = new Map();
+      const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {
+        const next = decide(card);
+        answers.set(card.number, next);
+        return next;
+      });
       const taken = pulls.slice(0, Math.max(0, Math.min(limit, concurrency - claims.size))).map((pull, index) => {
         claims.add(pull.card);
         const card = unclaimed.find((item) => item.number === pull.card);
-        return { ...pull, card, queueDepth: pulls.length - index - 1, inFlight: claims.size };
+        return { ...pull, card, next: answers.get(pull.card), queueDepth: pulls.length - index - 1, inFlight: claims.size };
       });
       return { claims: taken, failures };
     },
@@ -155,8 +165,10 @@ function released(release, claim, failure) {
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
  */
-export function loop({ config, board, decide, l2, dispatch, sink, kill }) {
+export function loop({ config, board, decide, l2, dispatch, sink, kill, workspace, state }) {
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, decide, l2, sink, kill });
+  if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
+  if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
 
   /**
    * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
@@ -166,8 +178,51 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill }) {
   let idle = false;
 
   /**
-   * One claimed card's work: its start, the dispatch, and L2's handling of its outcome, handed
-   * over unread. The slot is released however it ends, and then `freed` runs, unless the start
+   * Dispatches `step`, as L2's next action names it, for `card`'s attempt numbered `attempt`, in the
+   * workspace at `path`, and settles on its outcome as `Promise.allSettled` records it. L3
+   * allocates the dispatch's id and appends its start, under the id and the card, naming the step
+   * and the attempt, before L1 acts (`ARCHITECTURE.md`, "Failure model" and "Telemetry"). A start
+   * the sink refuses starts nothing, and rejects naming the card and the step.
+   */
+  const dispatchStep = async (card, step, path, attempt) => {
+    const id = `d-${randomUUID()}`;
+    try {
+      sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { step: step.name, attempt });
+    } catch (refusal) {
+      throw refused(`card #${card.number}'s step \`${step.name}\` was not started, because the event sink refused to record its start`, refusal);
+    }
+    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, ...stepDispatch(step, path) })]);
+    return outcome;
+  };
+
+  /**
+   * One attempt at `card` of kind `kind`, from `next`, L2's answer for it at the pull. L3 has L1
+   * make the workspace, then dispatches each step L2 names, one at a time, handing L2 each outcome
+   * unread and asking it again, until L2 names no step. An answer that dispatches no step is the
+   * maker: `dispatch` where one was injected, handed `card` and `kind`, whose outcome L2's column
+   * changes settle; where none was, the attempt answers that it reached the maker, naming the card
+   * and its workspace. Any other answer stops the attempt, naming the card and what L2 answered.
+   */
+  const attempt = async (card, kind, next) => {
+    const { path } = await workspace(card.number);
+    const outcomes = [];
+    let answer = next;
+    while (answer.action === 'dispatch' && answer.step !== undefined) {
+      outcomes.push(await dispatchStep(card, answer.step, path, 1));
+      answer = decide(card, [...outcomes]);
+    }
+    if (answer.action !== 'dispatch') {
+      throw Object.assign(new Error(`card #${card.number}'s attempt stopped: ${JSON.stringify(answer)}`), { stop: answer });
+    }
+    if (dispatch === undefined) return { card: card.number, workspace: path };
+    const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
+    await l2.settled(card, outcome);
+    return undefined;
+  };
+
+  /**
+   * One claimed card's work: its start, its attempt, and L2's handling of the maker's outcome,
+   * handed over unread. The slot is released however it ends, and then `freed` runs, unless the start
    * was not made: a claim the board refused to move, or whose pull event the sink refused, waits
    * for the next trigger rather than starting another pull at once, by the owner's ruling on
    * #228, so a board refusing every claim, or a sink refusing every event, cannot keep a run
@@ -175,21 +230,22 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill }) {
    * says, and L2's report of a refused transition event passes through unchanged.
    */
   const work = async (claim, freed) => {
-    const { card, kind } = claim;
+    const { card, kind, next } = claim;
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
     let claimed = false;
     let failure = null;
+    let reached;
     try {
       await start(claim);
       claimed = true;
-      const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
-      await l2.settled(card, outcome);
+      reached = await attempt(card, kind, next);
     } catch (thrown) {
       failure = thrown;
     }
     failure = released(release, claim, failure);
     if (claimed) await freed();
     if (failure !== null) throw failure;
+    return reached;
   };
 
   /**

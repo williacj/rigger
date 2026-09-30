@@ -119,6 +119,14 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
  * `kill` is the start's kill L3 is handed, standing in for L1's kill of recorded groups, and
  * kills nothing where none is given, since no process of this world outlives it.
  *
+ * `decide` hands L2's next action the card, the attempt's outcomes so far, `kinds`, the kinds it
+ * selects from, `KINDS` where none are given, and `provisioning`, the steps those kinds may list,
+ * none where none are given, so a card of this world selects no step unless a test lists one.
+ * `workspace` is L1's workspace handle L3 is handed, and where none is given a stand-in answers a
+ * path under this world's own temporary directory without creating it, and records nothing.
+ * `state` is the state directory L3 hands L1's dispatch, which is `directory`, as in production
+ * the stream and L1's record of process groups share one directory.
+ *
  * `handed` records every start the dispatch was handed, whole, and `decisions` every next action
  * L2 gave L3, as `{ card, action, pull }`, where `pull` counts the pull triggers fired so far.
  *
@@ -137,7 +145,8 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = mkdtempSync(join(tmpdir(), 'rigger-loop-')),
-  kill = async () => {},
+  kill = async () => {}, kinds = KINDS, provisioning = {},
+  workspace = async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }),
 } = {}) {
   const settings = { ...config, board: { ...config.board, columns } };
   delete settings.concurrency;
@@ -184,8 +193,8 @@ export function world({
   const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
-  const decide = (card) => {
-    const action = nextAction(card, KINDS, undefined, { columns, fresh: freshness });
+  const decide = (card, outcomes) => {
+    const action = nextAction(card, kinds, undefined, { columns, fresh: freshness, provisioning, outcomes, sink });
     decisions.push({ card: card.number, action, pull: pulls() });
     return action;
   };
@@ -213,7 +222,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink, kill }),
+    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink, kill, workspace, state: directory }),
     /** L3's claim-only call over the same board, L2 and sink, handed no dispatch. */
     claims: claimOnly({ config: settings, board, decide, l2, sink: l3Sink, kill }),
   };
