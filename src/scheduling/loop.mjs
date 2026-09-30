@@ -1,6 +1,7 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
-// before any await, has L2 move each claimed card, and drives its attempt: L1 makes the workspace,
-// L3 dispatches each step L2 names one at a time, then the maker; the run that fires that trigger
+// before any await, has L2 move each claimed card, and drives its attempts: L1 makes the workspace,
+// L3 dispatches each step L2 names one at a time, then the maker, or attempts the card again as L2
+// says, under the one claim and slot; the run that fires that trigger
 // again each time a slot frees; the drain trigger; L3's events; and L3's claim-only call, which
 // claims up to a limit capped at N and dispatches nothing.
 
@@ -156,8 +157,11 @@ function released(release, claim, failure) {
  * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
  * declared columns by key, and `readPriority()` answers the cards with their priority and the
  * declared order, which is what L0 hands L3 for the pull order. `decide` is L2's next action for a
- * card, which L3 asks once at the pull and again with the attempt's outcomes after each step, and
- * which alone names the steps L3 dispatches (the architect's ruling 6, Q-A and Q-D, on #423). `l2`
+ * card, which L3 asks once at the pull, and within each attempt as `decide(card, outcomes,
+ * { attempt, workspace })`: with the attempt's outcomes after each step, with none once a later
+ * attempt's workspace is made, and with L1's failure as `workspace` where it could not be made,
+ * `attempt` numbering the attempt from 1. It alone names the steps L3 dispatches, and whether the
+ * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). `l2`
  * is L2's column changes, whose `settled` takes the maker's outcome alone. `dispatch({ card, kind })`
  * is the maker, injected, and answers its result or throws; where none is injected, a card that
  * reaches it ends there (ruling 1, A1). `workspace(card)` is L1's workspace handle, injected, and
@@ -213,28 +217,59 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
   };
 
   /**
-   * One attempt at `card` of kind `kind`, from `next`, L2's answer for it at the pull. L3 has L1
-   * make the workspace, then dispatches each step L2 names, one at a time, handing L2 each outcome
-   * unread and asking it again, until L2 names no step. An answer that dispatches no step is the
-   * maker: `dispatch` where one was injected, handed `card` and `kind`, whose outcome L2's column
-   * changes settle; where none was, the attempt answers that it reached the maker, naming the card
-   * and its workspace. Any other answer stops the attempt, naming the card and what L2 answered.
+   * Has L1 make `card`'s workspace for the attempt numbered `number`, and answers it as `{ path }`,
+   * or, where L1 could not make it, L2's answer for that attempt, handed the failure unread.
+   */
+  const made = async (card, number) => {
+    const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number)))]);
+    if (outcome.status === 'fulfilled') return { path: outcome.value.path };
+    return { answer: decide(card, [], { attempt: number, workspace: outcome }) };
+  };
+
+  /**
+   * The attempts at `card` of kind `kind`, from `next`, L2's answer for it at the pull, under its
+   * one claim. Each attempt has L1 make the workspace, then dispatches each step L2 names, one at a
+   * time, handing L2 each outcome unread with the attempt's number and asking it again, until L2
+   * names no step. A later attempt asks L2 for its first step once its workspace is made.
+   *
+   * An answer that dispatches no step is the maker: `dispatch` where one was injected, handed
+   * `card` and `kind`, whose outcome L2's column changes settle; where none was, the attempt
+   * answers that it reached the maker, naming the card and its workspace. An answer naming the
+   * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
+   * attempt's failure, in order. Any other answer stops the attempts, naming the card and what L2
+   * answered.
    */
   const attempt = async (card, kind, next) => {
-    const { path } = await workspace(card.number);
-    const outcomes = [];
+    const failures = [];
     let answer = next;
-    while (answer.action === 'dispatch' && answer.step !== undefined) {
-      outcomes.push(await dispatchStep(card, answer.step, path, 1));
-      answer = decide(card, [...outcomes]);
+    for (let number = 1; ; number += 1) {
+      const { path, answer: unmade } = await made(card, number);
+      if (unmade !== undefined) {
+        answer = unmade;
+      } else {
+        if (number > 1) answer = decide(card, [], { attempt: number });
+        const outcomes = [];
+        while (answer.action === 'dispatch' && answer.step !== undefined) {
+          outcomes.push(await dispatchStep(card, answer.step, path, number));
+          answer = decide(card, [...outcomes], { attempt: number });
+        }
+      }
+      if (answer.action === 'again' && answer.attempt === number + 1) {
+        failures.push(answer.failure);
+        continue;
+      }
+      if (answer.action === 'stop') {
+        const each = [...failures, answer.failure].map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
+        throw new Error(`card #${card.number} was stopped after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`);
+      }
+      if (answer.action !== 'dispatch') {
+        throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
+      }
+      if (dispatch === undefined) return { card: card.number, workspace: path };
+      const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
+      await l2.settled(card, outcome);
+      return undefined;
     }
-    if (answer.action !== 'dispatch') {
-      throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
-    }
-    if (dispatch === undefined) return { card: card.number, workspace: path };
-    const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
-    await l2.settled(card, outcome);
-    return undefined;
   };
 
   /**

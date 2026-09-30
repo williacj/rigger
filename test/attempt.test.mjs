@@ -75,10 +75,10 @@ function attemptWorld({
   const asks = {};
   const kinds = kindListing(steps);
   const declared = typeof provisioning === 'function' ? provisioning(directory) : provisioning;
-  const l2Answer = (card, outcomes) => nextAction(card, kinds, undefined, { columns: COLUMNS, provisioning: declared, outcomes, sink });
-  const decide = (card, outcomes) => {
+  const l2Answer = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, provisioning: declared, outcomes, sink, ...attempt });
+  const decide = (card, outcomes, attempt) => {
     asks[card.number] = (asks[card.number] ?? 0) + 1;
-    return standIn ? standIn(card, outcomes, l2Answer) : l2Answer(card, outcomes);
+    return standIn ? standIn(card, outcomes, l2Answer) : l2Answer(card, outcomes, attempt);
   };
   const making = workspace ?? makingWorkspaces(join(directory, 'workspaces'));
   const makerCalls = [];
@@ -162,8 +162,8 @@ test('given a required step exiting non-zero, no later step of that attempt has 
   await assert.rejects(built.loop.pull(), (failure) => /#1\b/.test(failure.errors.map((each) => each.message).join('\n')));
 
   const events = built.events();
-  assert.deepEqual(named(events, 'L3', 'dispatch').map((each) => each.step), ['a', 'b']);
-  assert.equal(named(events, 'L1', 'dispatch.start').length, 2, JSON.stringify(events));
+  assert.deepEqual(named(events, 'L3', 'dispatch').map((each) => each.step), ['a', 'b', 'a', 'b']);
+  assert.equal(named(events, 'L1', 'dispatch.start').length, 4, JSON.stringify(events));
 });
 
 test('given a card\'s attempt, every step\'s dispatch has an id L3 allocated, and no two dispatches in the event stream share one', async () => {
