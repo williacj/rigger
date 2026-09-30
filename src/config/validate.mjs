@@ -2,6 +2,7 @@
 // the values only the consumer can answer, and the refusal of anything else, each
 // refusal naming what it refused.
 
+import { posix } from 'node:path';
 import { inspect } from 'node:util';
 
 /**
@@ -340,14 +341,104 @@ function readConcurrency(config, refusals) {
 }
 
 /**
- * What each provisioning step's selector may be. A step that selects nothing is selected by the
- * kinds that name it, so only a step that declares `select` has labels to read.
+ * What a step's working directory may be: a relative path naming a directory under the card's
+ * workspace, which L1 runs the step in.
+ */
+function readStepDirectory(cwd, where, refusals) {
+  if (typeof cwd !== 'string') {
+    refusals.push(`\`${where}.cwd\` must be a path under the card's workspace, and the config gives ${inspect(cwd)}`);
+    return;
+  }
+  // An absolute path names its directory wherever the workspace is.
+  if (posix.isAbsolute(cwd)) {
+    refusals.push(`\`${where}\` runs in \`${cwd}\`, which is absolute, and a step runs under the card's workspace`);
+    return;
+  }
+  // Normalised, a relative path that climbs out of the workspace begins with a `..` segment.
+  const normal = posix.normalize(cwd);
+  if (normal === '..' || normal.startsWith('../')) {
+    refusals.push(`\`${where}\` runs in \`${cwd}\`, which resolves outside the card's workspace`);
+  }
+}
+
+/**
+ * What each provisioning step may declare: a command line, and a selector. A step that selects
+ * nothing is selected by the kinds that name it, so only a step that declares `select` has labels
+ * to read.
  */
 function readProvisioning(provisioning, refusals) {
   // Provisioning that is no set of declarations earned its refusal where the shape was read.
   if (!declares(provisioning)) return;
   for (const [name, step] of Object.entries(provisioning)) {
-    readLabels(step?.select, `provisioning.${name}.select.labels`, refusals);
+    const where = `provisioning.${name}`;
+    readLabels(step?.select, `${where}.select.labels`, refusals);
+    // A step that is no set of declarations, or names no `run`, earned its refusal where the shape
+    // was read. L1 runs the command line under `/bin/sh`, so anything else is nothing it can run.
+    if (!declares(step)) continue;
+    if (Object.hasOwn(step, 'run') && !names(step.run)) {
+      refusals.push(`\`${where}.run\` must be a command line: a string holding something other than whitespace`);
+    }
+    if (Object.hasOwn(step, 'cwd')) readStepDirectory(step.cwd, where, refusals);
+    // The milliseconds L1 lets the step run, which is a count.
+    if (Object.hasOwn(step, 'timeout') && !(Number.isInteger(step.timeout) && step.timeout >= 1)) {
+      refusals.push(`\`${where}.timeout\` must be a positive whole number of milliseconds, and the config gives ${inspect(step.timeout)}`);
+    }
+  }
+}
+
+/**
+ * What a kind's provisioning may be: the steps it runs, as a list of step names. A kind that
+ * declares none runs no step, so only a declared list has anything to read.
+ */
+function readKindSteps(config, refusals) {
+  // Kinds or provisioning that are no set of declarations earned their refusal where the shape
+  // was read. A config that declares no provisioning declares no step.
+  const declared = Object.hasOwn(config, 'provisioning') ? config.provisioning : {};
+  if (!declares(config.kinds) || !declares(declared)) return;
+  for (const [name, kind] of Object.entries(config.kinds)) {
+    if (!declares(kind) || !Object.hasOwn(kind, 'provisioning')) continue;
+    const steps = kind.provisioning;
+    // L2 reads the steps as a list of names, so a string would be read a character at a time.
+    if (!Array.isArray(steps) || holdsUnnamed(steps)) {
+      refusals.push(`\`kinds.${name}.provisioning\` must be a list of step names`);
+      continue;
+    }
+    // A step the config does not declare is one Rigger has no command for (`R-SCHED-10`).
+    for (const step of steps) {
+      if (!Object.hasOwn(declared, step)) {
+        refusals.push(`\`kinds.${name}\` names the step \`${step}\`, which \`provisioning\` does not declare`);
+      }
+    }
+  }
+}
+
+/**
+ * What a declared worktree root and topic may be: a path naming a directory, and the rule naming
+ * each card's workspace directly under it. A key the config does not declare takes the default the
+ * Engine settings row states, so only a declared one has anything to read.
+ */
+function readWorktrees(worktrees, refusals) {
+  // A declaration that is no set of declarations earned its refusal where the shape was read.
+  if (!declares(worktrees)) return;
+  if (Object.hasOwn(worktrees, 'root') && !names(worktrees.root)) {
+    refusals.push('`worktrees.root` must be a path: a string holding something other than whitespace');
+  }
+  if (!Object.hasOwn(worktrees, 'topic')) return;
+  const { topic } = worktrees;
+  if (typeof topic !== 'string') {
+    refusals.push(`\`worktrees.topic\` must be a string, and the config gives ${inspect(topic)}`);
+    return;
+  }
+  // The issue number is what tells one card's workspace and branch from another's, so a topic
+  // that never places it names one of each for every card (`R-WORK-9`).
+  if (!topic.includes('{number}')) {
+    refusals.push(`\`worktrees.topic\` is \`${topic}\`, which holds no \`{number}\`, so it names one workspace for every card`);
+  }
+  // A workspace sits directly under the root. A `/` would make directories there that Rigger never
+  // removes, and a branch git refuses wherever one holds the part before it. An absolute topic and
+  // a `..` segment are each such a topic (ruling 3, P2).
+  if (topic.includes('/')) {
+    refusals.push(`\`worktrees.topic\` is \`${topic}\`, which holds a \`/\`, and a workspace sits directly under the root`);
   }
 }
 
@@ -383,8 +474,10 @@ export function validate(config) {
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
   readKinds(config, refusals);
+  readKindSteps(config, refusals);
   readEpicLabel(config, refusals);
   readConcurrency(config, refusals);
+  readWorktrees(config.worktrees, refusals);
   readProvisioning(config.provisioning, refusals);
   readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);

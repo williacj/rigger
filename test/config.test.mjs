@@ -700,3 +700,143 @@ test('a config with no provisioning selects the labels its kinds select', () => 
 
   assert.deepEqual(selectedLabels({ ...config, kinds }), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike']);
 });
+
+/** This repository's config with its `worktrees` declaration holding this instead. */
+const placedAt = (worktrees) => holding(rigger, ['worktrees'], worktrees);
+
+test('a worktree root that is not a string holding something other than whitespace is refused, and the refusal names worktrees.root', () => {
+  for (const root of ['', '  ', '\t', 3, null, true, ['../rigger-worktrees'], { path: '../rigger-worktrees' }]) {
+    assert.match(refusal(placedAt({ root, topic: 'rigger-{number}' })), /`worktrees\.root`/, JSON.stringify(root));
+  }
+});
+
+test('a worktree topic that is not a string is refused, and the refusal names worktrees.topic', () => {
+  for (const topic of [42, null, true, ['rigger-{number}'], { rule: 'rigger-{number}' }]) {
+    assert.match(refusal(placedAt({ topic })), /`worktrees\.topic`/, JSON.stringify(topic));
+  }
+});
+
+// Every card's issue number is what tells its workspace and its branch from another's, so a topic
+// that never places it derives one name for every card.
+// proves R-WORK-9
+test('a worktree topic holding no {number} is refused, and the refusal names the topic', () => {
+  for (const topic of ['rigger', 'rigger-number', 'rigger-{Number}', 'rigger-{num}', 'rigger-{ number }']) {
+    const refused = refusal(placedAt({ topic }));
+    assert.match(refused, /`worktrees\.topic`/, topic);
+    assert.ok(refused.includes(`\`${topic}\``), `the refusal does not name \`${topic}\`: ${refused}`);
+  }
+});
+
+// An empty topic places no number either, so every card would share the root itself.
+// proves R-WORK-9
+test('a worktree topic that is empty is refused, and the refusal names the topic', () => {
+  assert.match(refusal(placedAt({ topic: '' })), /`worktrees\.topic`/);
+});
+
+// A topic holding `/` makes directories under the root that Rigger never removes, and a branch
+// that git refuses wherever a branch holds the part before the slash. An absolute topic and one
+// holding a `..` segment are each such a topic, since each holds `{number}` too (ruling 3, P2).
+// proves R-SCHED-10
+test('a worktree topic holding a / is refused, and the refusal names the topic', () => {
+  for (const topic of ['cards/{number}', 'rigger-{number}/', '/tmp/rigger-{number}', '../rigger-{number}', 'a/../rigger-{number}', '{number}/..']) {
+    const refused = refusal(placedAt({ topic }));
+    assert.match(refused, /`worktrees\.topic`/, topic);
+    assert.ok(refused.includes(`\`${topic}\``), `the refusal does not name \`${topic}\`: ${refused}`);
+  }
+});
+
+// L2 reads a kind's steps as a list of names, so a string would be read a character at a time,
+// each character a step nobody declared (engineer 15).
+test('a kind whose provisioning is not a list of step names is refused, and the refusal names the kind', () => {
+  for (const provisioning of ['npm-ci', 3, null, { 'npm-ci': true }, ['npm-ci', 3], [''], ['  '], ['npm-ci', , 'vhs']]) {
+    assert.match(refusal(withKind({ provisioning })), /`kinds\.change/, JSON.stringify(provisioning));
+  }
+});
+
+// A step the config does not declare is one Rigger has no command for, so the kind names
+// something Rigger does not offer. A name every object inherits is declared by nobody either.
+// proves R-SCHED-10
+test('a kind whose provisioning names a step provisioning does not declare is refused, and the refusal names the kind and the step', () => {
+  for (const step of ['lint', 'toString', '__proto__']) {
+    const refused = refusal(withKind({ provisioning: ['npm-ci', step] }));
+    assert.match(refused, /`kinds\.change`/, step);
+    assert.ok(refused.includes(`\`${step}\``), `the refusal does not name \`${step}\`: ${refused}`);
+  }
+  const { provisioning, ...undeclared } = withKind({ provisioning: ['npm-ci'] });
+  const kinds = Object.fromEntries(Object.entries(undeclared.kinds).map(([name, kind]) => [name, name === 'change' ? kind : { ...kind, provisioning: [] }]));
+  const refused = refusal({ ...undeclared, kinds });
+  assert.match(refused, /`kinds\.change`/);
+  assert.match(refused, /`npm-ci`/);
+});
+
+// L1 runs a step's command line under `/bin/sh`, so anything but a string holding a command is
+// nothing it can run.
+test('a provisioning step whose run is not a string holding something other than whitespace is refused, and the refusal names the step', () => {
+  for (const run of ['', '  ', '\n', 3, null, true, ['brew', 'install', 'vhs'], { command: 'brew install vhs' }]) {
+    assert.match(refusal(withStep({ run })), /`provisioning\.vhs/, JSON.stringify(run));
+  }
+});
+
+test("a provisioning step's cwd that is not a string is refused, and the refusal names the step's cwd", () => {
+  for (const cwd of [3, null, true, ['.'], { path: '.' }]) {
+    assert.match(refusal(withStep({ run: 'brew install vhs', cwd })), /`provisioning\.vhs\.cwd`/, JSON.stringify(cwd));
+  }
+});
+
+// A step's working directory is a directory under the card's workspace, and an absolute path
+// names one wherever the workspace is.
+test("a provisioning step's cwd that is absolute is refused, and the refusal names the step", () => {
+  for (const cwd of ['/', '/tmp', '/Users/someone/work', '//server']) {
+    assert.match(refusal(withStep({ run: 'brew install vhs', cwd })), /`provisioning\.vhs/, cwd);
+  }
+});
+
+// Resolved against the workspace, each of these climbs out of it, however it gets there.
+test("a provisioning step's cwd that would resolve outside the card's workspace is refused, and the refusal names the step", () => {
+  for (const cwd of ['..', '../', '../sibling', './..', 'sub/../..', 'sub/../../other', 'a/b/../../../c']) {
+    assert.match(refusal(withStep({ run: 'brew install vhs', cwd })), /`provisioning\.vhs/, cwd);
+  }
+});
+
+// Each of these resolves to the workspace or a directory under it, `..foo` being a directory's
+// name rather than a step up.
+test("a provisioning step's cwd naming the workspace or a directory under it is accepted", () => {
+  for (const cwd of ['.', './', 'packages/app', './packages/app', 'sub/..', 'a/b/../c', '..foo', 'sub/..foo']) {
+    assert.deepEqual(validate(withStep({ run: 'brew install vhs', cwd })), [], cwd);
+  }
+});
+
+test("a provisioning step's timeout that is not a positive whole number of milliseconds is refused, and the refusal names the step", () => {
+  for (const timeout of [0, -1, 1.5, '1800000', Number.NaN, Infinity, 1800000n, null, true, [1800000], { ms: 1800000 }]) {
+    assert.match(refusal(withStep({ run: 'brew install vhs', timeout })), /`provisioning\.vhs/, String(timeout));
+  }
+});
+
+test("a provisioning step's timeout that is a positive whole number of milliseconds is accepted", () => {
+  for (const timeout of [1, 60000, 1800000]) {
+    assert.deepEqual(validate(withStep({ run: 'brew install vhs', timeout })), [], String(timeout));
+  }
+});
+
+test("a worktree declaration spelled as ARCHITECTURE.md's published shape spells it is accepted, naming neither key", async () => {
+  const { worktrees } = await publishedShape();
+  assert.ok(Object.hasOwn(worktrees, 'root') && Object.hasOwn(worktrees, 'topic'), 'the published shape declares no root and topic, so nothing was checked');
+  assert.deepEqual(validate(placedAt(worktrees)), []);
+});
+
+test("a step's cwd and timeout spelled as ARCHITECTURE.md's published shape spells them are accepted, naming neither key", async () => {
+  const steps = Object.entries((await publishedShape()).provisioning).filter(([, step]) => Object.hasOwn(step, 'cwd') && Object.hasOwn(step, 'timeout'));
+  assert.ok(steps.length > 0, 'the published shape declares no step with a cwd and a timeout, so nothing was checked');
+  for (const [name, step] of steps) {
+    assert.deepEqual(validate(holding(rigger, ['provisioning', name], step)), [], name);
+  }
+});
+
+// Each key is optional, and so is the declaration: an absent one takes the Engine settings row's
+// default rather than earning a refusal.
+test('a config declaring no worktrees, or a worktrees declaring only a root or only a topic, is accepted', () => {
+  assert.deepEqual(validate(without(rigger, ['worktrees'])), []);
+  assert.deepEqual(validate(placedAt({ root: '../rigger-worktrees' })), []);
+  assert.deepEqual(validate(placedAt({ topic: 'rigger-{number}' })), []);
+  assert.deepEqual(validate(placedAt({ topic: 'card{number}-work' })), []);
+});
