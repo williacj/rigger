@@ -149,7 +149,8 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-13 | Where a directory is at a card's workspace path and any condition below does not hold, Rigger fails the attempt, names the path, and changes nothing. Rigger replaces that directory only when all of these hold: | the engine | the test suite | |
 | R-WORK-14 | — the directory is a worktree added to the repository Rigger works, and not that repository's main worktree, the one its added worktrees belong to; | the engine | the test suite | |
 | R-WORK-15 | — the line of work the worktree holds is exactly the card's; | the engine | the test suite | |
-| R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds. | the engine | the test suite | |
+| R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds; | the engine | the test suite | |
+| R-WORK-17 | — no other worktree of the repository, the handed one included, lies inside it. | the engine | the test suite | |
 
 ## R-LOOP — maker, judges, and rounds
 
