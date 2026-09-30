@@ -124,6 +124,14 @@ function claiming({ config, board, decide, l2, sink, kill }) {
   };
 }
 
+/** Refuses a claim limit that is given and is not a positive whole number, naming it. */
+function refuseLimit(limit) {
+  if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
+    const shown = typeof limit === 'string' ? `'${limit}'` : String(limit);
+    throw new Error(`the claim limit must be a positive whole number, and ${shown} is not one`);
+  }
+}
+
 /** The reasons of every rejected result among `settled`, as `Promise.allSettled` answered them. */
 const rejections = (settled) => settled.filter((result) => result.status === 'rejected').map((result) => result.reason);
 
@@ -253,13 +261,15 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
    * works each. `freed` runs as each claimed card's slot is released, as `work` says, and that
    * card's work is not over until it settles.
    *
-   * Settles once every card it claimed has been worked. A read that fails rejects with the
-   * read's own error, and no card is claimed. A card whose work fails, and a trigger event the
+   * It claims no more than `limit` cards, N where none is given. Settles once every card it
+   * claimed has been worked, on the cards among them that reached the maker with none injected,
+   * each `{ card, workspace }`, naming its number and its workspace's path. A read that fails
+   * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
    * sink refused, are reported in one AggregateError naming how many failed, each failure
    * unchanged in its `errors`.
    */
-  const trigger = async (freed = () => {}) => {
-    const { claims: claimed, failures } = await take(concurrency);
+  const trigger = async (freed = () => {}, limit = concurrency) => {
+    const { claims: claimed, failures } = await take(limit);
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
@@ -269,15 +279,24 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
       }
     }
-    failures.push(...rejections(await Promise.allSettled(claimed.map((claim) => work(claim, freed)))));
+    const worked = await Promise.allSettled(claimed.map((claim) => work(claim, freed)));
+    failures.push(...rejections(worked));
     if (failures.length > 0) {
       throw new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`);
     }
+    return worked.map((result) => result.value).filter((reached) => reached !== undefined);
   };
 
   return {
-    /** Fires the pull trigger once, as `trigger` says. */
-    pull: () => trigger(),
+    /**
+     * Fires the pull trigger once, as `trigger` says, claiming no more than `limit` cards where one
+     * is given, which caps the limit at N. A limit that is not a positive whole number is refused,
+     * naming it, before the board is read.
+     */
+    pull: async (limit) => {
+      refuseLimit(limit);
+      return trigger(() => {}, limit ?? concurrency);
+    },
 
     /**
      * Fires the pull trigger, and fires it again each time a slot this run filled is released, so
@@ -286,7 +305,8 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
      * once every pull it fired has settled, which is once a pull fired on a freed slot claims
      * nothing and no card it claimed is still being worked.
      *
-     * A pull that fails stops no other. Once the run has ended, every failed pull is reported in
+     * Settles on every card its pulls answered as reaching the maker with none injected, as
+     * `trigger` says. A pull that fails stops no other. Once the run has ended, every failed pull is reported in
      * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
@@ -295,13 +315,17 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
       record('run.start', { concurrency });
       idle = false;
       const failures = [];
-      const fire = () => trigger(fire).catch((failure) => {
+      const reached = [];
+      const fire = () => trigger(fire).then((each) => {
+        reached.push(...each);
+      }, (failure) => {
         failures.push(failure);
       });
       await fire();
       if (failures.length > 0) {
         throw new AggregateError(failures, `${failures.length} of the pulls this run fired failed`);
       }
+      return reached;
     },
   };
 }
@@ -331,10 +355,7 @@ export function claimOnly({ config, board, decide, l2, sink, kill }) {
   const { take, start, release } = claiming({ config, board, decide, l2, sink, kill });
   return {
     claim: async (limit) => {
-      if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
-        const shown = typeof limit === 'string' ? `'${limit}'` : String(limit);
-        throw new Error(`the claim limit must be a positive whole number, and ${shown} is not one`);
-      }
+      refuseLimit(limit);
       const { claims: claimed, failures } = await take(limit ?? Infinity);
       failures.push(...rejections(await Promise.allSettled(claimed.map(async (claim) => {
         try {

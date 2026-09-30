@@ -2,7 +2,7 @@
 // cards, L0's handle on it, L2's column changes and next action, a held injected dispatch, and
 // one sink, wired into a loop, with the helpers that drive a run to its end and stop one mid-dispatch.
 
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -226,6 +226,21 @@ export function world({
     /** L3's claim-only call over the same board, L2 and sink, handed no dispatch. */
     claims: claimOnly({ config: settings, board, decide, l2, sink: l3Sink, kill }),
   };
+}
+
+/**
+ * A workspace stand-in that makes the directory it answers, `rigger-<card>` under `under`, and
+ * answers it as L1's workspace handle does, recording in its `made` each card and path it made.
+ */
+export function makingWorkspaces(under) {
+  const made = [];
+  const handle = async (card) => {
+    const path = join(under, `rigger-${card}`);
+    mkdirSync(path, { recursive: true });
+    made.push({ card, path });
+    return { path };
+  };
+  return Object.assign(handle, { made });
 }
 
 /** Each card on `fake` by number, with the display name of the column it is in now. */
