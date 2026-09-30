@@ -145,8 +145,8 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-8 | Two engines never share one board. A board Rigger works holds no issue or pull request of any repository but the one Rigger works, whether or not an engine works that other repository. | the consumer's configuration | `rigger doctor`, by an issue or pull request of another repository on the board | |
 | R-WORK-9 | Rigger refuses a configuration whose rule could derive one workspace, or one line of work, for two different cards. The refusal names the rule. | the config validator | the test suite | |
 | R-WORK-10 | An attempt that starts a card's work from the beginning runs in a workspace holding the repository's main line as the forge held it when the workspace was made. That workspace holds nothing an earlier attempt left. | the engine | the test suite | D1 |
-| R-WORK-11 | Rigger never removes or changes a directory at a card's workspace path unless that directory is a workspace of the repository Rigger works. Finding one that is not, it fails the attempt and names the path. | the engine | the test suite | |
 | R-WORK-12 | No two dispatches use one workspace at once, whether they work one card or two. | the engine | the event record, by two dispatches naming one workspace over overlapping intervals | |
+| R-WORK-13 | Rigger replaces a directory at a card's workspace path only when git reports it is a linked worktree of the repository whose checked-out branch is exactly the card's line of work. Rigger never replaces the worktree it was handed as the repository. Finding any other directory there, including a worktree on another branch or with a detached `HEAD`, Rigger fails the attempt, names the path, and changes nothing. | the engine | the test suite | |
 
 ## R-LOOP — maker, judges, and rounds
 
