@@ -17,6 +17,7 @@ export default {
   repo: 'williacj/rigger',
   board: { project: 6, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
+  worktrees: { topic: 'rigger-{number}' },
   roles: {
     engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard' },
     reviewer: { agent: '.claude/agents/reviewer.md', provider: 'claude', tier: 'high' },
