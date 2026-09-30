@@ -15,6 +15,7 @@ import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList
 import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 // Imported apart from the line above, which this card's grant leaves unchanged (#450).
 import { previousCheckout } from './git-repository.mjs';
+import { ADDING } from '../src/substrate/worktrees.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -243,6 +244,80 @@ test('the repository\'s main working tree named through a symbolic link is not a
   assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(link), false);
 });
 
+test('L0\'s recognition answers, for a linked worktree of the repository, the branch it has checked out, named directly or through a symbolic link, and no lock', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  const link = join(directory, 'link');
+  symlinkSync(path, link);
+  const adapter = workspaces({ repository, emitter: recorder() });
+
+  assert.deepEqual(await adapter.registration(path), { branch: 'rigger-1', detached: false, locked: undefined });
+  assert.deepEqual(await adapter.registration(link), { branch: 'rigger-1', detached: false, locked: undefined });
+});
+
+test('L0\'s recognition answers, for a linked worktree of the repository whose HEAD is detached, that it is detached, on no branch', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  gitIn(path, 'checkout', '-q', '--detach');
+
+  assert.deepEqual(await workspaces({ repository, emitter: recorder() }).registration(path), { branch: undefined, detached: true, locked: undefined });
+});
+
+test('L0\'s recognition answers, for a registration whose directory is gone, its branch and the reason it is locked, and nothing for a path git does not list', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1', '--lock', '--reason', 'a person\'s lock');
+  rmSync(path, { recursive: true, force: true });
+  const adapter = workspaces({ repository, emitter: recorder() });
+
+  assert.deepEqual(await adapter.registration(path), { branch: 'rigger-1', detached: false, locked: 'a person\'s lock' });
+  assert.equal(await adapter.registration(join(directory, 'rigger-2')), undefined);
+});
+
+test('L0 answers the top level git reports for the path it was handed, a subdirectory of a linked worktree included', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1');
+  const below = plainDirectory(join(path, 'below'));
+
+  assert.equal(await workspaces({ repository: below, emitter: recorder() }).topLevel(), realpathSync(path));
+  assert.equal(await workspaces({ repository, emitter: recorder() }).topLevel(), realpathSync(repository));
+});
+
+test('unlocking a locked registration whose directory is gone leaves it listed with no lock', async (t) => {
+  const { directory, repository } = world(t);
+  const path = worktreeAt(repository, join(directory, 'rigger-1'), 'rigger-1', '--lock');
+  rmSync(path, { recursive: true, force: true });
+  const adapter = workspaces({ repository, emitter: recorder() });
+
+  await adapter.unlock(path);
+
+  assert.deepEqual(await adapter.registration(path), { branch: 'rigger-1', detached: false, locked: undefined });
+});
+
+test('the lock reason L0 names as the one git worktree add writes is the one git lists for a worktree while git worktree add is making it', async (t) => {
+  const { directory, repository } = world(t);
+  // A smudge filter runs while git worktree add checks the new worktree's files out, before it
+  // takes its lock away, and records what git worktree list --porcelain -z prints then.
+  const seen = join(directory, 'seen');
+  const filter = fixture(scratch(t), 'smudge', [
+    `env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR '${GIT}' -C '${repository}' worktree list --porcelain -z > '${seen}'`,
+    'exec cat',
+  ].join('\n'));
+  writeFileSync(join(repository, '.gitattributes'), 'spied filter=spy\n');
+  writeFileSync(join(repository, 'spied'), 'spied\n');
+  gitIn(repository, 'add', '.gitattributes', 'spied');
+  gitIn(repository, '-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', 'commit', '-qm', 'a file the filter sees');
+  gitIn(repository, 'config', 'filter.spy.smudge', filter);
+  gitIn(repository, 'config', 'filter.spy.clean', 'cat');
+  const path = join(directory, 'rigger-1');
+
+  worktreeAt(repository, path, 'rigger-1');
+
+  const entry = readFileSync(seen, 'utf8').split('\0\0').find((record) => record.startsWith(`worktree ${realpathSync(path)}\0`));
+  assert.ok(entry, `git listed no worktree at ${path} while making it: ${JSON.stringify(readFileSync(seen, 'utf8'))}`);
+  assert.ok(entry.split('\0').includes(`locked ${ADDING}`), `git listed ${JSON.stringify(entry)}, and L0 names ${JSON.stringify(ADDING)}`);
+  assert.equal(await workspaces({ repository, emitter: recorder() }).registration(path).then((held) => held.locked), undefined);
+});
+
 test('a git call its timeout ends rejects, naming the git command and the timeout', async (t) => {
   const { repository } = world(t);
   const hanging = gitHanging(holding(t));
@@ -425,6 +500,31 @@ test('two git calls on one repository never run at once, for every git operation
 
   const calls = timings(dirname(timing));
   for (const operation of ['ls-remote', 'fetch', 'worktree add', 'worktree remove', 'worktree prune', 'rev-parse', '-C', 'check-ref-format']) {
+    assert.ok(calls.some((call) => call.args.startsWith(operation)), `no ${operation} was recorded, so the test does not cover it:\n${calls.map((call) => call.args).join('\n')}`);
+  }
+  for (let i = 1; i < calls.length; i += 1) {
+    assert.ok(calls[i].started >= calls[i - 1].ended, `\`${calls[i].args}\` started at ${calls[i].started}, before \`${calls[i - 1].args}\` ended at ${calls[i - 1].ended}`);
+  }
+});
+
+test('the recognition, the top-level question and the unlock never run at once with another git call on one repository, as a git stand-in\'s start and end times show', async (t) => {
+  const { directory, repository } = world(t);
+  const timing = gitTiming(scratch(t));
+  const locked = worktreeAt(repository, join(directory, 'locked'), 'locked', '--lock');
+  const linked = worktreeAt(repository, join(directory, 'linked'), 'linked');
+  const one = workspaces({ repository, emitter: recorder(), git: timing });
+  const two = workspaces({ repository: linked, emitter: recorder(), git: timing });
+
+  await Promise.all([
+    one.registration(linked),
+    two.registration(locked),
+    one.topLevel(),
+    two.unlock(locked),
+    one.make(join(directory, 'rigger-1'), 'rigger-1'),
+  ]);
+
+  const calls = timings(dirname(timing));
+  for (const operation of ['worktree list', 'worktree unlock', 'rev-parse', 'worktree add']) {
     assert.ok(calls.some((call) => call.args.startsWith(operation)), `no ${operation} was recorded, so the test does not cover it:\n${calls.map((call) => call.args).join('\n')}`);
   }
   for (let i = 1; i < calls.length; i += 1) {
