@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { FETCH_TRIES, workspaces } from '../src/substrate/worktrees.mjs';
+import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 
@@ -441,4 +442,49 @@ test('no operation but fetch is retried, whatever its standard error says', asyn
   assert.equal(await triesOf('check-ref-format', async () => {
     assert.deepEqual(await adapter.acceptsBranch('rigger-1'), { accepted: false, why: words });
   }), 1);
+});
+
+/** How many times the tests of workspaces made and removed at once repeat. The card names 20. */
+const REPETITIONS = 20;
+
+test('three workspaces made at once on one repository all exist on their branches, and three removed at once are none of them listed, in each of 20 repetitions', async (t) => {
+  const { directory, repository } = world(t);
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const cards = ['rigger-1', 'rigger-2', 'rigger-3'];
+  const pathOf = (branch) => join(directory, branch);
+
+  for (let repetition = 1; repetition <= REPETITIONS; repetition += 1) {
+    await Promise.all(cards.map((branch) => adapter.make(pathOf(branch), branch)));
+    const reals = cards.map((branch) => realpathSync(pathOf(branch)));
+    assert.deepEqual(cards.map((branch) => branchOf(pathOf(branch))), cards, `repetition ${repetition}`);
+
+    await Promise.all(cards.map((branch) => adapter.remove(pathOf(branch))));
+    assert.deepEqual(listed(repository).filter((each) => reals.includes(each)), [], `repetition ${repetition}`);
+  }
+});
+
+/** The violations `test/layer-boundaries.mjs` reports on this head's src/ with `modules` added. */
+const boundaryMessages = (modules) => boundaryReport(new Map([...sourceTree(), ...Object.entries(modules)])).violations.map(({ message }) => message);
+
+test('only src/execution/ imports the workspace adapter: an import from any other directory breaks rule 10, and one from src/execution/ breaks nothing', () => {
+  for (const directory of ['cli', 'config', 'observation', 'scheduling', 'workflow', 'substrate/forge']) {
+    const file = `src/${directory}/peek.mjs`;
+    const up = '../'.repeat(directory.split('/').length);
+    const found = boundaryMessages({ [file]: `import { workspaces } from '${up}substrate/worktrees.mjs';\nexport const peek = workspaces;` });
+    assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
+  }
+  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;" }), []);
+});
+
+test('rule 10 follows a namespace import, a dynamic import, and a re-export relayed through src/execution/', () => {
+  const breaks = (modules, file) => {
+    const found = boundaryMessages(modules);
+    assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
+  };
+  breaks({ 'src/cli/all.mjs': "import * as adapter from '../substrate/worktrees.mjs';\nexport const all = adapter;" }, 'src/cli/all.mjs');
+  breaks({ 'src/workflow/late.mjs': "export const late = () => import('../substrate/worktrees.mjs');" }, 'src/workflow/late.mjs');
+  breaks({
+    'src/execution/relay.mjs': "export { workspaces } from '../substrate/worktrees.mjs';",
+    'src/scheduling/pull.mjs': "import { workspaces } from '../execution/relay.mjs';\nexport const pull = workspaces;",
+  }, 'src/scheduling/pull.mjs');
 });
