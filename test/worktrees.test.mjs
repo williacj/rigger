@@ -67,9 +67,11 @@ test('given no refs/remotes/origin/HEAD, a workspace made on a new branch is at 
 });
 
 test('given origin\'s default branch changed after the clone, a workspace made on a new branch is at that branch\'s tip as the call began, on the branch named', async (t) => {
-  const { directory, origin, repository, push } = world(t);
+  const { directory, origin, source, repository, push } = world(t);
   push('on main');
   const pushed = push('on trunk', 'trunk');
+  // main moves on from before trunk's commit, so no fetch of main brings that commit.
+  gitIn(source, 'reset', '-q', '--hard', 'HEAD~1');
   push('main moves on');
   gitIn(origin, 'symbolic-ref', 'HEAD', 'refs/heads/trunk');
   const path = join(directory, 'rigger-1');

@@ -45,6 +45,10 @@ const ORIGIN = 'origin';
 /**
  * The tail of each repository's queue, by the real path of the repository its caller names. A
  * call waits for the one before it to settle, however it settled.
+ *
+ * The key is the path the caller names, not git's common directory, so two paths naming one
+ * repository, such as its main working tree and one of its worktrees, would get a queue each. L1
+ * names the repository by one path, so within one engine (`D11`) that does not arise.
  */
 const queues = new Map();
 
@@ -106,6 +110,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
    *
    * Asked of `origin` rather than read off `refs/remotes/origin/HEAD`, which a clone writes once
    * and never moves, and which a repository need not hold at all.
+   *
+   * Measured with git 2.54.0: `git ls-remote --symref origin HEAD` prints `ref: refs/heads/<branch>`
+   * and `<sha>`, each followed by a tab and `HEAD`, and where `origin`'s `HEAD` is detached it
+   * prints the second line alone, which this rejects as naming no main line. The commit is the one
+   * `origin` answered with, which the fetch after it brings.
    */
   const fetchMainLine = async () => {
     const printed = await answer(['ls-remote', '--symref', ORIGIN, 'HEAD']);
@@ -127,6 +136,12 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       // check its branch out anywhere else, with `fatal: '<branch>' is already used by worktree
       // at '<path>'`, until a prune forgets it.
       await answer(['worktree', 'prune']);
+      // `-B` makes the branch where it is missing and resets it where it exists, and `--no-track`
+      // writes no upstream, so the repository's shared config is not written: measured with git
+      // 2.54.0, the config is byte-identical after. Git can differ from what this assumes in two
+      // ways #426 (M3-S1)'s report measured: an add that fails, as onto an occupied directory, has
+      // already made or moved the branch, and an add racing another process's add can fail
+      // reading that worktree's administrative files, exiting 128. Neither is retried.
       await answer(['worktree', 'add', '--quiet', '--no-track', '-B', branch, path, commit]);
     },
 
