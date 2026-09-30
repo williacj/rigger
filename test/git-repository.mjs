@@ -87,3 +87,24 @@ export function cloneInto(from, into) {
   }
   return into;
 }
+
+/**
+ * A bare clone of the repository at `from`, made at `into`, as the remote a test pushes to and
+ * fetches from is. Git runs in the directory `into` will be made in, which already exists.
+ */
+export function bareCloneInto(from, into) {
+  gitIn(dirname(into), 'clone', '--quiet', '--bare', '--no-hardlinks', from, into);
+  return into;
+}
+
+/**
+ * A worktree of the repository at `repository`, made at `path` on a new branch `branch` by git
+ * itself, for a test whose subject is what it finds there rather than how it was made.
+ */
+export function worktreeAt(repository, path, branch) {
+  gitIn(repository, 'worktree', 'add', '--quiet', '-b', branch, path);
+  return path;
+}
+
+/** What `git worktree list --porcelain` prints in the repository at `repository`. */
+export const worktreeList = (repository) => gitIn(repository, 'worktree', 'list', '--porcelain');
