@@ -42,6 +42,7 @@ export const SHAPES = {
     repo: { required: true, placeholder: PLACEHOLDER.repo },
     board: { required: true, keys: 'board' },
     concurrency: {},
+    worktrees: { keys: 'worktrees' },
     roles: { required: true, entries: 'role' },
     kinds: { required: true, entries: 'kind' },
     // Optional: where it is absent no label marks an epic, and every card is selected by the
@@ -102,6 +103,12 @@ export const SHAPES = {
     // === true` as a step that declared nothing, which is not what its author wrote.
     required: { type: 'boolean' },
     select: { keys: 'select' },
+    cwd: {},
+    timeout: {},
+  },
+  worktrees: {
+    root: {},
+    topic: {},
   },
   telemetry: {
     push: {},
