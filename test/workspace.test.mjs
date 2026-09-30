@@ -923,7 +923,7 @@ function modes(directory) {
 /**
  * A world with the main working tree as the repository, card 42's own linked worktree on
  * `rigger-42` at its workspace path, and an owner's linked worktree on `owner` registered inside
- * it at `rigger-42/<at>`, holding an uncommitted file and a read-only one.
+ * it at `rigger-42/<at>`, holding an uncommitted file, a read-only one, and a read-only directory.
  */
 function nestedOwnerWorld(t, at = 'owner') {
   const here = world(t);
@@ -935,6 +935,8 @@ function nestedOwnerWorld(t, at = 'owner') {
   writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
   writeFileSync(join(owner, 'read-only'), 'the owner\'s\n');
   chmodSync(join(owner, 'read-only'), 0o444);
+  mkdirSync(join(owner, 'read-only-directory'));
+  chmodSync(join(owner, 'read-only-directory'), 0o555);
   const state = () => ({ files: contents(owner), worktrees: worktreeList(here.repository) });
   return { ...here, path, owner, state };
 }
