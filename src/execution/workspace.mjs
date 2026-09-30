@@ -2,7 +2,7 @@
 // the workspace fresh from the main line for an attempt, through L0's workspace adapter.
 
 import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
@@ -30,10 +30,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  *
  * Whatever is at the workspace's path, asked of what is there now through any symbolic link, is
  * replaced only where L0 finds it a linked worktree of the repository, not its main working tree,
- * with exactly the card's branch checked out, and not the worktree whose top level git reports for
- * `repository`, the worktree L1 was handed. Anything else there fails the attempt naming the path,
- * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
- * `R-WORK-16`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
+ * with exactly the card's branch checked out, not the worktree whose top level git reports for
+ * `repository`, the worktree L1 was handed, and holding inside it, by real path, no other worktree
+ * git lists for the repository, the handed one included. Anything else there fails the attempt
+ * naming the path, before any git call that could write, so neither it nor the branch is changed
+ * (`R-WORK-13` to `R-WORK-17`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
  * accepts the card's own derived name as a literal branch name. A workspace that passes is made
  * removable, as `writable` says, and removed; where nothing is at the path, a stale registration
  * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the
@@ -91,6 +92,10 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (held?.branch !== branch) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
     throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+  }
+  const nested = (await adapter.registered()).find((listed) => within(real, listed));
+  if (nested !== undefined) {
+    throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
   writable(real);
   await adapter.remove(real);
@@ -165,6 +170,22 @@ function writable(path) {
   if (!held.isDirectory()) return;
   chmodSync(path, held.mode | 0o700);
   for (const name of readdirSync(path)) writable(join(path, name));
+}
+
+/**
+ * Whether the worktree git lists at `listed` lies inside the directory whose real path is `real`,
+ * compared by real path: a worktree reached only through a symbolic link inside it lies where the
+ * link points, and a registration whose directory is gone has no real path and lies nowhere.
+ */
+function within(real, listed) {
+  let there;
+  try {
+    there = realpathSync(listed);
+  } catch {
+    return false;
+  }
+  const from = relative(real, there);
+  return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */

@@ -130,6 +130,27 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
    * prints the second line alone, which this rejects as naming no main line. The commit is the one
    * `origin` answered with, which the fetch after it brings.
    */
+  /**
+   * Each worktree `git worktree list --porcelain -z` lists: its path, `at`, as git holds it, the
+   * branch it has checked out, whether its `HEAD` is detached, and the reason it is locked, an
+   * empty one for a lock given none, or nothing where it is not locked. Measured with git 2.54.0:
+   * each worktree is a run of NUL-ended fields, `worktree <path>`, `HEAD <sha>`, then `branch
+   * refs/heads/<name>` or `detached`, then `locked` or `locked <reason>` where it is locked and
+   * `prunable <reason>` where its directory is gone, the run ended by a second NUL.
+   */
+  const listed = async () => {
+    const records = [];
+    for (const record of (await answer(['worktree', 'list', '--porcelain', '-z'])).split('\0\0')) {
+      const fields = record.split('\0').filter((field) => field !== '');
+      const at = fields.find((field) => field.startsWith('worktree '))?.slice('worktree '.length);
+      if (at === undefined) continue;
+      const branch = fields.find((field) => field.startsWith('branch refs/heads/'))?.slice('branch refs/heads/'.length);
+      const lock = fields.find((field) => field === 'locked' || field.startsWith('locked '));
+      records.push({ at, branch, detached: fields.includes('detached'), locked: lock === undefined ? undefined : lock.slice('locked '.length) });
+    }
+    return records;
+  };
+
   const fetchMainLine = async () => {
     const printed = await answer(['ls-remote', '--symref', ORIGIN, 'HEAD']);
     const named = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(printed);
@@ -204,25 +225,22 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * where it lists none: the branch it has checked out, whether its `HEAD` is detached, and the
      * reason it is locked, an empty one for a lock given none, or nothing where it is not locked.
      *
-     * Read from `git worktree list --porcelain -z`, which git lists whether or not the directory
-     * is still there. Measured with git 2.54.0: each worktree is a run of NUL-ended fields, `worktree
-     * <path>`, `HEAD <sha>`, then `branch refs/heads/<name>` or `detached`, then `locked` or
-     * `locked <reason>` where it is locked and `prunable <reason>` where its directory is gone, the
-     * run ended by a second NUL. The path is git's absolute one, which a registration whose
+     * Read from `git worktree list --porcelain -z`, as `listed` says, which git lists whether or
+     * not the directory is still there. The path is git's absolute one, which a registration whose
      * directory is gone keeps, so both are compared by the real path of what is left of them.
      */
     async registration(path) {
-      const listed = await answer(['worktree', 'list', '--porcelain', '-z']);
       const wanted = realOrLeft(path);
-      for (const record of listed.split('\0\0')) {
-        const fields = record.split('\0').filter((field) => field !== '');
-        const at = fields.find((field) => field.startsWith('worktree '))?.slice('worktree '.length);
-        if (at === undefined || realOrLeft(at) !== wanted) continue;
-        const branch = fields.find((field) => field.startsWith('branch refs/heads/'))?.slice('branch refs/heads/'.length);
-        const lock = fields.find((field) => field === 'locked' || field.startsWith('locked '));
-        return { branch, detached: fields.includes('detached'), locked: lock === undefined ? undefined : lock.slice('locked '.length) };
-      }
-      return undefined;
+      const held = (await listed()).find(({ at }) => realOrLeft(at) === wanted);
+      return held === undefined ? undefined : { branch: held.branch, detached: held.detached, locked: held.locked };
+    },
+
+    /**
+     * The path of every worktree of the repository git lists, its main worktree included, as git
+     * lists it, whether or not its directory is still there. Read as `registration` reads them.
+     */
+    async registered() {
+      return (await listed()).map(({ at }) => at);
     },
 
     /** Takes away the lock on the worktree registered at `path`, whether or not its directory is there. */
