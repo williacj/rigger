@@ -4,12 +4,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { workspaces } from '../src/substrate/worktrees.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
-import { scratch } from './process-fixtures.mjs';
+import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, scratch, withFirstOnPath } from './process-fixtures.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -192,4 +194,102 @@ test('the repository\'s main working tree named through a symbolic link is not a
   symlinkSync(repository, link);
 
   assert.equal(await workspaces({ repository, emitter: recorder() }).isWorktree(link), false);
+});
+
+test('a git call its timeout ends rejects, naming the git command and the timeout', async (t) => {
+  const { repository } = world(t);
+  const hanging = gitHanging(holding(t));
+
+  await assert.rejects(
+    workspaces({ repository, emitter: recorder(), git: hanging, timeout: OUTLIVED }).isWorktree(repository),
+    (error) => error.message.includes(`${hanging} worktree list`) && error.message.includes(`${OUTLIVED} ms`),
+  );
+});
+
+test('a git call that exits non-zero rejects, naming the git command, its exit code and the first line of its standard error', async (t) => {
+  const { repository } = world(t);
+  const failing = fixture(scratch(t), 'git', 'echo "the first line" >&2\necho "the second line" >&2\nexit 3');
+
+  await assert.rejects(
+    workspaces({ repository, emitter: recorder(), git: failing }).remove(join(repository, 'nowhere')),
+    (error) => error.message.includes(`${failing} worktree remove`) && error.message.includes('exited 3')
+      && error.message.includes('the first line') && !error.message.includes('the second line'),
+  );
+});
+
+test('given GIT_DIR naming a second repository in the calling process, making a workspace leaves that repository\'s git worktree list byte-identical', async (t) => {
+  const { directory, repository } = world(t);
+  const second = repositoryAt(join(directory, 'second'), { README: 'second\n' });
+  const before = worktreeList(second);
+  const held = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(second, '.git');
+  try {
+    await workspaces({ repository, emitter: recorder() }).make(join(directory, 'rigger-1'), 'rigger-1');
+  } finally {
+    if (held === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = held;
+  }
+
+  assert.equal(worktreeList(second), before);
+  assert.equal(branchOf(join(directory, 'rigger-1')), 'rigger-1');
+});
+
+test('a workspace is made with --no-track -B, leaves the repository\'s config byte-identical, and its branch has no upstream', async (t) => {
+  const { directory, repository } = world(t);
+  const recording = gitRecording(scratch(t));
+  const config = join(repository, '.git', 'config');
+  const before = readFileSync(config);
+  const path = join(directory, 'rigger-1');
+
+  await workspaces({ repository, emitter: recorder(), git: recording }).make(path, 'rigger-1');
+
+  const adds = gitCalls(dirname(recording)).filter((call) => call.startsWith('worktree add '));
+  assert.equal(adds.length, 1);
+  assert.match(adds[0], / --no-track -B rigger-1 /);
+  assert.deepEqual(readFileSync(config), before);
+  assert.equal(gitIn(repository, 'for-each-ref', '--format=%(upstream)', 'refs/heads/rigger-1'), '\n');
+});
+
+/** What git itself answers to `git check-ref-format --branch <name>`: its exit code and standard error. */
+function gitOnBranchName(name) {
+  const { status, stderr } = spawnSync('git', ['check-ref-format', '--branch', name], { encoding: 'utf8', env: gitEnvironment() });
+  return { status, first: stderr.split('\n')[0] };
+}
+
+test('asked whether git accepts a name as a branch, the answer is yes for rigger-1, and no for rigger-1.lock carrying git\'s first line of standard error', async (t) => {
+  const { repository } = world(t);
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const refused = gitOnBranchName('rigger-1.lock');
+  assert.equal(gitOnBranchName('rigger-1').status, 0);
+  assert.notEqual(refused.status, 0);
+
+  assert.deepEqual(await adapter.acceptsBranch('rigger-1'), { accepted: true });
+  assert.deepEqual(await adapter.acceptsBranch('rigger-1.lock'), { accepted: false, why: refused.first });
+});
+
+test('the branch-name question runs git check-ref-format --branch through the process adapter under gitEnvironment(), as a git stand-in first on PATH records', async (t) => {
+  const { repository } = world(t);
+  const directory = scratch(t);
+  // The adapter starts each command as the leader of a process group of its own, so the stand-in
+  // records whether its group is its own pid, and whether GIT_DIR reached it.
+  fixture(directory, 'git', [
+    'printf \'%s|%s|%s\\n\' "$*" "${GIT_DIR-unset}" "$(/bin/ps -o pgid= -p $$ | /usr/bin/tr -d \' \')=$$" >> "$here/git-calls"',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  const held = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(repository, '.git');
+  try {
+    await withFirstOnPath(directory, () => workspaces({ repository, emitter: recorder() }).acceptsBranch('rigger-1'));
+  } finally {
+    if (held === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = held;
+  }
+
+  const [call, ...rest] = gitCalls(directory);
+  assert.deepEqual(rest, []);
+  const [args, gitDir, group] = call.split('|');
+  const [pgid, pid] = group.split('=');
+  assert.equal(args, 'check-ref-format --branch rigger-1');
+  assert.equal(gitDir, 'unset');
+  assert.equal(pgid, pid);
 });

@@ -113,6 +113,21 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       const paths = fields.filter((field) => field.startsWith('worktree ')).map((field) => field.slice('worktree '.length));
       return paths.slice(1).some((listed) => realOrNothing(listed) === real);
     },
+
+    /**
+     * Whether git accepts `name` as a branch name, and where it does not, git's first line of
+     * standard error saying why (`D16` rule 1: git owns what a valid branch name is).
+     *
+     * Measured with git 2.54.0: `rigger-1` exits 0, and `rigger-1.lock` exits 128 with
+     * `fatal: 'rigger-1.lock' is not a valid branch name`. Any non-zero exit is read as a refusal,
+     * so a git that fails for another reason answers no with its own words, where git may differ
+     * from this reading; one the timeout ended rejects.
+     */
+    async acceptsBranch(name) {
+      const result = await call(['check-ref-format', '--branch', name]);
+      if (result.timedOut) throw failed(git, result, timeout);
+      return result.exit === 0 ? { accepted: true } : { accepted: false, why: firstLine(result.stderr) };
+    },
   };
 }
 
@@ -129,6 +144,8 @@ function realOrNothing(path) {
 function failed(git, { args, exit, timedOut, stderr }, timeout) {
   const command = `\`${[git, ...args].join(' ')}\``;
   if (timedOut) return new Error(`${command} ran past its timeout of ${timeout} ms, and L0 ended it`);
-  const first = stderr.split('\n').find((line) => line.trim() !== '') ?? '';
-  return new Error(`${command} exited ${exit}: ${first}`);
+  return new Error(`${command} exited ${exit}: ${firstLine(stderr)}`);
 }
+
+/** The first line of `text` holding anything but blanks. */
+const firstLine = (text) => text.split('\n').find((line) => line.trim() !== '') ?? '';
