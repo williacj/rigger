@@ -2,7 +2,8 @@
 // cards, L0's handle on it, L2's column changes and next action, a held injected dispatch, and
 // one sink, wired into a loop, with the helpers that drive a run to its end and stop one mid-dispatch.
 
-import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -236,7 +237,7 @@ export function makingWorkspaces(under) {
   const made = [];
   const handle = async (card) => {
     const path = join(under, `rigger-${card}`);
-    mkdirSync(path, { recursive: true });
+    await mkdir(path, { recursive: true });
     made.push({ card, path });
     return { path };
   };
