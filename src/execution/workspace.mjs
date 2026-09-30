@@ -27,12 +27,13 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * Rigger works, which L0's adapter runs git in, and `sink` L5's, through which L1 records under
  * the card a workspace made, one removed, and one that could not be made (ruling 1, A8).
  *
- * Whatever is at the workspace's path is replaced only where L0 finds it a linked worktree of the
- * repository, asked of what is there now, through any symbolic link. Anything else there fails
- * the attempt naming the path, before any git call that could write, so neither it nor the
- * branch is changed (`R-WORK-11`). The repository's main working tree is never a linked worktree,
- * so a path whose real path is it fails the same way. L0 then makes the workspace on the branch at
- * the main line's commit as `origin` holds it, resetting the branch where it exists.
+ * Whatever is at the workspace's path, asked of what is there now through any symbolic link, is
+ * replaced only where L0 finds it a linked worktree of the repository, not its main working tree,
+ * with exactly the card's branch checked out, and not the worktree whose top level git reports for
+ * `repository`, the worktree L1 was handed. Anything else there fails the attempt naming the path,
+ * before any git call that could write, so neither it nor the branch is changed (`R-WORK-13` to
+ * `R-WORK-16`; the architect's ruling 9 on #423). L0 then makes the workspace on the branch at the
+ * main line's commit as `origin` holds it, resetting the branch where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refuses that record, the rejection says so too. A sink that
@@ -53,6 +54,14 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
         throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
       }
       const real = realpathSync(path);
+      if (real === (await adapter.topLevel())) {
+        throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
+      }
+      const held = await adapter.registration(real);
+      if (held?.branch !== branch) {
+        const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
+        throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+      }
       await adapter.remove(real);
       // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
       if (present(path)) unlinkSync(path);

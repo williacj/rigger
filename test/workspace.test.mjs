@@ -17,6 +17,11 @@ import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
 import rigger from '../rigger.config.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
+// Imported apart from the lines above, which this card's grant leaves unchanged (#450).
+import { chmodSync, statSync } from 'node:fs';
+import { previousCheckout } from './git-repository.mjs';
+import { fixture, GIT } from './process-fixtures.mjs';
+import { ADDING } from '../src/substrate/worktrees.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -157,6 +162,7 @@ async function refusedNaming(attempt, path) {
   return failure;
 }
 
+// proves R-WORK-13, R-WORK-14
 test('given a plain directory holding a file at card 42\'s workspace path, under a root outside every repository, the attempt fails naming that path', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -165,6 +171,7 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   await refusedNaming(here.make(42), path);
 });
 
+// proves R-WORK-13, R-WORK-14
 test('given a plain directory holding a file at card 42\'s workspace path, under a root outside every repository, the file is byte-identical after the attempt, and nothing is added to or removed from the directory', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -176,6 +183,7 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
+// proves R-WORK-13, R-WORK-14
 test('given a plain directory holding a file at card 42\'s workspace path, under a root inside the repository\'s working tree, the attempt fails naming that path, and the file is byte-identical afterwards', async (t) => {
   const here = world(t);
   const root = join(here.repository, 'worktrees');
@@ -186,6 +194,7 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
+// proves R-WORK-13, R-WORK-14
 test('given a directory that is not a workspace of the repository at card 42\'s workspace path, the branch rigger-42 afterwards points where it did before, or does not exist where it did not', async (t) => {
   for (const existing of [false, true]) {
     const here = world(t);
@@ -201,6 +210,7 @@ test('given a directory that is not a workspace of the repository at card 42\'s 
   }
 });
 
+// proves R-WORK-13, R-WORK-14
 test('given a worktree of a different repository at card 42\'s workspace path, the attempt fails naming the path, and git worktree list --porcelain in that repository is byte-identical afterwards', async (t) => {
   const here = world(t);
   const other = repositoryAt(join(here.directory, 'other'), { README: 'other\n' });
@@ -213,9 +223,10 @@ test('given a worktree of a different repository at card 42\'s workspace path, t
   assert.equal(existsSync(join(path, 'README')), true);
 });
 
-test('given card 42\'s workspace path named through a symbolic link to a worktree of the repository, L1 recognises it as the card\'s workspace and replaces it', async (t) => {
+// proves R-WORK-13
+test('given card 42\'s workspace path named through a symbolic link to a linked worktree of the repository on branch rigger-42, L1 recognises it as the card\'s workspace and replaces it', async (t) => {
   const here = world(t);
-  const elsewhere = worktreeAt(here.repository, join(here.directory, 'elsewhere'), 'elsewhere');
+  const elsewhere = worktreeAt(here.repository, join(here.directory, 'elsewhere'), 'rigger-42');
   writeFileSync(join(elsewhere, 'left-behind'), 'an earlier attempt\'s work\n');
   const path = join(here.root, 'rigger-42');
   mkdirSync(here.root, { recursive: true });
@@ -250,11 +261,13 @@ function mainTreeWorld(t) {
   return { within, w, repository, make, state };
 }
 
+// proves R-WORK-13, R-WORK-14, R-WORK-16
 test('given a repository whose main working tree is W/app-7, with root W and topic app-{number}, an attempt at card 7 fails naming that path', async (t) => {
   const here = mainTreeWorld(t);
   await refusedNaming(here.make(), join(here.w, 'app-7'));
 });
 
+// proves R-WORK-13, R-WORK-14, R-WORK-16
 test('given a repository whose main working tree is W/app-7, with root W and topic app-{number}, after the attempt at card 7 fails, every file in the main working tree is byte-identical, and git status --porcelain --ignored and git worktree list --porcelain print what they printed before', async (t) => {
   const here = mainTreeWorld(t);
   const before = here.state();
@@ -262,6 +275,7 @@ test('given a repository whose main working tree is W/app-7, with root W and top
   assert.deepEqual(here.state(), before);
 });
 
+// proves R-WORK-13, R-WORK-14, R-WORK-16
 test('given a root named through a symbolic link, so that the path derived for card 7 resolves to the repository\'s main working tree, an attempt at card 7 fails naming that path', async (t) => {
   const here = mainTreeWorld(t);
   const link = join(here.within, 'link');
@@ -388,6 +402,7 @@ test('L1\'s dispatch runs its command in the directory its caller hands it, and 
 
 // A directory L1 must leave alone is found so by asking, never by trying: git's own refusals of a
 // removal are not what keeps it, so no git call that could write is sent at all.
+// proves R-WORK-13, R-WORK-14, R-WORK-16
 test('given a plain directory, a worktree of another repository, or the main working tree at the workspace path, L1 sends git only questions: no fetch, no worktree call, no branch call', async (t) => {
   const here = world(t);
   const plain = join(here.root, 'rigger-42');
@@ -406,4 +421,281 @@ test('given a plain directory, a worktree of another repository, or the main wor
   assert.ok(calls.length > 0, 'the stand-in recorded no call');
   const questions = /^(check-ref-format --branch |rev-parse |-C \S+ rev-parse )/;
   assert.deepEqual(calls.filter((call) => !questions.test(call)), []);
+});
+
+/** The topic that git's previous-checkout syntax turns into `@{-1}` for card 1, `@{-2}` for card 2. */
+const EXPANDING = '@{-{number}}';
+
+test('given the topic @{-{number}} and a repository whose previous checkout is owner-feature holding a commit not on the main line, building L1\'s workspace handle rejects, naming the topic', async (t) => {
+  const here = world(t);
+  previousCheckout(here.repository, 'owner-feature');
+  await assert.rejects(
+    workspaceHandle({ root: here.root, topic: EXPANDING, repository: here.repository, sink: here.sink }),
+    (failure) => failure.message.includes(`\`${EXPANDING}\``),
+  );
+});
+
+test('given the topic @{-{number}} and a repository whose previous checkout is owner-feature holding a commit not on the main line, owner-feature points afterwards at the commit it held before, whatever card is attempted', async (t) => {
+  const here = world(t);
+  const held = previousCheckout(here.repository, 'owner-feature');
+  for (const card of [1, 2, 3]) {
+    await here.make(card, { topic: EXPANDING }).catch(() => {});
+    assert.equal(branchAt(here.repository, 'owner-feature'), held, `card ${card}`);
+  }
+});
+
+/**
+ * A `git` stand-in in a scratch directory that refuses `check-ref-format --branch rigger-3` with the
+ * words git refuses a name with, records every call it is sent in `git-calls`, and hands every
+ * other call on to the real git.
+ */
+function gitRefusingCard3(t) {
+  const directory = scratch(t);
+  fixture(directory, 'git', [
+    'printf \'%s\\n\' "$*" >> "$here/git-calls"',
+    'if [ "$*" = "check-ref-format --branch rigger-3" ]; then echo "fatal: \'rigger-3\' is not a valid branch name" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  return directory;
+}
+
+test('given a git stand-in that accepts card 1\'s derived name and refuses card 3\'s, an attempt at card 3 fails naming card 3\'s name', async (t) => {
+  const here = world(t);
+  const stand = gitRefusingCard3(t);
+  await withFirstOnPath(stand, async () => {
+    const handle = await workspaceHandle({ root: here.root, topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
+    const failure = await refusedNaming(handle(3), join(here.root, 'rigger-3'));
+    assert.ok(failure.message.includes('rigger-3'), failure.message);
+  });
+});
+
+test('given a git stand-in that accepts card 1\'s derived name and refuses card 3\'s, the attempt at card 3 sends git no call that changes a ref or a directory', async (t) => {
+  const here = world(t);
+  const stand = gitRefusingCard3(t);
+  await withFirstOnPath(stand, async () => {
+    const handle = await workspaceHandle({ root: here.root, topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
+    await handle(3).catch(() => {});
+  });
+  const calls = gitCalls(stand);
+  assert.ok(calls.includes('check-ref-format --branch rigger-3'), calls.join('\n'));
+  const questions = /^(check-ref-format --branch |rev-parse |-C \S+ rev-parse |worktree list )/;
+  assert.deepEqual(calls.filter((call) => !questions.test(call)), []);
+  assert.equal(existsSync(here.root), false);
+});
+
+// proves R-WORK-13
+test('given a linked worktree of the repository on branch rigger-42 at card 42\'s workspace path, holding an uncommitted file, an attempt at card 42 makes a fresh workspace there on rigger-42, holding no such file', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'rigger-42');
+  writeFileSync(join(path, 'uncommitted'), 'work\n');
+  const made = await here.make(42);
+  assert.equal(realpathSync(made.path), realpathSync(path));
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(existsSync(join(made.path, 'uncommitted')), false);
+});
+
+/**
+ * A world whose card 42 workspace path, `root/rigger-42`, holds a linked worktree of the
+ * repository on `branch`, holding an uncommitted file, which L1 is handed as the repository, or
+ * whose directory `below` it is handed where one is named.
+ */
+function handedWorld(t, branch, below) {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, branch);
+  writeFileSync(join(path, 'uncommitted'), 'the engine\'s own work\n');
+  const handed = below === undefined ? path : join(path, below);
+  mkdirSync(handed, { recursive: true });
+  const state = () => ({ files: contents(path), worktrees: worktreeList(here.repository) });
+  return { ...here, path, handed, state, attempt: () => here.make(42, { repository: handed }) };
+}
+
+// proves R-WORK-13, R-WORK-15, R-WORK-16
+test('given L1 handed as the repository a linked worktree at root/rigger-42 on branch owner-work, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
+  const here = handedWorld(t, 'owner-work');
+  await refusedNaming(here.attempt(), here.path);
+});
+
+// proves R-WORK-13, R-WORK-15, R-WORK-16
+test('given L1 handed as the repository a linked worktree at root/rigger-42 on branch owner-work, after the attempt at card 42 fails, the uncommitted file is byte-identical, and git worktree list --porcelain prints the same as before', async (t) => {
+  const here = handedWorld(t, 'owner-work');
+  const before = here.state();
+  await here.attempt().catch(() => {});
+  assert.deepEqual(here.state(), before);
+  assert.equal(readFileSync(join(here.path, 'uncommitted'), 'utf8'), 'the engine\'s own work\n');
+});
+
+// proves R-WORK-13, R-WORK-16
+test('given L1 handed as the repository a linked worktree at root/rigger-42 that is on branch rigger-42, an attempt at card 42 fails naming the path, and the worktree\'s files are byte-identical afterwards', async (t) => {
+  const here = handedWorld(t, 'rigger-42');
+  const before = here.state();
+  await refusedNaming(here.attempt(), here.path);
+  assert.deepEqual(here.state(), before);
+});
+
+// proves R-WORK-13, R-WORK-16
+test('given L1 handed as the repository a subdirectory of a linked worktree at root/rigger-42 on branch rigger-42, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
+  const here = handedWorld(t, 'rigger-42', 'below');
+  await refusedNaming(here.attempt(), here.path);
+});
+
+// proves R-WORK-13, R-WORK-16
+test('given L1 handed as the repository a subdirectory of a linked worktree at root/rigger-42 on branch rigger-42, after the attempt at card 42 fails, the uncommitted file is byte-identical, and git worktree list --porcelain prints the same as before', async (t) => {
+  const here = handedWorld(t, 'rigger-42', 'below');
+  const before = here.state();
+  await here.attempt().catch(() => {});
+  assert.deepEqual(here.state(), before);
+  assert.equal(readFileSync(join(here.path, 'uncommitted'), 'utf8'), 'the engine\'s own work\n');
+});
+
+/**
+ * A world with the main working tree as the repository, and an owner's linked worktree on branch
+ * `owner-7` at card 7's workspace path, `root/rigger-7`, holding an uncommitted file and a
+ * read-only one.
+ */
+function ownerWorld(t) {
+  const here = world(t);
+  const path = join(here.root, 'rigger-7');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'owner-7');
+  writeFileSync(join(path, 'uncommitted'), 'the owner\'s work\n');
+  writeFileSync(join(path, 'read-only'), 'the owner\'s\n');
+  chmodSync(join(path, 'read-only'), 0o444);
+  const state = () => ({ files: contents(path), owner: branchAt(here.repository, 'owner-7'), worktrees: worktreeList(here.repository), mode: statSync(join(path, 'read-only')).mode });
+  return { ...here, path, state };
+}
+
+// proves R-WORK-13, R-WORK-15
+test('given the main working tree as the repository, and an owner\'s linked worktree on branch owner-7 at root/rigger-7 holding an uncommitted file, an attempt at card 7 fails naming the path', async (t) => {
+  const here = ownerWorld(t);
+  await refusedNaming(here.make(7), here.path);
+});
+
+// proves R-WORK-13, R-WORK-15
+test('given an owner\'s linked worktree on branch owner-7 at root/rigger-7 holding an uncommitted file, after the attempt at card 7 fails, the file is byte-identical, owner-7 points at the commit it held before, and git worktree list --porcelain prints the same as before', async (t) => {
+  const here = ownerWorld(t);
+  const before = here.state();
+  await here.make(7).catch(() => {});
+  assert.deepEqual(here.state(), before);
+  assert.equal(readFileSync(join(here.path, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+// proves R-WORK-13, R-WORK-15
+test('given an owner\'s linked worktree on owner-7 at card 7\'s workspace path holding a read-only file, after the attempt at card 7 fails, the file\'s mode bits are unchanged', async (t) => {
+  const here = ownerWorld(t);
+  const mode = statSync(join(here.path, 'read-only')).mode;
+  await here.make(7).catch(() => {});
+  assert.equal(statSync(join(here.path, 'read-only')).mode, mode);
+});
+
+/** A linked worktree of the repository at card 42's workspace path whose `HEAD` is detached. */
+function detachedWorld(t) {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(here.root, { recursive: true });
+  worktreeAt(here.repository, path, 'rigger-42');
+  gitIn(path, 'checkout', '-q', '--detach');
+  writeFileSync(join(path, 'uncommitted'), 'detached work\n');
+  return { ...here, path, state: () => ({ head: gitIn(path, 'rev-parse', 'HEAD'), symbolic: gitIn(path, 'rev-parse', '--symbolic-full-name', 'HEAD'), files: contents(path) }) };
+}
+
+// proves R-WORK-13, R-WORK-15
+test('given a linked worktree of the repository with a detached HEAD at card 42\'s workspace path, an attempt at card 42 fails naming the path', async (t) => {
+  const here = detachedWorld(t);
+  await refusedNaming(here.make(42), here.path);
+});
+
+// proves R-WORK-13, R-WORK-15
+test('given a linked worktree of the repository with a detached HEAD at card 42\'s workspace path, after the attempt fails, its HEAD and its files are unchanged', async (t) => {
+  const here = detachedWorld(t);
+  const before = here.state();
+  await here.make(42).catch(() => {});
+  assert.deepEqual(here.state(), before);
+});
+
+/** A symbolic link at card 42's workspace path to card 43's workspace, on `rigger-43`, holding an uncommitted file. */
+async function linkedToCard43(t) {
+  const here = world(t);
+  const other = await here.make(43);
+  writeFileSync(join(other.path, 'uncommitted'), 'card 43\'s work\n');
+  const path = join(here.root, 'rigger-42');
+  symlinkSync(other.path, path);
+  return { ...here, path, other: other.path };
+}
+
+// proves R-WORK-13, R-WORK-15
+test('given a symbolic link at card 42\'s workspace path pointing at card 43\'s workspace on rigger-43, which holds an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
+  const here = await linkedToCard43(t);
+  await refusedNaming(here.make(42), here.path);
+});
+
+// proves R-WORK-13, R-WORK-15
+test('given a symbolic link at card 42\'s workspace path pointing at card 43\'s workspace, after the attempt at card 42 fails, card 43\'s workspace still exists on rigger-43, and its uncommitted file is byte-identical', async (t) => {
+  const here = await linkedToCard43(t);
+  await here.make(42).catch(() => {});
+  assert.equal(branchOf(here.other), 'rigger-43');
+  assert.equal(readFileSync(join(here.other, 'uncommitted'), 'utf8'), 'card 43\'s work\n');
+});
+
+/**
+ * A repository whose main worktree is `W/app-7` on branch `app-7`, holding an uncommitted file and
+ * a read-only one, and a linked worktree of it elsewhere, which L1 is handed as the repository,
+ * with root `W` and topic `app-{number}`.
+ */
+function mainNotHandedWorld(t) {
+  const within = scratch(t);
+  const w = join(within, 'W');
+  const main = repositoryAt(join(w, 'app-7'), { README: 'app\n' });
+  gitIn(main, 'branch', '-M', 'app-7');
+  const elsewhere = worktreeAt(main, join(within, 'elsewhere'), 'elsewhere');
+  writeFileSync(join(main, 'uncommitted'), 'the owner\'s work\n');
+  writeFileSync(join(main, 'read-only'), 'the owner\'s\n');
+  chmodSync(join(main, 'read-only'), 0o444);
+  const sink = openSink({ directory: join(within, '.rigger'), run: 'r-test', now: () => 0 });
+  const attempt = () => makeWorkspace({ root: w, topic: 'app-{number}', card: 7, repository: elsewhere, sink });
+  const state = () => ({ uncommitted: readFileSync(join(main, 'uncommitted'), 'utf8'), readOnly: readFileSync(join(main, 'read-only'), 'utf8'), mode: statSync(join(main, 'read-only')).mode });
+  return { main, attempt, state };
+}
+
+// proves R-WORK-13, R-WORK-14
+test('given L1 handed as the repository a linked worktree elsewhere, and the repository\'s main worktree at W/app-7 on branch app-7, with root W and topic app-{number}, an attempt at card 7 fails naming the path', async (t) => {
+  const here = mainNotHandedWorld(t);
+  await refusedNaming(here.attempt(), here.main);
+});
+
+// proves R-WORK-13, R-WORK-14
+test('given L1 handed a linked worktree elsewhere, and the main worktree at W/app-7 holding a read-only file and an uncommitted file, after the attempt at card 7 fails, both files are byte-identical, and the read-only file\'s mode bits are unchanged', async (t) => {
+  const here = mainNotHandedWorld(t);
+  const before = here.state();
+  await here.attempt().catch(() => {});
+  assert.deepEqual(here.state(), before);
+});
+
+/** A separate clone of the repository at card 7's workspace path on branch `rigger-7`, holding an uncommitted file and a read-only one. */
+function cloneWorld(t) {
+  const here = world(t);
+  const path = cloneInto(here.origin, join(here.root, 'rigger-7'));
+  gitIn(path, 'switch', '-q', '-c', 'rigger-7');
+  writeFileSync(join(path, 'uncommitted'), 'the clone\'s work\n');
+  writeFileSync(join(path, 'read-only'), 'the clone\'s\n');
+  chmodSync(join(path, 'read-only'), 0o444);
+  const state = () => ({ uncommitted: readFileSync(join(path, 'uncommitted'), 'utf8'), readOnly: readFileSync(join(path, 'read-only'), 'utf8'), mode: statSync(join(path, 'read-only')).mode, status: gitIn(path, 'status', '--porcelain') });
+  return { ...here, path, state };
+}
+
+// proves R-WORK-13, R-WORK-14
+test('given a separate clone of the repository at card 7\'s workspace path, on branch rigger-7, an attempt at card 7 fails naming the path', async (t) => {
+  const here = cloneWorld(t);
+  await refusedNaming(here.make(7), here.path);
+});
+
+// proves R-WORK-13, R-WORK-14
+test('given a separate clone at card 7\'s workspace path holding a read-only file and an uncommitted file, after the attempt at card 7 fails, both files are byte-identical, the read-only file\'s mode bits are unchanged, and the clone\'s git status --porcelain prints the same as before', async (t) => {
+  const here = cloneWorld(t);
+  const before = here.state();
+  await here.make(7).catch(() => {});
+  assert.deepEqual(here.state(), before);
 });
