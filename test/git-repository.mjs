@@ -20,13 +20,22 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
  * files and an overwritten `user.name` landing in a repository nobody named, and card #152 wrote
  * the same spawn back in afterwards.
  *
+ * It also withholds `GIT_REFLOG_ACTION`, which `git merge` exports to the suite its
+ * `pre-merge-commit` hook runs. Git writes that variable's value in place of the reflog message a
+ * fixture's `switch` or `commit` would write, and `@{-1}` reads only `checkout: moving from`
+ * entries, so under it a fixture's previous checkout names nothing. Measured with git 2.54.0 on
+ * macOS 27.0 on 2026-10-01; the run is in
+ * `docs/journal/2026-10-01-1400-508-a-merge-relabels-the-fixture-reflog.md`. Only the fixture
+ * withholds it: L0 only reads that reflog, and its answer did not move with it.
+ *
  * It refuses by throwing rather than by asserting, so the fixture carries no runner of its own and
  * the caller reads git's own complaint. A throw fails the test that called it exactly as the
  * status comparison each call site made for itself used to.
  */
 export function gitIn(root, ...args) {
+  const { GIT_REFLOG_ACTION, ...env } = gitEnvironment();
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnvironment() });
+    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', env });
   } catch (refused) {
     throw new Error(`git ${args.join(' ')} in ${root} failed: ${refused.stderr ?? refused.message}`);
   }
