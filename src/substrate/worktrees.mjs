@@ -319,11 +319,12 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     },
 
     /**
-     * The real path of the top of the working tree git finds for the path this adapter was handed,
-     * which, for a directory below a worktree, is the worktree's, not the directory's.
+     * The real path, by `realpath(3)`, of the top of the working tree git finds for the path this
+     * adapter was handed, which, for a directory below a worktree, is the worktree's, not the
+     * directory's.
      */
     async topLevel() {
-      return realpathSync((await answer(['rev-parse', '--path-format=absolute', '--show-toplevel'])).replace(/\n$/, ''));
+      return realpathSync.native((await answer(['rev-parse', '--path-format=absolute', '--show-toplevel'])).replace(/\n$/, ''));
     },
 
     /**
@@ -352,10 +353,15 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
   };
 }
 
-/** `path`'s real path, or nothing where no file is there to resolve. */
+/**
+ * `path`'s real path, or nothing where no file is there to resolve. The real path is the file
+ * system's own, `realpath(3)`, in the case the disk holds: git prints paths in that case, while
+ * Node's JavaScript `realpathSync` keeps the case it was handed, so on a volume that folds case
+ * two spellings of one directory would compare as two.
+ */
 function realOrNothing(path) {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return undefined;
   }
