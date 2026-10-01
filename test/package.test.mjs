@@ -8,13 +8,17 @@ import { spawnSync } from 'node:child_process';
 import {
   copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import template from '../templates/rigger.config.mjs';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { installFromTarball as installRigger } from './installed-rigger.mjs';
 import { gitCalls, gitRecording, holding } from './process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
@@ -249,6 +253,38 @@ test('the installed rigger init, run against a target inside the installed packa
 test('the installed rigger init, run against the target whose node_modules it is installed under, exits non-zero naming R-SAFE-5, asks git nothing, and changes no file under the target', (t) => {
   const { consumer } = installFromTarball();
   initRefusesInstalled(t, consumer, consumer);
+});
+
+test('the installed rigger once, run against a fixture repository and a fake board, leaves its workspace at a path outside both the fixture\'s checkout and the installed package', (t) => {
+  const { rigger, path } = installFromTarball();
+  const installedAt = realpathSync(join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger'));
+  const directory = holding(t);
+  const config = {
+    ...template,
+    repo: 'acme/widgets',
+    board: { ...template.board, project: 3 },
+    kinds: Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])),
+  };
+  const fixture = withOrigin(repositoryAt(join(directory, 'fixture'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
+  mkdirSync(join(directory, 'fake'));
+  installFakeGh(join(directory, 'fake'), {
+    repo: 'acme/widgets',
+    project: 3,
+    board: {
+      columns: Object.values(template.board.columns),
+      fields: [{ name: template.board.priority.field, options: template.board.priority.options }],
+      items: [{ type: 'issue', repository: 'acme/widgets', number: 10, title: 'Card 10', body: '## Acceptance\n\n- The widget turns blue when pressed.\n', labels: ['type:change'], column: template.board.columns.ready }],
+    },
+  });
+
+  const ran = spawnSync(rigger, ['once'], { cwd: fixture, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${join(directory, 'fake')}:${path}` } });
+
+  const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; .*, so it stopped at its workspace, (\/.*)$/m)?.[1];
+  assert.ok(workspace && existsSync(workspace), said);
+  const outside = (tree) => !`${realpathSync(workspace)}/`.startsWith(`${realpathSync(tree)}/`);
+  assert.ok(outside(fixture), `${workspace} lies inside the fixture's checkout, ${fixture}`);
+  assert.ok(outside(installedAt), `${workspace} lies inside the installed package, ${installedAt}`);
 });
 
 test('every script the repository defines is reachable from npm run', () => {

@@ -52,17 +52,19 @@ const NAMES = [
 ];
 
 /**
- * The functions no module outside src/scheduling/ may bind, each the function its module exports as
- * `exported`, whatever that function is called where it is defined. Rule 8 holds L3's dispatching
- * entry point there, and rule 9 L1's dispatching function, because L3 alone gives L1 dispatches
- * (`ARCHITECTURE.md`, boundary rule 2; the M1 architect's ruling 5, §4). Rule 9 bars that one
+ * The functions no module outside the directories `holders` names may bind, each the function its
+ * module exports as `exported`, whatever that function is called where it is defined. Rule 8 holds
+ * L3's dispatching entry point in src/scheduling/ and src/cli/, since a verb fires L3's pull
+ * (architect Q4 on #423), and rule 9 L1's dispatching function in src/scheduling/ alone, because
+ * L3 alone gives L1 dispatches (`ARCHITECTURE.md`, boundary rule 2; the M1 architect's ruling 5,
+ * §4). Rule 9 bars that one
  * function and nothing else L1 exports (the architect's ruling 1, P1, on #332), so the CLI may
  * import L1's kill of recorded groups. A binding holds one as a binding holds a write side: through
  * the hand-on steps the reader of what each binding holds follows, and no further.
  */
 const HELD = [
-  { rule: 'rule 8', file: 'src/scheduling/loop.mjs', exported: 'loop', what: 'L3\'s dispatching entry point' },
-  { rule: 'rule 9', file: 'src/execution/run.mjs', exported: 'dispatch', what: 'L1\'s dispatching function' },
+  { rule: 'rule 8', file: 'src/scheduling/loop.mjs', exported: 'loop', what: 'L3\'s dispatching entry point', holders: ['src/scheduling/', 'src/cli/'] },
+  { rule: 'rule 9', file: 'src/execution/run.mjs', exported: 'dispatch', what: 'L1\'s dispatching function', holders: ['src/scheduling/'] },
 ];
 
 /**
@@ -1456,11 +1458,9 @@ export function boundaryReport(tree) {
         }
       }
     }
-    if (!file.startsWith('src/scheduling/')) {
+    for (const each of held.filter(({ holders }) => !holders.some((directory) => file.startsWith(directory)))) {
       for (const { line, name, definitions } of bindings) {
-        for (const each of held) {
-          if (holds(definitions, each)) report(file, line, each.rule, `it binds \`${name}\`, which holds ${each.what}, and only src/scheduling/ may hold it`);
-        }
+        if (holds(definitions, each)) report(file, line, each.rule, `it binds \`${name}\`, which holds ${each.what}, and only ${each.holders.join(' and ')} may hold it`);
       }
     }
     for (const { line, name, definitions } of handedOn) {

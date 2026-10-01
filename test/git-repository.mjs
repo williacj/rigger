@@ -98,6 +98,16 @@ export function bareCloneInto(from, into) {
 }
 
 /**
+ * Gives the repository at `repository` a local `origin`: a bare clone of it made at `into`, as the
+ * forge's main line a workspace starts from. Hands back `repository`.
+ */
+export function withOrigin(repository, into) {
+  bareCloneInto(repository, into);
+  gitIn(repository, 'remote', 'add', 'origin', into);
+  return repository;
+}
+
+/**
  * A worktree of the repository at `repository`, made at `path` on a new branch `branch` by git
  * itself, for a test whose subject is what it finds there rather than how it was made. `flags`
  * go to `git worktree add` as they are, such as `--lock`.

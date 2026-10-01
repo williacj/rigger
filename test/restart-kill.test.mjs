@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, constants as files, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as files, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,7 +15,7 @@ import { once as onceVerb } from '../src/cli/once.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { repositoryAt } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,8 +53,9 @@ function consumerIn(t, items, { hangs = false } = {}) {
   const started = [];
   t.after(() => Promise.all(started.map(ended)));
   const directory = holding(t);
-  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency: 3 };
-  const repository = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
+  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency: 3, kinds };
+  const repository = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   mkdirSync(join(directory, 'fake'));
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
@@ -192,14 +193,16 @@ function assertKillsFirst(world, pids) {
 }
 
 /**
- * Asserts that the restart through `verb` started no dispatch of its own, and printed for the card
- * it claimed exactly what `once` and `run` print at the base: they dispatch nothing before M4.
+ * Asserts that the restart through `verb` dispatched no maker of its own, and printed for the card
+ * it claimed exactly what `once` and `run` print in M3: its workspace, and that no maker runs
+ * before M4. The world's kinds list no step, so no dispatch of the restart's arises at all.
  */
-function assertNoDispatchOfItsOwn(world, verb, ran) {
+function assertNoMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
-  assert.deepEqual(restarted.filter((event) => event.layer === 'L1' || (event.dispatch !== undefined && event.event !== 'recorded.killed')), []);
+  assert.deepEqual(restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed'), []);
   assert.equal(ran.stdout, '');
-  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}, and it was not worked: dispatch arrives with M2 and M4\n`);
+  const workspace = join(realpathSync(world.directory), 'widgets-worktrees', 'rigger-10');
+  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}; no maker runs before M4, so it stopped at its workspace, ${workspace}\n`);
 }
 
 /**
@@ -222,8 +225,8 @@ async function neitherAliveAtFirstRead(t, verb) {
 
 /**
  * The same restart through `verb`: asserts that the stream holds each kill under the killed
- * dispatch's id and card, every one before the restart's first L3 event, and that `verb` started
- * no dispatch of its own and printed what the base prints.
+ * dispatch's id and card, every one before the restart's first L3 event, and that `verb`
+ * dispatched no maker of its own and printed what M3's verb prints.
  */
 async function killsRecordedFirst(t, verb) {
   const world = consumerIn(t, [card(10)]);
@@ -232,7 +235,7 @@ async function killsRecordedFirst(t, verb) {
   const ran = await restart(world, verb);
 
   assertKillsFirst(world, [pids.command, pids.child]);
-  assertNoDispatchOfItsOwn(world, verb, ran);
+  assertNoMakerOfItsOwn(world, verb, ran);
 }
 
 // proves R-STATE-10
@@ -242,10 +245,10 @@ test('given the engine SIGKILLed after a dispatched command and its child have s
 test('given the engine SIGKILLed after a dispatched command and its child have signalled they are running, and while both run, rigger run started afterwards leaves neither alive when its first board read reaches the forge stand-in', SETTLES_WITHIN, (t) => neitherAliveAtFirstRead(t, 'run'));
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger once, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and once started no dispatch of its own and printed what the base prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'once'));
+test('after that restart through rigger once, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and once dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'once'));
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run started no dispatch of its own and printed what the base prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
+test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
 
 /**
  * Opens the FIFO `name` in `directory` for writing, and closes it, which lets its reader go on. The
@@ -325,14 +328,14 @@ test('given the engine\'s record of its dispatch\'s group held back until after 
 });
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger once, the stream holds the child\'s kill under the killed dispatch\'s id and card, before the restart\'s first L3 event, and once started no dispatch of its own and printed what the base prints', SETTLES_WITHIN, async (t) => {
+test('after that restart through rigger once, the stream holds the child\'s kill under the killed dispatch\'s id and card, before the restart\'s first L3 event, and once dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, async (t) => {
   const world = consumerIn(t, [card(10)]);
   const pids = await leaderGoneAfterDeath(t, world);
 
   const ran = await restart(world, 'once');
 
   assertKillsFirst(world, [pids.child]);
-  assertNoDispatchOfItsOwn(world, 'once', ran);
+  assertNoMakerOfItsOwn(world, 'once', ran);
 });
 
 test('the engine standing in for Rigger mid-dispatch allocates each dispatch an id that no other dispatch in the same state directory holds, across runs', SETTLES_WITHIN, async (t) => {

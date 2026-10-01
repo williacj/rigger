@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -130,6 +131,18 @@ export async function until(condition, { signal }) {
 
 /** The pid of every child a fixture in `directory` left through `leave` as `child-<pid>`. */
 export const childrenIn = (directory) => readdirSync(directory).filter((name) => /^child-\d+\.pid$/.test(name)).map((name) => Number(read(directory, name)));
+
+/**
+ * The pid of the child among those `childrenIn` reads whose pid file has the earliest birth time,
+ * which is the first a fixture in `directory` left, or nothing where none did. Not the first by
+ * name: pid files sort by the stand-in's pid, and neither their names nor a numeric sort survive
+ * the pid counter wrapping below a pid already listed.
+ */
+export function firstChildIn(directory) {
+  const born = (name) => statSync(join(directory, name)).birthtimeMs;
+  const [first] = readdirSync(directory).filter((name) => /^child-\d+\.pid$/.test(name)).sort((one, other) => born(one) - born(other));
+  return first === undefined ? undefined : Number(read(directory, first));
+}
 
 /** Whether `pid` has gone within `within` ms, looked at once per turn of the event loop. */
 export async function gone(pid, within = 10_000) {

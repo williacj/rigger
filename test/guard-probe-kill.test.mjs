@@ -6,7 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,8 +16,8 @@ import { agentAuth, sourceTreeGuard } from '../src/cli/doctor.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { gitIn, repositoryIn } from './git-repository.mjs';
-import { alive, childrenIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, warmed, withFirstOnPath } from './process-fixtures.mjs';
+import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.mjs';
+import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, warmed, withFirstOnPath } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
@@ -34,9 +35,14 @@ const BOARD = {
   }],
 };
 
-/** A consumer's repository holding `config`, the template's for that board unless given, and its state directory. */
-function consumer(config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } }) {
-  const where = repositoryIn('rigger-guard-kill-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+/**
+ * A consumer's repository holding `config`, the template's for that board with kinds listing no
+ * provisioning unless given, with a local bare `origin` beside it in a directory of its own, and
+ * its state directory.
+ */
+function consumer(config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds: Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])) }) {
+  const directory = mkdtempSync(join(tmpdir(), 'rigger-guard-kill-'));
+  const where = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   return { where, state: join(where, '.rigger') };
 }
 
@@ -61,7 +67,7 @@ const eventsIn = (text) => text.split('\n').filter((line) => line.startsWith('{'
 
 /** Asserts `events` hold the kill of the child the stand-in in `directory` left, by its name and command line. */
 function holdsChildKill(events, directory, said) {
-  const [child] = childrenIn(directory);
+  const child = firstChildIn(directory);
   const kills = events.filter((event) => event.layer === 'L0' && event.pid === child);
   assert.equal(kills.length, 1, said);
   assert.equal(kills[0].name, 'tail', said);
@@ -103,7 +109,7 @@ test('given a git stand-in for the guard that leaves a child alive, and a target
   const said = `exited ${ran.code}: ${ran.out}${ran.err}`;
   const events = readEvents(state);
   holdsChildKill(events, directory, said);
-  const [child] = childrenIn(directory);
+  const child = firstChildIn(directory);
   const at = events.findIndex((event) => event.pid === child);
   assert.ok(events.length > 1, `once recorded nothing after the guard, so this proves nothing: ${said}`);
   assert.deepEqual(events.slice(0, at), [], said);
