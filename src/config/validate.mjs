@@ -83,6 +83,9 @@ export const SHAPES = {
     agent: { required: true },
     provider: { required: true },
     tier: { required: true },
+    // Optional: a card label mapped to the tier it selects for this role. A card carrying none of
+    // them runs the role at its `tier` (`ARCHITECTURE.md`, below the extension-point table).
+    labels: {},
   },
   kind: {
     select: { required: true, keys: 'select' },
