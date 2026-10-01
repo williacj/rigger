@@ -133,6 +133,15 @@ export function worktreeAt(repository, path, branch, ...flags) {
 }
 
 /**
+ * A worktree of the repository at `repository`, made at `path` by git itself with its `HEAD`
+ * detached at `commit`, making no branch, as a judge's directory holds them.
+ */
+export function detachedWorktreeAt(repository, path, commit) {
+  gitIn(repository, 'worktree', 'add', '--quiet', '--detach', path, commit);
+  return path;
+}
+
+/**
  * Makes `branch` the previous checkout in the repository at `repository`, holding a commit its
  * current branch does not, and checks the current branch out again, so `@{-1}` names `branch`.
  * Hands back the commit `branch` holds.

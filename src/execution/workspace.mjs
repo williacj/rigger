@@ -2,7 +2,7 @@
 // the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
 // at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
-import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
@@ -90,18 +90,73 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
   const path = join(root, 'judges', topicFor(topic, card), role);
   const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
   const trees = { main: join(path, 'main'), head: join(path, 'head') };
-  let main;
-  try {
-    ({ commit: main } = await adapter.fetchMainLine());
+  /** Runs `work`, rejecting as a judge's directory L1 could not make where it rejects. */
+  const step = async (work) => {
+    try {
+      return await work();
+    } catch (cause) {
+      throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
+    }
+  };
+  const { main, removed } = await step(async () => {
+    const { commit } = await adapter.fetchMainLine();
     const { held, why } = await adapter.holdsAfterFetch(head);
     if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
+    return { main: commit, removed: await judgeCleared({ adapter, path, repository }) };
+  });
+  if (removed) recorded(events, card, 'workspace.removed', { role, path });
+  await step(async () => {
     await adapter.makeDetached(trees.main, main);
     await adapter.makeDetached(trees.head, head);
-  } catch (cause) {
-    throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
-  }
+  });
   recorded(events, card, 'workspace.made', { role, path, main, head });
   return { path, ...trees };
+}
+
+/**
+ * Clears a judge's directory at `path` under `R-WORK-20` to `R-WORK-23`, and hands back whether
+ * it removed one. Nothing there is nothing to clear. Otherwise the path must be a directory, not a
+ * symbolic link, and everything in it a directory L0 finds a linked worktree of the repository, at
+ * a detached commit; neither the path nor anything inside it, by real path, may be the worktree
+ * git reports for `repository`, the worktree L1 was handed; and git may list no other worktree of
+ * the repository inside it. Anything else fails naming the path before any git call that could
+ * write, so nothing there changes. A path whose real path, or whose contents, L1 cannot read fails
+ * the same way, since L1 cannot tell what is there.
+ */
+async function judgeCleared({ adapter, path, repository }) {
+  const leaves = (why) => new Error(`${path} ${why}, so L1 leaves it as it is`);
+  let there;
+  try {
+    there = lstatSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw leaves(`cannot be read: ${error.message}`);
+  }
+  if (!there.isDirectory()) throw leaves('is not a directory');
+  let real;
+  let names;
+  try {
+    real = realpathSync.native(path);
+    names = readdirSync(real);
+  } catch (error) {
+    throw leaves(`cannot be read: ${error.message}`);
+  }
+  const handed = realpathSync.native(await adapter.topLevel());
+  if (handed === real || within(path, real, handed)) throw leaves(`holds the worktree L1 was handed as the repository, at ${repository}`);
+  const trees = [];
+  for (const name of names) {
+    const tree = join(real, name);
+    if (!lstatSync(tree).isDirectory() || !(await adapter.isWorktree(tree))) throw leaves(`holds ${tree}, which is not a worktree of the repository`);
+    const held = await adapter.registration(tree);
+    if (!held?.detached) throw leaves(`holds ${tree}, a worktree of the repository on the branch ${held?.branch}, not at a detached commit`);
+    trees.push(realpathSync.native(tree));
+  }
+  const nested = (await adapter.registered()).find((listed) => within(path, real, listed) && !trees.includes(realpathSync.native(listed)));
+  if (nested !== undefined) throw leaves(`holds another worktree of the repository, at ${nested}`);
+  writable(real);
+  for (const tree of trees) await adapter.remove(tree);
+  rmdirSync(real);
+  return true;
 }
 
 /**
