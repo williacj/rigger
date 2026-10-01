@@ -209,6 +209,10 @@ async function judgeCleared(adapter, { real, present: there, trees, unlocking })
 /**
  * Clears card `card`'s workspace path, `path`, for a workspace on `branch`, under the replace rule
  * above, and hands back the real path of the workspace it removed, or nothing where none was there.
+ *
+ * Every path is compared by the file system's own real path, `realpath(3)`, as L0's checks compare
+ * them, since the root reaches L1 in whatever case its caller spelled it and git prints paths in
+ * the case the disk holds.
  */
 async function cleared({ adapter, card, branch, path, repository }) {
   if (!present(path)) {
@@ -218,7 +222,7 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (!(await adapter.isWorktree(path))) {
     throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
   }
-  const real = realpathSync(path);
+  const real = realpathSync.native(path);
   if (real === (await adapter.topLevel())) {
     throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
   }
@@ -227,8 +231,7 @@ async function cleared({ adapter, card, branch, path, repository }) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
     throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
   }
-  const own = realpathSync.native(path);
-  const nested = (await adapter.registered()).find((listed) => within(path, own, listed));
+  const nested = (await adapter.registered()).find((listed) => within(path, real, listed));
   if (nested !== undefined) {
     throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }

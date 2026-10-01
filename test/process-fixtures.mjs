@@ -9,20 +9,61 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { statSync } from 'node:fs';
+import { chmodSync, lstatSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * A scratch directory for one test, torn down with every process that names it.
+ * A scratch directory for one test, torn down with every process that names it, and then removed.
  *
  * Every fixture process a test starts carries the directory's path in its command line, so the
- * teardown finds each one by it, whether the test passed or failed, and whatever the code under
- * test did.
+ * teardown finds each one by it, as `find` lists them, whether the test passed or failed, and
+ * whatever the code under test did. It removes the directory last of the test's teardown, and only
+ * once `sweep` has found none left; where one is, it fails naming it and leaves the directory.
  */
-export function scratch(t) {
+export function scratch(t, find = running) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
-  t.after(() => sweep(directory));
+  let ran = false;
+  const removal = () => {
+    if (ran) return;
+    ran = true;
+    sweep(directory, find);
+    removed(directory);
+  };
+  t.after(() => {
+    sweep(directory, find);
+    // The test's own teardown, registered after this, may still need the directory, as one giving
+    // back a permission it took does. `node:test` runs a hook added during teardown after every
+    // other, so the removal waits for theirs, and sweeps once more first.
+    t.after(removal);
+    // A hook of the test's own that throws stops every hook after it, this removal's included.
+    // `node:test` aborts the test's signal once its hooks have run, however they ended, so the
+    // removal runs then where its hook did not. A signal a timeout already aborted never fires
+    // again, so the removal never runs before the hooks. A stand-in context with no signal, which
+    // runs the hooks it holds itself, has only the hook.
+    t.signal?.addEventListener('abort', removal, { once: true });
+  });
   return directory;
+}
+
+/**
+ * Removes `directory` and everything in it, after giving its owner write permission on every
+ * directory inside it, which a test may have taken away. Neither step follows a symbolic link: each
+ * is removed as a link, and what it points to is left alone. A `directory` already gone is left so.
+ */
+function removed(directory) {
+  if (!existsSync(directory)) return;
+  writable(directory);
+  rmSync(directory, { recursive: true });
+}
+
+/** Gives the owner read, write and search permission on `directory` and every directory in it. */
+function writable(directory) {
+  if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is no longer a directory, so its teardown removes nothing through it`);
+  chmodSync(directory, lstatSync(directory).mode | 0o700);
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) writable(join(directory, entry.name));
+  }
 }
 
 /**
