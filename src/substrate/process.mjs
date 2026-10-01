@@ -1130,6 +1130,17 @@ function workingIn(printed, directory) {
   return pids;
 }
 
+/** Sends `SIGSTOP` to the process `pid`: `sent`, or `ESRCH` where it has gone, or `EPERM` where Rigger may not signal it. */
+function halt(pid) {
+  try {
+    process.kill(pid, 'SIGSTOP');
+    return 'sent';
+  } catch (error) {
+    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
+    return error.code;
+  }
+}
+
 /** Sends `name` to the process `pid`, and whether it reached it. */
 function sent(pid, name) {
   try {
@@ -1153,8 +1164,16 @@ function sent(pid, name) {
  * exec, nor fork, nor leave the directory. It lists them again, stopped, and resumes any no longer
  * working there: a pid handed on to another process between the list and the stop. It reads the
  * rest's names and command lines, then their states again, keeping them only where each is still
- * stopped, and kills them. It ends at the first list that holds none, so a process forked between a
- * list and the stop is killed in a later round. It never resumes a process it found working there.
+ * stopped, and kills them. It ends only at a list holding no process but those Rigger may not
+ * signal. A listed process that has gone before the stop is listed again, so one it forked between
+ * the list and the stop is killed in a later round. A directory whose processes go on forking
+ * successors faster than a round ends holds the census until its read timeout, and is then recorded
+ * as unread.
+ *
+ * It resumes a process it stopped only where a later list no longer finds it working there, or where
+ * the census gives up before it has listed that process again: a failed read leaves nothing it
+ * stopped stopped. A process it has listed again, stopped, it kills, by name or, where a later read
+ * fails, unnamed.
  *
  * Where the exit cleanup's census runs while the call's is reading, it kills what the call's had
  * stopped in the directory. A process the call's had stopped and not yet listed again, which can
@@ -1197,11 +1216,19 @@ function* sweeping(directory, lsof) {
       if (wait > 0) yield wait;
       const found = yield* list();
       resume([...held].filter((pid) => !found.includes(pid)));
-      for (const pid of found) if (!ours.has(pid) && sent(pid, 'SIGSTOP')) held.add(pid);
-      // A process the stop did not reach has gone, or is one Rigger may not signal, as a
-      // set-user-id program's is, so it is not this user's to end.
+      // A process the stop could not reach either has gone, and is listed again, since it may have
+      // forked first, or is one Rigger may not signal, as a set-user-id program's is, and so not
+      // this user's to end. So the census ends at a list holding only processes of the second kind.
+      const forbidden = new Set();
+      for (const pid of found) {
+        if (ours.has(pid)) continue;
+        const stop = halt(pid);
+        if (stop === 'sent') held.add(pid);
+        if (stop === 'EPERM') forbidden.add(pid);
+      }
       const pids = [...held, ...ours];
-      if (pids.length === 0) return { kills };
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid))) return { kills };
+      if (pids.length === 0) continue;
       const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
       if (!stopped(before)) continue;

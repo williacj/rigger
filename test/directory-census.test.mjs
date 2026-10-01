@@ -10,8 +10,8 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 
 import { join } from 'node:path';
 
 import { openSink, readEvents } from '../src/observation/sink.mjs';
-import { readGroups } from '../src/execution/groups.mjs';
-import { dispatch } from '../src/execution/run.mjs';
+import { readGroups, writeGroups } from '../src/execution/groups.mjs';
+import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, fixture, gone, holding, leave, leaveWorking, read, until, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -279,38 +279,48 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
 
 /**
  * A caller of its own: a Node process that dispatches `command` through L1's function in the
- * workspace given as its first argument, with its state directory inside it, ends its sink at its
- * exit, and then waits until it is signalled.
+ * workspace given as its first argument, reading working directories through the `lsof` given as
+ * its third where there is one, with its state directory inside it, ends its sink at its exit, and
+ * then waits until it is signalled.
  */
 const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
   `import { dispatch } from ${moduleAt('../src/execution/run.mjs')};`,
   `import { atExit } from ${moduleAt('../src/substrate/process.mjs')};`,
   "import { join } from 'node:path';",
-  'const [directory, command] = process.argv.slice(2);',
+  'const [directory, command, lsof] = process.argv.slice(2);',
   "const state = join(directory, '.rigger');",
   "const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });",
   'atExit(sink.end);',
-  "dispatch({ id: 'd-term', card: 7, directory: state, sink, command, args: [], cwd: directory, workspace: directory, env: {}, timeout: 600_000 }).catch(() => {});",
+  "dispatch({ id: 'd-term', card: 7, directory: state, sink, command, args: [], cwd: directory, workspace: directory, env: {}, timeout: 600_000, lsof: lsof || undefined }).catch(() => {});",
   'setInterval(() => {}, 1_000);',
 ].join('\n');
 
-// proves R-STATE-17, R-STATE-9
-test('given a dispatch running with a process that left its group, working under the dispatch\'s directory, when the calling process receives SIGTERM, that process is not alive afterwards', SETTLES_WITHIN, async (t) => {
-  const directory = holding(t);
-  const command = holdingInSub(directory);
-  // Its command line names the scratch directory, so the teardown ends it whatever the test did.
+/**
+ * Starts `CALLER` in `directory` on `command`, through `lsof` where it is given, waits until the
+ * command marks `ready`, sends the caller SIGTERM, and settles once it has ended, on the signal that
+ * ended it and what it wrote to standard error. Its command line names the scratch directory, so
+ * the teardown ends it whatever the test did.
+ */
+async function terminated(t, directory, command, lsof = '') {
   writeFileSync(join(directory, 'caller.mjs'), CALLER);
-  const caller = spawn(process.execPath, [join(directory, 'caller.mjs'), directory, command], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const caller = spawn(process.execPath, [join(directory, 'caller.mjs'), directory, command, lsof], { stdio: ['ignore', 'ignore', 'pipe'] });
   t.after(() => caller.kill('SIGKILL'));
   let said = '';
   caller.stderr.on('data', (chunk) => { said += chunk; });
   const exited = once(caller, 'exit');
   await until(() => existsSync(join(directory, 'ready')) || caller.exitCode !== null, t);
   assert.ok(existsSync(join(directory, 'ready')), `the caller ended before its dispatch was up: ${said}`);
-
   caller.kill('SIGTERM');
   const [, signal] = await exited;
+  return { signal, said };
+}
+
+// proves R-STATE-17, R-STATE-9
+test('given a dispatch running with a process that left its group, working under the dispatch\'s directory, when the calling process receives SIGTERM, that process is not alive afterwards', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+
+  const { signal, said } = await terminated(t, directory, holdingInSub(directory));
 
   assert.equal(signal, 'SIGTERM', said);
   const left = Number(read(directory, 'left.pid'));
@@ -318,4 +328,124 @@ test('given a dispatch running with a process that left its group, working under
   assert.equal(await gone(left), true, 'the process working under the dispatch\'s directory is alive');
   const kills = readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === left);
   assert.equal(kills.length, 1, `the cleanup did not record the process's kill: ${said}`);
+});
+
+/**
+ * The program of a process P that leaves the command's group and works in `$here/sub`, writes its
+ * pid to `p.pid`, and waits until the census has listed it, which the stand-in `listingOnce` marks
+ * as `go`. It then forks Q, which works in `sub/` too, writes its pid to `q.pid` and runs `tail`
+ * until killed, and exits once Q has written it. So Q is in no list the census made before P exited.
+ */
+const HOPPER = [
+  'my $h = $ARGV[0]; setpgrp(0, 0) or die "leave: $!"; chdir "$h/sub" or die "chdir: $!";',
+  'open(my $p, ">", "$h/p.pid.tmp") or die; print $p $$; close $p; rename "$h/p.pid.tmp", "$h/p.pid" or die;',
+  '1 until -e "$h/go";',
+  'my $q = fork // die "fork: $!";',
+  'if (!$q) { open(my $f, ">", "$h/q.pid.tmp") or die; print $f $$; close $f; rename "$h/q.pid.tmp", "$h/q.pid" or die; exec "/usr/bin/tail", "-f", "$h/hold"; }',
+  '1 until -e "$h/q.pid"; exit 0;',
+].join(' ');
+
+/** The lines of a fixture that start P (`HOPPER`) in the background, and wait until it is working in `sub/`. */
+const hopping = ['/bin/mkdir -p "$here/sub"', `/usr/bin/perl -e '${HOPPER}' "$here" &`, 'while [ ! -f "$here/p.pid" ]; do :; done'].join('\n');
+
+/**
+ * A stand-in for `lsof` in `directory` whose first answer is the real `lsof`'s, kept in
+ * `first-listing`, and given back only once P, which that answer lists, has exited and been reaped,
+ * having forked Q. Every later call is the real `lsof`. It is warmed, so its first exec is not held
+ * past a read's timeout.
+ */
+const listingOnce = (directory) => warmed(fixture(directory, 'lsof', [
+  'if [ ! -f "$here/listed" ]; then',
+  '  /usr/sbin/lsof "$@" > "$here/first-listing"; status=$?',
+  '  : > "$here/listed"; : > "$here/go"',
+  '  p=$(/bin/cat "$here/p.pid")',
+  '  while kill -0 "$p" 2>/dev/null; do :; done',
+  '  /bin/cat "$here/first-listing"; exit $status',
+  'fi',
+  'exec /usr/sbin/lsof "$@"',
+].join('\n')));
+
+/**
+ * Asserts that the census's first list in `directory` named P and not Q, so Q was forked after it,
+ * and that Q has gone, its kill recorded as `killed` in the stream in `state`.
+ */
+async function assertSuccessorEnded(directory, state, killed) {
+  const [p, q] = ['p', 'q'].map((name) => Number(read(directory, `${name}.pid`)));
+  const first = read(directory, 'first-listing').split('\n');
+  assert.ok(first.includes(`p${p}`) && !first.includes(`p${q}`), `the census's first list did not name P alone, so the test proves nothing: ${first.join(' ')}`);
+  assert.equal(await gone(q), true, 'the process P forked in the directory after the census listed P is alive');
+  assert.deepEqual(readEvents(state).filter((event) => event.pid === q).map(({ event, name }) => ({ event, name })), [{ event: killed, name: 'tail' }]);
+}
+
+// proves R-STATE-17, R-STATE-7
+test('given a dispatch exiting 0 whose process outside its group, once the census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive when the dispatch settles, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${hopping}\nexit 0`);
+
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof: listingOnce(directory) });
+
+  await assertSuccessorEnded(directory, stateOf(directory), 'survivor.killed');
+});
+
+// proves R-STATE-17, R-STATE-8
+test('given a dispatch outliving its timeout whose process outside its group, once the census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive when the dispatch settles, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = warmed(fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`));
+
+  const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof: listingOnce(directory), timeout: 3_000 });
+
+  assert.ok(existsSync(join(directory, 'ready')), 'the timeout ended the command before it had started P, so the test proves nothing');
+  assert.equal(result.timedOut, true);
+  await assertSuccessorEnded(directory, stateOf(directory), 'survivor.killed');
+});
+
+// proves R-STATE-17, R-STATE-9
+test('given a dispatch whose process outside its group, once the exit cleanup\'s census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive after the caller receives SIGTERM, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`);
+
+  const { signal, said } = await terminated(t, directory, command, listingOnce(directory));
+
+  assert.equal(signal, 'SIGTERM', said);
+  await assertSuccessorEnded(directory, stateOf(directory), 'survivor.killed');
+});
+
+// proves R-STATE-17, R-STATE-10
+test('given a recorded dispatch whose process, once a start\'s census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the start leaves the successor not alive, and records its kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const state = stateOf(directory);
+  // A group no process holds any longer, as a dead engine's emptied group is left.
+  const leader = spawnSync('/usr/bin/true');
+  writeGroups(state, [{ group: leader.pid, started: 0, dispatch: 'd-dead', card: 1412, workspace: realpathSync.native(directory) }]);
+  spawnSync('/bin/sh', [fixture(directory, 'hop', `${hopping}\nexit 0`)], { stdio: 'ignore' });
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+
+  await killRecordedGroups({ directory: state, sink, lsof: listingOnce(directory) });
+
+  await assertSuccessorEnded(directory, state, 'recorded.killed');
+});
+
+// proves R-STATE-17
+test('given a process outside every group Rigger created whose working directory is the dispatch\'s directory itself, it is not alive when the dispatch settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const at = await tailIn(t, directory, directory);
+
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true' });
+
+  assert.equal(alive(at), false, 'the process working in the dispatch\'s directory itself is alive');
+});
+
+// proves R-STATE-17
+test('given a census whose read fails after it has stopped a process it listed in the dispatch\'s directory, the call settles leaving no process stopped, and records that the census could not be read', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const under = await tailIn(t, directory, join(directory, 'sub'));
+  writeFileSync(join(directory, 'lsof-hold'), '');
+  // The first list is the real `lsof`'s, and every later read never answers.
+  const lsof = warmed(fixture(directory, 'lsof', 'if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\nexec /usr/sbin/lsof "$@"'));
+
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', lsof, readTimeout: 2_000 });
+
+  assert.ok(existsSync(join(directory, 'listed')), 'the census never listed the directory, so the test proves nothing');
+  assertUntouched(under, 'the process the census listed before its read failed');
+  assert.equal(readEvents(stateOf(directory)).filter((event) => event.event === 'directory.unread').length, 1);
 });
