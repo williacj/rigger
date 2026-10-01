@@ -54,16 +54,24 @@ const READ_SUBCOMMANDS = [['auth', 'status']];
 const oneOf = (args, lists) => lists.some((list) => list.length === args.length && list.every((word, i) => word === args[i]));
 
 /**
- * The whole of what may follow `gh api <path>` for the read runner to send it: an explicit GET.
+ * The header asking GitHub to serve a pull request as its diff: the one header a read sends, and
+ * the one the read runner admits.
+ */
+export const DIFF_HEADER = 'Accept: application/vnd.github.diff';
+
+/**
+ * The whole of what may follow `gh api <path>` for the read runner to send it: an explicit GET,
+ * and, after `-X GET` only, the header asking for a diff.
  *
  * `gh` chooses the method itself when none is named, and where it can disagree with a reading of
  * the request (`D16` rule 3), measured with gh 2.99.0 on macOS on 2026-09-25 through a local
  * proxy: with no flag it sends GET; with `-f`, `-F` or `--input` it sends POST; with `-X GET` or
  * `--method GET` it sends GET, and `-X GET -f` puts the field in the query string. So only a
- * named GET is admitted, and with no field at all, after a path that is not itself a flag.
- * `test/forge-runners.test.mjs` asks `gh` the same question each run.
+ * named GET is admitted, and with no field at all, after a path that is not itself a flag. A
+ * header can override the method, so no header is admitted but the diff's.
+ * `test/forge-runners.test.mjs` asks `gh` the same question each run, of the diff's form too.
  */
-const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET']];
+const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET'], ['-X', 'GET', '-H', DIFF_HEADER]];
 
 /** How an operation is named in a refusal: its type, its name if it has one, and its root fields. */
 function named(operation) {
@@ -128,7 +136,7 @@ export async function readRunner(args, { send = throughL0, emitter, timeout = FO
     // A path slot holding a flag makes that flag take the next word, so the `-X GET` after it
     // would name no method: `gh api --input -X GET` sends `POST /GET` with a file as its body.
     if (endpoint.startsWith('-') || !oneOf(rest, EXPLICIT_GET)) {
-      refuse('read', `${spelled(args)}, which is not \`gh api <path>\` with an explicit GET and nothing else`);
+      refuse('read', `${spelled(args)}, which is not \`gh api <path>\` with an explicit GET and nothing else but the diff's header`);
     }
   } else if (!oneOf(args, READ_SUBCOMMANDS)) {
     refuse('read', `${spelled(args)}, which its read allowlist does not name`);
