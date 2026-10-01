@@ -1313,23 +1313,27 @@ test('a side with no module, or no runner, is refused rather than read as clean'
 const outsideScheduling = () => [...new Set([...sourceTree().keys()].map((path) => `src/${path.split('/')[1]}/`))]
   .filter((directory) => directory !== 'src/scheduling/');
 
-test('rule 8: a named import of L3\'s dispatching entry point from each directory under src/ but src/scheduling/ fails', () => {
-  const directories = outsideScheduling();
-  assert.ok(directories.includes('src/config/') && directories.includes('src/cli/'), `the tree read no directories: ${directories.join(', ')}`);
+test('rule 8: a named import of L3\'s dispatching entry point from each directory under src/ but src/scheduling/ and src/cli/ fails', () => {
+  const directories = outsideScheduling().filter((directory) => directory !== 'src/cli/');
+  assert.ok(directories.includes('src/config/') && directories.includes('src/workflow/'), `the tree read no directories: ${directories.join(', ')}`);
   for (const directory of directories) {
     const file = `${directory}start.mjs`;
     assertBreaks({ [file]: "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();" }, file, 'rule 8');
   }
 });
 
-test('rule 8: a namespace import, a dynamic import and a re-export relayed through src/scheduling/ each fail from src/cli/', () => {
-  assertBreaks({ 'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
-  assertBreaks({ 'src/cli/start.mjs': "export const start = async (deps) => (await import('../scheduling/loop.mjs')).loop(deps).pull();" }, 'src/cli/start.mjs', 'rule 8');
+test('rule 8: a namespace import, a dynamic import and a re-export relayed through src/scheduling/ each fail from src/config/', () => {
+  assertBreaks({ 'src/config/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();" }, 'src/config/start.mjs', 'rule 8');
+  assertBreaks({ 'src/config/start.mjs': "export const start = async (deps) => (await import('../scheduling/loop.mjs')).loop(deps).pull();" }, 'src/config/start.mjs', 'rule 8');
   const relayed = {
     'src/scheduling/relay.mjs': "export { loop as run } from './loop.mjs';",
-    'src/cli/start.mjs': "import { run } from '../scheduling/relay.mjs';\nexport const start = (deps) => run(deps).pull();",
+    'src/config/start.mjs': "import { run } from '../scheduling/relay.mjs';\nexport const start = (deps) => run(deps).pull();",
   };
-  assertBreaks(relayed, 'src/cli/start.mjs', 'rule 8');
+  assertBreaks(relayed, 'src/config/start.mjs', 'rule 8');
+});
+
+test('rule 8: a named import of L3\'s dispatching entry point from src/cli/ passes', () => {
+  assert.deepEqual(messages({ 'src/cli/start.mjs': "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();" }), []);
 });
 
 test('rule 8: a module under src/scheduling/ calling L3\'s dispatching entry point passes', () => {
@@ -1346,7 +1350,7 @@ test('rule 8: a tree with no dispatching entry point is refused rather than read
   assert.throws(() => boundaryReport(renamed), /`loop`/);
 });
 
-test('rule 8: the entry point is the function loop.mjs exports as loop, whatever its local name, so importing it from src/cli/ fails', () => {
+test('rule 8: the entry point is the function loop.mjs exports as loop, whatever its local name, so importing it from src/config/ fails', () => {
   const start = "import { loop } from '../scheduling/loop.mjs';\nexport const start = (deps) => loop(deps).pull();";
   const entries = {
     // #298's N3 and its sibling, the card's two instances.
@@ -1359,18 +1363,18 @@ test('rule 8: the entry point is the function loop.mjs exports as loop, whatever
     },
   };
   for (const [shape, modules] of Object.entries(entries)) {
-    const found = messages({ ...modules, 'src/cli/start.mjs': start });
-    assert.ok(found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:')), `${shape}:\n${found.join('\n') || '(nothing)'}`);
+    const found = messages({ ...modules, 'src/config/start.mjs': start });
+    assert.ok(found.some((message) => message.startsWith('src/config/start.mjs ') && message.includes('breaks rule 8:')), `${shape}:\n${found.join('\n') || '(nothing)'}`);
   }
   // The renamed entry point reached by a namespace import, and by its own name where it is also exported.
   assertBreaks({
     'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop };',
-    'src/cli/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();",
-  }, 'src/cli/start.mjs', 'rule 8');
+    'src/config/start.mjs': "import * as l3 from '../scheduling/loop.mjs';\nexport const start = (deps) => l3.loop(deps).pull();",
+  }, 'src/config/start.mjs', 'rule 8');
   assertBreaks({
     'src/scheduling/loop.mjs': 'function run(deps) { return deps; }\nexport { run as loop, run };',
-    'src/cli/start.mjs': "import { run } from '../scheduling/loop.mjs';\nexport const start = (deps) => run(deps).pull();",
-  }, 'src/cli/start.mjs', 'rule 8');
+    'src/config/start.mjs': "import { run } from '../scheduling/loop.mjs';\nexport const start = (deps) => run(deps).pull();",
+  }, 'src/config/start.mjs', 'rule 8');
 });
 
 test('rule 8: loop.mjs exporting no binding named loop is refused, naming loop.mjs, whatever it names its function', () => {
@@ -1388,7 +1392,7 @@ test('rule 8: an importer outside src/scheduling/ of loop.mjs\'s other exports p
   assert.deepEqual(messages(modules), []);
 });
 
-test('the proof, rule 8: a hand-on of the entry point through each of the eight steps holds it, and importing it from src/cli/ fails', () => {
+test('the proof, rule 8: a hand-on of the entry point through each of the eight steps holds it, and importing it from src/config/ fails', () => {
   // The write sides' proof shapes, with the entry point for the side. The runners module plays no
   // part in rule 8, so the shape importing a runner is not one of them.
   const missed = [];
@@ -1396,10 +1400,10 @@ test('the proof, rule 8: a hand-on of the entry point through each of the eight 
     const modules = {
       'src/scheduling/index-default.mjs': "import { loop } from './loop.mjs';\nexport default loop;",
       'src/scheduling/relay.mjs': template.replaceAll('../substrate/forge/index-default.mjs', './index-default.mjs').replaceAll('SIDE', './loop.mjs').replaceAll('NAME', 'loop'),
-      'src/cli/start.mjs': "import * as all from '../scheduling/relay.mjs';",
+      'src/config/start.mjs': "import * as all from '../scheduling/relay.mjs';",
     };
     const found = messages(modules);
-    if (!found.some((message) => message.startsWith('src/cli/start.mjs ') && message.includes('breaks rule 8:'))) missed.push(`${shape}: src/cli/start.mjs did not break rule 8`);
+    if (!found.some((message) => message.startsWith('src/config/start.mjs ') && message.includes('breaks rule 8:'))) missed.push(`${shape}: src/config/start.mjs did not break rule 8`);
     if (found.some((message) => message.startsWith('src/scheduling/'))) missed.push(`${shape}: a module under src/scheduling/ was reported: ${found.join('; ')}`);
   }
   assert.equal(missed.length, 0, `missed:\n${missed.join('\n')}`);

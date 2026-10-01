@@ -907,8 +907,8 @@ test('rule 8 lets a module under src/cli/ import and call the claim-only call fr
 
   assert.deepEqual(boundaryReport(tree).violations.map((violation) => violation.message), []);
 
-  tree.set('src/cli/claim-verb.mjs', "import { loop } from '../scheduling/loop.mjs';\nexport const once = (deps) => loop(deps).pull();");
-  assert.ok(boundaryReport(tree).violations.some((violation) => violation.message.includes('rule 8')), 'importing the dispatching entry point still breaks rule 8');
+  tree.set('src/config/claim-verb.mjs', "import { loop } from '../scheduling/loop.mjs';\nexport const once = (deps) => loop(deps).pull();");
+  assert.ok(boundaryReport(tree).violations.some((violation) => violation.message.includes('rule 8')), 'importing the dispatching entry point from src/config/ still breaks rule 8');
 });
 
 // The halt: L3 records each start before it acts outside Rigger on it, and starts nothing whose
