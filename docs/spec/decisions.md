@@ -201,7 +201,9 @@ measured until it has already been allowed, so the evidence only ever argues one
    - the run's worktree root lies outside both that clone and the installed package.
 
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
-   still upgraded under rule 1, to the commit that closed the milestone.
+   still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
+   the commit rule 1 promotes, so the engine promoted at the boundary is the one the exit run
+   tested.
 
 ### Notes
 
@@ -220,10 +222,11 @@ would then close with no evidence that its own engine works. The candidate engin
 and dispatches nothing afterwards, so rule 1's boundary stays where it was.
 
 Two observations would reverse rule 4. First, an exit run by the candidate engine changes a file
-in a checkout, or in the installed engine that builds Rigger. Second, an exit run passes on the
-candidate engine, and the engine rule 1 then installs fails `rigger doctor` or its first dispatch.
-The first shows the installation rule cannot hold for a candidate. The second shows a candidate's
-exit run is not evidence for the engine that gets promoted.
+in another checkout, or in the installed engine that builds Rigger. Second, an exit run passes on
+the candidate engine, and the engine rule 1 then promotes from that same commit fails `rigger
+doctor` or its first dispatch. The first shows the installation rule cannot hold for a candidate.
+The second shows a candidate's exit run is not evidence for the engine that gets promoted, even
+when the two share a commit.
 
 ## D8 — A fact the code owns is generated, never typed
 
