@@ -2,8 +2,8 @@
 // flight, a claim taken before any await, a claim held only until its slot is released, every
 // read failure, refused claim move and dispatch outcome passed on, and a run that refills each
 // freed slot and leaves each card in the column its outcome settles, by the config's column names;
-// the events L3 records, the drain trigger's among them; and L3's claim-only call, handed no
-// dispatch, which claims up to a limit capped at N, redos without a move, and fires no drain.
+// the events L3 records, the drain trigger's among them; and L3's single pull, which claims up to
+// a limit capped at N and takes a redo without a move.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +19,7 @@ import { installFakeGh } from './fake-gh.mjs';
 import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
 } from './loop-world.mjs';
-import { claimOnly, loop } from '../src/scheduling/loop.mjs';
+import { loop } from '../src/scheduling/loop.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
@@ -624,78 +624,98 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
   assert.equal(Math.max(...intervals.map(([from]) => overlapping(from))), 3);
 });
 
-// L3's claim-only call: claims up to a limit capped at N, and hands no card to any dispatch.
+// L3's single pull: claims up to a limit capped at N.
 
-/** The numbers of `cards`, the board items a claim-only call answered, in the order answered. */
+/** The numbers of `cards`, the board items a single pull handed the maker, in the order handed. */
 const numbersOf = (cards) => cards.map((card) => card.number);
 
-test('the claim-only call, handed no dispatch, answers the cards it claimed', async () => {
+test('`loop`\'s single pull hands the maker stand-in exactly the cards it claimed', async () => {
   const built = world({ concurrency: 3 });
 
-  const claimed = await built.claims.claim();
+  const pulled = built.loop.pull();
+  await quiesce();
+  const claimed = built.handed.map(({ card }) => card);
 
   assert.deepEqual(numbersOf(claimed), [1, 2, 3]);
   assert.deepEqual(claimed.map((card) => card.id), ['item-1', 'item-2', 'item-3']);
-  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.dispatches.holding(), [1, 2, 3]);
+  assert.deepEqual(await columnsOf(built.fake), { 1: 'Coding', 2: 'Coding', 3: 'Coding', 4: 'Ready' });
+  built.dispatches.releaseAll();
+  await pulled;
 });
 
 /**
- * One claim-only call over `cards` under `concurrency`, with claim limit `limit` where it is not
- * undefined. Answers the numbers of the cards it claimed, and each card's column after it.
+ * One single pull of a world's `loop` over `cards` under `concurrency`, with limit `limit` where it
+ * is not undefined, every maker stand-in held. Answers the numbers of the cards handed to the maker
+ * stand-in, and each card's column before any is released, with what `world` built and `release`,
+ * which releases every maker stand-in and settles once the pull has.
  */
 async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}) {
   const built = world({ cards, concurrency });
-  const claimed = numbersOf(await built.claims.claim(limit));
-  return { claimed, columns: await columnsOf(built.fake), built };
+  const pulled = built.loop.pull(limit);
+  await quiesce();
+  const claimed = numbersOf(built.handed.map(({ card }) => card));
+  const columns = await columnsOf(built.fake);
+  const release = async () => {
+    built.dispatches.releaseAll();
+    await pulled;
+  };
+  return { claimed, columns, built, release };
 }
 
-test('given concurrency 3, four pullable cards and a claim limit of 1, the claim-only call claims exactly one card', async () => {
-  const { claimed, columns } = await claimOnce({ concurrency: 3, limit: 1 });
+test('given concurrency 3, four pullable cards and a claim limit of 1, `loop`\'s single pull claims exactly one card', async () => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 3, limit: 1 });
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
+  await release();
 });
 
-test('given concurrency 1, four pullable cards and a claim limit of 3, the claim-only call claims exactly one card', async () => {
-  const { claimed, columns } = await claimOnce({ concurrency: 1, limit: 3 });
+test('given concurrency 1, four pullable cards and a claim limit of 3, `loop`\'s single pull claims exactly one card', async () => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 1, limit: 3 });
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
+  await release();
 });
 
-test('given concurrency 3, four pullable cards and no claim limit, the claim-only call claims exactly three cards', async () => {
-  const { claimed, columns } = await claimOnce({ concurrency: 3 });
+test('given concurrency 3, four pullable cards and no claim limit, `loop`\'s single pull claims exactly three cards', async () => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 3 });
 
   assert.deepEqual(claimed, [1, 2, 3]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Coding', 3: 'Coding', 4: 'Ready' });
+  await release();
 });
 
-test('given concurrency 1, four pullable cards and no claim limit, the claim-only call claims exactly one card', async () => {
-  const { claimed, columns } = await claimOnce({ concurrency: 1 });
+test('given concurrency 1, four pullable cards and no claim limit, `loop`\'s single pull claims exactly one card', async () => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 1 });
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
+  await release();
 });
 
-test('given concurrency 3, two pullable cards and no claim limit, the claim-only call claims both', async () => {
-  const { claimed, columns } = await claimOnce({ cards: [1, 2], concurrency: 3 });
+test('given concurrency 3, two pullable cards and no claim limit, `loop`\'s single pull claims both', async () => {
+  const { claimed, columns, release } = await claimOnce({ cards: [1, 2], concurrency: 3 });
 
   assert.deepEqual(claimed, [1, 2]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Coding' });
+  await release();
 });
 
-test('given no pullable card, the claim-only call claims nothing and answers an empty list', async () => {
-  const { claimed, built } = await claimOnce({ cards: [{ ...readyCard(1), labels: [] }], concurrency: 3 });
+test('given no pullable card, `loop`\'s single pull claims nothing and answers an empty list', async () => {
+  const { claimed, built, release } = await claimOnce({ cards: [{ ...readyCard(1), labels: [] }], concurrency: 3 });
 
   assert.deepEqual(claimed, []);
   assert.deepEqual(built.fake.writes(), []);
+  await release();
 });
 
 test('a claim limit that is not a positive whole number is refused naming the claim limit, and nothing is claimed', async () => {
   for (const limit of [0, -1, 1.5, '1', Number.NaN, null]) {
     const built = world({ concurrency: 3 });
 
-    await assert.rejects(built.claims.claim(limit), (refusal) => {
+    await assert.rejects(built.loop.pull(limit), (refusal) => {
       assert.match(refusal.message, /claim limit/);
       assert.ok(refusal.message.includes(typeof limit === 'string' ? `'${limit}'` : String(limit)), refusal.message);
       return true;
@@ -706,9 +726,10 @@ test('a claim limit that is not a positive whole number is refused naming the cl
 });
 
 /**
- * Two claim-only calls on one handle, each with claim limit `limit`, over one pullable card, while
- * the fake board holds both calls' reads unresolved. Answers what each read returned, what the
- * two calls claimed together, and the board's writes.
+ * Two concurrent single pulls on one `loop` handle, each with limit `limit`, over one pullable
+ * card, while the fake board holds both pulls' reads unresolved and every maker stand-in is held.
+ * Answers what each read returned, the cards the two pulls handed the maker stand-in together, and
+ * the board's writes, the last two read before any maker stand-in is released.
  */
 async function twoClaims(limit) {
   const fake = boardOf([7]);
@@ -720,23 +741,19 @@ async function twoClaims(limit) {
   });
   const built = world({ fake, concurrency: 2, board });
 
-  const calls = [built.claims.claim(limit), built.claims.claim(limit)];
+  const pulls = [built.loop.pull(limit), built.loop.pull(limit)];
   await quiesce();
   assert.equal(releases.length, 2, 'both reads are held at once');
   releases.forEach((release) => release());
-  const claimed = (await Promise.all(calls)).flatMap(numbersOf);
-  return { answered, claimed, writes: fake.writes() };
+  await quiesce();
+  const claimed = [...built.dispatches.started];
+  const writes = fake.writes();
+  built.dispatches.releaseAll();
+  await Promise.all(pulls);
+  return { answered, claimed, writes };
 }
 
-test('given one pullable card, two concurrent claim-only calls with no claim limit claim it exactly once, though both reads returned it as Ready', async () => {
-  const { answered, claimed, writes } = await twoClaims(undefined);
-
-  assert.deepEqual(answered, [[[7, 'Ready']], [[7, 'Ready']]]);
-  assert.deepEqual(claimed, [7]);
-  assert.deepEqual(writes.map(({ operation, args: [, column] }) => [operation, column]), [['moveItem', COLUMNS.coding]]);
-});
-
-test('given one pullable card, two concurrent claim-only calls each with a claim limit of 1 claim it exactly once, though both reads returned it as Ready', async () => {
+test('given one pullable card, two concurrent `loop`\'s single pulls each with a claim limit of 1 claim it exactly once, though both reads returned it as Ready', async () => {
   const { answered, claimed, writes } = await twoClaims(1);
 
   assert.deepEqual(answered, [[[7, 'Ready']], [[7, 'Ready']]]);
@@ -747,26 +764,28 @@ test('given one pullable card, two concurrent claim-only calls each with a claim
 /** Each claim limit the event items are shown under: 1, and none. */
 const LIMITS = [1, undefined];
 
-test('each card the claim-only call claims from the ready column, with a claim limit of 1 and with none, has one L2 transition event from ready into coding', async () => {
+test('each card `loop`\'s single pull claims from the ready column, with a claim limit of 1 and with none, has one L2 transition event from ready into coding', async () => {
   for (const limit of LIMITS) {
-    const { claimed, built } = await claimOnce({ concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit });
     const transitions = built.events().filter((event) => event.layer === 'L2' && event.event === 'transition');
 
     assert.deepEqual(transitions.map(({ card, from, to }) => [card, from, to]), claimed.map((number) => [number, 'ready', 'coding']), String(limit));
     assert.equal(claimed.length, limit ?? 3, String(limit));
+    await release();
   }
 });
 
 /** A board holding a redo in the coding column, card 5, ahead of three ready cards. */
 const REDO_AND_READY = [cardIn(5, COLUMNS.coding), 1, 2, 3];
 
-test('each card the claim-only call claims, from the ready column or as a redo, with a claim limit of 1 and with none, has one L3 pull event', async () => {
+test('each card `loop`\'s single pull claims, from the ready column or as a redo, with a claim limit of 1 and with none, has one L3 pull event', async () => {
   const claims = [];
   for (const limit of LIMITS) {
-    const { claimed, built } = await claimOnce({ cards: REDO_AND_READY, concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ cards: REDO_AND_READY, concurrency: 3, limit });
 
     assert.deepEqual(cardsOf(built, 'pull'), claimed, String(limit));
     claims.push(claimed);
+    await release();
   }
   assert.deepEqual(claims, [[5], [5, 1, 2]]);
 });
@@ -774,98 +793,65 @@ test('each card the claim-only call claims, from the ready column or as a redo, 
 /** No card in the ready column, and one unclaimed card L2 would dispatch in each of coding and review. */
 const REDOS_ONLY = [cardIn(5, COLUMNS.coding), cardIn(6, COLUMNS.review)];
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the claim-only call with no claim limit returns both as claimed', async () => {
-  const { claimed } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, `loop`\'s single pull with no claim limit returns both as claimed', async () => {
+  const { claimed, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
 
   assert.deepEqual([...claimed].sort(), [5, 6]);
+  await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after the claim-only call', async () => {
-  const { claimed, columns, built } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after `loop`\'s single pull', async () => {
+  const { claimed, columns, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
 
   assert.equal(claimed.length, 2);
   assert.deepEqual(built.fake.writes(), []);
   assert.deepEqual(columns, { 5: COLUMNS.coding, 6: COLUMNS.review });
+  await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after the claim-only call', async () => {
-  const { claimed, built } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after `loop`\'s single pull', async () => {
+  const { claimed, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
 
   assert.equal(claimed.length, 2);
   assert.deepEqual(built.events().filter((event) => event.layer === 'L2'), []);
+  await release();
 });
 
-test('after the claim-only call returns, the state directory holds nothing but the event stream', async () => {
+test('after `loop`\'s single pull returns, the state directory holds nothing but the event stream', async () => {
   for (const limit of LIMITS) {
-    const { claimed, built } = await claimOnce({ concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit });
+    await release();
 
     assert.ok(claimed.length > 0, String(limit));
     assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl'], String(limit));
   }
 });
 
-test('given four pullable cards, the claim-only call returns without awaiting any dispatch, and no drain event exists when it returns', async () => {
+test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', async () => {
   const built = world({ concurrency: 3 });
 
-  const claimed = await built.claims.claim();
+  const pulled = built.loop.pull();
+  await quiesce();
 
-  assert.deepEqual(numbersOf(claimed), [1, 2, 3]);
-  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(numbersOf(built.handed.map(({ card }) => card)), [1, 2, 3]);
+  assert.deepEqual(built.dispatches.holding(), [1, 2, 3]);
   assert.deepEqual(drainsOf(built), []);
+  built.dispatches.releaseAll();
+  await pulled;
 });
 
-test('given a board with nothing to pull, the claim-only call writes no drain event', async () => {
+test('given a board with nothing to pull, `loop`\'s single pull hands the maker stand-in no card, leaves the write record empty, and writes exactly one drain event', async () => {
   const built = world({ cards: [{ ...readyCard(1), labels: [] }], concurrency: 3 });
 
-  assert.deepEqual(await built.claims.claim(), []);
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(built.handed, []);
+  assert.deepEqual(built.fake.writes(), []);
 
-  assert.deepEqual(triggersOf(built), ['pull']);
-  assert.deepEqual(drainsOf(built), []);
+  assert.deepEqual(triggersOf(built), ['pull', 'drain']);
+  assert.deepEqual(drainsOf(built), ['drain']);
 });
 
-test('the claim-only calls on a board whose five columns carry other display names, with a config naming them, claim the same cards and make the same moves by column key', async () => {
-  const renamed = { ready: 'To do', coding: 'In progress', review: 'In review', owner: 'Blocked', done: 'Shipped' };
-  const claimedOn = async (columns) => {
-    const outcomes = [];
-    for (const limit of LIMITS) {
-      const built = world({ cards: [1, { ...readyCard(2, columns), labels: [] }, 3, 4], columns, concurrency: 2 });
-      const claimed = numbersOf(await built.claims.claim(limit));
-      const keyOf = Object.fromEntries(Object.entries(columns).map(([key, name]) => [name, key]));
-      outcomes.push({ claimed, moves: built.fake.writes().map(({ operation, args: [id, column] }) => [operation, id, keyOf[column]]) });
-    }
-    return outcomes;
-  };
-
-  const named = await claimedOn(COLUMNS);
-  const other = await claimedOn(renamed);
-
-  assert.deepEqual(named, [
-    { claimed: [1], moves: [['moveItem', 'item-1', 'coding']] },
-    { claimed: [1, 3], moves: [['moveItem', 'item-1', 'coding'], ['moveItem', 'item-3', 'coding']] },
-  ]);
-  assert.deepEqual(other, named);
-});
-
-test("each card's pull event from the claim-only call is recorded before L2 asks the board to move that card to the coding column", async () => {
-  const fake = boardOf([1, 2]);
-  const pulledAtMove = [];
-  let built;
-  const items = {
-    ...fake.operations,
-    moveItem: async (id, column) => {
-      if (column === COLUMNS.coding) pulledAtMove.push([id, cardsOf(built, 'pull')]);
-      return fake.operations.moveItem(id, column);
-    },
-  };
-  built = world({ fake, items, concurrency: 2 });
-
-  await built.claims.claim();
-
-  assert.deepEqual(pulledAtMove, [['item-1', [1]], ['item-2', [1, 2]]]);
-  assert.deepEqual(triggersOf(built), ['pull']);
-});
-
-test('when the board refuses a card\'s claim move, the claim-only call reports it, answers no card, and frees its slot for the next call', async () => {
+test('when the board refuses a card\'s claim move, `loop`\'s single pull reports it, answers no card, and frees its slot for the next call', async () => {
   const fake = boardOf([8]);
   let refused = 0;
   const items = {
@@ -880,30 +866,43 @@ test('when the board refuses a card\'s claim move, the claim-only call reports i
   };
   const built = world({ fake, concurrency: 1, items });
 
-  await assert.rejects(built.claims.claim(), (failure) => {
+  await assert.rejects(built.loop.pull(), (failure) => {
     assert.match(failure.errors[0].message, /card #8's move from ready to coding .* was refused: the board refused the move/);
     return true;
   });
+  assert.deepEqual(built.handed, []);
   assert.deepEqual(cardsOf(built, 'slot.release'), [8]);
 
-  // Concurrency is 1, so the next call claims the card only if the refused claim freed its slot.
-  assert.deepEqual(numbersOf(await built.claims.claim()), [8]);
+  // Concurrency is 1, so the next pull claims the card only if the refused claim freed its slot.
+  const next = built.loop.pull();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [8]);
   assert.deepEqual(await columnsOf(fake), { 8: 'Coding' });
+  built.dispatches.releaseAll();
+  await next;
 });
 
-test('calls on one claim-only handle never together hold more claims than N, and never claim a card twice', async () => {
+test('calls on one `loop` handle never together hold more claims than N, and never claim a card twice', async () => {
   const built = world({ concurrency: 3 });
 
-  const first = numbersOf(await built.claims.claim(2));
-  const second = numbersOf(await built.claims.claim());
-  const third = numbersOf(await built.claims.claim());
+  const pulls = [built.loop.pull(2)];
+  await quiesce();
+  const first = built.dispatches.started.slice(0);
+  pulls.push(built.loop.pull());
+  await quiesce();
+  const second = built.dispatches.started.slice(first.length);
+  pulls.push(built.loop.pull());
+  await quiesce();
+  const third = built.dispatches.started.slice(first.length + second.length);
 
   assert.deepEqual([first, second, third], [[1, 2], [3], []]);
+  built.dispatches.releaseAll();
+  await Promise.all(pulls);
 });
 
-test('rule 8 lets a module under src/cli/ import and call the claim-only call from the loop\'s own module', () => {
+test('rule 8 lets a module under src/cli/ import `loop` and call its single pull', () => {
   const tree = sourceTree();
-  tree.set('src/cli/claim-verb.mjs', "import { claimOnly } from '../scheduling/loop.mjs';\nexport const once = (deps) => claimOnly(deps).claim(1);");
+  tree.set('src/cli/claim-verb.mjs', "import { loop } from '../scheduling/loop.mjs';\nexport const once = (deps) => loop(deps).pull(1);");
 
   assert.deepEqual(boundaryReport(tree).violations.map((violation) => violation.message), []);
 
@@ -913,20 +912,6 @@ test('rule 8 lets a module under src/cli/ import and call the claim-only call fr
 
 // The halt: L3 records each start before it acts outside Rigger on it, and starts nothing whose
 // event the sink refuses (`ARCHITECTURE.md`, "Failure model").
-
-test('in one sequence of the sink\'s appends and the fake board\'s writes, each card the claim-only call claims has its L3 pull event before L2\'s move of it into the coding column', async () => {
-  const built = world({ cards: [1, 2], concurrency: 2 });
-
-  const claimed = numbersOf(await built.claims.claim());
-
-  assert.deepEqual(claimed, [1, 2]);
-  for (const number of claimed) {
-    const pulled = built.sequence.findIndex((entry) => entry.append === 'pull' && entry.layer === 'L3' && entry.card === number);
-    const moved = built.sequence.findIndex((entry) => entry.move === `item-${number}` && entry.column === COLUMNS.coding);
-    assert.ok(pulled !== -1 && moved !== -1, `card ${number} was pulled and moved: ${JSON.stringify(built.sequence)}`);
-    assert.ok(pulled < moved, `card ${number}'s pull event came before its move: ${JSON.stringify(built.sequence)}`);
-  }
-});
 
 /** Every failure `error` reports, an AggregateError opened to the failures it holds, however deep. */
 const leavesOf = (error) => (error instanceof AggregateError ? error.errors.flatMap(leavesOf) : [error]);
@@ -941,11 +926,11 @@ const notStarted = (number) => (failure) => {
   return true;
 };
 
-test('given a sink that refuses every append and one pullable card, the claim-only call fails naming the card it did not start and the sink\'s error', async () => {
+test('given a sink that refuses every append and one pullable card, `loop`\'s single pull fails naming the card it did not start and the sink\'s error', async () => {
   const built = world({ cards: [8], concurrency: 2 });
   built.refuseAppends(DISK_FULL);
 
-  await assert.rejects(built.claims.claim(), (failure) => {
+  await assert.rejects(built.loop.pull(), (failure) => {
     const reported = leavesOf(failure).filter((held) => /#8\b/.test(held.message));
     assert.equal(reported.length, 1, `one failure names card 8: ${JSON.stringify(leavesOf(failure).map((held) => held.message))}`);
     assert.match(reported[0].message, /not started/);
@@ -956,35 +941,39 @@ test('given a sink that refuses every append and one pullable card, the claim-on
 });
 
 /**
- * One claim-only call over ready cards 1 and 2 under concurrency 2, with the sink refusing every
- * append from before the call. Answers the call's failure and what `world` built.
+ * One single pull over ready cards 1 and 2 under concurrency 2, with the sink refusing every
+ * append from before the pull. Answers the pull's failure and what `world` built.
  */
 async function refusedClaim() {
   const built = world({ cards: [1, 2], concurrency: 2 });
   built.refuseAppends(DISK_FULL);
   let failure = null;
-  await built.claims.claim().catch((thrown) => {
+  await built.loop.pull().catch((thrown) => {
     failure = thrown;
   });
   return { built, failure };
 }
 
 // proves R-RECORD-9
-test('given a sink that refuses every append and two pullable cards, the claim-only call claims no card', async () => {
+test('given a sink that refuses every append and two pullable cards, `loop`\'s single pull claims no card', async () => {
   const { built, failure } = await refusedClaim();
 
-  assert.ok(failure, 'the call failed');
+  assert.ok(failure, 'the pull failed');
   assert.deepEqual(await columnsOf(built.fake), { 1: 'Ready', 2: 'Ready' });
-  // A claim held in memory would keep its card from the next call: both slots are free, so the
-  // next call over an accepting sink claims both cards.
+  // A claim held in memory would keep its card from the next pull: both slots are free, so the
+  // next pull over an accepting sink hands the maker stand-in both cards.
   built.acceptAppends();
-  assert.deepEqual(numbersOf(await built.claims.claim()), [1, 2]);
+  const next = built.loop.pull();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [1, 2]);
+  built.dispatches.releaseAll();
+  await next;
 });
 
-test('given a sink that refuses every append and two pullable cards, the claim-only call leaves the fake board\'s write record empty', async () => {
+test('given a sink that refuses every append and two pullable cards, `loop`\'s single pull leaves the fake board\'s write record empty', async () => {
   const { built, failure } = await refusedClaim();
 
-  assert.ok(failure, 'the call failed');
+  assert.ok(failure, 'the pull failed');
   assert.deepEqual(built.fake.writes(), []);
 });
 
@@ -1033,55 +1022,68 @@ test('given a dispatch already running when the sink starts refusing appends, th
 });
 
 // proves R-RECORD-9
-test('given a sink that refused the previous claim-only call and now accepts appends, the next claim-only call claims a card, with nothing between the two calls but the sink accepting again', async () => {
+test('given a sink that refused the previous `loop`\'s single pull and now accepts appends, the next `loop`\'s single pull claims a card, with nothing between the two calls but the sink accepting again', async () => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
-  await assert.rejects(built.claims.claim(), notStarted(1));
+  await assert.rejects(built.loop.pull(), notStarted(1));
   assert.deepEqual(await columnsOf(built.fake), { 1: 'Ready' });
 
   built.acceptAppends();
-  const claimed = numbersOf(await built.claims.claim());
+  const next = built.loop.pull();
+  await quiesce();
+  const claimed = [...built.dispatches.started];
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(await columnsOf(built.fake), { 1: 'Coding' });
+  built.dispatches.releaseAll();
+  await next;
 });
 
-test('across a claim-only call the sink refused and a later one it accepted, the event stream holds no event recording a change of admission', async () => {
+test('across a `loop`\'s single pull the sink refused and a later one it accepted, the event stream holds no event recording a change of admission', async () => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
-  await assert.rejects(built.claims.claim(), notStarted(1));
+  await assert.rejects(built.loop.pull(), notStarted(1));
   built.acceptAppends();
-  assert.deepEqual(numbersOf(await built.claims.claim()), [1]);
+  const next = built.loop.pull();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [1]);
+  built.dispatches.releaseAll();
+  await next;
 
-  // The accepted call's own events, and no other: R-SCHED-4 has only the owner and a repeated
+  // The accepted pull's own events, and no other: R-SCHED-4 has only the owner and a repeated
   // infrastructure failure change admission, and the halt is neither.
-  assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`), ['L3 trigger', 'L3 pull', 'L2 transition']);
+  const pulled = new Set(['L3 trigger', 'L3 pull', 'L2 transition', 'L3 slot.release']);
+  assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`).filter((name) => !pulled.has(name)), []);
 });
 
-test('after a claim-only call the sink refused, followed by one it accepted, the state directory holds nothing but the event stream', async () => {
+test('after a `loop`\'s single pull the sink refused, followed by one it accepted, the state directory holds nothing but the event stream', async () => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
-  await assert.rejects(built.claims.claim(), notStarted(1));
+  await assert.rejects(built.loop.pull(), notStarted(1));
   built.acceptAppends();
-  assert.deepEqual(numbersOf(await built.claims.claim()), [1]);
+  const next = built.loop.pull();
+  await quiesce();
+  assert.deepEqual(built.dispatches.holding(), [1]);
+  built.dispatches.releaseAll();
+  await next;
 
   assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl']);
 });
 
 test('a start whose pull event the sink refused writes no release event once the sink accepts again, so no release event lacks its pull', async () => {
-  // The trigger event and the pull event are the first two appends of a claim-only call, and the
+  // The trigger event and the pull event are the first two appends of a single pull, and the
   // sink refuses exactly those two: whatever L3 appends after them, it accepts.
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL, 2);
 
-  await assert.rejects(built.claims.claim(), notStarted(1));
+  await assert.rejects(built.loop.pull(), notStarted(1));
 
   assert.deepEqual(built.sequence.filter((entry) => entry.append), []);
   assert.deepEqual(readdirSync(built.directory), [], 'nothing was appended, so the sink never wrote the stream');
 });
 
 // proves R-RECORD-9
-test('when L2 reports a refused transition event, the claim-only call\'s caller receives the failure L2 reported, with the card, the columns and the sink\'s error unchanged', async () => {
+test('when L2 reports a refused transition event, `loop`\'s single pull\'s caller receives the failure L2 reported, with the card, the columns and the sink\'s error unchanged', async () => {
   // The board takes the claim move, and the sink refuses from the move on, so L2's transition
   // event is the first append it refuses.
   const fake = boardOf([1]);
@@ -1095,7 +1097,7 @@ test('when L2 reports a refused transition event, the claim-only call\'s caller 
   };
   built = world({ fake, items, concurrency: 1 });
 
-  await assert.rejects(built.claims.claim(), (failure) => {
+  await assert.rejects(built.loop.pull(), (failure) => {
     const reported = leavesOf(failure).filter((held) => /moved from/.test(held.message));
     assert.equal(reported.length, 1, JSON.stringify(leavesOf(failure).map((held) => held.message)));
     assert.equal(reported[0].message, `card #1 moved from ready to coding, and the event sink refused to record it: ${DISK_FULL}`);
@@ -1134,11 +1136,11 @@ test('given a redo card and a sink that refuses from the first pull event on, a 
   assert.deepEqual(built.dispatches.started, []);
 });
 
-test('given a sink that refuses every append, the claim-only call reports the pull trigger\'s refused event beside the start it did not make', async () => {
+test('given a sink that refuses every append, `loop`\'s single pull reports the pull trigger\'s refused event beside the start it did not make', async () => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
 
-  await assert.rejects(built.claims.claim(), (failure) => {
+  await assert.rejects(built.loop.pull(), (failure) => {
     const messages = leavesOf(failure).map((held) => held.message);
     assert.deepEqual(messages, [
       `the event sink refused to record the pull trigger: ${DISK_FULL}`,
@@ -1151,7 +1153,7 @@ test('given a sink that refuses every append, the claim-only call reports the pu
 // The start's kill (`ARCHITECTURE.md`, "Failure model"): L3 has L1 kill every recorded group
 // before it records or reads anything, so a handle is built with the kill injected.
 
-/** What `loop` and `claimOnly` are handed but the kill, over `built`'s board, L2 and a sink. */
+/** What `loop` is handed but the kill, over `built`'s board, L2 and a sink. */
 function withoutKill() {
   const built = world({ cards: [1] });
   const settings = { ...config, concurrency: 1 };
@@ -1160,10 +1162,6 @@ function withoutKill() {
 
 test('a loop handle built without the injected kill throws when it is built, naming the kill', () => {
   assert.throws(() => loop({ ...withoutKill(), dispatch: async () => ({ exit: 0 }), workspace: async () => ({ path: '/nowhere' }) }), /\bkill\b/);
-});
-
-test('a claim-only handle built without the injected kill throws when it is built, naming the kill', () => {
-  assert.throws(() => claimOnly(withoutKill()), /\bkill\b/);
 });
 
 /**
@@ -1237,7 +1235,6 @@ test('given a loop handle whose injected kill rejects, a pull reads nothing, rec
   const built = world({ fake, board: counted.handle, kill: async () => { throw refusal; } });
 
   await assert.rejects(built.loop.pull(), (failure) => failure === refusal);
-  await assert.rejects(built.claims.claim(1), (failure) => failure === refusal);
 
   assert.equal(counted.reads, 0);
   assert.deepEqual(built.l3Events(), []);

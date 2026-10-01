@@ -151,7 +151,7 @@ test('src/cli/ re-exporting a schema-write binding fails', () => {
   assertBreaks({ 'src/cli/relay.mjs': "export { shape } from '../substrate/forge/schema-write.mjs';" }, 'src/cli/relay.mjs', 'the re-export rule');
 });
 
-test('the ruled call paths pass: L3 importing an L2 function that writes, and the CLI importing L3\'s claim-only call', () => {
+test('the ruled call paths pass: L3 importing an L2 function that writes, and the CLI importing an L3 call that is not the dispatching entry point', () => {
   const modules = {
     'src/workflow/transitions.mjs': [
       "import { write } from '../substrate/forge/item-write.mjs';",
@@ -159,9 +159,9 @@ test('the ruled call paths pass: L3 importing an L2 function that writes, and th
     ].join('\n'),
     'src/scheduling/claims.mjs': [
       "import { claim } from '../workflow/transitions.mjs';",
-      'export async function claimOnly(cards, limit) { return Promise.all(cards.slice(0, limit).map(claim)); }',
+      'export async function claimNext(cards, limit) { return Promise.all(cards.slice(0, limit).map(claim)); }',
     ].join('\n'),
-    'src/cli/once.mjs': "import { claimOnly } from '../scheduling/claims.mjs';\nexport const once = (cards) => claimOnly(cards, 1);",
+    'src/cli/once.mjs': "import { claimNext } from '../scheduling/claims.mjs';\nexport const once = (cards) => claimNext(cards, 1);",
   };
   assert.deepEqual(messages(modules), []);
 });

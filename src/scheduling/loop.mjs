@@ -2,8 +2,7 @@
 // before any await, has L2 move each claimed card, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker, or attempts the card again as L2
 // says, under the one claim and slot; the run that fires that trigger
-// again each time a slot frees; the drain trigger; L3's events; and L3's claim-only call, which
-// claims up to a limit capped at N and dispatches nothing.
+// again each time a slot frees; the drain trigger; and L3's events.
 
 import { randomUUID } from 'node:crypto';
 
@@ -15,7 +14,7 @@ import { pullOrder } from './pull-order.mjs';
 const DEFAULT_CONCURRENCY = 3;
 
 /**
- * What the loop and the claim-only call share over the board `config` names: N, the claims held
+ * What the loop holds over the board `config` names: N, the claims held
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
  * it. The arguments are `loop`'s, less the dispatch.
  *
@@ -372,48 +371,6 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
         throw new AggregateError(failures, `${failures.length} of the pulls this run fired failed`);
       }
       return reached;
-    },
-  };
-}
-
-/**
- * L3's claim-only call, over the board `config` names, handed everything `loop` is but a
- * dispatch, the start's kill included: there is no dispatch to hand (the architect's ruling 1,
- * B5). It is a separate export from `loop`, so a verb outside `src/scheduling/` may call it
- * without holding L3's dispatching entry point (the boundary test's rule 8).
- *
- * `claim(limit)` fires the pull trigger's read once and claims as many cards as there are free
- * slots, and no more than `limit` where one is given, which caps the limit at N (the architect's
- * ruling 5, R5-B1). A limit that is not a positive whole number is refused, naming it, before
- * the board is read. It starts each claim as the loop does, recording its pull event before L2
- * moves it, and answers the cards it claimed, as the board read them, first pulled first. It
- * dispatches nothing, and it is no run of the loop, so it fires no drain trigger (review r3-N1).
- *
- * A claim is held in memory until its slot is released, as the loop holds one. Nothing here
- * releases a claim whose card L2 moved, since no work follows it, so calls on one handle never
- * claim a card twice and never together hold more than N. A card whose claim move the board
- * refuses has its slot released, and every such refusal is reported in one AggregateError once
- * the others have moved. So is every event the sink refused: a start not made, as `start`
- * says, a transition L2 reported, passed on unchanged, and a trigger or release event, each
- * beside the others rather than in place of one (`ARCHITECTURE.md`, "Failure model").
- */
-export function claimOnly({ config, board, decide, l2, sink, kill }) {
-  const { take, start, release } = claiming({ config, board, decide, l2, sink, kill });
-  return {
-    claim: async (limit) => {
-      refuseLimit(limit);
-      const { claims: claimed, failures } = await take(limit ?? Infinity);
-      failures.push(...rejections(await Promise.allSettled(claimed.map(async (claim) => {
-        try {
-          await start(claim);
-        } catch (failure) {
-          throw released(release, claim, failure);
-        }
-      }))));
-      if (failures.length > 0) {
-        throw new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this call claimed`);
-      }
-      return claimed.map((claim) => claim.card);
     },
   };
 }
