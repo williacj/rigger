@@ -382,13 +382,12 @@ async function awaiting(t, what, wait) {
  * reader has closed it. The open fails until the reader is there, so it is retried each turn until
  * the test `t` ends.
  *
- * One open and close is not enough. Under load, a writer that opens and closes while the reader's
- * own open is under way can leave the reader blocked in its read for ever, with the FIFO open as
- * its standard input and no writer left. Measured with Node 26.5.0 on macOS 27.0 on 2026-10-01: of
- * 5,800 shell readers released so, 5 stayed blocked, every one at a one-minute load of 40 or more
- * (#515's journal entry). So each turn that finds a reader writes it a line, which its read returns
- * however the close went, and the wait ends only once an open finds no reader left: the reader has
- * read and gone on.
+ * One open and close is not enough. Under load, a reader released so can stay blocked in its read
+ * for ever, with the FIFO open as its standard input and no writer left. Measured with Node 26.5.0
+ * on macOS 27.0 on 2026-10-01: of 5,800 shell readers released so, 5 were still blocked 3 s later,
+ * every one at a one-minute load of 40 or more (#515's journal entry). So each turn that finds a
+ * reader writes it a line, which its read returns however the close went, and the wait ends only
+ * once an open finds no reader left: the reader has read and gone on.
  */
 async function opened(t, directory, name) {
   let reached = false;
