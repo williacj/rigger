@@ -310,7 +310,8 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
    * each `{ card, workspace }`, naming its number and its workspace's path. A read that fails
    * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
    * sink refused, are reported in one AggregateError naming how many failed, each failure
-   * unchanged in its `errors`.
+   * unchanged in its `errors`, and carrying as `reached` the cards that did reach the maker, as
+   * the pull would have settled on them, so no card's outcome is dropped for another's failure.
    */
   const trigger = async (freed = () => {}, limit = concurrency) => {
     const { claims: claimed, failures } = await take(limit);
@@ -325,10 +326,11 @@ export function loop({ config, board, decide, l2, dispatch, sink, kill, workspac
     }
     const worked = await Promise.allSettled(claimed.map((claim) => work(claim, freed)));
     failures.push(...rejections(worked));
+    const reached = worked.map((result) => result.value).filter((each) => each !== undefined);
     if (failures.length > 0) {
-      throw new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`);
+      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
-    return worked.map((result) => result.value).filter((reached) => reached !== undefined);
+    return reached;
   };
 
   return {

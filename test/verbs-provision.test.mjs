@@ -451,3 +451,75 @@ test('given a workspace that cannot be made on either attempt of a card rigger r
   assert.equal(pulls(events), 1, ran.said);
   assert.equal((await columnsOf(here))[40], 'Ready', ran.said);
 });
+
+/** #10, #20 and #30, oldest first, where #20 alone carries `area:fails`, so under `FAILING` its required step exits non-zero on both attempts. */
+const ONE_FAILING = [card(30), card(10), card(20, { labels: ['area:fails'] })];
+
+/** The line `text` holds beginning `rigger run: claimed #<number> from board 3`, which must be there. */
+function claimedLine(text, number, said) {
+  const line = text.split('\n').find((held) => new RegExp(`^rigger run: claimed #${number} from board 3\\b`).test(held));
+  assert.ok(line, said);
+  return line;
+}
+
+test('given a pull claiming #10, #20 and #30, where #20\'s required step exits non-zero on both attempts, rigger run prints a line for #10 naming its workspace\'s path and that no maker runs before M4', (t) => {
+  const here = world(t, { items: ONE_FAILING, ...FAILING });
+
+  const ran = here.verb('run');
+
+  const line = claimedLine(ran.err, 10, ran.said);
+  assert.ok(line.includes(derived(here, 10)), line);
+  assert.match(line, /no maker runs before M4/, line);
+});
+
+test('given that world, rigger run prints a line for #30 naming its workspace\'s path and that no maker runs before M4', (t) => {
+  const here = world(t, { items: ONE_FAILING, ...FAILING });
+
+  const ran = here.verb('run');
+
+  const line = claimedLine(ran.err, 30, ran.said);
+  assert.ok(line.includes(derived(here, 30)), line);
+  assert.match(line, /no maker runs before M4/, line);
+});
+
+test('given that world, rigger run prints #20\'s two attempts\' failures, each naming the step and its exit code', (t) => {
+  const ran = world(t, { items: ONE_FAILING, ...FAILING }).verb('run');
+
+  const stopped = ran.err.indexOf('rigger run: card #20 was stopped after 2 attempts');
+  assert.ok(stopped >= 0, ran.said);
+  for (const attempt of [1, 2]) {
+    const line = ran.err.slice(stopped).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
+    assert.ok(line, ran.said);
+    assert.match(line, /"step":"fails"/, line);
+    assert.match(line, /"exit":3\b/, line);
+  }
+});
+
+test('given that world, rigger run prints each claimed card\'s line, or its failures, once and only once', (t) => {
+  const ran = world(t, { items: ONE_FAILING, ...FAILING }).verb('run');
+
+  const lines = ran.err.split('\n');
+  for (const number of [10, 30]) {
+    assert.equal(lines.filter((held) => held.startsWith(`rigger run: claimed #${number} `)).length, 1, ran.said);
+    assert.equal(lines.filter((held) => new RegExp(`#${number}\\b`).test(held)).length, 1, ran.said);
+  }
+  assert.equal(lines.filter((held) => held.startsWith('rigger run: card #20 was stopped')).length, 1, ran.said);
+  assert.equal(lines.filter((held) => /#20\b/.test(held)).length, 1, ran.said);
+  for (const attempt of [1, 2]) assert.equal(lines.filter((held) => held.startsWith(`attempt ${attempt}: `)).length, 1, ran.said);
+});
+
+test('given that world, where #20 failed while #10 and #30 reached their workspaces, rigger run exits non-zero', (t) => {
+  const ran = world(t, { items: ONE_FAILING, ...FAILING }).verb('run');
+
+  assert.notEqual(ran.code, 0, ran.said);
+});
+
+test('given that world, #10 and #30 are in the coding column after rigger run', async (t) => {
+  const here = world(t, { items: ONE_FAILING, ...FAILING });
+
+  const ran = here.verb('run');
+
+  const columns = await columnsOf(here);
+  assert.equal(columns[10], 'Coding', ran.said);
+  assert.equal(columns[30], 'Coding', ran.said);
+});

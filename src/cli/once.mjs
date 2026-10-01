@@ -94,6 +94,8 @@ async function claiming(verb, limit, opened, {
   };
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
+  const { project } = config.board;
+  const stoppedAt = (reached) => reached.map(({ card, workspace: path }) => `rigger ${verb}: claimed #${card} from board ${project}; no maker runs before M4, so it stopped at its workspace, ${path}`);
   let reached;
   try {
     reached = await loop({ config, board, decide, l2, sink, kill, workspace, state }).pull(limit);
@@ -103,23 +105,20 @@ async function claiming(verb, limit, opened, {
     // it did not make, and so does a start's kill that failed, naming each unrecorded kill,
     // unconfirmed group or unreadable record. A card stopped after its second attempt names each
     // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
-    // model"). The record is not used to say so, because the record is what failed.
-    return { text: [...failuresIn(failure).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'), code: 1 };
+    // model"). The record is not used to say so, because the record is what failed. The cards the
+    // same pull left at their workspaces are named first, as they would be had none failed.
+    return {
+      text: [...stoppedAt(failure.reached ?? []), ...failuresIn(failure).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'),
+      code: 1,
+    };
   }
-  const { project } = config.board;
   const refused = refusals.map(refusalLine);
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
   if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
   // Non-zero, because a card whose workspace is ready and whose maker never ran is short of what
   // the README promises of this verb, and a zero exit would read to whoever called it as work that
   // was done (the owner's O8 on #423).
-  return {
-    text: [
-      ...reached.map(({ card, workspace: path }) => `rigger ${verb}: claimed #${card} from board ${project}; no maker runs before M4, so it stopped at its workspace, ${path}`),
-      ...refused,
-    ].join('\n'),
-    code: 1,
-  };
+  return { text: [...stoppedAt(reached), ...refused].join('\n'), code: 1 };
 }
 
 /**
