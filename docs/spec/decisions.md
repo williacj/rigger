@@ -44,7 +44,7 @@ its row stays in the table below so its id is never reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -184,7 +184,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified.
+**Status:** Ratified. Amended 2026-10-01.
 
 ### Rule
 
@@ -193,6 +193,18 @@ measured until it has already been allowed, so the evidence only ever argues one
 2. `rigger doctor` passes against this repository's config before the upgraded engine resumes.
 3. `AGENTS.md` holds the rule for a card that changes the live gate, the live config, or the CLI
    entry point the running engine reads.
+4. A milestone's exit run uses the candidate engine: the engine installed from a tarball that
+   `npm pack` produces at the commit under test. The installation rule in `docs/v0-build-plan.md`
+   still holds for that run, in three parts:
+   - the run installs the tarball outside every checkout;
+   - the run's target is a separate clone of the commit under test;
+   - the run's worktree root lies outside both that clone and the installed package.
+
+   The candidate engine serves the exit run alone. The installed engine that builds Rigger is
+   still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
+   the commit rule 1 promotes, so the engine promoted at the boundary is the one the exit run
+   tested. A commit that leaves the packed tarball's contents unchanged does not move the closing
+   commit, so a milestone's exit-run evidence can merge after the run.
 
 ### Notes
 
@@ -204,6 +216,18 @@ A milestone is v0's unit because its exit test is the evidence that the new engi
 serves after v0 is not knowable yet, and it is a smaller question than the one this decision
 settles: the choice is that a boundary exists at all, and that choice does not expire with any
 particular boundary.
+
+Rule 4 follows from that evidence. The engine a release behind is the one rule 1 leaves
+installed, and an exit run by it would test the old engine rather than the new one. The milestone
+would then close with no evidence that its own engine works. The candidate engine serves one run
+and dispatches nothing afterwards, so rule 1's boundary stays where it was.
+
+Two observations would reverse rule 4. First, an exit run by the candidate engine changes a file
+in another checkout, or in the installed engine that builds Rigger. Second, an exit run passes on
+the candidate engine, and the engine rule 1 then promotes from that same commit fails `rigger
+doctor` or its first dispatch. The first shows the installation rule cannot hold for a candidate.
+The second shows a candidate's exit run is not evidence for the engine promoted from the commit
+it tested.
 
 ## D8 — A fact the code owns is generated, never typed
 
