@@ -2067,3 +2067,44 @@ test('a kill of a chain reads a number of rows of the table that grows with the 
   // read, which holds the whole group.
   assert.ok(rows <= 4 * (depth + 1), `the kill read ${rows} rows of the table for a chain ${depth + 1} processes long`);
 });
+
+test('given bytes for standard input, the command reads them and then end of file, so a copy of its input ends', async (t) => {
+  // An agent CLI reads its prompt from standard input and starts only once that input ends (ruling
+  // 1 Q1 on #467). The defect this catches is input written and never closed, where `cat` waits
+  // for more and the call runs to its timeout.
+  const directory = scratch(t);
+  const result = await shell(directory, '/bin/cat; printf end', { input: Buffer.from('the prompt\n') });
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.toString('utf8'), 'the prompt\nend');
+});
+
+test('given 1,000,000 bytes for standard input, a command copying its input to its output writes back every byte, unchanged', async (t) => {
+  // A prompt carrying a pull request's diff runs far past a pipe's buffer. The defect this catches
+  // is input cut short at the buffer, or written as text, where a byte that is no UTF-8 changes.
+  const directory = scratch(t);
+  const input = bytes(1_000_000, 11);
+  const result = await shell(directory, 'exec /bin/cat', { input });
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.length, input.length);
+  assert.ok(result.stdout.equals(input), 'standard output holds every byte of the input, unchanged');
+});
+
+test('given input larger than the pipe\'s buffer, a command that exits without reading it settles with its own exit code and no unhandled error', async (t) => {
+  // The write meets a pipe whose reader has gone, which Node reports as an error on standard
+  // input. The defect this catches is that error left unhandled, which ends the engine.
+  const directory = scratch(t);
+  const result = await shell(directory, 'exit 7', { input: bytes(4 * 1024 * 1024, 3) });
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 7);
+});
+
+test('given no standard input, a command reading its standard input reads end of file at once', async (t) => {
+  // As at the base: a command given nothing to read finds nothing, rather than waiting on a pipe
+  // no one writes to.
+  const directory = scratch(t);
+  const result = await shell(directory, '/bin/cat; printf end');
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.toString('utf8'), 'end');
+});

@@ -1357,6 +1357,9 @@ function refused(unrecorded, result, ending = '') {
  * most `timeout` milliseconds, and settles on its exit code, whether the timeout ended it, and the
  * bytes it wrote to standard output and standard error.
  *
+ * `input`, where the caller gives it, is written to the command's standard input, which is then
+ * closed. A command given none reads end of file at once.
+ *
  * The order is fixed: the command exits, or at its timeout L0 kills its whole group, the command
  * with it, and confirms the group is empty; L0 kills what is left of its group and confirms it is
  * empty; L0 reads both pipes until they close, or until `outputBound` milliseconds have passed,
@@ -1395,7 +1398,7 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, directory, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -1412,9 +1415,17 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   const { real, why } = directory === undefined ? {} : placed(directory);
   if (why !== undefined) throw notStarted(command, why);
   install();
-  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  const stdin = input === undefined ? 'ignore' : 'pipe';
+  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }));
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
+  if (input !== undefined) {
+    // A command that exits without reading all of its input closes the pipe under the write,
+    // which Node reports as an error on standard input. What the command read is its own
+    // business, and its result is its exit code and output, so the error is let go.
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const call = { emitter, ps, lsof, readTimeout, onExit, directory: real, child, events: [], contained: false };
   calls.set(child.pid, call);
