@@ -16,6 +16,7 @@ import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { installFakeGh } from './fake-gh.mjs';
+import { until } from './process-fixtures.mjs';
 import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
 } from './loop-world.mjs';
@@ -626,14 +627,24 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
 
 // L3's single pull: claims up to a limit capped at N.
 
+/**
+ * How long a test of the single pull may run, which bounds each of its condition waits: `until`
+ * rejects once the test has ended. A judgment, whose premise is that every wait here is on
+ * promises alone, with no timer and no I/O, so a condition that has not held in this long never will.
+ */
+const SETTLES_WITHIN = { timeout: 10_000 };
+
+/** Settles once `built`'s maker stand-in holds at least `cards` cards, as `until` waits. */
+const makersHold = (built, cards, t) => until(() => built.dispatches.held() >= cards, t);
+
 /** The numbers of `cards`, the board items a single pull handed the maker, in the order handed. */
 const numbersOf = (cards) => cards.map((card) => card.number);
 
-test('`loop`\'s single pull hands the maker stand-in exactly the cards it claimed', async () => {
+test('`loop`\'s single pull hands the maker stand-in exactly the cards it claimed', SETTLES_WITHIN, async (t) => {
   const built = world({ concurrency: 3 });
 
   const pulled = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 3, t);
   const claimed = built.handed.map(({ card }) => card);
 
   assert.deepEqual(numbersOf(claimed), [1, 2, 3]);
@@ -646,14 +657,21 @@ test('`loop`\'s single pull hands the maker stand-in exactly the cards it claime
 
 /**
  * One single pull of a world's `loop` over `cards` under `concurrency`, with limit `limit` where it
- * is not undefined, every maker stand-in held. Answers the numbers of the cards handed to the maker
- * stand-in, and each card's column before any is released, with what `world` built and `release`,
- * which releases every maker stand-in and settles once the pull has.
+ * is not undefined, every maker stand-in held, in the test `t`. Answers the numbers of the cards
+ * handed to the maker stand-in, and each card's column before any is released, with what `world`
+ * built and `release`, which releases every maker stand-in and settles once the pull has.
+ *
+ * It reads them once the pull has settled, having claimed nothing to hold, or once the maker
+ * stand-in holds a card for every pull event, since the pull records each claim's pull event in
+ * the step that claims it, before any card reaches the maker.
  */
-async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}) {
+async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}, t) {
   const built = world({ cards, concurrency });
-  const pulled = built.loop.pull(limit);
-  await quiesce();
+  let settled = false;
+  const pulled = built.loop.pull(limit).finally(() => {
+    settled = true;
+  });
+  await until(() => settled || (built.dispatches.held() > 0 && built.dispatches.held() === cardsOf(built, 'pull').length), t);
   const claimed = numbersOf(built.handed.map(({ card }) => card));
   const columns = await columnsOf(built.fake);
   const release = async () => {
@@ -663,48 +681,48 @@ async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}) {
   return { claimed, columns, built, release };
 }
 
-test('given concurrency 3, four pullable cards and a claim limit of 1, `loop`\'s single pull claims exactly one card', async () => {
-  const { claimed, columns, release } = await claimOnce({ concurrency: 3, limit: 1 });
+test('given concurrency 3, four pullable cards and a claim limit of 1, `loop`\'s single pull claims exactly one card', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 3, limit: 1 }, t);
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
   await release();
 });
 
-test('given concurrency 1, four pullable cards and a claim limit of 3, `loop`\'s single pull claims exactly one card', async () => {
-  const { claimed, columns, release } = await claimOnce({ concurrency: 1, limit: 3 });
+test('given concurrency 1, four pullable cards and a claim limit of 3, `loop`\'s single pull claims exactly one card', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 1, limit: 3 }, t);
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
   await release();
 });
 
-test('given concurrency 3, four pullable cards and no claim limit, `loop`\'s single pull claims exactly three cards', async () => {
-  const { claimed, columns, release } = await claimOnce({ concurrency: 3 });
+test('given concurrency 3, four pullable cards and no claim limit, `loop`\'s single pull claims exactly three cards', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 3 }, t);
 
   assert.deepEqual(claimed, [1, 2, 3]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Coding', 3: 'Coding', 4: 'Ready' });
   await release();
 });
 
-test('given concurrency 1, four pullable cards and no claim limit, `loop`\'s single pull claims exactly one card', async () => {
-  const { claimed, columns, release } = await claimOnce({ concurrency: 1 });
+test('given concurrency 1, four pullable cards and no claim limit, `loop`\'s single pull claims exactly one card', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, release } = await claimOnce({ concurrency: 1 }, t);
 
   assert.deepEqual(claimed, [1]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Ready', 3: 'Ready', 4: 'Ready' });
   await release();
 });
 
-test('given concurrency 3, two pullable cards and no claim limit, `loop`\'s single pull claims both', async () => {
-  const { claimed, columns, release } = await claimOnce({ cards: [1, 2], concurrency: 3 });
+test('given concurrency 3, two pullable cards and no claim limit, `loop`\'s single pull claims both', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, release } = await claimOnce({ cards: [1, 2], concurrency: 3 }, t);
 
   assert.deepEqual(claimed, [1, 2]);
   assert.deepEqual(columns, { 1: 'Coding', 2: 'Coding' });
   await release();
 });
 
-test('given no pullable card, `loop`\'s single pull claims nothing and answers an empty list', async () => {
-  const { claimed, built, release } = await claimOnce({ cards: [{ ...readyCard(1), labels: [] }], concurrency: 3 });
+test('given no pullable card, `loop`\'s single pull claims nothing and answers an empty list', SETTLES_WITHIN, async (t) => {
+  const { claimed, built, release } = await claimOnce({ cards: [{ ...readyCard(1), labels: [] }], concurrency: 3 }, t);
 
   assert.deepEqual(claimed, []);
   assert.deepEqual(built.fake.writes(), []);
@@ -731,7 +749,7 @@ test('a claim limit that is not a positive whole number is refused naming the cl
  * Answers what each read returned, the cards the two pulls handed the maker stand-in together, and
  * the board's writes, the last two read before any maker stand-in is released.
  */
-async function twoClaims(limit) {
+async function twoClaims(limit, t) {
   const fake = boardOf([7]);
   const releases = [];
   const answered = [];
@@ -742,10 +760,10 @@ async function twoClaims(limit) {
   const built = world({ fake, concurrency: 2, board });
 
   const pulls = [built.loop.pull(limit), built.loop.pull(limit)];
-  await quiesce();
+  await until(() => releases.length === 2, t);
   assert.equal(releases.length, 2, 'both reads are held at once');
   releases.forEach((release) => release());
-  await quiesce();
+  await until(() => answered.length === 2 && built.dispatches.held() >= 1, t);
   const claimed = [...built.dispatches.started];
   const writes = fake.writes();
   built.dispatches.releaseAll();
@@ -753,8 +771,8 @@ async function twoClaims(limit) {
   return { answered, claimed, writes };
 }
 
-test('given one pullable card, two concurrent `loop`\'s single pulls each with a claim limit of 1 claim it exactly once, though both reads returned it as Ready', async () => {
-  const { answered, claimed, writes } = await twoClaims(1);
+test('given one pullable card, two concurrent `loop`\'s single pulls each with a claim limit of 1 claim it exactly once, though both reads returned it as Ready', SETTLES_WITHIN, async (t) => {
+  const { answered, claimed, writes } = await twoClaims(1, t);
 
   assert.deepEqual(answered, [[[7, 'Ready']], [[7, 'Ready']]]);
   assert.deepEqual(claimed, [7]);
@@ -764,9 +782,9 @@ test('given one pullable card, two concurrent `loop`\'s single pulls each with a
 /** Each claim limit the event items are shown under: 1, and none. */
 const LIMITS = [1, undefined];
 
-test('each card `loop`\'s single pull claims from the ready column, with a claim limit of 1 and with none, has one L2 transition event from ready into coding', async () => {
+test('each card `loop`\'s single pull claims from the ready column, with a claim limit of 1 and with none, has one L2 transition event from ready into coding', SETTLES_WITHIN, async (t) => {
   for (const limit of LIMITS) {
-    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit }, t);
     const transitions = built.events().filter((event) => event.layer === 'L2' && event.event === 'transition');
 
     assert.deepEqual(transitions.map(({ card, from, to }) => [card, from, to]), claimed.map((number) => [number, 'ready', 'coding']), String(limit));
@@ -778,10 +796,10 @@ test('each card `loop`\'s single pull claims from the ready column, with a claim
 /** A board holding a redo in the coding column, card 5, ahead of three ready cards. */
 const REDO_AND_READY = [cardIn(5, COLUMNS.coding), 1, 2, 3];
 
-test('each card `loop`\'s single pull claims, from the ready column or as a redo, with a claim limit of 1 and with none, has one L3 pull event', async () => {
+test('each card `loop`\'s single pull claims, from the ready column or as a redo, with a claim limit of 1 and with none, has one L3 pull event', SETTLES_WITHIN, async (t) => {
   const claims = [];
   for (const limit of LIMITS) {
-    const { claimed, built, release } = await claimOnce({ cards: REDO_AND_READY, concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ cards: REDO_AND_READY, concurrency: 3, limit }, t);
 
     assert.deepEqual(cardsOf(built, 'pull'), claimed, String(limit));
     claims.push(claimed);
@@ -793,15 +811,15 @@ test('each card `loop`\'s single pull claims, from the ready column or as a redo
 /** No card in the ready column, and one unclaimed card L2 would dispatch in each of coding and review. */
 const REDOS_ONLY = [cardIn(5, COLUMNS.coding), cardIn(6, COLUMNS.review)];
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, `loop`\'s single pull with no claim limit returns both as claimed', async () => {
-  const { claimed, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, `loop`\'s single pull with no claim limit returns both as claimed', SETTLES_WITHIN, async (t) => {
+  const { claimed, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.deepEqual([...claimed].sort(), [5, 6]);
   await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after `loop`\'s single pull', async () => {
-  const { claimed, columns, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after `loop`\'s single pull', SETTLES_WITHIN, async (t) => {
+  const { claimed, columns, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.equal(claimed.length, 2);
   assert.deepEqual(built.fake.writes(), []);
@@ -809,17 +827,17 @@ test('given concurrency 3, no ready card, and one dispatchable card each in codi
   await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after `loop`\'s single pull', async () => {
-  const { claimed, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 });
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after `loop`\'s single pull', SETTLES_WITHIN, async (t) => {
+  const { claimed, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.equal(claimed.length, 2);
   assert.deepEqual(built.events().filter((event) => event.layer === 'L2'), []);
   await release();
 });
 
-test('after `loop`\'s single pull returns, the state directory holds nothing but the event stream', async () => {
+test('after `loop`\'s single pull returns, the state directory holds nothing but the event stream', SETTLES_WITHIN, async (t) => {
   for (const limit of LIMITS) {
-    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit });
+    const { claimed, built, release } = await claimOnce({ concurrency: 3, limit }, t);
     await release();
 
     assert.ok(claimed.length > 0, String(limit));
@@ -827,11 +845,11 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
   }
 });
 
-test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', async () => {
+test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', SETTLES_WITHIN, async (t) => {
   const built = world({ concurrency: 3 });
 
   const pulled = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 3, t);
 
   assert.deepEqual(numbersOf(built.handed.map(({ card }) => card)), [1, 2, 3]);
   assert.deepEqual(built.dispatches.holding(), [1, 2, 3]);
@@ -851,7 +869,7 @@ test('given a board with nothing to pull, `loop`\'s single pull hands the maker 
   assert.deepEqual(drainsOf(built), ['drain']);
 });
 
-test('when the board refuses a card\'s claim move, `loop`\'s single pull reports it, answers no card, and frees its slot for the next call', async () => {
+test('when the board refuses a card\'s claim move, `loop`\'s single pull reports it, answers no card, and frees its slot for the next call', SETTLES_WITHIN, async (t) => {
   const fake = boardOf([8]);
   let refused = 0;
   const items = {
@@ -875,24 +893,25 @@ test('when the board refuses a card\'s claim move, `loop`\'s single pull reports
 
   // Concurrency is 1, so the next pull claims the card only if the refused claim freed its slot.
   const next = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 1, t);
   assert.deepEqual(built.dispatches.holding(), [8]);
   assert.deepEqual(await columnsOf(fake), { 8: 'Coding' });
   built.dispatches.releaseAll();
   await next;
 });
 
-test('calls on one `loop` handle never together hold more claims than N, and never claim a card twice', async () => {
+test('calls on one `loop` handle never together hold more claims than N, and never claim a card twice', SETTLES_WITHIN, async (t) => {
   const built = world({ concurrency: 3 });
 
   const pulls = [built.loop.pull(2)];
-  await quiesce();
+  await makersHold(built, 2, t);
   const first = built.dispatches.started.slice(0);
   pulls.push(built.loop.pull());
-  await quiesce();
+  await makersHold(built, 3, t);
   const second = built.dispatches.started.slice(first.length);
+  // Every card is claimed, so the third pull claims nothing: it settles, as no maker holds it.
   pulls.push(built.loop.pull());
-  await quiesce();
+  await pulls[2];
   const third = built.dispatches.started.slice(first.length + second.length);
 
   assert.deepEqual([first, second, third], [[1, 2], [3], []]);
@@ -955,7 +974,7 @@ async function refusedClaim() {
 }
 
 // proves R-RECORD-9
-test('given a sink that refuses every append and two pullable cards, `loop`\'s single pull claims no card', async () => {
+test('given a sink that refuses every append and two pullable cards, `loop`\'s single pull claims no card', SETTLES_WITHIN, async (t) => {
   const { built, failure } = await refusedClaim();
 
   assert.ok(failure, 'the pull failed');
@@ -964,7 +983,7 @@ test('given a sink that refuses every append and two pullable cards, `loop`\'s s
   // next pull over an accepting sink hands the maker stand-in both cards.
   built.acceptAppends();
   const next = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 2, t);
   assert.deepEqual(built.dispatches.holding(), [1, 2]);
   built.dispatches.releaseAll();
   await next;
@@ -1022,7 +1041,7 @@ test('given a dispatch already running when the sink starts refusing appends, th
 });
 
 // proves R-RECORD-9
-test('given a sink that refused the previous `loop`\'s single pull and now accepts appends, the next `loop`\'s single pull claims a card, with nothing between the two calls but the sink accepting again', async () => {
+test('given a sink that refused the previous `loop`\'s single pull and now accepts appends, the next `loop`\'s single pull claims a card, with nothing between the two calls but the sink accepting again', SETTLES_WITHIN, async (t) => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
   await assert.rejects(built.loop.pull(), notStarted(1));
@@ -1030,7 +1049,7 @@ test('given a sink that refused the previous `loop`\'s single pull and now accep
 
   built.acceptAppends();
   const next = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 1, t);
   const claimed = [...built.dispatches.started];
 
   assert.deepEqual(claimed, [1]);
@@ -1039,13 +1058,13 @@ test('given a sink that refused the previous `loop`\'s single pull and now accep
   await next;
 });
 
-test('across a `loop`\'s single pull the sink refused and a later one it accepted, the event stream holds no event recording a change of admission', async () => {
+test('across a `loop`\'s single pull the sink refused and a later one it accepted, the event stream holds no event recording a change of admission', SETTLES_WITHIN, async (t) => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
   await assert.rejects(built.loop.pull(), notStarted(1));
   built.acceptAppends();
   const next = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 1, t);
   assert.deepEqual(built.dispatches.holding(), [1]);
   built.dispatches.releaseAll();
   await next;
@@ -1056,13 +1075,13 @@ test('across a `loop`\'s single pull the sink refused and a later one it accepte
   assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`).filter((name) => !pulled.has(name)), []);
 });
 
-test('after a `loop`\'s single pull the sink refused, followed by one it accepted, the state directory holds nothing but the event stream', async () => {
+test('after a `loop`\'s single pull the sink refused, followed by one it accepted, the state directory holds nothing but the event stream', SETTLES_WITHIN, async (t) => {
   const built = world({ cards: [1], concurrency: 1 });
   built.refuseAppends(DISK_FULL);
   await assert.rejects(built.loop.pull(), notStarted(1));
   built.acceptAppends();
   const next = built.loop.pull();
-  await quiesce();
+  await makersHold(built, 1, t);
   assert.deepEqual(built.dispatches.holding(), [1]);
   built.dispatches.releaseAll();
   await next;
