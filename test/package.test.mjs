@@ -6,8 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
+  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,8 @@ import template from '../templates/rigger.config.mjs';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { installFromTarball as installRigger } from './installed-rigger.mjs';
 import { gitCalls, gitRecording, holding } from './process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
