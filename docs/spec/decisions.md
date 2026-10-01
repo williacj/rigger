@@ -203,7 +203,8 @@ measured until it has already been allowed, so the evidence only ever argues one
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
    the commit rule 1 promotes, so the engine promoted at the boundary is the one the exit run
-   tested.
+   tested. A commit that changes no file the packed tarball carries does not move the closing
+   commit, so a milestone's exit-run evidence can merge after the run.
 
 ### Notes
 
@@ -225,8 +226,8 @@ Two observations would reverse rule 4. First, an exit run by the candidate engin
 in another checkout, or in the installed engine that builds Rigger. Second, an exit run passes on
 the candidate engine, and the engine rule 1 then promotes from that same commit fails `rigger
 doctor` or its first dispatch. The first shows the installation rule cannot hold for a candidate.
-The second shows a candidate's exit run is not evidence for the engine that gets promoted, even
-when the two share a commit.
+The second shows a candidate's exit run is not evidence for the engine promoted from the commit
+it tested.
 
 ## D8 — A fact the code owns is generated, never typed
 
