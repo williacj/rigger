@@ -1,5 +1,6 @@
 // ABOUTME: Tests the forge adapter's read side against recorded `gh` answers: the cards a board
-// holds, its columns, its single-select fields and the repository's labels, each read in full.
+// holds, its columns, its single-select fields and the repository's labels, each read in full, and
+// a card's branch, pull requests, diff, merge base, comments and issue edit time.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +12,7 @@ import { validate } from '../src/config/validate.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import rigger from '../rigger.config.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -716,4 +718,385 @@ test("where the repository's owner and the declared board owner each hold a boar
   const cards = await readSide(boardFor(OCTO), { send }).readItems();
 
   assert.deepEqual(cards.map((card) => card.id), ['PVTI_octo_1']);
+});
+
+/**
+ * The key paths gh printed on 2026-10-01, with gh 2.99.0, for each of the repository reads'
+ * requests on this repository: the pull requests from a branch, its branches, an issue's last
+ * edit, a pull request's base and head, its comments, and the comparison its merge base is read
+ * from. A constructed answer holding any other path carries a field the request does not select.
+ */
+const PRINTED_REPOSITORY = Object.fromEntries(
+  [
+    ['pull requests', 'rigger-pull-requests-2026-10-01.json'],
+    ['branches', 'rigger-branches-2026-10-01.json'],
+    ['edited', 'rigger-issue-edited-2026-10-01.json'],
+    ['head', 'rigger-pull-request-head-2026-10-01.json'],
+    ['comments', 'rigger-pull-request-comments-2026-10-01.json'],
+    ['compare', 'rigger-compare-2026-10-01.json'],
+  ].map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
+);
+
+/** The diff a pull request is served as, here two files' worth, ending without a newline. */
+const DIFF = 'diff --git a/README.md b/README.md\nindex 1111111..2222222 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/a.txt b/a.txt\nnew file mode 100644\n--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1 @@\n+é and \\ "quoted"\n\\ No newline at end of file';
+
+/** What gh says of a request that failed: its message on stderr, and exit 1. */
+const failed = (message) => ({ status: 1, stdout: '', stderr: `${message}\n` });
+
+/**
+ * A forge answering the repository reads, recording every command it is handed and the function
+ * that handed it to the spawn. `answers` maps a kind of request to its answer: the data gh
+ * answered, keyed by the cursor each page is asked for where the request pages, or what gh said
+ * where it did not answer 0. A REST read is answered with the text gh printed. Every constructed
+ * answer is shaped as gh printed it for the same request.
+ */
+function repositoryForge(answers = {}) {
+  const sent = [];
+  const callers = [];
+  const answer = (kind, document) => {
+    const held = answers[kind];
+    assert.ok(held !== undefined, `the test forge holds no ${kind} answer`);
+    const page = said(held) || !Object.hasOwn(held, 'paged') ? held : held.paged[String(cursorOf(document))];
+    assert.ok(page !== undefined, `the ${kind} page after ${cursorOf(document)} is not one gh answered`);
+    if (said(page)) return page;
+    const printed = ok(page);
+    assert.deepEqual([...pathsOf(JSON.parse(printed.stdout))].filter((path) => !PRINTED_REPOSITORY[kind].has(path)), [], `the ${kind} answer is not shaped as gh prints it`);
+    return printed;
+  };
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
+    if (args[1] !== 'graphql') {
+      const held = answers[args[1]];
+      assert.ok(held !== undefined, `the test forge does not answer ${args.join(' ')}`);
+      if (said(held)) return held;
+      if (typeof held === 'string') return { status: 0, stdout: held, stderr: '' };
+      assert.deepEqual([...pathsOf(held)].filter((path) => !PRINTED_REPOSITORY.compare.has(path)), [], 'the compare answer is not shaped as gh prints it');
+      return { status: 0, stdout: JSON.stringify(held), stderr: '' };
+    }
+    const document = documentOf(args);
+    for (const kind of ['pullRequests(', 'refs(', 'issue(', 'comments(']) {
+      if (document.includes(kind)) return answer({ 'pullRequests(': 'pull requests', 'refs(': 'branches', 'issue(': 'edited', 'comments(': 'comments' }[kind], document);
+    }
+    if (document.includes('pullRequest(')) return answer('head', document);
+    throw new Error(`the test forge does not answer ${document}`);
+  };
+  send.sent = sent;
+  send.callers = callers;
+  return send;
+}
+
+/** A pull request as the pull request read answers it. */
+const pullNode = ({ number, state = 'OPEN', head = `${number}`.padStart(40, 'a'), base = 'main', from = 'williacj/rigger' }) =>
+  ({ number, state, headRefOid: head, baseRefName: base, headRepository: from === null ? null : { nameWithOwner: from } });
+
+/** The pull request read's answer: `nodes`, pointing on to the page `next` when there is one. */
+const pullPage = (nodes, next = null) => ({ repository: { pullRequests: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'Y3Vy' }, nodes } } });
+
+/** The branch read's answer: `names`, pointing on to the page `next` when there is one. */
+const branchPage = (names, next = null) => ({ repository: { refs: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MjU' }, nodes: names.map((name) => ({ name })) } } });
+
+/** The comment read's answer: `comments`, pointing on to the page `next` when there is one. */
+const commentPage = (comments, next = null) => ({ repository: { pullRequest: { comments: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'Y3Vy' }, nodes: comments } } } });
+
+/** The pull requests a read answers, one page of them. */
+const pulls = (...nodes) => ({ paged: { null: pullPage(nodes.map(pullNode)) } });
+
+test('given a branch, the repository read answers the open pull request from it in the configured repository, with its number, head SHA and base', async () => {
+  // A pull request from a fork's branch of the same name is not this repository's line of work.
+  const send = repositoryForge({
+    'pull requests': pulls({ number: 12, head: 'c'.repeat(40), base: 'main' }, { number: 13, from: 'someone/rigger' }, { number: 14, from: null }),
+  });
+
+  const read = await repositoryReads(BOARD, { send }).readPullRequests('rigger-214');
+
+  assert.deepEqual(read, { open: [{ number: 12, head: 'c'.repeat(40), base: 'main' }], merged: [] });
+  assert.match(documentOf(send.sent[0].slice(1)), /pullRequests\(headRefName: "rigger-214", states: \[OPEN, MERGED\], first: 100\)/);
+});
+
+test('given a branch with no open pull request, the repository read answers none', async () => {
+  const send = repositoryForge({ 'pull requests': pulls() });
+
+  assert.deepEqual(await repositoryReads(BOARD, { send }).readPullRequests('rigger-214'), { open: [], merged: [] });
+});
+
+test('given a branch with two open pull requests, the repository read answers both', async () => {
+  const send = repositoryForge({ 'pull requests': pulls({ number: 12 }, { number: 15, base: 'release' }) });
+
+  const { open } = await repositoryReads(BOARD, { send }).readPullRequests('rigger-214');
+
+  assert.deepEqual(open.map(({ number, base }) => [number, base]), [[12, 'main'], [15, 'release']]);
+});
+
+test('given a branch, the repository read answers every merged pull request whose head was that branch, across pages', async () => {
+  const send = repositoryForge({
+    'pull requests': {
+      paged: {
+        null: pullPage([pullNode({ number: 9, state: 'MERGED' })], 'Y3Vyc29yOnYyOpHPAA'),
+        Y3Vyc29yOnYyOpHPAA: pullPage([pullNode({ number: 11, state: 'MERGED', head: 'd'.repeat(40) }), pullNode({ number: 12 })]),
+      },
+    },
+  });
+
+  const read = await repositoryReads(BOARD, { send }).readPullRequests('rigger-214');
+
+  assert.deepEqual(read.merged, [{ number: 9, head: pullNode({ number: 9 }).headRefOid, base: 'main' }, { number: 11, head: 'd'.repeat(40), base: 'main' }]);
+  assert.deepEqual(read.open.map(({ number }) => number), [12]);
+  assert.equal(send.sent.length, 2);
+});
+
+test("the repository read answers the pull requests gh answered for this repository's branch on 2026-10-01", async () => {
+  // Captured with gh 2.99.0: #503, merged from m4/477-structure-deltas into main.
+  const recorded = readFileSync(join(FIXTURES, 'rigger-pull-requests-2026-10-01.json'), 'utf8');
+  const send = () => ({ status: 0, stdout: recorded, stderr: '' });
+
+  const read = await repositoryReads(BOARD, { send }).readPullRequests('m4/477-structure-deltas');
+
+  assert.deepEqual(read, { open: [], merged: [{ number: 503, head: '2241b82e646247db82dae465dd0d2fbcb7e098e0', base: 'main' }] });
+});
+
+test('given a branch name, the repository read answers whether the forge holds that branch', async () => {
+  const send = repositoryForge({ branches: { paged: { null: branchPage(['main', 'rigger-214']) } } });
+  const reads = repositoryReads(BOARD, { send });
+
+  assert.deepEqual(await reads.readBranches(['rigger-214']), { 'rigger-214': true });
+  assert.deepEqual(await reads.readBranches(['rigger-21']), { 'rigger-21': false });
+});
+
+test('given several branch names, the repository read answers for each whether the forge holds it, in one call', async () => {
+  const send = repositoryForge({ branches: { paged: { null: branchPage(['main', 'rigger-214', 'rigger-216']) } } });
+
+  const read = await repositoryReads(BOARD, { send }).readBranches(['rigger-214', 'rigger-215', 'rigger-216']);
+
+  assert.deepEqual(read, { 'rigger-214': true, 'rigger-215': false, 'rigger-216': true });
+  assert.equal(send.sent.length, 1);
+});
+
+test('the branch read finds a branch on the second page gh answers', async () => {
+  const names = Array.from({ length: 100 }, (_, i) => `topic-${i}`);
+  const send = repositoryForge({ branches: { paged: { null: branchPage(names, 'MTAw'), MTAw: branchPage(['rigger-214']) } } });
+
+  assert.deepEqual(await repositoryReads(BOARD, { send }).readBranches(['rigger-214', 'topic-0']), { 'rigger-214': true, 'topic-0': true });
+  assert.equal(send.sent.length, 2);
+});
+
+test("the repository read answers the branches gh answered for this repository on 2026-10-01", async () => {
+  const recorded = readFileSync(join(FIXTURES, 'rigger-branches-2026-10-01.json'), 'utf8');
+  const send = () => ({ status: 0, stdout: recorded, stderr: '' });
+
+  const read = await repositoryReads(BOARD, { send }).readBranches(['main', 'm4/357-safe-declared-tools', 'm4/477-structure-deltas']);
+
+  assert.deepEqual(read, { main: true, 'm4/357-safe-declared-tools': true, 'm4/477-structure-deltas': false });
+});
+
+test("given an issue number, the repository read answers the time of its body's last edit, and null for a body never edited", async () => {
+  const edited = repositoryReads(BOARD, { send: repositoryForge({ edited: { repository: { issue: { lastEditedAt: '2026-10-01T13:20:50Z' } } } }) });
+  const never = repositoryReads(BOARD, { send: repositoryForge({ edited: { repository: { issue: { lastEditedAt: null } } } }) });
+
+  assert.equal(await edited.readEditedAt(479), '2026-10-01T13:20:50Z');
+  assert.equal(await never.readEditedAt(479), null);
+});
+
+test("the repository read answers #479's last edit as gh answered it on 2026-10-01", async () => {
+  const recorded = readFileSync(join(FIXTURES, 'rigger-issue-edited-2026-10-01.json'), 'utf8');
+  const sent = [];
+  const send = (command, args) => {
+    sent.push(documentOf(args));
+    return { status: 0, stdout: recorded, stderr: '' };
+  };
+
+  assert.equal(await repositoryReads(BOARD, { send }).readEditedAt(479), '2026-10-01T13:20:50Z');
+  assert.deepEqual(sent, ['query { repository(owner: "williacj", name: "rigger") { issue(number: 479) { lastEditedAt } } }']);
+});
+
+test('given a pull request number, the repository read answers its diff as the forge serves it, byte for byte', async () => {
+  const send = repositoryForge({ 'repos/williacj/rigger/pulls/12': DIFF });
+
+  const diff = await repositoryReads(BOARD, { send }).readDiff(12);
+
+  assert.equal(Buffer.compare(Buffer.from(diff), Buffer.from(DIFF)), 0);
+  assert.deepEqual(send.sent, [['gh', 'api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff']]);
+});
+
+test('given a pull request whose diff the forge declines to serve, the repository read rejects naming the pull request and the reason', async () => {
+  // Constructed: GitHub declines a diff past its limits with HTTP 406, and gh prints the message
+  // on stderr as it printed "gh: Not Found (HTTP 404)" for a missing pull request on 2026-10-01.
+  const reason = 'gh: Sorry, the diff exceeded the maximum number of files (300). Consider using \'List pull requests files\' API or locally cloning the repository instead. (HTTP 406)';
+  const send = repositoryForge({ 'repos/williacj/rigger/pulls/12': failed(reason) });
+
+  await assert.rejects(repositoryReads(BOARD, { send }).readDiff(12), (error) => {
+    assert.ok(error.message.includes('pull request #12'), error.message);
+    assert.ok(error.message.includes(reason), error.message);
+    return true;
+  });
+});
+
+test('given a pull request number, the repository read answers the merge base the forge computed its diff from, with the base and head it compared', async () => {
+  const head = '559db5bf83f4b7c30c1098ba4944875343af72cc';
+  const send = repositoryForge({
+    head: { repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } },
+    [`repos/williacj/rigger/compare/main...${head}`]: { merge_base_commit: { sha: 'ef60b49362c2fb1720412b2fbf30c0eb586a93d4' } },
+  });
+
+  const read = await repositoryReads(BOARD, { send }).readMergeBase(497);
+
+  assert.deepEqual(read, { base: 'main', head, mergeBase: 'ef60b49362c2fb1720412b2fbf30c0eb586a93d4' });
+  assert.deepEqual(send.sent[1], ['gh', 'api', `repos/williacj/rigger/compare/main...${head}`, '-X', 'GET']);
+});
+
+test("the repository read answers #497's merge base from the comparison gh answered on 2026-10-01", async () => {
+  // `git merge-base` of main and #497's head gave the same commit on that day.
+  const recorded = {
+    head: readFileSync(join(FIXTURES, 'rigger-pull-request-head-2026-10-01.json'), 'utf8'),
+    compare: readFileSync(join(FIXTURES, 'rigger-compare-2026-10-01.json'), 'utf8'),
+  };
+  const send = (command, args) => ({ status: 0, stdout: args[1] === 'graphql' ? recorded.head : recorded.compare, stderr: '' });
+
+  const read = await repositoryReads(BOARD, { send }).readMergeBase(497);
+
+  assert.deepEqual(read, { base: 'main', head: '559db5bf83f4b7c30c1098ba4944875343af72cc', mergeBase: 'ef60b49362c2fb1720412b2fbf30c0eb586a93d4' });
+});
+
+test('given a pull request number, the repository read answers every comment on it with its body and time, across more than one page', async () => {
+  const comments = Array.from({ length: 101 }, (_, i) => ({ body: `Comment ${i + 1}`, createdAt: `2026-10-01T10:${String(i % 60).padStart(2, '0')}:00Z` }));
+  const send = repositoryForge({ comments: { paged: { null: commentPage(comments.slice(0, 100), 'Y3Vyc29yOnYyOpHPAAA'), Y3Vyc29yOnYyOpHPAAA: commentPage(comments.slice(100)) } } });
+
+  const read = await repositoryReads(BOARD, { send }).readComments(12);
+
+  assert.deepEqual(read, comments);
+  assert.equal(send.sent.length, 2);
+});
+
+test("the repository read answers #503's comments as gh answered them on 2026-10-01", async () => {
+  const recorded = readFileSync(join(FIXTURES, 'rigger-pull-request-comments-2026-10-01.json'), 'utf8');
+  const send = () => ({ status: 0, stdout: recorded, stderr: '' });
+
+  const read = await repositoryReads(BOARD, { send }).readComments(503);
+
+  assert.equal(read.length, 2);
+  assert.ok(read[0].body.startsWith('## Engineer judge verdict, PR #503'), read[0].body.slice(0, 60));
+  assert.deepEqual(read, JSON.parse(recorded).data.repository.pullRequest.comments.nodes);
+});
+
+/** Each repository read, called on what it reads, with what a failure must name of it. */
+const REPOSITORY_READS = {
+  readPullRequests: { call: (reads) => reads.readPullRequests('rigger-214'), names: 'branch rigger-214' },
+  readBranches: { call: (reads) => reads.readBranches(['rigger-214', 'rigger-215']), names: 'branches rigger-214, rigger-215' },
+  readEditedAt: { call: (reads) => reads.readEditedAt(214), names: 'issue #214' },
+  readDiff: { call: (reads) => reads.readDiff(12), names: 'pull request #12' },
+  readMergeBase: { call: (reads) => reads.readMergeBase(12), names: 'pull request #12' },
+  readComments: { call: (reads) => reads.readComments(12), names: 'pull request #12' },
+};
+
+test('the table of repository reads names every read the repository side offers', () => {
+  assert.deepEqual(Object.keys(repositoryReads(BOARD)).sort(), Object.keys(REPOSITORY_READS).sort());
+});
+
+test('a repository read that fails rejects naming what it read and what gh said, and never answers none in its place', async () => {
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    const send = () => failed('gh: Could not resolve to a Repository with the name \'williacj/rigger\'.');
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+      assert.ok(error.message.includes(name), error.message);
+      assert.ok(error.message.includes(names), error.message);
+      assert.ok(error.message.includes('Could not resolve to a Repository'), error.message);
+      return true;
+    }, name);
+  }
+});
+
+test('a repository read that gh answers without the repository, issue or pull request rejects naming what it read', async () => {
+  // gh exits 1 where GitHub resolves nothing, so this is the answer read defensively: data that
+  // does not hold what was asked is never read as an empty answer.
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    if (name === 'readDiff') continue;
+    const send = (command, args) => ({ status: 0, stdout: JSON.stringify(args[1] === 'graphql' ? { data: { repository: null } } : {}), stderr: '' });
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => error.message.includes(names) || assert.fail(error.message), name);
+  }
+});
+
+test('a repository read refuses a number that is not an issue or pull request number, and sends nothing', async () => {
+  const sent = [];
+  const reads = repositoryReads(BOARD, { send: (command, args) => sent.push(args) });
+  for (const call of [() => reads.readEditedAt('214) { id } x: issue(number: 1'), () => reads.readDiff('12/../../labels'), () => reads.readMergeBase(1.5), () => reads.readComments(null)]) {
+    await assert.rejects(call(), /not an issue or pull request number/);
+  }
+  assert.deepEqual(sent, []);
+});
+
+test('every request a full repository read issues reaches the spawn through the read runner, which admits it', async () => {
+  const head = 'e'.repeat(40);
+  const answers = {
+    'pull requests': pulls({ number: 12 }),
+    branches: { paged: { null: branchPage(['main']) } },
+    edited: { repository: { issue: { lastEditedAt: null } } },
+    head: { repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } },
+    comments: { paged: { null: commentPage([]) } },
+    'repos/williacj/rigger/pulls/12': DIFF,
+    'repos/williacj/rigger/pulls/214': DIFF,
+    [`repos/williacj/rigger/compare/main...${head}`]: { merge_base_commit: { sha: head } },
+  };
+  const sent = [];
+  const callers = [];
+  for (const { call } of Object.values(REPOSITORY_READS)) {
+    const send = repositoryForge(answers);
+    await call(repositoryReads(BOARD, { send }));
+    sent.push(...send.sent);
+    callers.push(...send.callers);
+  }
+
+  assert.ok(sent.length >= 7, `only ${sent.length} requests were recorded`);
+  assert.deepEqual([...new Set(callers)], ['readRunner'], `requests reached the spawn from ${callers}`);
+  for (const [command, ...args] of sent) {
+    assert.equal(command, 'gh');
+    const received = [];
+    await readRunner(args, { send: (handed, admitted) => received.push([handed, ...admitted]) });
+    assert.deepEqual(received, [['gh', ...args]]);
+    await assert.rejects(itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
+    await assert.rejects(schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
+  }
+});
+
+test('a repository read whose request never reached gh rejects naming what it read and why, keeps the failure\'s code, and sends nothing more', async () => {
+  // L0's process adapter rejects, rather than answering, where `gh` never started.
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    const sent = [];
+    const send = (command, args) => {
+      sent.push(args);
+      throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
+    };
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+      assert.ok(error.message.startsWith(`${name} on board 6 failed: `), error.message);
+      assert.ok(error.message.includes(names), error.message);
+      assert.ok(error.message.includes('williacj/rigger'), error.message);
+      assert.ok(error.message.includes('spawn gh ENOENT'), error.message);
+      assert.equal(error.code, 'ENOENT', name);
+      return true;
+    }, name);
+    assert.equal(sent.length, 1, `${name} went on after its first request failed`);
+  }
+});
+
+test('a repository read whose answer gh printed is not JSON rejects naming what it read and that the answer could not be read', async () => {
+  // The diff is text and is never parsed, so its read is not among these.
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    if (name === 'readDiff') continue;
+    const send = () => ({ status: 0, stdout: '{"data": {"repository"', stderr: '' });
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+      assert.ok(error.message.startsWith(`${name} on board 6 failed: `), error.message);
+      assert.ok(error.message.includes(names), error.message);
+      assert.match(error.message, /JSON/, error.message);
+      return true;
+    }, name);
+  }
+  // The merge base's comparison is the second request, and is parsed too.
+  const head = 'e'.repeat(40);
+  const send = (command, args) => (args[1] === 'graphql'
+    ? ok({ repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } })
+    : { status: 0, stdout: '<html>', stderr: '' });
+  await assert.rejects(repositoryReads(BOARD, { send }).readMergeBase(12), (error) => {
+    assert.ok(error.message.startsWith('readMergeBase on board 6 failed: '), error.message);
+    assert.ok(error.message.includes('pull request #12'), error.message);
+    assert.match(error.message, /JSON/, error.message);
+    return true;
+  });
 });

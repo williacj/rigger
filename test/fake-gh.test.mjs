@@ -16,6 +16,11 @@ import { readSide } from '../src/substrate/forge/read.mjs';
 import { schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { AGENT_ANSWERED, seedRepository } from './fake-gh.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+import { clonedFromOrigin, gitIn } from './git-repository.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { writeFileSync } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -355,4 +360,200 @@ test('given a board owner, the fake gh holds its board under that owner and answ
       return true;
     }),
   );
+});
+
+/** A head commit a seeded pull request is given, distinct for each `n`. */
+const sha = (n) => String(n).padStart(40, 'a');
+
+/** The repository reads, pointed at the board the fake `gh` holds, sent through its runner's own spawn. */
+const reads = () => repositoryReads(BOARD, { emitter: UNKILLED });
+
+/** The cards a board holds for the repository tests below. */
+const CARDS = [
+  { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'One', column: 'Review' },
+  { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Two', column: 'Coding' },
+];
+
+test("a fake gh seeded with nothing answers no branch, no pull request and no edit for any card, and no pull request's comments", async () => {
+  const fake = installed({ columns: ['Coding', 'Review'], items: CARDS });
+
+  await onPath(fake, async () => {
+    for (const { number } of CARDS) {
+      assert.deepEqual(await reads().readPullRequests(`rigger-${number}`), { open: [], merged: [] });
+      assert.equal(await reads().readEditedAt(number), null);
+    }
+    assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': false, 'rigger-215': false });
+    await assert.rejects(reads().readComments(1), /Could not resolve to a PullRequest with the number of 1/);
+  });
+});
+
+test("the repository reads through the fake gh answer a card's seeded branch, open and merged pull requests, and its issue's edit time", async () => {
+  const fake = installed({ columns: ['Coding', 'Review'], items: CARDS });
+  seedRepository(fake, {
+    branches: ['rigger-214'],
+    pullRequests: [
+      { number: 301, head: 'rigger-214', sha: sha(301) },
+      { number: 302, head: 'rigger-214', sha: sha(302), base: 'release' },
+      { number: 299, head: 'rigger-215', sha: sha(299), merged: true },
+      { number: 303, head: 'rigger-214', sha: sha(303), from: 'someone/rigger' },
+    ],
+    edited: { 214: '2026-10-01T09:30:00Z' },
+  });
+
+  await onPath(fake, async () => {
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }, { number: 302, head: sha(302), base: 'release' }], merged: [] });
+    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [{ number: 299, head: sha(299), base: 'main' }] });
+    assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': true, 'rigger-215': false });
+    assert.equal(await reads().readEditedAt(214), '2026-10-01T09:30:00Z');
+    assert.equal(await reads().readEditedAt(215), null);
+    await assert.rejects(reads().readEditedAt(216), /readEditedAt.*issue #216.*Could not resolve to an Issue with the number of 216/);
+  });
+});
+
+test("the repository reads through the fake gh answer a seeded pull request's diff byte for byte, its merge base, and its comments across pages", async () => {
+  const diff = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-é\n+"\\\n\\ No newline at end of file';
+  const comments = Array.from({ length: 101 }, (_, i) => ({ body: `Finding ${i}`, createdAt: '2026-10-01T09:30:00Z' }));
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), diff, mergeBase: sha(1), comments }] });
+
+  await onPath(fake, async () => {
+    assert.equal(Buffer.compare(Buffer.from(await reads().readDiff(301)), Buffer.from(diff)), 0);
+    assert.deepEqual(await reads().readMergeBase(301), { base: 'main', head: sha(301), mergeBase: sha(1) });
+    assert.deepEqual(await reads().readComments(301), comments);
+  });
+});
+
+test('a diff the fake gh declines to serve is rejected by the repository read, naming the pull request and the reason', async () => {
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), declined: 'Sorry, the diff exceeded the maximum number of lines (20000)' }] });
+
+  await onPath(fake, () => assert.rejects(reads().readDiff(301), /pull request #301.*Sorry, the diff exceeded the maximum number of lines \(20000\) \(HTTP 406\)/));
+  await onPath(fake, () => assert.rejects(reads().readDiff(302), /pull request #302.*Not Found \(HTTP 404\)/));
+});
+
+test("the fake repository's reads are exactly the repository read side's, compared both ways", () => {
+  // In-process worlds stand the fake repository in for the read side, so each must offer what the other does.
+  const fake = Object.keys(createFakeRepository().operations);
+  const adapter = Object.keys(repositoryReads(BOARD));
+
+  assert.ok(fake.length > 0);
+  assert.deepEqual(adapter.filter((name) => !fake.includes(name)), []);
+  assert.deepEqual(fake.filter((name) => !adapter.includes(name)), []);
+});
+
+test('the fake repository answers in process what the fake gh answers for the same seed', async () => {
+  const seed = {
+    branches: ['rigger-214'],
+    pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), diff: 'd', mergeBase: sha(1), comments: [{ body: 'x', createdAt: '2026-10-01T09:30:00Z' }] }, { number: 299, head: 'rigger-214', sha: sha(299), merged: true }],
+    edited: { 214: '2026-10-01T09:30:00Z' },
+  };
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  seedRepository(fake, seed);
+  const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readEditedAt', 214], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301]];
+
+  const { operations } = createFakeRepository(seed);
+  for (const [name, argument] of calls) {
+    assert.deepEqual(await onPath(fake, () => reads()[name](argument)), await operations[name](argument), name);
+  }
+});
+
+test('the agent commands the fake gh answers are gh pr create, comment, view and diff, and none is among the adapter commands it answers', () => {
+  assert.deepEqual([...AGENT_ANSWERED].sort(), ['comment', 'create', 'diff', 'view']);
+  assert.deepEqual(ANSWERED.filter((command) => command.startsWith('gh pr ')), []);
+});
+
+/**
+ * A fake `gh` over a local `origin` holding `main` and a branch `rigger-214` one commit past it,
+ * with a clone checked out on that branch, where an agent would run `gh`.
+ */
+function withPushedBranch() {
+  const { origin, repository } = clonedFromOrigin(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-origin-')));
+  gitIn(repository, 'switch', '--quiet', '-c', 'rigger-214');
+  writeFileSync(join(repository, 'README'), 'two\n');
+  gitIn(repository, 'commit', '--quiet', '-am', 'Two');
+  gitIn(repository, 'push', '--quiet', 'origin', 'rigger-214');
+  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
+  const ran = (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', cwd: repository, env: gitEnvironment() });
+  return { origin, repository, fake, ran, head: gitIn(repository, 'rev-parse', 'HEAD').trim(), main: gitIn(repository, 'rev-parse', 'main').trim() };
+}
+
+test("gh pr create on the fake gh opens a pull request from a branch the local origin holds, at that branch's head, which the repository reads then see", async () => {
+  const { fake, ran, head, main, origin } = withPushedBranch();
+
+  const said = ran('pr', 'create', '--title', 'Two', '--body', 'Why.');
+
+  assert.equal(said.status, 0, said.stderr);
+  assert.equal(said.stdout, 'https://github.com/williacj/rigger/pull/216\n');
+  const expectedDiff = gitIn(origin, 'diff', main, head);
+  await onPath(fake, async () => {
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 216, head, base: 'main' }], merged: [] });
+    assert.deepEqual(await reads().readBranches(['rigger-214', 'main', 'rigger-215']), { 'rigger-214': true, main: true, 'rigger-215': false });
+    assert.equal(await reads().readDiff(216), expectedDiff);
+    assert.deepEqual(await reads().readMergeBase(216), { base: 'main', head, mergeBase: main });
+  });
+  assert.ok(expectedDiff.includes('+two'), expectedDiff);
+});
+
+test('gh pr create on the fake gh refuses a branch the local origin does not hold, and a second pull request from the same branch, and opens nothing', async () => {
+  const { fake, ran } = withPushedBranch();
+
+  const unpushed = ran('pr', 'create', '--head', 'rigger-215', '--title', 'T', '--body', 'B');
+  assert.notEqual(unpushed.status, 0);
+  assert.match(unpushed.stderr, /push/);
+  assert.equal(ran('pr', 'create', '--title', 'T', '--body', 'B').status, 0);
+  const twice = ran('pr', 'create', '--head', 'rigger-214', '--title', 'T', '--body', 'B');
+  assert.notEqual(twice.status, 0);
+  assert.match(twice.stderr, /already exists/);
+
+  await onPath(fake, async () => {
+    assert.deepEqual((await reads().readPullRequests('rigger-214')).open.map(({ number }) => number), [216]);
+    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [] });
+  });
+});
+
+test("gh pr comment on the fake gh records the comment, which the repository read then answers with its time", async () => {
+  const { fake, ran } = withPushedBranch();
+  ran('pr', 'create', '--title', 'T', '--body', 'B');
+  const before = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+  const by = ran('pr', 'comment', '216', '--body', '## Findings\n\n- None.');
+  const current = ran('pr', 'comment', '--body-file', '-', '--repo', 'williacj/rigger');
+
+  assert.equal(by.status, 0, by.stderr);
+  assert.equal(by.stdout, 'https://github.com/williacj/rigger/pull/216#issuecomment-1\n');
+  assert.equal(current.status, 0, current.stderr);
+  const comments = await onPath(fake, () => reads().readComments(216));
+  assert.deepEqual(comments.map(({ body }) => body), ['## Findings\n\n- None.', '']);
+  for (const { createdAt } of comments) {
+    assert.match(createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.ok(createdAt >= before, `${createdAt} is before the comment was made`);
+  }
+});
+
+test('gh pr view and gh pr diff on the fake gh print a pull request as gh prints it to a reader that is not a terminal', async () => {
+  const { ran, head, origin, main } = withPushedBranch();
+  ran('pr', 'create', '--title', 'Two', '--body', 'Why.');
+
+  const viewed = ran('pr', 'view', '216');
+  const json = ran('pr', 'view', 'rigger-214', '--json', 'state,number,headRefOid');
+  const diff = ran('pr', 'diff');
+
+  assert.equal(viewed.status, 0, viewed.stderr);
+  assert.equal(viewed.stdout, 'title:\tTwo\nstate:\tOPEN\nauthor:\trigger-fake\nlabels:\t\nassignees:\t\nreviewers:\t\nprojects:\t\nmilestone:\t\nnumber:\t216\nurl:\thttps://github.com/williacj/rigger/pull/216\nadditions:\t1\ndeletions:\t1\nauto-merge:\tdisabled\n--\nWhy.\n');
+  assert.equal(json.stdout, `{"headRefOid":"${head}","number":216,"state":"OPEN"}\n`);
+  assert.equal(ran('pr', 'view', 'https://github.com/williacj/rigger/pull/216', '--json', 'number').stdout, '{"number":216}\n');
+  assert.equal(diff.stdout, gitIn(origin, 'diff', main, head));
+  const missing = ran('pr', 'view', '999');
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Could not resolve to a PullRequest with the number of 999/);
+});
+
+test('an agent command the fake gh does not model fails, printing itself, and changes nothing', async () => {
+  const { fake, ran } = withPushedBranch();
+  for (const args of [['pr', 'merge', '216'], ['pr', 'create', '--title', 'T', '--body', 'B', '--reviewer', 'x'], ['pr', 'view', '--json', 'author'], ['pr', 'comment', '216', '--body', 'x', '--repo', 'someone/else']]) {
+    const said = ran(...args);
+    assert.notEqual(said.status, 0, args.join(' '));
+    assert.ok(said.stderr.includes(`gh ${args.join(' ')}`), said.stderr);
+  }
+  await onPath(fake, async () => assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [], merged: [] }));
 });
