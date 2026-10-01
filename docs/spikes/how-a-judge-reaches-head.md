@@ -184,7 +184,7 @@ The `init` record from c2, abridged:
 
 | Item | Result | Shown by |
 |---|---|---|
-| `init` lists anything from `head` | no. `agents`: `c519-main-agent` and the five built-ins. `skills`: `c519-main-skill` and the bundled ones. `mcp_servers`: only `c519main` | c6, c7, c8, c13 to c19 `init` |
+| `init` lists anything from `head` | no: quoted below the table | c6 `init`; c7, c8 and c13 to c19 the same |
 | `head` markers named, asked about context | none. The answer named all five of `main`'s | c6 answer; transcripts.txt: no `OSPREY-head-` source marker in any route-B run |
 | `head`'s settings hook ran | no `head/HOOKRAN-*` file after any run | c6 to c8, c13 to c19 .files |
 | The planted agent dispatched | no, and no subagent started: "not in the list of available agent types". Asked to use any tool, it checked `ListAgents` and gave the same answer, trying no workflow | c7, c13 |
@@ -192,6 +192,21 @@ The `init` record from c2, abridged:
 | Work in `head` | read; wrote; `npm test` ran in `head` (head/npm-test-cwd.txt), and the tool added "Shell cwd was reset to `<main>`". The tool result printed no exit code: haiku reported 0, and sonnet said the output "didn't show an exit code". `permission_denials` empty, so no permission prompt was left unanswered | c8, c15 and their .files |
 | A failing command's exit code | reported by the tool as `Exit code 1`. sonnet appended ` .` to the command, so the script's `exit 3` failed with "too many arguments" and exited 1 | c19 |
 | `main`'s `CLAUDE.md`, hooks, .mcp.json | all three loaded as with no flag; `c519main` connected, source `dynamic` where c1 had source `project`. `main`'s skill and agent were listed too | c6 |
+
+The three fields of c6's `init` record, verbatim, with line breaks and indentation added after
+commas. c7, c8 and c13 to c19 held the identical three fields, compared as `jq -c` output from each stream:
+
+```
+"agents":["c519-main-agent","claude","Explore","general-purpose","Plan","statusline-setup"],
+"skills":["c519-main-skill","deep-research","design","design-sync","dataviz","update-config","verify",
+          "debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","schedule",
+          "claude-api","workflow-authoring","run","run-skill-generator","plugin-authoring"],
+"mcp_servers":[{"name":"c519main","status":"connected","source":"dynamic"}]
+```
+
+No entry is `head`'s: the one non-bundled skill is `c519-main-skill`, the one non-built-in agent is
+`c519-main-agent`, and the one server is `c519main`. The other 19 skills are #473's 18 bundled
+skills and `plugin-authoring`.
 
 ### What route B's permissions rest on
 
@@ -215,13 +230,28 @@ needing approval. And c16's `cd <head> && npm test; echo "npm-exit=$?"` was refu
 
 | Item | Result | Shown by |
 |---|---|---|
-| `init` lists anything from `head` | no: the same lists as route B | c9, c10, c11 `init` |
+| `init` lists anything from `head` | no: quoted below the table | c9 `init`; c10 and c11 the same |
 | `head` markers named, asked about context | none. The answer named all five of `main`'s | c9 answer; transcripts.txt |
 | `head`'s settings hook ran | no `head/HOOKRAN-*` file | c9 to c11 .files |
 | The planted agent dispatched | no, and no subagent started: "not listed in the available agent types" | c10 |
 | `main`'s skill read by path | yes | c11 |
 | Work in `head` | read; wrote; `npm test` ran in `head`, with no cwd reset. The session reported exit 0 from a non-error result. `permission_denials` empty, so no permission prompt was left unanswered | c11 and c11.files |
 | `main`'s `CLAUDE.md`, hooks, .mcp.json | as route B | c9 |
+
+The three fields of c9's `init` record, verbatim, with line breaks and indentation added after
+commas. c10 and c11 held the identical three fields, compared as `jq -c` output from each stream:
+
+```
+"agents":["c519-main-agent","claude","Explore","general-purpose","Plan","statusline-setup"],
+"skills":["c519-main-skill","deep-research","design","design-sync","dataviz","update-config","verify",
+          "debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","schedule",
+          "claude-api","workflow-authoring","run","run-skill-generator","plugin-authoring"],
+"mcp_servers":[{"name":"c519main","status":"connected","source":"dynamic"}]
+```
+
+No entry is `head`'s: the one non-bundled skill is `c519-main-skill`, the one non-built-in agent is
+`c519-main-agent`, and the one server is `c519main`. The other 19 skills are #473's 18 bundled
+skills and `plugin-authoring`.
 
 ## `main`'s sources with no route flag
 
