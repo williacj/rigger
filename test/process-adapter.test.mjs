@@ -956,10 +956,14 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   // stopped and reads again until it gives up. Its second call marks the re-reads' start, and
   // each call leaves a file in `reads`. It is compiled, and `exec`s `ps`, so that a read costs
   // what a read of `ps` costs, near enough: a shell stand-in costs a shell's start on every read.
+  // It is `warmed`, because the census's first read is its first exec, which must reach its body
+  // within `readTimeout`. Run with `RIGGER_FIXTURE_WARMING` set, it exits before marking a call,
+  // so its first call is still the census's.
   writeFileSync(join(directory, 'ps.c'), [
     '#include <fcntl.h>',
     '#include <signal.h>',
     '#include <stdio.h>',
+    '#include <stdlib.h>',
     '#include <string.h>',
     '#include <sys/stat.h>',
     '#include <unistd.h>',
@@ -967,6 +971,7 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
     '  char here[4096], path[4608];',
     '  snprintf(here, sizeof here, "%s", argv[0]);',
     '  *strrchr(here, \'/\') = 0;',
+    '  if (getenv("RIGGER_FIXTURE_WARMING")) return 0;',
     '  snprintf(path, sizeof path, "%s/called", here);',
     '  if (mkdir(path, 0700) != 0) { snprintf(path, sizeof path, "%s/second", here); close(open(path, O_CREAT | O_EXCL | O_WRONLY, 0600)); }',
     '  snprintf(path, sizeof path, "%s/reads/%d", here, getpid());',
@@ -983,6 +988,7 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   const ps = join(directory, 'ps');
   const built = spawnSync('/usr/bin/cc', ['-o', ps, join(directory, 'ps.c')], { encoding: 'utf8' });
   assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
+  warmed(ps);
   mkdirSync(join(directory, 'reads'));
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
   const readTimeout = 1_500;
@@ -992,6 +998,7 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
 
   const { user, system } = process.cpuUsage(used);
   assert.deepEqual(events.map(({ event }) => event), ['group.killed'], 'the census did not give up on a group it never found stopped');
+  assert.ok(writtenAt(directory, 'called') >= writtenAt(directory, 'exited'), 'the stand-in\'s first call came before the census, so its second call marks no re-read');
   // The census began once the command had exited, and re-read until `readTimeout` had passed
   // from its start, so the re-reads lasted at least this long.
   const rereading = writtenAt(directory, 'exited') + readTimeout - writtenAt(directory, 'second');
