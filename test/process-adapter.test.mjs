@@ -1498,6 +1498,39 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   assert.equal(leader, true, `the leader's kill was not recorded: ${JSON.stringify(events)}`);
 });
 
+test('a census whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // Every read of the group, by the census, the kill and the reads after it, is cut down to the
+  // zombie's row and exits 0, so no read lists the leader. A read of one pid is answered as `ps`
+  // answers it. A read of the census, with `-ww`, marks that it listed the zombie only while the
+  // leader, whose pid is the group's, answers signal 0, so no read made after the leader is gone
+  // stands in for it. It is `warmed`, because the census's first read is its first exec, which
+  // must reach its body within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *"-g "*)',
+    '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
+    '  [ -z "$rows" ] && exit 0',
+    '  case "$*" in "-ww -g "*) /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/census.cut" ;; esac',
+    '  echo "$rows"',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n')));
+  // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
+  // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
+  // ready within `OUTLIVED` of its spawn.
+  const command = warmed(unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', ''));
+
+  const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
+
+  ready(directory);
+  const group = Number(read(directory, 'group'));
+  assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the group by the census listed the zombie while the leader answered signal 0, so the test proves nothing');
+  assert.equal(alive(group), false);
+  assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
+  assert.equal(events.some(({ event }) => event === 'group.killed'), true, `the leader's kill was not recorded: ${JSON.stringify(events)}`);
+});
+
 test('a group whose leader is dead and which holds only a zombie its parent outside the group never reaps is recorded with no kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = unreaped(directory, '', '');
