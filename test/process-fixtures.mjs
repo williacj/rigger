@@ -23,15 +23,25 @@ import { join } from 'node:path';
  */
 export function scratch(t, find = running) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-process-')));
+  let ran = false;
+  const removal = () => {
+    if (ran) return;
+    ran = true;
+    sweep(directory, find);
+    removed(directory);
+  };
   t.after(() => {
     sweep(directory, find);
     // The test's own teardown, registered after this, may still need the directory, as one giving
     // back a permission it took does. `node:test` runs a hook added during teardown after every
     // other, so the removal waits for theirs, and sweeps once more first.
-    t.after(() => {
-      sweep(directory, find);
-      removed(directory);
-    });
+    t.after(removal);
+    // A hook of the test's own that throws stops every hook after it, this removal's included.
+    // `node:test` aborts the test's signal once its hooks have run, however they ended, so the
+    // removal runs then where its hook did not. A signal a timeout already aborted never fires
+    // again, so the removal never runs before the hooks. A stand-in context with no signal, which
+    // runs the hooks it holds itself, has only the hook.
+    t.signal?.addEventListener('abort', removal, { once: true });
   });
   return directory;
 }
