@@ -654,8 +654,11 @@ const late = (timeout) => new Error(`the reads of the process table did not fini
 /** The failure for a read of the process table that wrote `stderr`, which `ps` does only on a failure (`run`). */
 const failed = (stderr) => new Error(`the process-table read failed: ${stderr.trim()}`);
 
-/** The failure for a read of the process table that ran out of time. */
-const timedOut = (timeout) => new Error(`the process-table read timed out after ${timeout} ms`);
+/** The failure for a read of the process table that ran out of time, with Node's code for one. */
+const timedOut = (timeout) => Object.assign(new Error(`the process-table read timed out after ${timeout} ms`), { code: 'ETIMEDOUT' });
+
+/** The failure for a run of `tool` given `args` that ended with `status`, an exit code or a signal, other than as `ps` ends when no process matched (`run`). */
+const exited = (tool, args, status) => new Error(`${tool} ${args.join(' ')} ended with ${status}`);
 
 /**
  * What one run of `ps`, at the path `ps` names, prints given `args`, or nothing where no process
@@ -683,7 +686,7 @@ function run(ps, args, remaining, timeout) {
       reads.delete(read);
       if (error?.killed) return reject(timedOut(timeout));
       if (stderr !== '') return reject(failed(stderr));
-      if (error && !(error.code === 1 && stdout === '')) return reject(error);
+      if (error && !(error.code === 1 && stdout === '')) return reject(typeof error.code === 'number' || error.signal ? exited(ps, args, error.code ?? error.signal) : error);
       resolve(stdout);
     });
     reads.add(read);
@@ -705,7 +708,7 @@ function runNow(ps, args, remaining, timeout) {
   }
   if (error) throw error;
   if (stderr !== '') throw failed(stderr);
-  if (status !== 0 && !(status === 1 && stdout === '')) throw new Error(`${ps} ${args.join(' ')} ended with ${status ?? ending}`);
+  if (status !== 0 && !(status === 1 && stdout === '')) throw exited(ps, args, status ?? ending);
   return stdout;
 }
 
@@ -1581,7 +1584,9 @@ function startOf(ps, pid, timeout) {
  * would otherwise judge the group without the one start that can show it is not the one
  * recorded. While either holds, it reads again, since a process that is exiting answers signal 0
  * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
- * group is killed. A leader that has left the group for another holds the read to `timeout` the
+ * group is killed. That failure says what the last read that answered left out, even where the
+ * read after it was still running when `timeout` passed, so a read that answered short is never
+ * reported as one that only timed out. A leader that has left the group for another holds the read to `timeout` the
  * same way, which kills nothing.
  *
  * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), the
@@ -1616,12 +1621,25 @@ function startOf(ps, pid, timeout) {
  */
 async function startsIn(ps, group, timeout) {
   const deadline = Date.now() + timeout;
+  // What the last read that answered left out, while signal 0 still reached it.
+  let short;
+  const failure = () => new Error(`the reads of the group's start times ${short}, for ${timeout} ms`);
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`the reads of the group's start times left out a process signal 0 still reached, its leader or every member, for ${timeout} ms`);
-    const rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
-    if ((rows.size === 0 && occupied(group)) || (!rows.has(group) && answers(group))) continue;
+    if (remaining <= 0) throw failure();
+    let rows;
+    try {
+      rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+    } catch (error) {
+      // A read given up at the deadline, after reads that answered short, ends the reads for why they did.
+      if (short === undefined || error.code !== 'ETIMEDOUT') throw error;
+      throw new Error(`${failure().message}, and the read running at that point was given up: ${error.message}`);
+    }
+    if (rows.size === 0 && occupied(group)) short = 'listed no process of the group while signal 0 still reached it';
+    else if (!rows.has(group) && answers(group)) short = `left out its leader, pid ${group}, while signal 0 still reached that pid`;
+    else short = undefined;
+    if (short !== undefined) continue;
     const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
     return new Map(live.map(([pid, row]) => [pid, secondsOf(row?.[2] ?? '')]));
   }
