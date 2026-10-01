@@ -57,7 +57,7 @@ when to stop and ask. Rigger is that something.
 
 ## A piece of work, start to finish
 
-![rigger once claims a card from a fake board, and exits non-zero because nothing dispatches before M2 and M4](docs/demo.gif)
+![rigger once claims a card from a fake board, makes and provisions the card's workspace, and exits non-zero naming that workspace because no maker runs before M4](docs/demo.gif)
 
 1. A piece of work starts as a **card**: an issue on your board. You write it, a clock trigger
    creates it, or an intake role breaks a larger need into several — ex. a product manager
