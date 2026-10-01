@@ -23,6 +23,7 @@ import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
 import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
+import { createHash } from 'node:crypto';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -1095,4 +1096,159 @@ test('given an owner\'s worktree registered inside card 42\'s own workspace thro
   await refusedNaming(here.make(42), first.path);
   assert.deepEqual({ files: contents(owner), worktrees: worktreeList(here.repository) }, before);
   assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+/**
+ * Makes the root's directory on disk as `Worktrees`, so `here.root`, `…/worktrees`, names it in
+ * another case, and hands back its path on disk where the volume folds case: where that other
+ * spelling reaches the directory, and the directory lists it only as `Worktrees`. Where the volume
+ * does not fold case, it skips the test, saying so, and hands back nothing.
+ */
+function foldedRoot(t, here) {
+  const disk = join(here.directory, 'Worktrees');
+  mkdirSync(disk);
+  const names = readdirSync(here.directory);
+  if (existsSync(here.root) && names.includes('Worktrees') && !names.includes('worktrees')) return disk;
+  t.skip('this volume does not fold case, so no spelling in another case names the root');
+  return undefined;
+}
+
+// proves R-WORK-3, R-WORK-10
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, a second make of card 42 under that same spelling removes the first workspace and makes card 42\'s workspace again, on rigger-42, at the main line\'s commit', async (t) => {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return;
+  const first = await here.make(42);
+  writeFileSync(join(first.path, 'left-behind'), 'the first attempt\'s work\n');
+  const pushed = here.push('between the attempts');
+  const second = await here.make(42);
+  assert.equal(realpathSync.native(second.path), join(realpathSync.native(disk), 'rigger-42'));
+  assert.equal(existsSync(join(second.path, 'left-behind')), false);
+  assert.equal(branchOf(second.path), 'rigger-42');
+  assert.equal(headOf(second.path), pushed);
+  assert.equal(l1(here.events(), 42, 'workspace.removed').length, 1);
+});
+
+// proves R-WORK-3, R-WORK-10
+test('given a root whose directory on disk is spelled Worktrees, on a volume that folds case, a first make of card 42 under the spelling worktrees and a second under WORKTREES replace the workspace, on rigger-42, at the main line\'s commit', async (t) => {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return;
+  const first = await here.make(42);
+  writeFileSync(join(first.path, 'left-behind'), 'the first attempt\'s work\n');
+  const pushed = here.push('between the attempts');
+  const second = await here.make(42, { root: join(here.directory, 'WORKTREES') });
+  assert.equal(realpathSync.native(second.path), join(realpathSync.native(disk), 'rigger-42'));
+  assert.equal(existsSync(join(second.path, 'left-behind')), false);
+  assert.equal(branchOf(second.path), 'rigger-42');
+  assert.equal(headOf(second.path), pushed);
+  assert.equal(l1(here.events(), 42, 'workspace.removed').length, 1);
+});
+
+/**
+ * What a refusal must leave unchanged in `here`'s repository and under `disk`, the root on disk:
+ * every ref git holds, `refs/remotes` included, every object, git worktree list --porcelain, and,
+ * as `held` reads them, everything under the repository's working tree, its `.git` included, and
+ * under the root.
+ */
+function untouched(here, disk) {
+  return {
+    refs: gitIn(here.repository, 'for-each-ref'),
+    objects: gitIn(here.repository, 'cat-file', '--batch-all-objects', '--batch-check'),
+    worktrees: worktreeList(here.repository),
+    repository: held(here.repository),
+    root: held(disk),
+  };
+}
+
+/**
+ * `directory` itself and everything under it, each as its path relative to `directory`, its mode
+ * bits and type as `lstat` reads them, and, for a file, the SHA-256 digest of its bytes, or, for a
+ * symbolic link, where it points. A digest rather than the bytes keeps a failing comparison short.
+ */
+function held(directory) {
+  const entry = (path) => {
+    const stat = lstatSync(path);
+    const what = stat.isFile() ? createHash('sha256').update(readFileSync(path)).digest('hex') : stat.isSymbolicLink() ? `-> ${readlinkSync(path)}` : '';
+    return `${stat.mode.toString(8)} ${what}`;
+  };
+  const found = { '.': entry(directory) };
+  for (const name of readdirSync(directory, { recursive: true })) found[name] = entry(join(directory, name));
+  return found;
+}
+
+// proves R-WORK-13, R-WORK-14
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, and a plain directory holding a file at card 42\'s workspace path, an attempt at card 42 fails naming the path, and afterwards every ref, every object, git worktree list --porcelain and the files of the repository and the root are unchanged', async (t) => {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return;
+  mkdirSync(join(disk, 'rigger-42'));
+  writeFileSync(join(disk, 'rigger-42', 'kept'), 'not Rigger\'s\n');
+  here.push('the main line moves on');
+  const before = untouched(here, disk);
+  await refusedNaming(here.make(42), join(here.root, 'rigger-42'));
+  assert.deepEqual(untouched(here, disk), before);
+  assert.equal(readFileSync(join(disk, 'rigger-42', 'kept'), 'utf8'), 'not Rigger\'s\n');
+});
+
+// proves R-WORK-13, R-WORK-15
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, and an owner\'s linked worktree on branch owner-42 at card 42\'s workspace path holding an uncommitted file, an attempt at card 42 fails naming the path and the branch, and afterwards every ref, every object, git worktree list --porcelain and the files of the repository and the root are unchanged', async (t) => {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return;
+  const owner = worktreeAt(here.repository, join(disk, 'rigger-42'), 'owner-42');
+  writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
+  here.push('the main line moves on');
+  const before = untouched(here, disk);
+  const failure = await refusedNaming(here.make(42), join(here.root, 'rigger-42'));
+  assert.match(failure.message, /holding the branch owner-42/);
+  assert.deepEqual(untouched(here, disk), before);
+  assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
+});
+
+// proves R-WORK-13, R-WORK-16
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, and L1 handed as the repository a linked worktree on rigger-42 at card 42\'s workspace path holding an uncommitted file, an attempt at card 42 fails naming the path, and afterwards every ref, every object, git worktree list --porcelain and the files of the repository and the root are unchanged', async (t) => {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return;
+  const handed = worktreeAt(here.repository, join(disk, 'rigger-42'), 'rigger-42');
+  writeFileSync(join(handed, 'uncommitted'), 'the engine\'s own work\n');
+  here.push('the main line moves on');
+  const before = untouched(here, disk);
+  const failure = await refusedNaming(here.make(42, { repository: handed }), join(here.root, 'rigger-42'));
+  assert.match(failure.message, /is the worktree L1 was handed/);
+  assert.deepEqual(untouched(here, disk), before);
+  assert.equal(readFileSync(join(handed, 'uncommitted'), 'utf8'), 'the engine\'s own work\n');
+});
+
+/**
+ * A registration made through the root's spelling on disk at card 44's workspace path, on
+ * rigger-44 and locked with `reason`, whose directory is gone, with the main line moved on since.
+ */
+function foldedStaleLock(t, reason) {
+  const here = world(t);
+  const disk = foldedRoot(t, here);
+  if (disk === undefined) return undefined;
+  worktreeAt(here.repository, join(disk, 'rigger-44'), 'rigger-44', '--lock', '--reason', reason);
+  rmSync(join(disk, 'rigger-44'), { recursive: true, force: true });
+  return { ...here, disk, pushed: here.push('the main line moves on') };
+}
+
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, and a registration made through the disk\'s spelling at card 44\'s workspace path on rigger-44, whose directory is gone and which is locked with the reason git worktree add writes, an attempt at card 44 makes the workspace on rigger-44 at the main line\'s commit', async (t) => {
+  const here = foldedStaleLock(t, ADDING);
+  if (here === undefined) return;
+  const made = await here.make(44);
+  assert.equal(realpathSync.native(made.path), join(realpathSync.native(here.disk), 'rigger-44'));
+  assert.equal(branchOf(made.path), 'rigger-44');
+  assert.equal(headOf(made.path), here.pushed);
+  assert.doesNotMatch(worktreeList(here.repository), /locked/);
+});
+
+test('given a root spelled in another case than its directory on disk, on a volume that folds case, and a registration made through the disk\'s spelling at card 44\'s workspace path on rigger-44, whose directory is gone and which is locked by a person, an attempt at card 44 fails naming the path and the reason, and afterwards every ref, every object, git worktree list --porcelain and the files of the repository and the root are unchanged', async (t) => {
+  const here = foldedStaleLock(t, 'kept by a person');
+  if (here === undefined) return;
+  const before = untouched(here, here.disk);
+  const failure = await refusedNaming(here.make(44), join(here.root, 'rigger-44'));
+  assert.match(failure.message, /kept by a person/);
+  assert.deepEqual(untouched(here, here.disk), before);
 });
