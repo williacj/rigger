@@ -134,10 +134,11 @@ export function worktreeAt(repository, path, branch, ...flags) {
 
 /**
  * A worktree of the repository at `repository`, made at `path` by git itself with its `HEAD`
- * detached at `commit`, making no branch, as a judge's directory holds them.
+ * detached at `commit`, making no branch, as a judge's directory holds them. `flags` go to `git
+ * worktree add` as they are, such as `--lock`.
  */
-export function detachedWorktreeAt(repository, path, commit) {
-  gitIn(repository, 'worktree', 'add', '--quiet', '--detach', path, commit);
+export function detachedWorktreeAt(repository, path, commit, ...flags) {
+  gitIn(repository, 'worktree', 'add', '--quiet', ...flags, '--detach', path, commit);
   return path;
 }
 

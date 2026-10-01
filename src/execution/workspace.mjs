@@ -3,7 +3,7 @@
 // at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
 import { chmodSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
@@ -98,13 +98,15 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
       throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
     }
   };
-  const { main, removed } = await step(async () => {
+  const found = await step(() => judgeChecked({ adapter, path, repository }));
+  const main = await step(async () => {
     const { commit } = await adapter.fetchMainLine();
     const { held, why } = await adapter.holdsAfterFetch(head);
     if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
-    return { main: commit, removed: await judgeCleared({ adapter, path, repository }) };
+    return commit;
   });
-  if (removed) recorded(events, card, 'workspace.removed', { role, path });
+  await step(() => judgeCleared(adapter, found));
+  if (found.present) recorded(events, card, 'workspace.removed', { role, path });
   await step(async () => {
     await adapter.makeDetached(trees.main, main);
     await adapter.makeDetached(trees.head, head);
@@ -114,49 +116,94 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
 }
 
 /**
- * Clears a judge's directory at `path` under `R-WORK-20` to `R-WORK-23`, and hands back whether
- * it removed one. Nothing there is nothing to clear. Otherwise the path must be a directory, not a
- * symbolic link, and everything in it a directory L0 finds a linked worktree of the repository, at
- * a detached commit; neither the path nor anything inside it, by real path, may be the worktree
- * git reports for `repository`, the worktree L1 was handed; and git may list no other worktree of
- * the repository inside it. Anything else fails naming the path before any git call that could
- * write, so nothing there changes. A path whose real path, or whose contents, L1 cannot read fails
- * the same way, since L1 cannot tell what is there.
+ * Checks what is at a judge's directory, `path`, against `R-WORK-20` to `R-WORK-23`, making no git
+ * call that writes, so a refusal changes nothing: no ref, no object, no file. It runs before any
+ * fetch for that reason. It hands back the directory's real path, whether anything is there, the
+ * worktrees in it, and the registrations L1 must unlock first.
+ *
+ * Nothing there passes. Otherwise the path must be a directory, not a symbolic link, and everything
+ * in it a directory L0 finds a linked worktree of the repository, which git lists at a detached
+ * commit, unlocked or locked with `ADDING`, the reason Rigger's own `git worktree add` writes while
+ * it makes one (#423's ruling 9); neither the path nor anything inside it, by real path, may be the
+ * worktree git reports for `repository`, the worktree L1 was handed; and git may list no other
+ * worktree of the repository inside it. A registration inside it whose directory is gone passes
+ * where it is unlocked, which the make's prune forgets, or detached and locked with `ADDING`, which
+ * L1 unlocks; any other lock is a person's, and fails. Anything else fails naming the path, as does
+ * a path whose real path or contents L1 cannot read, since L1 cannot tell what is there.
+ *
+ * Every path is compared by the file system's own real path, `realpath(3)`, on both sides, since
+ * git keeps the spelling a worktree was added through and a volume that folds case answers to
+ * either.
  */
-async function judgeCleared({ adapter, path, repository }) {
+async function judgeChecked({ adapter, path, repository }) {
   const leaves = (why) => new Error(`${path} ${why}, so L1 leaves it as it is`);
+  /** `there`'s real path, or, where nothing is there, its parent's joined to its name. */
+  const real = (there) => {
+    try {
+      return realpathSync.native(there);
+    } catch (error) {
+      if (error.code !== 'ENOENT' || dirname(there) === there) throw leaves(`cannot be read at ${there}: ${error.message}`);
+      return join(real(dirname(there)), basename(there));
+    }
+  };
   let there;
   try {
     there = lstatSync(path);
   } catch (error) {
-    if (error.code === 'ENOENT') return false;
-    throw leaves(`cannot be read: ${error.message}`);
+    if (error.code !== 'ENOENT') throw leaves(`cannot be read: ${error.message}`);
   }
-  if (!there.isDirectory()) throw leaves('is not a directory');
-  let real;
-  let names;
-  try {
-    real = realpathSync.native(path);
-    names = readdirSync(real);
-  } catch (error) {
-    throw leaves(`cannot be read: ${error.message}`);
+  if (there !== undefined && !there.isDirectory()) throw leaves('is not a directory');
+  const own = real(path);
+  let names = [];
+  if (there !== undefined) {
+    try {
+      names = readdirSync(own);
+    } catch (error) {
+      throw leaves(`cannot be read: ${error.message}`);
+    }
   }
+  const inside = (at) => {
+    const from = relative(own, at);
+    return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
+  };
   const handed = realpathSync.native(await adapter.topLevel());
-  if (handed === real || within(path, real, handed)) throw leaves(`holds the worktree L1 was handed as the repository, at ${repository}`);
+  if (handed === own || inside(handed)) throw leaves(`holds the worktree L1 was handed as the repository, at ${repository}`);
+  const listed = (await adapter.listing()).map((record) => ({ ...record, real: real(record.at) }));
   const trees = [];
+  const unlocking = [];
+  /** Adds `record`'s worktree to those L1 unlocks where `ADDING` locks it, failing on any other lock. */
+  const lockOf = (record) => {
+    if (record.locked === undefined) return;
+    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`);
+    unlocking.push(record.real);
+  };
   for (const name of names) {
-    const tree = join(real, name);
+    const tree = join(own, name);
     if (!lstatSync(tree).isDirectory() || !(await adapter.isWorktree(tree))) throw leaves(`holds ${tree}, which is not a worktree of the repository`);
-    const held = await adapter.registration(tree);
-    if (!held?.detached) throw leaves(`holds ${tree}, a worktree of the repository on the branch ${held?.branch}, not at a detached commit`);
-    trees.push(realpathSync.native(tree));
+    const record = listed.find((each) => each.real === tree);
+    if (record === undefined) throw leaves(`holds ${tree}, a worktree where git lists no worktree of the repository`);
+    if (!record.detached) throw leaves(`holds ${tree}, a worktree of the repository on the branch ${record.branch}, not at a detached commit`);
+    lockOf(record);
+    trees.push(tree);
   }
-  const nested = (await adapter.registered()).find((listed) => within(path, real, listed) && !trees.includes(realpathSync.native(listed)));
-  if (nested !== undefined) throw leaves(`holds another worktree of the repository, at ${nested}`);
+  for (const record of listed.filter((each) => inside(each.real) && !trees.includes(each.real))) {
+    if (present(record.real)) throw leaves(`holds another worktree of the repository, at ${record.at}`);
+    lockOf(record);
+  }
+  return { real: own, present: there !== undefined, trees, unlocking };
+}
+
+/**
+ * Clears the judge's directory `judgeChecked` passed: unlocks each registration it named, then
+ * makes the directory removable, as `writable` says, and removes each worktree in it and the
+ * directory itself.
+ */
+async function judgeCleared(adapter, { real, present: there, trees, unlocking }) {
+  for (const tree of unlocking) await adapter.unlock(tree);
+  if (!there) return;
   writable(real);
   for (const tree of trees) await adapter.remove(tree);
   rmdirSync(real);
-  return true;
 }
 
 /**

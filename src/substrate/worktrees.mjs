@@ -222,8 +222,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * repository already holds exits 0 without asking `origin`; one `origin` holds, reachable from
      * any of its branches, is fetched under protocol version 2; one it does not hold exits 128 with
      * `fatal: remote error: upload-pack: not our ref <commit>`. A fetch that fails is read through
-     * the check after it, so a commit held already is held whatever the fetch answered. A timeout
-     * rejects.
+     * the check after it, so a commit held already is held whatever the fetch answered. That check is
+     * `git cat-file -t`, which prints `commit` for a commit, `tag` for an annotated tag's own object,
+     * which a peeling check such as `<name>^{commit}` would take for the commit it tags, and exits
+     * 128 with `fatal: git cat-file: could not get object info` for an object the repository does not
+     * hold. A timeout rejects.
      */
     async holdsAfterFetch(commit) {
       const named = await call(['rev-parse', '--verify', '--quiet', '--end-of-options', commit]);
@@ -231,10 +234,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       if (named.exit !== 0 || named.stdout.trim() !== commit) return { held: false, why: `git does not read ${commit} as a full object name` };
       const fetch = await call(['fetch', '--no-write-fetch-head', '--end-of-options', ORIGIN, commit]);
       if (fetch.timedOut) throw failed(git, fetch, timeout);
-      const held = await call(['cat-file', '-e', '--end-of-options', `${commit}^{commit}`]);
+      const held = await call(['cat-file', '-t', '--end-of-options', commit]);
       if (held.timedOut) throw failed(git, held, timeout);
-      if (held.exit === 0) return { held: true };
-      return { held: false, why: fetch.exit === 0 ? `${commit} is not a commit` : firstLine(fetch.stderr) };
+      if (held.exit === 0 && held.stdout.trim() === 'commit') return { held: true };
+      if (held.exit === 0) return { held: false, why: `${commit} names a ${held.stdout.trim()}, not a commit` };
+      return { held: false, why: fetch.exit === 0 ? `the repository does not hold ${commit}` : firstLine(fetch.stderr) };
     },
 
     /**
@@ -290,6 +294,15 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       const wanted = realOrLeft(path);
       const held = (await listed()).find(({ at }) => realOrLeft(at) === wanted);
       return held === undefined ? undefined : { branch: held.branch, detached: held.detached, locked: held.locked };
+    },
+
+    /**
+     * Every worktree of the repository git lists, its main worktree included, as `listed` reads
+     * them: its path `at` as git holds it, its branch, whether its `HEAD` is detached, and the
+     * reason it is locked.
+     */
+    async listing() {
+      return listed();
     },
 
     /**

@@ -677,6 +677,17 @@ test('a commit origin does not hold is not held after fetching, and the answer g
   assert.ok(why.includes(missing), why);
 });
 
+test('an annotated tag\'s own object name, which origin holds, is not held as a commit, though it names one when peeled', async (t) => {
+  const { source, origin, repository } = world(t);
+  gitIn(source, '-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', 'tag', '-a', 'v1', '-m', 'a tag');
+  gitIn(source, 'push', '-q', origin, 'refs/tags/v1');
+  const tag = gitIn(source, 'rev-parse', 'refs/tags/v1').trim();
+  assert.equal(gitIn(source, 'cat-file', '-t', tag).trim(), 'tag');
+  const { held, why } = await workspaces({ repository, emitter: recorder() }).holdsAfterFetch(tag);
+  assert.equal(held, false);
+  assert.ok(why.includes(tag), why);
+});
+
 test('a name git does not print back unchanged as a full object name, such as a branch, an abbreviation, an upper-case name or a refspec, is not held, and no ref of the repository changes', async (t) => {
   const { source, repository, push } = world(t);
   gitIn(source, 'switch', '-q', '-c', 'rigger-42');

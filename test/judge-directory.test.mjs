@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
@@ -11,6 +11,7 @@ import { WORKSPACE_NOT_MADE, makeJudgeDirectory, makeWorkspace } from '../src/ex
 import { clonedFromOrigin, detachedWorktreeAt, gitIn, worktreeAt, worktreeList } from './git-repository.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
+import { ADDING } from '../src/substrate/worktrees.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, with card 42's pull request head pushed
@@ -147,20 +148,34 @@ function contents(directory) {
 }
 
 /**
- * What a refusal must leave unchanged in `here`'s repository and under `under`: the worktrees git
- * lists, the branches and where each points, and every file, link and directory under `under`.
+ * What a refusal must leave unchanged in `here`'s repository: the worktrees git lists, every ref
+ * and where it points, `refs/remotes/` included, and every object the repository holds.
  */
-const unchanged = (here, under) => ({
+const held = (here) => ({
   worktrees: worktreeList(here.repository),
-  branches: gitIn(here.repository, 'for-each-ref', 'refs/heads'),
-  files: contents(under),
+  refs: gitIn(here.repository, 'for-each-ref'),
+  objects: gitIn(here.repository, 'cat-file', '--batch-all-objects', '--batch-check'),
 });
+
+/** `held`, and every file, link and directory under `under`. */
+const unchanged = (here, under) => ({ ...held(here), files: contents(under) });
+
+/**
+ * Moves `origin`'s main line beyond the repository's `refs/remotes/origin/main`, so a fetch made
+ * by an attempt that refuses would show in `held`.
+ */
+const advanced = (here) => {
+  const before = gitIn(here.repository, 'rev-parse', 'refs/remotes/origin/main').trim();
+  here.push('main', 'the main line moves on before a refusal');
+  assert.notEqual(here.main(), before);
+};
 
 // proves R-WORK-20, R-WORK-21
 test('given a file at the path that is not a worktree, L1 fails naming the path, and the file is byte-identical afterwards', async (t) => {
   const here = world(t);
   mkdirSync(dirname(here.path), { recursive: true });
   writeFileSync(here.path, 'not Rigger\'s\n');
+  advanced(here);
   const before = unchanged(here, dirname(here.path));
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, dirname(here.path)), before);
@@ -173,6 +188,7 @@ test('given a directory at the path holding a worktree of the repository on a br
   const owner = worktreeAt(here.repository, join(here.path, 'head'), 'owner');
   writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
   const branch = gitIn(here.repository, 'rev-parse', 'refs/heads/owner').trim();
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
@@ -186,6 +202,7 @@ test('given a directory at the path holding, besides main and head, a plain file
   const here = world(t);
   await here.make();
   writeFileSync(join(here.path, 'notes'), 'a person\'s notes\n');
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
@@ -200,6 +217,7 @@ test('given a judge directory whose main was deleted without git and replaced by
   mkdirSync(made.main);
   writeFileSync(join(made.main, 'kept'), 'not Rigger\'s\n');
   assert.match(worktreeList(here.repository), /\ndetached\n[\s\S]*\ndetached\n/);
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
@@ -212,6 +230,7 @@ test('given the worktree L1 was handed as the repository inside the judge direct
   detachedWorktreeAt(here.repository, join(here.path, 'main'), here.main());
   const handed = detachedWorktreeAt(here.repository, join(here.path, 'head'), here.main());
   writeFileSync(join(handed, 'uncommitted'), 'the handed worktree\'s work\n');
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make({ repository: handed }), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
@@ -223,6 +242,7 @@ test('given the worktree L1 was handed as the repository at the judge directory\
   const here = world(t);
   const handed = detachedWorktreeAt(here.repository, here.path, here.main());
   writeFileSync(join(handed, 'uncommitted'), 'the handed worktree\'s work\n');
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make({ repository: handed }), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
@@ -235,10 +255,100 @@ test('given another worktree of the repository registered inside head, at a deta
   const made = await here.make();
   const nested = detachedWorktreeAt(here.repository, join(made.head, 'nested'), here.main());
   writeFileSync(join(nested, 'uncommitted'), 'the nested worktree\'s work\n');
+  advanced(here);
   const before = unchanged(here, here.path);
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
   assert.equal(readFileSync(join(nested, 'uncommitted'), 'utf8'), 'the nested worktree\'s work\n');
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a root spelled in another case than the directory on disk, on a volume that folds case, a second make through that root replaces the judge\'s directory at this attempt\'s commits', async (t) => {
+  const here = world(t);
+  mkdirSync(join(here.directory, 'Worktrees'));
+  if (!existsSync(here.root)) {
+    t.skip('this volume does not fold case, so no spelling in another case names the root');
+    return;
+  }
+  await here.make();
+  const head = here.push('rigger-42', 'the maker pushes again');
+  const made = await here.make({ head });
+  assert.equal(headOf(made.head), head);
+  assert.equal(headOf(made.main), here.main());
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a worktree in the judge directory that git lists under another path, after it was moved without git, L1 fails naming the path and saying git lists no worktree there, and nothing changes', async (t) => {
+  const here = world(t);
+  const made = await here.make();
+  renameSync(made.head, join(here.path, 'moved'));
+  advanced(here);
+  const before = unchanged(here, here.path);
+  const failure = await refusedNaming(here.make(), here.path);
+  assert.match(failure.message, /git lists no worktree/);
+  assert.doesNotMatch(failure.message, /undefined/);
+  assert.deepEqual(unchanged(here, here.path), before);
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a judge directory whose head is a detached worktree locked with Rigger\'s own reason initializing, as a make killed while adding it leaves it, L1 replaces it at this attempt\'s commits', async (t) => {
+  const here = world(t);
+  detachedWorktreeAt(here.repository, join(here.path, 'main'), here.main());
+  detachedWorktreeAt(here.repository, join(here.path, 'head'), here.main(), '--lock', '--reason', ADDING);
+  const head = here.push('rigger-42', 'the maker pushes again');
+  const made = await here.make({ head });
+  assert.equal(headOf(made.head), head);
+  assert.equal(headOf(made.main), here.main());
+  assert.doesNotMatch(worktreeList(here.repository), /locked/);
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a judge directory holding main, where git still lists head locked with Rigger\'s own reason initializing though its directory is gone, L1 replaces it at this attempt\'s commits', async (t) => {
+  const here = world(t);
+  detachedWorktreeAt(here.repository, join(here.path, 'main'), here.main());
+  detachedWorktreeAt(here.repository, join(here.path, 'head'), here.main(), '--lock', '--reason', ADDING);
+  rmSync(join(here.path, 'head'), { recursive: true, force: true });
+  const made = await here.make();
+  assert.equal(headOf(made.head), here.head);
+  assert.equal(headOf(made.main), here.main());
+  assert.doesNotMatch(worktreeList(here.repository), /locked/);
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a judge directory whose head is a detached worktree locked with a reason other than initializing, L1 fails naming the path, and the lock and that worktree\'s files are unchanged afterwards', async (t) => {
+  const here = world(t);
+  detachedWorktreeAt(here.repository, join(here.path, 'main'), here.main());
+  const locked = detachedWorktreeAt(here.repository, join(here.path, 'head'), here.main(), '--lock', '--reason', 'a person is reading it');
+  writeFileSync(join(locked, 'uncommitted'), 'a person\'s work\n');
+  advanced(here);
+  const before = unchanged(here, here.path);
+  await refusedNaming(here.make(), here.path);
+  assert.deepEqual(unchanged(here, here.path), before);
+  assert.match(worktreeList(here.repository), /\nlocked a person is reading it\n/);
+  assert.equal(readFileSync(join(locked, 'uncommitted'), 'utf8'), 'a person\'s work\n');
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a judge directory holding, besides main and head, a symbolic link to a detached worktree of the repository outside it, L1 fails naming the path, and that worktree, its registration and its files are unchanged afterwards', async (t) => {
+  const here = world(t);
+  await here.make();
+  const outside = detachedWorktreeAt(here.repository, join(here.directory, 'outside'), here.main());
+  writeFileSync(join(outside, 'uncommitted'), 'outside work\n');
+  symlinkSync(outside, join(here.path, 'extra'));
+  advanced(here);
+  const before = { ...unchanged(here, here.path), outside: contents(outside) };
+  await refusedNaming(here.make(), here.path);
+  assert.deepEqual({ ...unchanged(here, here.path), outside: contents(outside) }, before);
+});
+
+test('given a judge directory already made and a head commit the repository does not hold after fetching, L1 fails naming the path and the commit, and the earlier judge directory is unchanged', async (t) => {
+  const here = world(t);
+  const earlier = await here.make();
+  writeFileSync(join(earlier.head, 'left-behind'), 'an earlier judge\'s build\n');
+  const missing = gitIn(here.source, 'commit-tree', '-m', 'never pushed', `${here.head}^{tree}`).trim();
+  const before = { worktrees: worktreeList(here.repository), files: contents(here.path) };
+  await refusedNaming(here.make({ head: missing }), here.path, missing);
+  assert.deepEqual({ worktrees: worktreeList(here.repository), files: contents(here.path) }, before);
 });
 
 // proves R-WORK-20
@@ -248,13 +358,14 @@ test('given a judge directory at a path whose real path cannot be resolved, its 
   const parent = dirname(here.path);
   chmodSync(parent, 0o000);
   t.after(() => chmodSync(parent, 0o755));
-  const state = () => ({ mode: statSync(parent).mode, worktrees: worktreeList(here.repository), branches: gitIn(here.repository, 'for-each-ref', 'refs/heads') });
+  const state = () => ({ mode: statSync(parent).mode, ...held(here) });
+  advanced(here);
   const before = state();
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(state(), before);
   chmodSync(parent, 0o755);
   assert.equal(headOf(join(here.path, 'head')), here.head);
-  assert.equal(headOf(join(here.path, 'main')), here.main());
+  assert.equal(headOf(join(here.path, 'main')), gitIn(here.repository, 'rev-parse', 'refs/remotes/origin/main').trim());
 });
 
 /** L1's events under `card` named `event` in the stream. */
