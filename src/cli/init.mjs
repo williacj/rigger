@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PLACEHOLDER } from '../config/validate.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
+import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { PACKAGE, gitAnswer, real, sameTree, sourceTreeRefusal } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
@@ -15,7 +16,7 @@ export const CONFIG = 'rigger.config.mjs';
 
 /**
  * Where each provider reads its assets from, which is the whole of what decides a fork's
- * destination.
+ * destination, as each provider's adapter names it in `assets` (ruling 1 Q1 on #467).
  *
  * `ARCHITECTURE.md`'s "Where provider assets live" row: a role names its agent file by path, so
  * the directory is whatever the provider reads — Claude Code reads `.claude/`, and a second
@@ -23,7 +24,7 @@ export const CONFIG = 'rigger.config.mjs';
  * provider's templates therefore ship under `templates/<provider>/`, mirroring the tree that
  * lands in the directory named here.
  */
-export const PROVIDER_ASSETS = { claude: '.claude' };
+export const PROVIDER_ASSETS = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.assets]));
 
 /**
  * The templates this package ships. Everything `init` writes is read from here and from nowhere

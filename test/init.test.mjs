@@ -16,6 +16,7 @@ import { OUTLIVED, TAIL, UNKILLED, alive, childrenIn, fixture, gitCalls, gitHang
 import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
 import riggerConfig from '../rigger.config.mjs';
+import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -732,4 +733,14 @@ test('an ssh:// remote reads as the owner and name at the end of its path', asyn
   // parsed by the same pattern would agree with it by construction.
   assert.equal(await slugOf(repository('ssh://git@github.com/acme/widgets.git')), 'acme/widgets');
   assert.equal(await initOver('ssh://git@github.com/acme/widgets.git').then(({ repo }) => repo), 'acme/widgets');
+});
+
+test('init forks each provider\'s templates into the directory that provider\'s adapter names', () => {
+  // Ruling 1 Q1 on #467: where a provider reads its assets is a fact about its CLI, held by its
+  // adapter alone. The defect this catches is a second copy in `init`, which forks a provider's
+  // templates where its adapter no longer says the CLI reads them.
+  assert.deepEqual(PROVIDER_ASSETS, Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.assets])));
+  const paths = plan({ repo: 'acme/widgets' }).map(({ path }) => path).filter((path) => path !== CONFIG);
+  assert.ok(paths.length > 0);
+  for (const path of paths) assert.ok(path.startsWith(`${ADAPTERS.claude.assets}/`), path);
 });

@@ -161,7 +161,7 @@ test('given a sink that refuses every append and a gh stand-in that leaves a chi
  * A `gh` stand-in in `directory` that never answers: it leaves a child alive, writes its own pid to
  * `gh.pid`, marks `ready`, and waits on the child, which runs until killed.
  */
-const hanging = (directory) => fixture(directory, 'gh', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/gh.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+const hanging = (directory) => fixture(fixture(directory, 'claude', `printf '%s\\n' '{"loggedIn": true, "authMethod": "claude.ai"}'`) && directory, 'gh', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/gh.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
 /**
  * A module a verb's Node process loads first, with `--import`, that sends that process `SIGTERM`
