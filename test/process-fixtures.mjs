@@ -307,16 +307,21 @@ export function ended(child) {
 }
 
 /**
- * A `git` stand-in in `directory` that fails the first fetch it is sent with the words git prints
- * for a fetch another process's fetch beat to `refs/remotes/origin/main`, and hands every other
- * call, and every later fetch, on to the real git. The words are the ones #426 (M3-S1)'s report
- * quotes; `test/worktrees.test.mjs` ties L0's reading of them to the real git.
+ * A `git` stand-in in `directory` that fails the first `times` fetches it is sent as git fails one
+ * another process's fetch beat to `refs/remotes/origin/main`, counting them in `raced` beside
+ * itself, and hands every other call, and every later fetch, on to the real git. The words are
+ * git's own: the stand-in asks the real git to move that ref from a value it does not hold, which
+ * git refuses through the same lock check a fetch meets, and prints that refusal as a fetch prints it.
  */
-export const gitRacingOnce = (directory) => fixture(directory, 'git', [
-  'if [ "$1" = fetch ] && [ ! -e "$here/raced" ]; then',
-  '  : > "$here/raced"',
-  `  echo "error: cannot lock ref 'refs/remotes/origin/main': is at ${'1'.repeat(40)} but expected ${'2'.repeat(40)}" >&2`,
-  '  exit 1',
-  'fi',
-  `exec '${GIT}' "$@"`,
-].join('\n'));
+export function gitRacing(directory, times = 1) {
+  return fixture(directory, 'git', [
+    'tries=$(/bin/cat "$here/raced" 2>/dev/null || echo 0)',
+    `if [ "$1" = fetch ] && [ "$tries" -lt ${times} ]; then`,
+    '  echo $((tries + 1)) > "$here/raced"',
+    `  words=$('${GIT}' update-ref refs/remotes/origin/main HEAD ${'1'.repeat(40)} 2>&1)`,
+    '  printf \'%s\\n\' "$words" | /usr/bin/sed \'s/.*\\(cannot lock ref\\)/error: \\1/\' >&2',
+    '  exit 1',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+}

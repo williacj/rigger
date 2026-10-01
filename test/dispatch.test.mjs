@@ -14,10 +14,11 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { RECORD_REFUSED, dispatch } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, until } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
-const SETTLES_WITHIN = { timeout: 20_000 };
+const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The state directory a test's dispatches name: `.rigger/` in the scratch directory. */
 const stateOf = (directory) => join(directory, '.rigger');

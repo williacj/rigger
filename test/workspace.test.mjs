@@ -15,14 +15,14 @@ import { validate } from '../src/config/validate.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
 import rigger from '../rigger.config.mjs';
-import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
+import { cloneInto, clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
 import { previousCheckout } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
-import { childrenIn, gitLeavingChild, gitRacingOnce } from './process-fixtures.mjs';
+import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -31,10 +31,7 @@ import { childrenIn, gitLeavingChild, gitRacingOnce } from './process-fixtures.m
  */
 function world(t) {
   const directory = scratch(t);
-  const source = repositoryAt(join(directory, 'source'), { README: 'one\n' });
-  gitIn(source, 'branch', '-M', 'main');
-  const origin = bareCloneInto(source, join(directory, 'origin.git'));
-  const repository = cloneInto(origin, join(directory, 'repository'));
+  const { source, origin, repository } = clonedFromOrigin(directory);
   gitIn(repository, 'config', 'user.email', 'fixture@example.invalid');
   gitIn(repository, 'config', 'user.name', 'fixture');
   const root = join(directory, 'worktrees');
@@ -1057,7 +1054,7 @@ test('given a git stand-in that leaves a child during each git call, and a sink 
 test('given a sink that refuses fetch.retried, making card 42\'s workspace rejects with the code a refused workspace event gives, and the failure names fetch.retried as unrecorded', async (t) => {
   const here = world(t);
   const stand = scratch(t);
-  gitRacingOnce(stand);
+  gitRacing(stand, 1);
   const failure = await withFirstOnPath(stand, () => refusedEvent(here.make(42, { sink: refusing(here.sink, 'fetch.retried') })));
   assert.equal(existsSync(join(stand, 'raced')), true);
   assert.match(failure.message, /fetch\.retried/);

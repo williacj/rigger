@@ -11,11 +11,13 @@ import { fileURLToPath } from 'node:url';
 
 import config from '../rigger.config.mjs';
 import { openSink } from '../src/observation/sink.mjs';
+import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { repositoryIn } from './git-repository.mjs';
+import { waitFor } from './loop-world.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -69,8 +71,20 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   });
   // A card whose dispatch returned has nothing more for L2 to do in this run.
   const decide = (card) => (returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS));
+  /** How many slot releases this run has recorded so far. */
+  const releasesRecorded = () => (existsSync(streamPath(directory)) ? readEvents(directory) : [])
+    .filter((event) => event.run === run && event.layer === 'L3' && event.event === 'slot.release').length;
+  /**
+   * Whether the loop has made every start it can: every returned card's slot release is recorded,
+   * and under `run` its maker stand-in holds as many cards as there are slots, or every card not
+   * yet returned where fewer remain, and under `pull`, which refills no slot, every card the pull
+   * claimed less those returned.
+   */
+  const everyStartMade = () => releasesRecorded() === returned.size && held.size === (entry === 'run'
+    ? Math.min(concurrency, cards.length - returned.size)
+    : Math.min(concurrency, cards.length) - returned.size);
   const running = loop({ config: settings, board, decide, l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory })[entry]();
-  await quiesce();
+  await waitFor(everyStartMade);
   for (const [at, numbers] of releases) {
     minute = at;
     for (const number of numbers) {
@@ -78,7 +92,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
       held.get(number)();
       held.delete(number);
     }
-    await quiesce();
+    await waitFor(everyStartMade);
   }
   await running;
   assert.equal(held.size, 0, `cards ${[...held.keys()]} were still dispatched when the run ended`);

@@ -16,6 +16,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, GIT, scratch, withFirstOnPath } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -34,7 +35,7 @@ const PROJECT = 3;
  * slowest test in this file took 1.9 s with Node 26.5.0 on macOS 27.0 on 2026-09-30, under a
  * one-minute load near 20 on 12 CPUs.
  */
-const SETTLES_WITHIN = 60_000;
+const { 60_000: { timeout: SETTLES_WITHIN } } = BOUNDS;
 
 /** A body whose acceptance the form check admits: one item that is not the title. */
 const ADMITTED = '## Acceptance\n\n- The widget turns blue when pressed.\n';

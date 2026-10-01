@@ -13,8 +13,9 @@ import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import {
-  COLUMNS, cardIn, columnsOf, drive, quiesce, stoppedRun, world,
+  COLUMNS, cardIn, columnsOf, drive, waitFor, stoppedRun, world,
 } from './loop-world.mjs';
+import { settledOf } from './loop-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 
 /** A new empty temporary directory, named for what it stands in for. */
@@ -23,7 +24,8 @@ const scratch = (name) => mkdtempSync(join(tmpdir(), `rigger-restart-${name}-`))
 /** Fires one pull on `built`'s loop, releases whatever it dispatched, and waits for it to settle. */
 async function pullOnce(built) {
   const tick = built.loop.pull();
-  await quiesce();
+  const pulled = settledOf(tick);
+  await waitFor(() => pulled() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await tick;
 }
@@ -60,7 +62,8 @@ test("given a run stopped while card X's dispatch is unfinished, a second engine
   const restarted = world({ fake, concurrency: 2 });
 
   const run = restarted.loop.run();
-  await quiesce();
+  const ran = settledOf(run);
+  await waitFor(() => restarted.dispatches.held() === 2);
   const [held] = (await fake.operations.readPriority()).items.filter((item) => item.number === 1);
   assert.equal(held.column, COLUMNS.coding, 'X was left in the coding column by the stopped run');
   const handedX = restarted.handed.filter((start) => start.card.number === 1);
@@ -68,7 +71,7 @@ test("given a run stopped while card X's dispatch is unfinished, a second engine
   assert.deepEqual(Object.keys(handedX[0]).sort(), ['card', 'kind']);
   assert.deepEqual(handedX[0].card, held);
   restarted.dispatches.releaseAll();
-  await quiesce();
+  await waitFor(() => ran() || restarted.dispatches.held() > 0);
   restarted.dispatches.releaseAll();
   await run;
 });
@@ -80,11 +83,12 @@ test("given the same stopped run, the write record shows no move of X out of the
   const restarted = world({ fake, concurrency: 2 });
 
   const run = restarted.loop.run();
-  await quiesce();
+  const ran = settledOf(run);
+  await waitFor(() => restarted.dispatches.held() === 2);
   assert.ok(restarted.dispatches.holding().includes(1), "X's new dispatch is held open");
   const beforeReturn = fake.writes().slice(atRestart);
   restarted.dispatches.releaseAll();
-  await quiesce();
+  await waitFor(() => ran() || restarted.dispatches.held() > 0);
   restarted.dispatches.releaseAll();
   await run;
 

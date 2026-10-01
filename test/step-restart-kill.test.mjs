@@ -15,12 +15,13 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt } from './git-repository.mjs';
 import { TAIL, alive, ended, fixture, holding, leave, read, until } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
 
 // A bound on the test alone, so that a run which never settles fails here rather than holding the suite.
-const SETTLES_WITHIN = { timeout: 60_000 };
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
 const REPO = 'acme/widgets';

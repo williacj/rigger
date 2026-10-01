@@ -14,15 +14,16 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
-import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.mjs';
+import { clonedFromOrigin } from './git-repository.mjs';
 import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { worktreeAt } from './git-repository.mjs';
-import { gitLeavingChild, gitRacingOnce, withFirstOnPath } from './process-fixtures.mjs';
+import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
-const SETTLES_WITHIN = { timeout: 60_000 };
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 /** A step that runs `run` in the workspace, required unless `required` is false. */
 const step = (run, required = true) => ({ run, required });
@@ -44,10 +45,7 @@ const step = (run, required = true) => ({ run, required });
  */
 async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, refuse = () => false, before = () => {}, altered = (answer) => answer } = {}) {
   const directory = scratch(t);
-  const source = repositoryAt(join(directory, 'source'), { README: 'one\n' });
-  gitIn(source, 'branch', '-M', 'main');
-  const origin = bareCloneInto(source, join(directory, 'origin.git'));
-  const repository = cloneInto(origin, join(directory, 'repository'));
+  const { repository } = clonedFromOrigin(directory);
   const root = join(directory, 'worktrees');
   const state = join(directory, 'state');
   mkdirSync(state);
@@ -527,7 +525,7 @@ const said = (failure) => (failure.errors ?? [failure]).map((each) => each.messa
 /** A world whose attempt meets a refused L0 `fetch.retried`, the first fetch having lost a race. */
 function refusedFetchRetried(t) {
   const stand = scratch(t);
-  gitRacingOnce(stand);
+  gitRacing(stand, 1);
   return refusedWorld(t, { stand, refuse: (context, event) => context.layer === 'L0' && event === 'fetch.retried' });
 }
 
