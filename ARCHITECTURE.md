@@ -124,7 +124,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N; L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop and the gate | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
@@ -152,7 +152,7 @@ export default {
   concurrency: 3,
   worktrees: { root: '../rigger-worktrees', topic: 'rigger-{number}' },
   roles: {
-    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard', labels: { 'tier:high': 'high' } },
+    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard', labels: { 'tier:high': 'high' }, timeout: 14400000 },
     reviewer:      { agent: '.claude/agents/reviewer.md',       provider: 'claude', tier: 'high' },
     pm:            { agent: '.claude/agents/pm.md',             provider: 'claude', tier: 'high' },
     architect:     { agent: '.claude/agents/architect.md',      provider: 'claude', tier: 'high' },
@@ -355,16 +355,16 @@ A dispatch runs in a directory Rigger made for it, which no other dispatch uses 
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
 runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
 fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
-process of Rigger's own user whose working directory lies under that directory. L0 records each
-as it records a survivor. L1 hands L0 that directory and records it in the dispatch's entry, so a
-later start does the same. A command that is not a dispatch has no such directory, and its group
-remains its whole containment.
+process of Rigger's own user whose working directory is that directory or lies under it. L0
+records each as it records a survivor. L1 hands L0 that directory and records it in the dispatch's
+entry, so a later start does the same. A command that is not a dispatch has no such directory, and
+its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
 the head of the card's pull request, and L3 dispatches the card's provisioning steps there.
 
-Where one holds the command's output open once the group is empty, L0 stops
+Where a process that left its group holds the command's output open once the group is empty, L0 stops
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
 the group's processes. L1 then records the dispatch's end. It records one end for every dispatch
 whose start it recorded, and a command that never started is included. Each end carries the exit
