@@ -1,12 +1,13 @@
 // ABOUTME: L0's process adapter: it runs one command in a process group of its own, ends the group at
-// the command's timeout, and once the command exits, kills what is left of that group, records each
-// process it killed, and stops reading output a process outside the group holds open. On a start,
-// it kills a group a dead engine recorded, once it has confirmed that group is the one recorded. On
-// the process's own exit it kills every group it holds.
+// the command's timeout, and once the command exits, kills what is left of that group and, for a
+// dispatch, every process of its user working in the dispatch's directory, records each process it
+// killed, and stops reading output a process outside the group holds open. On a start, it kills a
+// group a dead engine recorded, once it has confirmed that group is the one recorded, and what works
+// in its dispatch's directory. On the process's own exit it kills every group it holds.
 
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants as files, statSync } from 'node:fs';
+import { accessSync, constants as files, realpathSync, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
 import { inspect } from 'node:util';
@@ -230,7 +231,7 @@ function cleanup() {
   const ended = [];
   for (const [group, call] of calls) {
     calls.delete(group);
-    attempt(() => ended.push([group, call, call.contained ? {} : containNow(group, call)]));
+    attempt(() => ended.push([group, call, call.contained ? {} : endedNow(group, call)]));
   }
   const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
@@ -606,7 +607,7 @@ async function reading(looks, ps, timeout, deadline = Date.now() + timeout) {
     } else {
       let printed;
       try {
-        printed = await run(ps, look.value, deadline - Date.now(), timeout);
+        printed = await run(...toolOf(look.value, ps), deadline - Date.now(), timeout);
       } catch (error) {
         look = looks.throw(error);
         continue;
@@ -616,6 +617,9 @@ async function reading(looks, ps, timeout, deadline = Date.now() + timeout) {
   }
   return look.value;
 }
+
+/** The tool a read `looks` yields runs in, and its arguments: `ps` for a list of them, or the `tool` it names. */
+const toolOf = (read, ps) => (Array.isArray(read) ? [ps, read] : [read.tool, read.args]);
 
 /** `reading`, synchronously, for the exit cleanup, which passes over each pause. */
 function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
@@ -627,7 +631,7 @@ function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
     }
     let printed;
     try {
-      printed = runNow(ps, look.value, deadline - Date.now(), timeout);
+      printed = runNow(...toolOf(look.value, ps), deadline - Date.now(), timeout);
     } catch (error) {
       look = looks.throw(error);
       continue;
@@ -637,8 +641,12 @@ function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
   return look.value;
 }
 
-/** How `ps` is run besides its environment: killed outright at `remaining` milliseconds. */
-const reader = (remaining) => ({ timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8' });
+/**
+ * How `ps` and `lsof` are run besides their environment: killed outright at `remaining`
+ * milliseconds, and working in `/`, so the census of working directories never lists a read of its
+ * own, nor one of another call's, as working in a dispatch's directory.
+ */
+const reader = (remaining) => ({ timeout: remaining, killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8', cwd: '/' });
 
 /** The failure for reads of the process table that ran out of time between reads. */
 const late = (timeout) => new Error(`the reads of the process table did not finish within ${timeout} ms`);
@@ -1046,6 +1054,279 @@ function end(pid) {
 }
 
 /**
+ * The identity of the directory at `path`, by which a later start tells it from another made at the
+ * same path since: its device and inode, as decimal strings, read by `stat` through any link.
+ *
+ * Where it can fail to tell them apart (`D16` rule 3): a directory made at a path after another
+ * there was removed could take the same device and inode. Measured on this host's APFS volume
+ * (`/System/Volumes/Data`, macOS 27.0, 26A428) on 2026-10-01: of 200 directories each removed and
+ * made again at once at the same path, none took the inode it had (`316037766` became
+ * `316037792` on the last), on the same device. That APFS gives inodes out from a counter that
+ * only grows is the architect's judgment (ruling 7), not a measurement.
+ */
+export function identityOf(path) {
+  const { dev, ino } = statSync(path, { bigint: true });
+  return { device: String(dev), inode: String(ino) };
+}
+
+/**
+ * Why the directory at `directory` may not be the one recorded with `identity`, or nothing where it
+ * is: the record carries no identity for it, its identity cannot be read at the path, as where it
+ * no longer exists, or the path now names another directory.
+ */
+function unconfirmed(directory, identity) {
+  if (identity?.device === undefined || identity?.inode === undefined) return 'the record carries no device and inode for it, so the start cannot tell it is the directory recorded';
+  let now;
+  try {
+    now = identityOf(directory);
+  } catch (error) {
+    return `its device and inode cannot be read: ${error.message}`;
+  }
+  if (now.device === identity.device && now.inode === identity.inode) return undefined;
+  return `it is not the directory recorded: it is device ${now.device}, inode ${now.inode}, where the record names device ${identity.device}, inode ${identity.inode}`;
+}
+
+/**
+ * The census of working directories' tool, by absolute path, for the same reason as `PS`. It runs
+ * under `PS_ENV` too, whose UTF-8 locale it needs to print `ü` as itself (`listing`).
+ */
+export const LSOF = '/usr/sbin/lsof';
+
+/**
+ * The real path of `directory`, which the census of working directories compares with, or why it
+ * cannot be one. A path that cannot be resolved is refused, never taken as holding no process, and
+ * so is one `illegible` refuses.
+ */
+function placed(directory) {
+  let real;
+  try {
+    real = realpathSync.native(directory);
+  } catch (error) {
+    return { why: `its directory ${directory} cannot be resolved: ${error.message}` };
+  }
+  return { real, why: illegible(real) };
+}
+
+/**
+ * Why the census cannot compare with `real`, or nothing where it can: it holds a character `lsof`
+ * does not print as itself, or `\` or `^`, which begin what it prints in a character's place. Of
+ * such a path, what `lsof` prints is not the path, and a path it prints could be another
+ * directory's (`listing`). Only printable ASCII is known to print as itself. The root is refused
+ * too, since every process works under it.
+ */
+const illegible = (real) => (/^\/[\x20-\x5b\x5d\x5f-\x7e]+$/.test(real) ? undefined
+  : `the directory ${JSON.stringify(real)} is not an absolute path below the root, of printable ASCII without \\ or ^, which alone the census of working directories can read back`);
+
+/**
+ * What `lsof` is given to list the working directory of each process of Rigger's own user, or of
+ * `pids` among them: `-a` lists a process only where it is the user's, by `-u` and its real user
+ * id, and the file is its working directory, and `-F pun` prints each as lines of a field each.
+ *
+ * Where `lsof`'s answer can differ from a process's true working directory (`D16` rule 3), measured
+ * with `lsof` 4.91 on macOS 27.0 (26A428) on 2026-10-01:
+ *
+ * - It prints the path the kernel names the directory by now: one renamed after a process began
+ *   working in it printed its new name. One removed after printed the path it had, with nothing to
+ *   mark it removed. One a process entered through a symbolic link printed the link's target, so
+ *   the census compares with the real path (`placed`).
+ * - It prints a character it holds unprintable in its place: a newline as `\n`, a tab as `\t`, a
+ *   backslash as `\\`, U+0001 as `^A`, which a path holding `^A` prints too, and U+007F and
+ *   U+200B as `\x` and the hexadecimal of each byte. It printed `ü` as itself under this locale.
+ *   So a path is compared only where it holds printable ASCII but `\` and `^` (`placed`), and then
+ *   a path printed under it is one lying under it.
+ * - It exits 1, printing nothing on either stream, where no process matched, as `ps` does (`run`),
+ *   and it lists itself, working where it was started, which is `/` (`reader`).
+ *
+ * One call listing every process of the user took 164 to 186 ms over 20 calls, with Node 26.5.0,
+ * at a load average of about 11.5 on 12 cores, with 658 processes of the user's.
+ */
+const listing = (pids) => ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), ...(pids ? ['-p', pids.join(',')] : []), '-F', 'pun'];
+
+/**
+ * The pid of each process `lsof`'s `printed` lists working in `directory`, a real path: its
+ * working directory is that directory or lies under it. A process of another user is left out
+ * whatever `lsof` was asked, and so is this one. A line it cannot read fails the census.
+ */
+function workingIn(printed, directory) {
+  const pids = [];
+  let listed;
+  for (const line of printed.split('\n').filter(Boolean)) {
+    const [, field, value] = /^([pufn])(.*)$/.exec(line) ?? [];
+    if (field === undefined || ((field === 'p' || field === 'u') && !/^\d+$/.test(value)) || (field !== 'p' && listed === undefined)) {
+      throw new Error(`the census of working directories held a line it cannot read: ${JSON.stringify(line)}`);
+    }
+    if (field === 'p') listed = { pid: Number(value) };
+    if (field === 'u') listed.uid = Number(value);
+    const there = value === directory || value.startsWith(`${directory}/`);
+    if (field === 'n' && there && listed.uid === process.getuid() && listed.pid !== process.pid) pids.push(listed.pid);
+  }
+  return pids;
+}
+
+/** Sends `SIGSTOP` to the process `pid`: `sent`, or `ESRCH` where it has gone, or `EPERM` where Rigger may not signal it. */
+function halt(pid) {
+  try {
+    process.kill(pid, 'SIGSTOP');
+    return 'sent';
+  } catch (error) {
+    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
+    return error.code;
+  }
+}
+
+/** Sends `name` to the process `pid`, and whether it reached it. */
+function sent(pid, name) {
+  try {
+    process.kill(pid, name);
+    return true;
+  } catch (error) {
+    if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error;
+    return false;
+  }
+}
+
+/**
+ * Kills every process of Rigger's own user working in `directory`, a real path `illegible` admits,
+ * read through `lsof` at the path `lsof` names, and hands back the `kills`, each by its pid, name
+ * and command line, read as the group's census reads them. Where the census could not be read, it
+ * hands back why as `unread`, and as `unnamed` the pid of each process it had found working there
+ * and stopped, which it then killed unnamed. It yields each read and each pause, as `census` does,
+ * so the call and the exit cleanup both take it.
+ *
+ * Each round lists the directory's processes and stops them, because a stopped process can neither
+ * exec, nor fork, nor leave the directory. It lists them again, stopped, and resumes any no longer
+ * working there: a pid handed on to another process between the list and the stop. It reads the
+ * rest's names and command lines, then their states again, keeping them only where each is still
+ * stopped, and kills them. It ends only at a list holding no process but those Rigger may not
+ * signal. A listed process that has gone before the stop is listed again, so one it forked between
+ * the list and the stop is killed in a later round. A directory whose processes go on forking
+ * successors faster than a round ends holds the census until its read timeout, and is then recorded
+ * as unread.
+ *
+ * It resumes a process it stopped only where a later list no longer finds it working there, or where
+ * the census gives up before it has listed that process again: a failed read leaves nothing it
+ * stopped stopped. A process it has listed again, stopped, it kills, by name or, where a later read
+ * fails, unnamed.
+ *
+ * Where the exit cleanup's census runs while the call's is reading, it kills what the call's had
+ * stopped in the directory. A process the call's had stopped and not yet listed again, which can
+ * only be a pid handed on to a process outside it between a list and the stop, stays stopped.
+ */
+function* sweep(directory, lsof) {
+  const found = yield* sweeping(directory, lsof);
+  yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])]);
+  return found;
+}
+
+/**
+ * Settles once no process of `pids`, each one the census killed, answers signal 0, or once
+ * `UNREAPED_BOUND` has passed, yielding each pause. A killed process answers until its parent
+ * reaps it, and the census kills a process whatever its parent, so it waits as `ended` waits on a
+ * group holding only zombies, and leaves one whose parent never reaps it.
+ */
+function* reaped(pids) {
+  const since = Date.now();
+  for (let wait = 1; pids.some(answers) && Date.now() - since < UNREAPED_BOUND; wait = longer(wait)) yield wait;
+}
+
+/** `sweep`'s rounds, until a list holds no process working in `directory`, or a read fails. */
+function* sweeping(directory, lsof) {
+  const kills = [];
+  // Stopped and not yet listed again; and listed again, stopped, and not yet killed.
+  const held = new Set();
+  const ours = new Set();
+  const list = function* (pids) {
+    return workingIn(yield { tool: lsof, args: listing(pids) }, directory);
+  };
+  const resume = (pids) => {
+    for (const pid of pids) {
+      held.delete(pid);
+      sent(pid, 'SIGCONT');
+    }
+  };
+  try {
+    for (let wait = 0; ; wait = longer(wait)) {
+      if (wait > 0) yield wait;
+      const found = yield* list();
+      resume([...held].filter((pid) => !found.includes(pid)));
+      // A process the stop could not reach either has gone, and is listed again, since it may have
+      // forked first, or is one Rigger may not signal, as a set-user-id program's is, and so not
+      // this user's to end. So the census ends at a list holding only processes of the second kind.
+      const forbidden = new Set();
+      for (const pid of found) {
+        if (ours.has(pid)) continue;
+        const stop = halt(pid);
+        if (stop === 'sent') held.add(pid);
+        if (stop === 'EPERM') forbidden.add(pid);
+      }
+      const pids = [...held, ...ours];
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid))) return { kills };
+      if (pids.length === 0) continue;
+      const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
+      for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
+      if (!stopped(before)) continue;
+      const there = yield* list(pids);
+      resume([...held].filter((pid) => !there.includes(pid)));
+      for (const pid of held) ours.add(pid);
+      held.clear();
+      const names = yield* namesOf([...before.keys()], function* (args) { return yield args; });
+      const commands = rowsOf(yield ['-ww', '-p', pids.join(','), '-o', 'pid=,command=']);
+      const after = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
+      if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
+      for (const [pid, state] of after) {
+        if (!ours.has(pid) || !state.startsWith('T')) continue;
+        ours.delete(pid);
+        if (sent(pid, 'SIGKILL')) kills.push({ pid, name: names.get(pid), cmd: commands.get(pid) });
+      }
+    }
+  } catch (error) {
+    return { kills, unread: error.message, unnamed: [...ours].filter((pid) => sent(pid, 'SIGKILL')) };
+  } finally {
+    resume([...held]);
+  }
+}
+
+/**
+ * The `L0` events for the census of `directory`, a real path, read through the call's `ps`, `lsof`
+ * and read timeout,
+ * with `killed` naming each kill as a survivor's: each kill by name, and where the census could not
+ * be read, a `directory.unread` event naming the directory and why, and each process it then
+ * killed unnamed. Of a directory `illegible` refuses, that event says why, and nothing is killed.
+ */
+async function swept(directory, { ps, lsof, readTimeout }, killed) {
+  const why = illegible(directory);
+  return sweptEvents(directory, why === undefined ? await reading(sweep(directory, lsof), ps, readTimeout) : { kills: [], unread: why, unnamed: [] }, killed);
+}
+
+/** `swept`, synchronously, for the exit cleanup. */
+function sweptNow(directory, { ps, lsof, readTimeout }, killed) {
+  const why = illegible(directory);
+  return sweptEvents(directory, why === undefined ? readingNow(sweep(directory, lsof), ps, readTimeout) : { kills: [], unread: why, unnamed: [] }, killed);
+}
+
+/** The events `swept` hands back, from what `sweep` found in `directory`. */
+const sweptEvents = (directory, { kills, unread, unnamed }, killed) => [
+  ...kills.map((kill) => [killed, { ...kill, directory }]),
+  ...(unread === undefined ? [] : [['directory.unread', { directory, census: unread, ...(unnamed.length > 0 ? { killed: unnamed } : {}) }]]),
+];
+
+/**
+ * The `L0` events for the census of the dispatch's directory `call` holds, once its group is empty,
+ * each kill named as a survivor's; none where the call is not a dispatch's.
+ */
+const censused = async (call) => (call.directory === undefined ? [] : swept(call.directory, call, 'survivor.killed'));
+
+/**
+ * `containNow` for the exit cleanup, followed by the census of the dispatch's directory `call`
+ * holds, where it holds one, whose kills are recorded after the group's.
+ */
+function endedNow(group, call) {
+  const look = containNow(group, call);
+  if (call.directory !== undefined) look.kills = [...look.kills, ...sweptNow(call.directory, call, 'survivor.killed')];
+  return look;
+}
+
+/**
  * Appends each of `events` through `emitter`, trying every one whatever became of those before
  * it, and hands back each the sink refused, with its fields and why.
  */
@@ -1091,6 +1372,14 @@ function refused(unrecorded, result, ending = '') {
  * append is tried, and where the sink refused any, the call rejects with an `EVENT_REFUSED`
  * failure naming each unrecorded event and carrying the result.
  *
+ * `directory`, where the caller gives one, is the directory of the dispatch the command is, and the
+ * call is then a dispatch's (`ARCHITECTURE.md`, "Failure model"). Once L0 has emptied the group,
+ * it kills every process of Rigger's own user working in that directory, by its real path, and
+ * records each as a survivor (`swept`). A directory that cannot be resolved, or whose real path the
+ * census cannot read back (`illegible`), starts nothing, as a command that never started. `lsof`
+ * stands in for `LSOF` where the caller gives one. A call given no directory has its group as its
+ * whole containment.
+ *
  * `onGroup`, where the caller gives one, is handed the group's id in the step that creates the
  * group, before the call first yields (`ARCHITECTURE.md`, "Failure model"). L1 records a
  * dispatch's group there. A command that never started has no group, and `onGroup` is not called.
@@ -1106,7 +1395,7 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, ps = PS, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, timeout, emitter, onGroup, onExit, directory, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -1118,12 +1407,16 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   }
   const unfit = unusable(cwd);
   if (unfit !== undefined) throw notStarted(command, unfit);
+  // A dispatch's directory the census could not read would leave every process working there
+  // alive, so a command given one runs only where the census can read it.
+  const { real, why } = directory === undefined ? {} : placed(directory);
+  if (why !== undefined) throw notStarted(command, why);
   install();
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, ps, readTimeout, onExit, child, events: [], contained: false };
+  const call = { emitter, ps, lsof, readTimeout, onExit, directory: real, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
   // more of it.
@@ -1138,7 +1431,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
     // A group the caller could not take runs no further: it is ended, and recorded, as a
     // survivor would be, before the caller hears why.
     // Nothing reads the output of a command that runs no further, so its pipes are let go.
-    const kills = await contain(child.pid, { ps, readTimeout }, 'survivor.killed');
+    const kills = [...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')), ...(await censused(call))];
     call.contained = true;
     const unrecorded = record(emitter, taken() ? [] : kills);
     release();
@@ -1162,6 +1455,7 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
   if (!timedOut) for (const kill of events) if (kill[0] === 'timeout.killed') kill[0] = 'survivor.killed';
   const exit = signal === null ? code : signalled(signal);
   events.push(...(await contain(child.pid, { ps, readTimeout }, 'survivor.killed')));
+  events.push(...(await censused(call)));
   call.contained = true;
   if (await outlasts(output, outputBound)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
@@ -1185,11 +1479,22 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
  * `recorded.killed` through `emitter`. Where the sink refused any of those, it rejects with an
  * `EVENT_REFUSED` failure, once the group is empty. Where the start times cannot be read, it
  * rejects having killed nothing.
+ *
+ * Where L1 recorded the dispatch's `directory`, a real path, the census of that directory follows,
+ * whether or not the group was the one recorded: the directory was made for that dispatch alone,
+ * and the dead engine's dispatch can have left a process working there whatever became of its
+ * group. It follows only where the directory at that path is still the one L1 recorded, by the
+ * `identity` it recorded (`unconfirmed`). Where it is not, or that cannot be told, it sweeps nothing
+ * there and records a `directory.skipped` event naming the path and why, and the group's kill
+ * stands as it is (the architect's ruling 7 on #467).
  */
-export async function killRecordedGroup({ group, started, emitter, ps = PS, readTimeout = READ_TIMEOUT }) {
+export async function killRecordedGroup({ group, started, emitter, directory, identity, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT }) {
   const starts = await startsIn(ps, group, readTimeout);
-  if (!recorded(group, started, starts)) return;
-  const unrecorded = record(emitter, await contain(group, { ps, readTimeout }, 'recorded.killed'));
+  const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout }, 'recorded.killed') : [];
+  const replaced = directory === undefined ? undefined : unconfirmed(directory, identity);
+  if (replaced !== undefined) kills.push(['directory.skipped', { directory, reason: replaced }]);
+  else if (directory !== undefined) kills.push(...(await swept(directory, { ps, lsof, readTimeout }, 'recorded.killed')));
+  const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
 }
 

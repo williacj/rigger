@@ -285,6 +285,8 @@ cannot record runs no command. Each entry names:
 - what L0 needs to tell that group from a later one given the same id;
 - the dispatch's id;
 - the dispatch's card, where it has one.
+- the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
+  later one at the same path.
 
 L1 removes an entry once its group is empty, and on Rigger's own exit. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
@@ -357,8 +359,9 @@ runs in a directory of its own, `judges/<topic>/<role>` under the worktree root,
 fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
 process of Rigger's own user whose working directory is that directory or lies under it. L0
 records each as it records a survivor. L1 hands L0 that directory and records it in the dispatch's
-entry, so a later start does the same. A command that is not a dispatch has no such directory, and
-its group remains its whole containment.
+entry. A later start does the same only where the directory at that path is still the one recorded.
+Where it is not, or L0 cannot tell, the start sweeps nothing there and records why. A command that
+is not a dispatch has no such directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
