@@ -20,7 +20,7 @@ import { until } from './process-fixtures.mjs';
 import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, waitFor, readyCard, world,
 } from './loop-world.mjs';
-import { readingLater, settledOf } from './loop-world.mjs';
+import { WAIT_TURNS, readingLater, settledOf } from './loop-world.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
@@ -698,6 +698,21 @@ const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
 /** Settles once `built`'s maker stand-in holds at least `cards` cards, as `until` waits. */
 const makersHold = (built, cards, t) => until(() => built.dispatches.held() >= cards, t);
+
+test('a wait on a condition that never holds fails after the number of turns the harness names, and its failure names the condition', SETTLES_WITHIN, async () => {
+  let looked = 0;
+  const neverHolds = () => {
+    looked += 1;
+    return 'the board' === 'empty';
+  };
+
+  await assert.rejects(waitFor(neverHolds), (failure) => {
+    assert.match(failure.message, /'the board' === 'empty'/);
+    assert.match(failure.message, new RegExp(`\\b${WAIT_TURNS} turns\\b`));
+    return true;
+  });
+  assert.equal(looked, WAIT_TURNS + 1);
+});
 
 /** The numbers of `cards`, the board items a single pull handed the maker, in the order handed. */
 const numbersOf = (cards) => cards.map((card) => card.number);

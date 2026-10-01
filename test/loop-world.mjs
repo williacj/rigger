@@ -6,11 +6,9 @@ import { existsSync, mkdtempSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getTestContext } from 'node:test';
 
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
-import { turn, until } from './process-fixtures.mjs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
@@ -36,13 +34,29 @@ export const cardIn = (number, column, fieldValues) => ({
 /** A ready issue numbered `number` that L2 would dispatch, on a board whose columns are `columns` by key. */
 export const readyCard = (number, columns = COLUMNS) => cardIn(number, columns.ready);
 
+/** One turn of the event loop: every step already queued runs before it ends. */
+const oneTurn = () => new Promise((resolve) => setImmediate(resolve));
+
 /**
- * Settles once `condition` holds, checked once per turn of the event loop as `until` checks it, and
- * rejects once the test running the caller has ended without it, so that test's own timeout bounds
- * it. Run outside any test, as a test's child process runs this harness, it waits on the condition
- * alone. It reads no clock and sleeps for no time.
+ * The most turns of the event loop `waitFor` waits for its condition. A judgment, whose premise is
+ * a measurement: across three full `npm test` runs with Node 26.5.0 on macOS 27.0 on 2026-10-01, at
+ * one-minute loads of 5.9, 12.7 and 14.9 on 12 CPUs, no wait needed more than 2 turns, over 220
+ * waits a run. The bound is 500 times that, so a loaded host stretching a wait fails nothing,
+ * while a condition that never holds still fails within a moment.
  */
-export const waitFor = (condition) => until(condition, getTestContext() ?? { signal: new AbortController().signal });
+export const WAIT_TURNS = 1_000;
+
+/**
+ * Settles once `condition` holds, checked at once and then once per turn of the event loop, and
+ * rejects naming the condition once it has not held after `WAIT_TURNS` turns. It reads no clock and
+ * sleeps for no time.
+ */
+export async function waitFor(condition) {
+  for (let turns = 0; !condition(); turns += 1) {
+    if (turns === WAIT_TURNS) throw new Error(`the condition ${condition} did not hold within ${WAIT_TURNS} turns of the event loop`);
+    await oneTurn();
+  }
+}
 
 /** A function answering whether `promise` has settled, fulfilled or rejected, for a wait to read. */
 export function settledOf(promise) {
@@ -127,7 +141,7 @@ export function readingLater(fake) {
   return {
     ...handle,
     readColumns: async () => {
-      await turn(getTestContext());
+      await oneTurn();
       return handle.readColumns();
     },
   };

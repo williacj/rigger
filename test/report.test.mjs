@@ -33,9 +33,6 @@ const readyCard = (number) => ({
   type: 'issue', repository: config.repo, number, title: 'Add a verb', body: '## Acceptance\n\n- The verb prints its help.\n', labels: ['type:change'], column: config.board.columns.ready,
 });
 
-/** Lets every step already queued run to its end: the fake board answers through promises alone. */
-const quiesce = () => new Promise((resolve) => setImmediate(resolve));
-
 /** When every recorded run's clock starts: minute 0. */
 const START = Date.parse('2026-01-01T00:00:00.000Z');
 
