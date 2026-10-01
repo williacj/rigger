@@ -231,7 +231,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
 | R-STATE-1 | The board is the truth for a card's workflow state. Rigger persists no card workflow state of its own. | the engine | the test suite | D1 |
-| R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning. | the engine | the test suite | D1, D10 |
+| R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning, except where `R-WORK-19` refuses to start that card's work again. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
 | R-STATE-4 | Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
 | R-STATE-17 | A process works in a directory when its working directory is that directory or lies under it. A process outside every process group Rigger created, and working in no directory Rigger made for a dispatch, is outside this rule. Rigger ends every process in a process group it created, and every process of its own user working in a dispatch's directory, whenever any of these holds: | the engine | the test suite | |
