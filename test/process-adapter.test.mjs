@@ -1386,15 +1386,17 @@ test('a census whose every read of the group lists only one of two survivors sti
 test('a census whose every read of the group lists only its zombie, while a survivor lives, still has the survivor recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill and the wait read it without, so the
-  // stand-in cuts every read of the census down to the zombie's row, and none other.
-  const ps = fixture(directory, 'ps', [
+  // stand-in cuts every read of the census down to the zombie's row, and none other. It is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*)',
     '  : > "$here/cut"',
     '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") "',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = unreaped(directory);
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
@@ -1476,17 +1478,18 @@ test('a group whose leader is dead and which holds only a zombie its parent outs
  * 0 still reaches the group once the survivor is killed, through a `ps` stand-in that answers every
  * read as `ps` does except the reads of the group's states alone (`-g <group> -o pid=,stat=`), taken
  * once the kill has named the survivor, which run the shell lines `failing` instead. Hands back
- * the survivor's pid and the events.
+ * the survivor's pid and the events. The stand-in is `warmed`, because the census's first read is
+ * its first exec, which must reach its body within `readTimeout`.
  */
 async function lastReadFailing(t, failing) {
   const directory = holding(t);
-  const ps = fixture(directory, 'ps', [
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-g "*" -o pid=,stat=")',
     '  : > "$here/failed"',
     failing,
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = unreaped(directory);
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
