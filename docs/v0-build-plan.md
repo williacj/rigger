@@ -19,7 +19,7 @@ cites it, and the citation is where the binding text lives; a conflict resolves 
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting (`ARCHITECTURE.md`, Extension points).
 3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
-   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-6`, `R-STATE-12`). A repeated
+   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A repeated
    host fault closes admission rather than stopping cards (`R-FAIL-3`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
@@ -248,7 +248,7 @@ This is the budgeted module.
 Exit:
 
 - A tree with a lingering grandchild whose parent exits 0 yields result 0, and the grandchild is
-  dead and named in the log (`R-STATE-6`, `R-STATE-7`, `R-STATE-12`, `R-STATE-15`).
+  dead and named in the log (`R-STATE-17`, `R-STATE-7`, `R-STATE-12`, `R-STATE-15`).
 - SIGKILL of Rigger mid-dispatch, then restart, kills the recorded group before scheduling
   (`R-STATE-10`).
 
@@ -274,6 +274,9 @@ Exit:
 
 - Maker and judges as headless dispatches of the configured provider CLI through M2, with the
   Claude Code adapter as the default.
+- A second provider adapter, for Codex, implements the same interface as the Claude Code adapter.
+  It dispatches makers and judges, and loads only the tools and connectors the consumer's
+  repository declares. Claude Code stays the default.
 - Role names, prompts, and skills owned by the consumer; model tier per role from the card's label.
 - `once` and `run` dispatch the maker for each card they claim. M4 is the first milestone in which
   either verb dispatches a role for a card.
@@ -283,9 +286,9 @@ Exit:
 - L2 composes a review packet for each judge dispatch and L1 delivers it. `R-EVIDENCE` states
   what it carries.
 - Rigger binds three kinds of work against its own board: a code change (maker engineer, judge
-  reviewer), a spec proposal (maker PM, judges reviewer and engineer, then owner), and a spike
-  (maker spike-engineer, judge reviewer). The proposal is the panel case — two agent judges
-  running concurrently, with the owner last.
+  reviewer), a spec proposal (maker PM, judges reviewer, engineer and architect, then owner), and
+  a spike (maker spike-engineer, judge reviewer). The proposal is the panel case — three agent
+  judges running concurrently, with the owner last.
 
 Exit:
 
@@ -294,13 +297,17 @@ Exit:
   maker's session or the other judge's output. Each writes its findings; the marker schema they
   write into is M5's.
 - The judge configured as `owner` is not dispatched (`R-LOOP-11`).
-- Two judges at one head receive the same card, base SHA and diff, and what each was given is in
-  the event stream. What they write their findings into is M5's.
+- Two judges at one head receive the same card, base SHA and diff, and the event stream records,
+  for each judge, the facts that identify what it was given (the card, its acceptance revision,
+  the pull request, and the base and head SHAs) and a digest of the evidence, from which a reader
+  recomposes the evidence and checks it against the digest. What they write their findings into
+  is M5's.
 - Concurrency holds across a restart. On a fake board holding four pullable cards, `run`
   dispatches under `concurrency: 2`. Rigger is SIGKILLed while two makers run, then restarted
   under `concurrency: 1`. Those two makers never exit on their own, so only a kill ends them
-  before the restarted engine's first dispatch. A card counts as running while any process its
-  dispatch started is alive, the killed run's included.
+  before the restarted engine's first dispatch. A card counts as running while any process is
+  alive in a process group one of its dispatches created, or works in the directory one of them
+  ran in, the killed run's included.
   No more than two cards are running before the kill, and no more than one from the restarted
   engine's first dispatch onward (`R-SCHED-2`).
 

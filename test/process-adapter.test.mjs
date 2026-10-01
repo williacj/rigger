@@ -195,7 +195,7 @@ test('a child that writes to standard output and standard error before the comma
   assert.ok(result.stderr.equals(third), 'standard error holds every byte of the child\'s third payload');
 });
 
-// proves R-STATE-6, R-STATE-7
+// proves R-STATE-17, R-STATE-7
 test('a child a command leaves alive is not alive when the adapter\'s call settles', async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -1733,7 +1733,7 @@ test('a command ended by a signal it does not handle has a non-zero integer exit
 });
 
 
-// proves R-STATE-6, R-STATE-8
+// proves R-STATE-17, R-STATE-8
 test('given a command and its child outliving its timeout, no process of the group is alive when the call settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 

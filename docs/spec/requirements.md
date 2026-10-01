@@ -151,6 +151,13 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-WORK-15 | — the line of work the worktree holds is exactly the card's; | the engine | the test suite | |
 | R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds; | the engine | the test suite | |
 | R-WORK-17 | — no other worktree of the repository, the handed one included, lies inside it. | the engine | the test suite | |
+| R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. A maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
+| R-WORK-19 | Rigger never starts a card's work from the beginning while the forge holds the card's line of work, or a merged pull request from it. It refuses the card, naming it and what the forge holds. | the engine | the test suite | D10 |
+| R-WORK-20 | Where a directory is at the path of the directory Rigger makes for a judge's dispatch, and any condition below does not hold, Rigger dispatches no judge there, names the path, and changes nothing. Rigger replaces that directory only when all of these hold: | the engine | the test suite | |
+| R-WORK-21 | — everything in it is a worktree added to the repository Rigger works, each at a detached commit; | the engine | the test suite | |
+| R-WORK-22 | — none of them is the worktree Rigger was handed as the repository; | the engine | the test suite | |
+| R-WORK-23 | — no other worktree of the repository lies inside it. | the engine | the test suite | |
+| R-WORK-24 | Rigger does a card in review again from the beginning where the forge holds no pull request from the card's line of work, open or merged, and not the line of work itself. The card shows coding while it is done again. | the engine | the test suite | D1 |
 
 ## R-LOOP — maker, judges, and rounds
 
@@ -167,6 +174,10 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-LOOP-9 | A disagreement is bounded. The consumer sets how many rounds each kind of work gets, three unless the consumer says otherwise. Exhausting them escalates the card as ambiguous. | the engine | the event record, by rounds against the configured bound | D3, D4 |
 | R-LOOP-10 | No role settles a disagreement between a maker and a judge. | the consumer's configuration | the config validator | D4 |
 | R-LOOP-11 | The owner, when named as a judge, judges last and is asked only once every agent judge is satisfied. The owner is never dispatched. | the engine | the event record, by a dispatch naming the owner | D3 |
+| R-LOOP-12 | A role runs at the tier the consumer declares for it, unless the card carries a label the consumer declares as selecting another tier for that role. The role then runs at the tier that label selects. | the engine | the event record, by the tier each dispatch names | |
+| R-LOOP-13 | Rigger never dispatches a role for a card carrying two or more labels that select different tiers for that role. It refuses the card, and the refusal names the role and every such label. | the engine | the test suite | |
+| R-LOOP-14 | A judge takes its role's instructions, and every setting and tool declaration its agent loads, from the repository's main line as the forge held it when Rigger made the judge's directory. It never takes them from the work it judges. | the engine | the test suite | D6 |
+| R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 
@@ -177,6 +188,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-EVIDENCE-3 | What a judge is given identifies the card, its acceptance, the work under review, and what that work changed. On a second or later round it also identifies what changed since the round before. | the engine | the event record, by what each judge was given | D9 |
 | R-EVIDENCE-4 | What a judge is given carries no other judge's findings or verdict, and no part of the maker's session. | the engine | the event record, by what each judge was given | D9, D6 |
 | R-EVIDENCE-5 | Rigger records what each judge was given, so a later reader can tell whether two judges ruled on the same thing. | the engine | the event record | D9 |
+| R-EVIDENCE-6 | Rigger gives a judge the work it judges as the pull request's head, provisioned by the steps the card's kind selects, in a directory apart from where the judge's instructions are read. | the engine | the test suite | D9 |
 
 ## R-VERDICT — what a judge returns
 
@@ -222,7 +234,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
 | R-STATE-4 | Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
-| R-STATE-6 | A process that has left its process group is outside this rule. Rigger ends every process still in a process group it created, whenever any of these holds: | the engine | the test suite | |
+| R-STATE-17 | A process works in a directory when its working directory is that directory or lies under it. A process outside every process group Rigger created, and working in no directory Rigger made for a dispatch, is outside this rule. Rigger ends every process in a process group it created, and every process of its own user working in a dispatch's directory, whenever any of these holds: | the engine | the test suite | |
 | R-STATE-7 | — the command Rigger ran in that group returns; | the engine | the test suite | |
 | R-STATE-8 | — that command runs past its time; | the engine | the test suite | |
 | R-STATE-9 | — Rigger itself exits, unless it is killed outright: ended by a signal that no process can catch or that Rigger cannot safely handle, by an abort, or by a fatal runtime error. | the engine | the test suite | |
