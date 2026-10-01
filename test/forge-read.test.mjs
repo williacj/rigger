@@ -1,5 +1,6 @@
 // ABOUTME: Tests the forge adapter's read side against recorded `gh` answers: the cards a board
-// holds, its columns, its single-select fields and the repository's labels, each read in full.
+// holds, its columns, its single-select fields and the repository's labels, each read in full, and
+// a card's branch, pull requests, diff, merge base, comments and issue edit time.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1053,4 +1054,49 @@ test('every request a full repository read issues reaches the spawn through the 
     await assert.rejects(itemWriteRunner(args, { send: () => assert.fail('an item write was sent') }));
     await assert.rejects(schemaWriteRunner(args, { send: () => assert.fail('a schema write was sent') }));
   }
+});
+
+test('a repository read whose request never reached gh rejects naming what it read and why, keeps the failure\'s code, and sends nothing more', async () => {
+  // L0's process adapter rejects, rather than answering, where `gh` never started.
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    const sent = [];
+    const send = (command, args) => {
+      sent.push(args);
+      throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
+    };
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+      assert.ok(error.message.startsWith(`${name} on board 6 failed: `), error.message);
+      assert.ok(error.message.includes(names), error.message);
+      assert.ok(error.message.includes('williacj/rigger'), error.message);
+      assert.ok(error.message.includes('spawn gh ENOENT'), error.message);
+      assert.equal(error.code, 'ENOENT', name);
+      return true;
+    }, name);
+    assert.equal(sent.length, 1, `${name} went on after its first request failed`);
+  }
+});
+
+test('a repository read whose answer gh printed is not JSON rejects naming what it read and that the answer could not be read', async () => {
+  // The diff is text and is never parsed, so its read is not among these.
+  for (const [name, { call, names }] of Object.entries(REPOSITORY_READS)) {
+    if (name === 'readDiff') continue;
+    const send = () => ({ status: 0, stdout: '{"data": {"repository"', stderr: '' });
+    await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+      assert.ok(error.message.startsWith(`${name} on board 6 failed: `), error.message);
+      assert.ok(error.message.includes(names), error.message);
+      assert.match(error.message, /JSON/, error.message);
+      return true;
+    }, name);
+  }
+  // The merge base's comparison is the second request, and is parsed too.
+  const head = 'e'.repeat(40);
+  const send = (command, args) => (args[1] === 'graphql'
+    ? ok({ repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } })
+    : { status: 0, stdout: '<html>', stderr: '' });
+  await assert.rejects(repositoryReads(BOARD, { send }).readMergeBase(12), (error) => {
+    assert.ok(error.message.startsWith('readMergeBase on board 6 failed: '), error.message);
+    assert.ok(error.message.includes('pull request #12'), error.message);
+    assert.match(error.message, /JSON/, error.message);
+    return true;
+  });
 });

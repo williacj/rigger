@@ -1,5 +1,6 @@
 // ABOUTME: The fake `gh`: an executable a test places first on `PATH`, answering the forge
-// adapter's commands from the fake board. Test-only, and never named from src/.
+// adapter's commands from the fake board and the fake repository, and an agent's `gh pr`
+// commands from the fake repository. Test-only, and never named from src/.
 
 import { chmodSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -305,8 +306,10 @@ function pathIn(state, args) {
 
 /**
  * The commands the fake `gh` answers, each keyed by how `commandOf` writes it, with what answers
- * it: the data `gh` prints, given the board, the fake's state and the document's one operation.
- * Nothing else is answered: an unmodelled command fails, printing itself.
+ * it. A GraphQL request's answer is the data `gh` prints, given the board, the fake's state and the
+ * document's one operation; a REST read's is the text `gh` prints, given the board, the fake's
+ * state and the command's arguments. Nothing else is answered: an unmodelled command fails,
+ * printing itself.
  */
 const COMMANDS = {
   [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,

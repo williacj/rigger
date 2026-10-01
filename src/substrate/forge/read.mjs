@@ -308,6 +308,23 @@ async function restRead(operation, board, via, path, headers, addressed) {
   return said.stdout;
 }
 
+/**
+ * What `read` answers, or a failure naming `operation`, what was `addressed` and why: a failure
+ * the read gave already names them, and any other, such as a request that never reached `gh` or
+ * an answer that is not JSON, is given them, keeping its `code` and carrying it as its cause.
+ */
+async function labelled(operation, board, addressed, read) {
+  try {
+    return await read();
+  } catch (error) {
+    const named = `${operation} on board ${board.project} failed: `;
+    if (error.message.startsWith(named)) throw error;
+    const failure = new Error(`${named}${addressed}${error.message}`, { cause: error });
+    if (error.code !== undefined) failure.code = error.code;
+    throw failure;
+  }
+}
+
 /** A pull request as the reads answer it: its number, head SHA and base branch. */
 const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: headRefOid, base: baseRefName });
 
@@ -315,54 +332,61 @@ const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: 
  * The reads of a card's facts held in the repository `board.repo` names: its line of work's
  * branch and pull requests, a pull request's diff, merge base and comments, and an issue's last
  * edit. Each is sent through the read runner, as `readSide`'s reads are, with `send`, `emitter`
- * and `timeout`. A read that fails rejects naming what it read, and never answers none in its
- * place.
+ * and `timeout`. Each is given what it reads, and what a failure says it was reading. A read that
+ * fails rejects naming what it read and why, and never answers none in its place.
  */
-export function repositoryReads(board, { send, emitter, timeout } = {}) {
-  const via = { send, emitter, timeout };
-  return {
-    /**
-     * The pull requests whose head is `branch` in the repository, as `{ open, merged }`, each a
-     * list of `{ number, head, base }` in the order gh answers them. A fork's branch of the same
-     * name is another repository's, and is left out.
-     */
-    readPullRequests: async (branch) => {
-      const addressed = reading(board, `the pull requests from branch ${branch}`);
+const REPOSITORY_READS = {
+  /**
+   * The pull requests whose head is `branch` in the repository, as `{ open, merged }`, each a list
+   * of `{ number, head, base }` in the order gh answers them. A fork's branch of the same name is
+   * another repository's, and is left out.
+   */
+  readPullRequests: {
+    reading: (branch) => `the pull requests from branch ${branch}`,
+    read: async (board, via, branch, addressed) => {
       const query = (page) => repositoryQuery(board, `pullRequests(headRefName: ${literal(branch)}, states: [OPEN, MERGED], ${page}) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } }`);
       const nodes = (await everyPage('readPullRequests', board, via, query, (data) => heldIn('readPullRequests', board, data, 'pullRequests', addressed), addressed))
         .filter((node) => node.headRepository && ofRepository(board, node.headRepository.nameWithOwner));
       const inState = (state) => nodes.filter((node) => node.state === state).map(pullRequestOf);
       return { open: inState('OPEN'), merged: inState('MERGED') };
     },
-    /**
-     * For each of `names`, whether the repository holds a branch of that name, as an object keyed
-     * by name. One call answers them all, read from the repository's branches a page at a time.
-     */
-    readBranches: async (names) => {
-      const addressed = reading(board, `the branches ${names.join(', ')}`);
+  },
+  /**
+   * For each of `names`, whether the repository holds a branch of that name, as an object keyed by
+   * name, read from the repository's branches a page at a time.
+   */
+  readBranches: {
+    reading: (names) => `the branches ${names.join(', ')}`,
+    read: async (board, via, names, addressed) => {
       const query = (page) => repositoryQuery(board, `refs(refPrefix: "refs/heads/", ${page}) { pageInfo { hasNextPage endCursor } nodes { name } }`);
       const held = new Set((await everyPage('readBranches', board, via, query, (data) => heldIn('readBranches', board, data, 'refs', addressed), addressed)).map((ref) => ref.name));
       return Object.fromEntries(names.map((name) => [name, held.has(name)]));
     },
-    /** The time issue `number`'s body was last edited, as GitHub answers it, or null for a body never edited. */
-    readEditedAt: async (number) => {
-      const addressed = reading(board, `issue #${number}`);
+  },
+  /** The time issue `number`'s body was last edited, as GitHub answers it, or null for a body never edited. */
+  readEditedAt: {
+    reading: (number) => `issue #${number}`,
+    read: async (board, via, number, addressed) => {
       const query = repositoryQuery(board, `issue(number: ${numbered('readEditedAt', board, number)}) { lastEditedAt }`);
       return heldIn('readEditedAt', board, await asked('readEditedAt', board, query, via, addressed), 'issue', addressed).lastEditedAt;
     },
-    /**
-     * Pull request `number`'s diff, as the forge serves it under the diff's media type. A diff the
-     * forge declines to serve rejects with the forge's reason.
-     */
-    readDiff: async (number) =>
-      restRead('readDiff', board, via, `pulls/${numbered('readDiff', board, number)}`, ['-H', DIFF_HEADER], reading(board, `pull request #${number}'s diff`)),
-    /**
-     * The merge base the forge computes pull request `number`'s diff from, as `{ base, head,
-     * mergeBase }`: its base branch and head SHA, read first, and the merge base of the two the
-     * forge's comparison answers, which is what a pull request's diff is taken against.
-     */
-    readMergeBase: async (number) => {
-      const addressed = reading(board, `pull request #${number}'s merge base`);
+  },
+  /**
+   * Pull request `number`'s diff, as the forge serves it under the diff's media type. A diff the
+   * forge declines to serve rejects with the forge's reason.
+   */
+  readDiff: {
+    reading: (number) => `pull request #${number}'s diff`,
+    read: (board, via, number, addressed) => restRead('readDiff', board, via, `pulls/${numbered('readDiff', board, number)}`, ['-H', DIFF_HEADER], addressed),
+  },
+  /**
+   * The merge base the forge computes pull request `number`'s diff from, as `{ base, head,
+   * mergeBase }`: its base branch and head SHA, read first, and the merge base of the two the
+   * forge's comparison answers, which is what a pull request's diff is taken against.
+   */
+  readMergeBase: {
+    reading: (number) => `pull request #${number}'s merge base`,
+    read: async (board, via, number, addressed) => {
       const query = repositoryQuery(board, `pullRequest(number: ${numbered('readMergeBase', board, number)}) { baseRefName headRefOid }`);
       const { baseRefName: base, headRefOid: head } = heldIn('readMergeBase', board, await asked('readMergeBase', board, query, via, addressed), 'pullRequest', addressed);
       const compared = JSON.parse(await restRead('readMergeBase', board, via, `compare/${base}...${head}`, [], addressed));
@@ -370,11 +394,28 @@ export function repositoryReads(board, { send, emitter, timeout } = {}) {
       if (!mergeBase) fail('readMergeBase', board, `${addressed}gh answered no merge base`);
       return { base, head, mergeBase };
     },
-    /** Every comment on pull request `number`, oldest first, each as `{ body, createdAt }`. */
-    readComments: async (number) => {
-      const addressed = reading(board, `pull request #${number}'s comments`);
+  },
+  /** Every comment on pull request `number`, oldest first, each as `{ body, createdAt }`. */
+  readComments: {
+    reading: (number) => `pull request #${number}'s comments`,
+    read: (board, via, number, addressed) => {
       const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt } } }`);
       return everyPage('readComments', board, via, query, (data) => heldIn('readComments', board, data, 'pullRequest', addressed).comments, addressed);
     },
-  };
+  },
+};
+
+/**
+ * `REPOSITORY_READS` on `board`, each taking what it reads, sent as `send`, `emitter` and
+ * `timeout` say.
+ */
+export function repositoryReads(board, { send, emitter, timeout } = {}) {
+  const via = { send, emitter, timeout };
+  return Object.fromEntries(Object.entries(REPOSITORY_READS).map(([operation, { reading: what, read }]) => [
+    operation,
+    (target) => {
+      const addressed = reading(board, what(target));
+      return labelled(operation, board, addressed, () => read(board, via, target, addressed));
+    },
+  ]));
 }
