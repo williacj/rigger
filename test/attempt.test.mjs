@@ -15,13 +15,14 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import {
-  COLUMNS, KINDS, columnsOf, handleOn, makingWorkspaces, quiesce, readyCard, world,
+  COLUMNS, KINDS, columnsOf, handleOn, makingWorkspaces, waitFor, readyCard, world,
 } from './loop-world.mjs';
 import { until } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on a test that waits on a real command, so one whose condition never holds fails here
 // rather than holding the suite.
-const SETTLES_WITHIN = { timeout: 60_000 };
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The kind every card here carries, listing `steps`, in the order a test gives them. */
 const kindListing = (steps) => ({ change: { ...KINDS.change, provisioning: steps } });
@@ -488,7 +489,7 @@ test('given a loop world whose kinds option lists no step, L3 still calls its wo
   const built = world({ cards: [1, 2], concurrency: 2, workspace: async (card) => { calls.push(card); return { path: `/nowhere/rigger-${card}` }; } });
 
   const pull = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() === 2);
   built.dispatches.releaseAll();
   await pull;
 

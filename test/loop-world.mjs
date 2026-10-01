@@ -34,12 +34,36 @@ export const cardIn = (number, column, fieldValues) => ({
 /** A ready issue numbered `number` that L2 would dispatch, on a board whose columns are `columns` by key. */
 export const readyCard = (number, columns = COLUMNS) => cardIn(number, columns.ready);
 
+/** One turn of the event loop: every step already queued runs before it ends. */
+const oneTurn = () => new Promise((resolve) => setImmediate(resolve));
+
 /**
- * Lets every step already queued run to its end. The fake board, L2 and the injected dispatch
- * answer through promises alone, with no timer and no I/O, so once this returns every start the
- * loop could make without a held dispatch returning has been made. It waits on no clock.
+ * The most turns of the event loop `waitFor` waits for its condition. A judgment, whose premise is
+ * a measurement: across three full `npm test` runs with Node 26.5.0 on macOS 27.0 on 2026-10-01, at
+ * one-minute loads of 5.9, 12.7 and 14.9 on 12 CPUs, no wait needed more than 2 turns, over 220
+ * waits a run. The bound is 500 times that, so a loaded host stretching a wait fails nothing,
+ * while a condition that never holds still fails within a moment.
  */
-export const quiesce = () => new Promise((resolve) => setImmediate(resolve));
+export const WAIT_TURNS = 1_000;
+
+/**
+ * Settles once `condition` holds, checked at once and then once per turn of the event loop, and
+ * rejects naming the condition once it has not held after `WAIT_TURNS` turns. It reads no clock and
+ * sleeps for no time.
+ */
+export async function waitFor(condition) {
+  for (let turns = 0; !condition(); turns += 1) {
+    if (turns === WAIT_TURNS) throw new Error(`the condition ${condition} did not hold within ${WAIT_TURNS} turns of the event loop`);
+    await oneTurn();
+  }
+}
+
+/** A function answering whether `promise` has settled, fulfilled or rejected, for a wait to read. */
+export function settledOf(promise) {
+  let settled = false;
+  promise.then(() => { settled = true; }, () => { settled = true; });
+  return () => settled;
+}
 
 /**
  * A dispatch that holds every card it is handed until the test releases it, recording each start
@@ -104,6 +128,21 @@ export function handleOn(fake, { columns = COLUMNS, priority, beforeRead = () =>
       const answer = await fake.operations.readPriority(priority);
       onRead(answer.items);
       return answer;
+    },
+  };
+}
+
+/**
+ * L0's handle on `fake`, as `handleOn` makes it with nothing given, but whose column read answers
+ * one turn of the event loop later, as a board read slower than the fake's would.
+ */
+export function readingLater(fake) {
+  const handle = handleOn(fake);
+  return {
+    ...handle,
+    readColumns: async () => {
+      await oneTurn();
+      return handle.readColumns();
     },
   };
 }
@@ -267,7 +306,7 @@ export async function drive(built) {
   run.catch(() => {});
   for (let round = 0; !ended; round += 1) {
     if (round === DRIVEN_ROUNDS) throw new Error(`the run had not ended after ${DRIVEN_ROUNDS} rounds, having started dispatches ${built.dispatches.started}`);
-    await quiesce();
+    await waitFor(() => ended || built.dispatches.held() > 0);
     built.dispatches.releaseAll();
   }
   return run;
@@ -284,7 +323,7 @@ export async function stoppedRun({ directory } = {}) {
   const fake = boardOf([1, 2, 3]);
   const first = world({ fake, concurrency: 2, directory, run: 'r-first' });
   first.loop.run().catch(() => {});
-  await quiesce();
+  await waitFor(() => first.dispatches.held() === 2);
   if (first.dispatches.holding().join() !== '1,2') throw new Error(`the first run was not stopped mid-dispatch of cards 1 and 2: ${first.dispatches.holding()}`);
   return fake;
 }

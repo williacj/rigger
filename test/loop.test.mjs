@@ -18,12 +18,14 @@ import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { until } from './process-fixtures.mjs';
 import {
-  COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, quiesce, readyCard, world,
+  COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, waitFor, readyCard, world,
 } from './loop-world.mjs';
+import { WAIT_TURNS, readingLater, settledOf } from './loop-world.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
@@ -34,7 +36,8 @@ async function runToEnd(built) {
   for (let round = 0; round < DRIVEN_ROUNDS; round += 1) {
     const before = built.dispatches.started.length;
     const ticks = [built.loop.pull(), built.loop.pull()];
-    await quiesce();
+    const pulled = settledOf(Promise.all(ticks));
+    await waitFor(() => pulled() || built.dispatches.held() > 0);
     built.dispatches.releaseAll();
     await Promise.all(ticks);
     if (built.dispatches.started.length === before) return built;
@@ -47,15 +50,46 @@ test('given concurrency 2 and cards A, B and C, where A\'s dispatch returns befo
   const built = world({ cards: [1, 2, 3], concurrency: 2 });
 
   const run = built.loop.run();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() === 2);
   assert.deepEqual(built.dispatches.holding(), [1, 2]);
   built.dispatches.release(1);
-  await quiesce();
+  await waitFor(() => built.dispatches.started.length === 3);
 
   assert.deepEqual(built.dispatches.started, [1, 2, 3]);
   assert.deepEqual(built.dispatches.holding(), [2, 3], "B's dispatch has not returned");
   built.dispatches.releaseAll();
   await run;
+});
+
+test('given a board whose column read answers one turn later than the fake\'s, concurrency 2 and cards A, B and C, where A\'s dispatch returns before B\'s, C\'s dispatch starts before B\'s returns', async () => {
+  const fake = boardOf([1, 2, 3]);
+  const built = world({ fake, board: readingLater(fake), concurrency: 2 });
+
+  const run = built.loop.run();
+  await waitFor(() => built.dispatches.held() === 2);
+  assert.deepEqual(built.dispatches.holding(), [1, 2]);
+  built.dispatches.release(1);
+  await waitFor(() => built.dispatches.started.length === 3);
+
+  assert.deepEqual(built.dispatches.started, [1, 2, 3]);
+  assert.deepEqual(built.dispatches.holding(), [2, 3], "B's dispatch has not returned");
+  built.dispatches.releaseAll();
+  await run;
+});
+
+test('given a board whose column read answers one turn later than the fake\'s, a run driven to its end over cards 1 to 4 at concurrency 2 makes the dispatches and the board moves the same run over the fake makes, in the same order', async () => {
+  const answer = (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' });
+  const ran = async (later) => {
+    const fake = boardOf([1, 2, 3, 4]);
+    const built = world({ fake, board: later ? readingLater(fake) : handleOn(fake), concurrency: 2, answer });
+    await drive(built);
+    return { started: built.dispatches.started, writes: fake.writes() };
+  };
+
+  const later = await ran(true);
+
+  assert.deepEqual(later, await ran(false));
+  assert.deepEqual(later.started, [1, 2, 3, 4]);
 });
 
 test('in one record of board writes and dispatch starts, each card\'s move to the coding column comes before its dispatch starts', async () => {
@@ -92,10 +126,10 @@ for (const [how, failed] of Object.entries(FAILURES)) {
     const built = world({ cards: [1, 2], concurrency: 1, answer: (card) => (card.number === 1 ? failed() : { exit: 0, output: '' }) });
 
     const run = built.loop.run();
-    await quiesce();
+    await waitFor(() => built.dispatches.held() === 1);
     assert.deepEqual(built.dispatches.holding(), [1]);
     built.dispatches.release(1);
-    await quiesce();
+    await waitFor(() => built.dispatches.started.length === 2);
 
     assert.deepEqual(built.dispatches.holding(), [2], "card 1's slot is free, and card 2 holds it");
     built.dispatches.releaseAll();
@@ -189,9 +223,12 @@ async function refusingRun() {
   const refusing = createFakeBoard({ columns: Object.values(COLUMNS), items: [1, 2, 3].map((number) => readyCard(number)), refuseMoves: true });
   const handle = handleOn(refusing);
   let stopped = false;
+  // How many times the test has looked at whether the run has settled, once per turn of the event loop.
+  let looks = 0;
   const board = {
     readColumns: async () => {
-      await quiesce();
+      const begun = looks;
+      await waitFor(() => stopped || looks > begun);
       if (stopped) throw new Error('the test stopped a run that had not settled');
       return handle.readColumns();
     },
@@ -202,7 +239,10 @@ async function refusingRun() {
   const run = built.loop.run().catch(() => {}).finally(() => {
     settled = true;
   });
-  for (let turn = 0; turn < TURNS && !settled; turn += 1) await quiesce();
+  await waitFor(() => {
+    looks += 1;
+    return settled || looks > TURNS;
+  });
   const inTime = settled;
   stopped = true;
   await run;
@@ -266,10 +306,10 @@ test('given one pullable card and two free slots, two pull triggers whose reads 
   const built = world({ fake, concurrency: 2, board });
 
   const ticks = [built.loop.pull(), built.loop.pull()];
-  await quiesce();
+  await waitFor(() => releases.length === 2);
   assert.equal(releases.length, 2, 'both reads are held at once');
   releases.forEach((release) => release());
-  await quiesce();
+  await waitFor(() => answered.length === 2 && built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await Promise.all(ticks);
 
@@ -281,13 +321,13 @@ test('after a card\'s slot is released with freshness "not fresh", the next tick
   const built = world({ cards: [5], concurrency: 1, fresh: false });
 
   const first = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await first;
   assert.deepEqual(built.dispatches.started, [5]);
 
   const second = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await second;
 
@@ -313,7 +353,8 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
     assert.match(failure.errors[0].message, /card #8's move from ready to coding .* was refused: the board refused the move/);
     return true;
   });
-  await quiesce();
+  const refusedPull = settledOf(first);
+  await waitFor(() => refusedPull() || built.dispatches.held() > 0);
   assert.deepEqual(built.dispatches.started, []);
   assert.deepEqual(fake.writes(), []);
   built.dispatches.releaseAll();
@@ -321,7 +362,7 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
 
   // Concurrency is 1, so the card is pulled and dispatched on the next tick only if its slot was freed.
   const next = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() > 0);
   assert.deepEqual(built.dispatches.started, [8]);
   built.dispatches.releaseAll();
   await next;
@@ -370,7 +411,7 @@ test('L3 hands L2 every dispatch outcome, one returned and one failed', async ()
   };
 
   const tick = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() === 2);
   built.dispatches.releaseAll();
   await tick;
 
@@ -394,7 +435,7 @@ test("the forge adapter's read side, passed whole, is L3's board handle: the dec
   const built = world({ cards: [], concurrency: 1, board: readSide(where, { send }), items: itemWriteSide(where, { send }) });
 
   const tick = built.loop.pull();
-  await quiesce();
+  await waitFor(() => built.dispatches.started.length > 0);
   assert.deepEqual(built.dispatches.started, [22]);
   built.dispatches.releaseAll();
   await tick;
@@ -418,11 +459,12 @@ test('every pull writes one event naming the card, its kind, the queue depth and
   const built = world({ cards: [1, 2, 3], concurrency: 2 });
 
   const run = built.loop.run();
-  await quiesce();
+  const ran = settledOf(run);
+  await waitFor(() => built.dispatches.held() === 2);
   built.dispatches.release(1);
-  await quiesce();
+  await waitFor(() => built.dispatches.started.length === 3);
   built.dispatches.releaseAll();
-  await quiesce();
+  await waitFor(() => ran() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await run;
 
@@ -436,6 +478,24 @@ test('every pull writes one event naming the card, its kind, the queue depth and
     { card: 2, kind: 'change', queueDepth: 1, inFlight: 2 },
     { card: 3, kind: 'change', queueDepth: 0, inFlight: 2 },
   ]);
+});
+
+test('given a board whose column read answers one turn later than the fake\'s, every pull writes one event naming the card, its kind, the queue depth and the number in flight', async () => {
+  const fake = boardOf([1, 2, 3]);
+  const built = world({ fake, board: readingLater(fake), concurrency: 2 });
+
+  const run = built.loop.run();
+  const ran = settledOf(run);
+  await waitFor(() => built.dispatches.held() === 2);
+  built.dispatches.release(1);
+  await waitFor(() => built.dispatches.started.length === 3);
+  built.dispatches.releaseAll();
+  await waitFor(() => ran() || built.dispatches.held() > 0);
+  built.dispatches.releaseAll();
+  await run;
+
+  const pulls = built.l3Events().filter((event) => event.event === 'pull').map(({ card, queueDepth, inFlight }) => ({ card, queueDepth, inFlight }));
+  assert.deepEqual(pulls, [{ card: 1, queueDepth: 2, inFlight: 1 }, { card: 2, queueDepth: 1, inFlight: 2 }, { card: 3, queueDepth: 0, inFlight: 2 }]);
 });
 
 /** The cards named by `built`'s L3 events named `name`, in the order recorded. */
@@ -471,7 +531,8 @@ test('every firing of the pull trigger writes one event naming the trigger as pu
 
   await drive(built);
   const tick = built.loop.pull();
-  await quiesce();
+  const pulled = settledOf(tick);
+  await waitFor(() => pulled() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await tick;
 
@@ -504,9 +565,9 @@ test('while a card is in flight, the drain trigger writes no event, and it write
   const built = world({ cards: [1, 2], concurrency: 2 });
 
   const run = built.loop.run();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() === 2);
   built.dispatches.release(1);
-  await quiesce();
+  await waitFor(() => built.fake.requests().filter(({ operation }) => operation === 'readPriority').length === 2);
   assert.deepEqual(built.dispatches.holding(), [2], "card 2's dispatch is held open");
   assert.ok(triggersOf(built).includes('pull'), "card 1's release fired a pull that found nothing");
   assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), []);
@@ -523,7 +584,8 @@ const drainsOf = (built) => triggersOf(built).filter((trigger) => trigger === 'd
 /** Fires one pull on `built`'s loop, releases whatever it dispatched, and waits for it to settle. */
 async function pullOnce(built) {
   const tick = built.loop.pull();
-  await quiesce();
+  const pulled = settledOf(tick);
+  await waitFor(() => pulled() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await tick;
 }
@@ -632,10 +694,25 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
  * rejects once the test has ended. A judgment, whose premise is that every wait here is on
  * promises alone, with no timer and no I/O, so a condition that has not held in this long never will.
  */
-const SETTLES_WITHIN = { timeout: 10_000 };
+const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
 /** Settles once `built`'s maker stand-in holds at least `cards` cards, as `until` waits. */
 const makersHold = (built, cards, t) => until(() => built.dispatches.held() >= cards, t);
+
+test('a wait on a condition that never holds fails after the number of turns the harness names, and its failure names the condition', SETTLES_WITHIN, async () => {
+  let looked = 0;
+  const neverHolds = () => {
+    looked += 1;
+    return 'the board' === 'empty';
+  };
+
+  await assert.rejects(waitFor(neverHolds), (failure) => {
+    assert.match(failure.message, /'the board' === 'empty'/);
+    assert.match(failure.message, new RegExp(`\\b${WAIT_TURNS} turns\\b`));
+    return true;
+  });
+  assert.equal(looked, WAIT_TURNS + 1);
+});
 
 /** The numbers of `cards`, the board items a single pull handed the maker, in the order handed. */
 const numbersOf = (cards) => cards.map((card) => card.number);
@@ -1008,7 +1085,8 @@ test('given a sink that refuses every append, the loop with an injected dispatch
     fired.catch(() => {});
     // A dispatch the halt let through would be held open here, so it is released: a loop that
     // called the dispatch then fails on its start count rather than never settling.
-    await quiesce();
+    const halted = settledOf(fired);
+    await waitFor(() => halted() || built.dispatches.held() > 0);
     built.dispatches.releaseAll();
     await assert.rejects(fired, (failure) => {
       assert.ok(leavesOf(failure).every((held) => held.message.includes(DISK_FULL)), JSON.stringify(leavesOf(failure).map((held) => held.message)));
@@ -1030,7 +1108,7 @@ test('given a dispatch already running when the sink starts refusing appends, th
     return settled(card, outcome);
   };
   const run = built.loop.run();
-  await quiesce();
+  await waitFor(() => built.dispatches.held() === 1);
   assert.deepEqual(built.dispatches.holding(), [1], "card 1's dispatch is running");
   built.refuseAppends(DISK_FULL);
 
@@ -1215,14 +1293,15 @@ test('given a loop handle whose injected kill settles only when the test release
   const built = world({ fake, concurrency: 1, kill: held.kill });
 
   const running = built.loop.run();
-  await quiesce();
+  const ran = settledOf(running);
+  await waitFor(() => held.calls === 1);
   assert.equal(held.calls, 1, 'the kill was called');
   assert.deepEqual(built.l3Events(), []);
   held.release();
-  await quiesce();
+  await waitFor(() => built.l3Events().length > 0);
   assert.equal(built.l3Events()[0]?.event, 'run.start', JSON.stringify(built.l3Events()));
   built.dispatches.releaseAll();
-  await quiesce();
+  await waitFor(() => ran() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await running;
   assert.equal(held.calls, 1, 'the kill ran once for the handle');
@@ -1235,13 +1314,14 @@ test('given a loop handle whose injected kill settles only when the test release
   const built = world({ fake, board: counted.handle, concurrency: 1, kill: held.kill });
 
   const running = built.loop.run();
-  await quiesce();
+  const ran = settledOf(running);
+  await waitFor(() => held.calls === 1);
   assert.equal(counted.reads, 0);
   held.release();
-  await quiesce();
+  await waitFor(() => counted.reads > 0);
   assert.ok(counted.reads > 0, 'the run read the board once the kill settled');
   built.dispatches.releaseAll();
-  await quiesce();
+  await waitFor(() => ran() || built.dispatches.held() > 0);
   built.dispatches.releaseAll();
   await running;
 });

@@ -12,10 +12,11 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, turn, warmed } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
-const SETTLES_WITHIN = { timeout: 20_000 };
+const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
 /** An `L0` emitter over a sink in `directory`, and the state directory it writes to. */
 function l0(directory) {

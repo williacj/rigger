@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { COLUMNS, boardOf, cardIn, columnsOf, quiesce, world } from './loop-world.mjs';
+import { COLUMNS, boardOf, cardIn, columnsOf, waitFor, world } from './loop-world.mjs';
 
 /**
  * The most rounds a run is driven before the test gives up on it. Each round lets every queued
@@ -26,7 +26,7 @@ async function bounded(built, most) {
   });
   run.catch(() => {});
   for (let round = 0; round < ROUNDS && !ended; round += 1) {
-    await quiesce();
+    await waitFor(() => ended || built.dispatches.held() > 0);
     assert.ok(built.dispatches.started.length <= most, `the run started ${built.dispatches.started.length} dispatches: ${built.dispatches.started}`);
     built.dispatches.releaseAll();
   }

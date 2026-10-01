@@ -108,6 +108,21 @@ export function withOrigin(repository, into) {
 }
 
 /**
+ * The arrangement a test of workspaces made from the forge's main line starts from, under
+ * `directory`: a repository at `source` holding one committed `README` on `main`, its local
+ * `origin`, a bare clone of it at `origin.git` given as `withOrigin` gives one, and a clone of that
+ * `origin` at `repository`. Answers the three paths.
+ */
+export function clonedFromOrigin(directory) {
+  const source = repositoryAt(join(directory, 'source'), { README: 'one\n' });
+  gitIn(source, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  withOrigin(source, origin);
+  const repository = cloneInto(origin, join(directory, 'repository'));
+  return { source, origin, repository };
+}
+
+/**
  * A worktree of the repository at `repository`, made at `path` on a new branch `branch` by git
  * itself, for a test whose subject is what it finds there rather than how it was made. `flags`
  * go to `git worktree add` as they are, such as `--lock`.

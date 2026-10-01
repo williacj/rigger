@@ -12,10 +12,11 @@ import { dispatch } from '../src/execution/run.mjs';
 import { stepDispatch } from '../src/execution/step.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { alive, leave, read, scratch } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a step which never settles fails here rather than holding
 // the suite: nothing waits on it when the step settles.
-const SETTLES_WITHIN = { timeout: 20_000 };
+const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The state directory, the card's workspace and a sink, all in a scratch directory for test `t`. */
 function world(t) {

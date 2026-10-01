@@ -11,8 +11,8 @@ import { dirname, join } from 'node:path';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { FETCH_TRIES, workspaces } from '../src/substrate/worktrees.mjs';
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
-import { bareCloneInto, cloneInto, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
-import { fixture, GIT, gitCalls, gitHanging, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
+import { clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
+import { fixture, GIT, gitCalls, gitHanging, gitRacing, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { previousCheckout } from './git-repository.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 
@@ -29,10 +29,7 @@ function recorder() {
  */
 function world(t) {
   const directory = scratch(t);
-  const source = repositoryAt(join(directory, 'source'), { README: 'one\n' });
-  gitIn(source, 'branch', '-M', 'main');
-  const origin = bareCloneInto(source, join(directory, 'origin.git'));
-  const repository = cloneInto(origin, join(directory, 'repository'));
+  const { source, origin, repository } = clonedFromOrigin(directory);
   const push = (message, branch = 'main') => {
     gitIn(source, 'commit', '-q', '--allow-empty', '-m', message);
     gitIn(source, 'push', '-q', origin, `HEAD:refs/heads/${branch}`);
@@ -531,32 +528,12 @@ test('the recognition, the top-level question and the unlock never run at once w
   }
 });
 
-/**
- * A `git` stand-in in `directory` that fails a fetch as git fails one another process's fetch beat
- * to `refs/remotes/origin/main`, `times` times, and hands every other call, and every later fetch,
- * on to the real git. The words are git's own: the stand-in asks the real git to move that ref from
- * a value it does not hold, which git refuses through the same lock check a fetch meets, and
- * prints that refusal as a fetch prints it.
- */
-function gitRaced(directory, times) {
-  return fixture(directory, 'git', [
-    'tries=$(/bin/cat "$here/raced" 2>/dev/null || echo 0)',
-    `if [ "$1" = fetch ] && [ "$tries" -lt ${times} ]; then`,
-    '  echo $((tries + 1)) > "$here/raced"',
-    `  words=$('${GIT}' update-ref refs/remotes/origin/main HEAD ${'1'.repeat(40)} 2>&1)`,
-    '  printf \'%s\\n\' "$words" | /usr/bin/sed \'s/.*\\(cannot lock ref\\)/error: \\1/\' >&2',
-    '  exit 1',
-    'fi',
-    `exec '${GIT}' "$@"`,
-  ].join('\n'));
-}
-
 /** How many calls the stand-in in `directory` failed as a lost fetch race. */
 const raced = (directory) => (existsSync(join(directory, 'raced')) ? Number(read(directory, 'raced')) : 0);
 
 test('a fetch whose first try another fetch beat to the remote-tracking ref is retried, the call succeeds, and the retry is an L0 event naming the ref', async (t) => {
   const { directory, repository, push } = world(t);
-  const standIn = gitRaced(scratch(t), 1);
+  const standIn = gitRacing(scratch(t), 1);
   const pushed = push('after the clone');
   const emitter = recorder();
 
@@ -569,7 +546,7 @@ test('a fetch whose first try another fetch beat to the remote-tracking ref is r
 
 test('a fetch whose every try another fetch beat to the remote-tracking ref rejects after the count the code names, naming the ref and the count', async (t) => {
   const { directory, repository } = world(t);
-  const standIn = gitRaced(scratch(t), FETCH_TRIES + 1);
+  const standIn = gitRacing(scratch(t), FETCH_TRIES + 1);
 
   await assert.rejects(
     workspaces({ repository, emitter: recorder(), git: standIn }).make(join(directory, 'rigger-1'), 'rigger-1'),

@@ -13,10 +13,11 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { COLUMNS, KINDS, boardOf, cardIn, handleOn, makingWorkspaces } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on a test that waits on real commands, so one whose pull never settles fails here
 // rather than holding the suite.
-const SETTLES_WITHIN = { timeout: 60_000 };
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 /** A step `ready` that exits 0, and a step `fails` that exits 3, selected only for a card carrying `area:fails`. */
 const PROVISIONING = {
