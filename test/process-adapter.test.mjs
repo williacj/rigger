@@ -1436,12 +1436,13 @@ test('a census whose every read of the group lists only its zombie, while a surv
 test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
-  // second survivor's row from every read of both, and answers every other read as `ps` does. It
-  // is `warmed`, because the census's first read is its first exec, which must reach its body
-  // within `readTimeout`.
+  // second survivor's row from every read of both, and answers every other read as `ps` does. The
+  // census's reads and the kill's each mark that they were cut in a file of their own, so a read
+  // of one never stands in for the other. It is `warmed`, because the census's first read is its
+  // first exec, which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*|*ppid=*)',
-    '  : > "$here/cut"',
+    '  case "$*" in *ppid=*) : > "$here/kill.cut" ;; *) : > "$here/census.cut" ;; esac',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
     '  exit 0 ;;',
     'esac',
@@ -1452,7 +1453,8 @@ test('a census and a kill whose every read leaves out one of two survivors still
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
-  assert.equal(existsSync(join(directory, 'cut')), true, 'no read was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the kill was cut, so the test proves nothing');
   assert.deepEqual(survivors.map(alive), [false, false]);
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
@@ -1461,14 +1463,21 @@ test('a census and a kill whose every read leaves out one of two survivors still
 
 test('a kill whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded, by name or by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // Every read of the group, by the census, the kill and the reads after it, is cut down to the
-  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it. It is `warmed`,
-  // because the census's first read is its first exec, which must reach its body within
-  // `readTimeout`.
+  // The census reads the group with `-ww`, and is answered as `ps` answers it: a census whose reads
+  // leave out a leader that answers signal 0 reads again until it gives up, and the kill is then
+  // never reached. Every other read of the group, the kill's and the reads after it, is cut down
+  // to the zombie's row and exits 0. A read of one pid is answered as `ps` answers it. A read of
+  // the kill, which asks for `ppid`, marks that it listed the zombie only while the leader, whose
+  // pid is the group's, answers signal 0, so no read made after the leader is gone stands in for
+  // it. It is `warmed`, because the census's first read is its first exec, which must reach its
+  // body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*) exec /bin/ps "$@" ;; esac',
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
-    '  [ -n "$rows" ] && : > "$here/cut" && echo "$rows"',
+    '  [ -z "$rows" ] && exit 0',
+    '  case "$*" in *ppid=*) /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/kill.cut" ;; esac',
+    '  echo "$rows"',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
@@ -1482,11 +1491,44 @@ test('a kill whose every read of the group lists only its zombie, while its lead
 
   ready(directory);
   const group = Number(read(directory, 'group'));
-  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the group listed the zombie, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the group by the kill listed the zombie while the leader answered signal 0, so the test proves nothing');
   assert.equal(alive(group), false);
   assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
   const leader = events.some(({ event }) => event === 'group.killed') || events.some(({ event, pid }) => event === 'timeout.killed' && pid === group);
   assert.equal(leader, true, `the leader's kill was not recorded: ${JSON.stringify(events)}`);
+});
+
+test('a census whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // Every read of the group, by the census, the kill and the reads after it, is cut down to the
+  // zombie's row and exits 0, so no read lists the leader. A read of one pid is answered as `ps`
+  // answers it. A read of the census, with `-ww`, marks that it listed the zombie only while the
+  // leader, whose pid is the group's, answers signal 0, so no read made after the leader is gone
+  // stands in for it. It is `warmed`, because the census's first read is its first exec, which
+  // must reach its body within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *"-g "*)',
+    '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
+    '  [ -z "$rows" ] && exit 0',
+    '  case "$*" in "-ww -g "*) /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/census.cut" ;; esac',
+    '  echo "$rows"',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n')));
+  // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
+  // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
+  // ready within `OUTLIVED` of its spawn.
+  const command = warmed(unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', ''));
+
+  const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
+
+  ready(directory);
+  const group = Number(read(directory, 'group'));
+  assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the group by the census listed the zombie while the leader answered signal 0, so the test proves nothing');
+  assert.equal(alive(group), false);
+  assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
+  assert.equal(events.some(({ event }) => event === 'group.killed'), true, `the leader's kill was not recorded: ${JSON.stringify(events)}`);
 });
 
 test('a group whose leader is dead and which holds only a zombie its parent outside the group never reaps is recorded with no kill', SETTLES_WITHIN, async (t) => {
