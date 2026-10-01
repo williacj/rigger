@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
@@ -190,6 +190,20 @@ test('given a directory at the path holding, besides main and head, a plain file
   await refusedNaming(here.make(), here.path);
   assert.deepEqual(unchanged(here, here.path), before);
   assert.equal(readFileSync(join(here.path, 'notes'), 'utf8'), 'a person\'s notes\n');
+});
+
+// proves R-WORK-20, R-WORK-21
+test('given a judge directory whose main was deleted without git and replaced by a plain directory holding a file, while git still lists main detached there, L1 fails naming the path, and the file is byte-identical afterwards', async (t) => {
+  const here = world(t);
+  const made = await here.make();
+  rmSync(made.main, { recursive: true, force: true });
+  mkdirSync(made.main);
+  writeFileSync(join(made.main, 'kept'), 'not Rigger\'s\n');
+  assert.match(worktreeList(here.repository), /\ndetached\n[\s\S]*\ndetached\n/);
+  const before = unchanged(here, here.path);
+  await refusedNaming(here.make(), here.path);
+  assert.deepEqual(unchanged(here, here.path), before);
+  assert.equal(readFileSync(join(made.main, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
 // proves R-WORK-20, R-WORK-22

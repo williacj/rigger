@@ -652,3 +652,41 @@ test('rule 10 follows a namespace import, an import binding no name, a dynamic i
     'src/scheduling/pull.mjs': "import { workspaces } from '../execution/relay.mjs';\nexport const pull = workspaces;",
   }, 'src/scheduling/pull.mjs');
 });
+
+test('a commit origin holds on a branch never fetched is held once fetched, and a worktree made detached at it has HEAD there and makes no branch', async (t) => {
+  const { directory, source, repository, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker\'s work', 'rigger-42');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const branches = gitIn(repository, 'for-each-ref', 'refs/heads');
+
+  assert.deepEqual(await adapter.holdsAfterFetch(head), { held: true });
+  const path = join(directory, 'judges', 'rigger-42', 'reviewer', 'head');
+  await adapter.makeDetached(path, head);
+
+  assert.equal(headOf(path), head);
+  assert.equal(gitIn(path, 'rev-parse', '--symbolic-full-name', 'HEAD').trim(), 'HEAD');
+  assert.equal(gitIn(repository, 'for-each-ref', 'refs/heads'), branches);
+});
+
+test('a commit origin does not hold is not held after fetching, and the answer gives git\'s words naming it', async (t) => {
+  const { source, repository } = world(t);
+  const missing = gitIn(source, 'commit-tree', '-m', 'never pushed', 'HEAD^{tree}').trim();
+  const { held, why } = await workspaces({ repository, emitter: recorder() }).holdsAfterFetch(missing);
+  assert.equal(held, false);
+  assert.ok(why.includes(missing), why);
+});
+
+test('a name git does not print back unchanged as a full object name, such as a branch, an abbreviation, an upper-case name or a refspec, is not held, and no ref of the repository changes', async (t) => {
+  const { source, repository, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker\'s work', 'rigger-42');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const refs = gitIn(repository, 'for-each-ref');
+  for (const name of ['main', head.slice(0, 12), head.toUpperCase(), `${head}:refs/heads/taken`, 'refs/heads/rigger-42:refs/heads/taken', '--upload-pack=true']) {
+    const { held, why } = await adapter.holdsAfterFetch(name);
+    assert.equal(held, false, name);
+    assert.ok(why.includes(name), why);
+  }
+  assert.equal(gitIn(repository, 'for-each-ref'), refs);
+});

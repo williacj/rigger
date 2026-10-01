@@ -1,6 +1,7 @@
-// ABOUTME: L0's workspace adapter: makes a git worktree on a branch from the main line, removes one,
-// answers whether a path is a worktree of the repository and what git lists for it, unlocks one,
-// and answers whether git accepts a name as a literal branch name.
+// ABOUTME: L0's workspace adapter: makes a git worktree on a branch from the main line, or one
+// detached at a commit, removes one, answers whether a path is a worktree of the repository and
+// what git lists for it, unlocks one, answers whether git accepts a name as a literal branch name,
+// and whether the repository holds a commit once fetched from `origin`.
 // Every git call it makes runs one at a time.
 
 import { realpathSync, statSync } from 'node:fs';
