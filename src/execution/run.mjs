@@ -7,7 +7,7 @@ import { sep } from 'node:path';
 
 import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
-import { EVENT_REFUSED, NOT_STARTED, killRecordedGroup, runCommand } from '../substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
 /**
  * The `code` of the failure a dispatch rejects with when its command ran and the record refused
@@ -101,7 +101,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     }
     // The dispatch's directory, its workspace's real path, as the record names it and L0's census
     // of it compares.
-    const { escape, place } = workspace === undefined ? {} : placed(cwd, workspace, directory);
+    const { escape, place, identity } = workspace === undefined ? {} : placed(cwd, workspace, directory);
     if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED });
     result = await runCommand({
       command,
@@ -130,7 +130,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         // dispatch's processes, so a restart could find them without the record. #335 read the
         // marker only from binaries that are not Apple's, and every survivor the Claude CLI left
         // was one of Apple's (`docs/spikes/what-leaves-the-process-group.md`).
-        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place }) });
+        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }) });
         recorded = group;
       },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
@@ -226,7 +226,8 @@ function escapes(cwd, workspace) {
 }
 
 /**
- * The real path of `workspace` as `place`, the directory of a dispatch working in `cwd` there, or
+ * The real path of `workspace` as `place`, the directory of a dispatch working in `cwd` there, with
+ * its device and inode as `identity`, which a later start checks before it sweeps it; or
  * as `escape` why it cannot be one now: `cwd` is no directory in it (`escapes`), the workspace
  * cannot be resolved, or an entry in the record in `directory` names a directory that is it, or
  * that it lies under, or that lies under it. L0's census of either would end the other's processes
@@ -236,14 +237,16 @@ function placed(cwd, workspace, directory) {
   const escape = escapes(cwd, workspace);
   if (escape !== undefined) return { escape };
   let place;
+  let identity;
   try {
     place = realpathSync.native(workspace);
+    identity = identityOf(place);
   } catch (cause) {
     return { escape: `its workspace ${workspace} cannot be read: ${cause.message}` };
   }
   const within = (inner, outer) => inner === outer || inner.startsWith(`${outer}${sep}`);
   const holder = readGroups(directory).find((entry) => entry.workspace !== undefined && (within(place, entry.workspace) || within(entry.workspace, place)));
-  if (holder === undefined) return { place };
+  if (holder === undefined) return { place, identity };
   return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}` };
 }
 
@@ -337,10 +340,10 @@ async function killEntries({ directory, sink, ps, lsof, readTimeout, entries }) 
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
-    const { group, started, dispatch, card, workspace } = entry;
+    const { group, started, dispatch, card, workspace, device, inode } = entry;
     const under = named(dispatch, card);
     try {
-      await killRecordedGroup({ group, started, directory: workspace, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);

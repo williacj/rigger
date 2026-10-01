@@ -6,14 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, gone, holding, leave, leaveWorking, read, until, warmed } from './process-fixtures.mjs';
+import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
@@ -47,27 +47,6 @@ function dispatchIn(directory, options) {
   return dispatch({ directory: state, sink, args: [], cwd: directory, workspace: directory, env: {}, timeout: UNREACHED, ...options });
 }
 
-/** The state `ps` reads for `pid`: its first character is `T` for a stopped process. */
-const stateOfPid = (pid) => spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
-
-/** Asserts that `pid` is alive and running: the census neither killed it nor left it stopped. */
-function assertUntouched(pid, what) {
-  assert.equal(alive(pid), true, `${what} is not alive`);
-  assert.ok(!stateOfPid(pid).startsWith('T'), `${what} is stopped`);
-}
-
-/**
- * Starts a `tail`, outside every process group Rigger created, working in `cwd`, as a test's own
- * child, so it runs until killed. It follows `hold` in `directory`, which names the scratch
- * directory in its command line, so the test's teardown ends it. Settles once it runs, on its pid.
- */
-async function tailIn(t, directory, cwd) {
-  mkdirSync(cwd, { recursive: true });
-  const child = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { cwd, detached: true, stdio: 'ignore' });
-  t.after(() => child.kill('SIGKILL'));
-  await until(() => stateOfPid(child.pid) !== '' && spawnSync('/bin/ps', ['-o', 'ucomm=', '-p', String(child.pid)], { encoding: 'utf8' }).stdout.startsWith('tail'), t);
-  return child.pid;
-}
 
 // proves R-STATE-17, R-STATE-7
 test('given a dispatch whose command starts a process that leaves its group, working under the dispatch\'s directory, and then exits 0, that process is not alive when the dispatch settles', SETTLES_WITHIN, async (t) => {
@@ -416,7 +395,8 @@ test('given a recorded dispatch whose process, once a start\'s census has listed
   const state = stateOf(directory);
   // A group no process holds any longer, as a dead engine's emptied group is left.
   const leader = spawnSync('/usr/bin/true');
-  writeGroups(state, [{ group: leader.pid, started: 0, dispatch: 'd-dead', card: 1412, workspace: realpathSync.native(directory) }]);
+  const { dev, ino } = statSync(realpathSync.native(directory), { bigint: true });
+  writeGroups(state, [{ group: leader.pid, started: 0, dispatch: 'd-dead', card: 1412, workspace: realpathSync.native(directory), device: String(dev), inode: String(ino) }]);
   spawnSync('/bin/sh', [fixture(directory, 'hop', `${hopping}\nexit 0`)], { stdio: 'ignore' });
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
 
@@ -448,4 +428,36 @@ test('given a census whose read fails after it has stopped a process it listed i
   assert.ok(existsSync(join(directory, 'listed')), 'the census never listed the directory, so the test proves nothing');
   assertUntouched(under, 'the process the census listed before its read failed');
   assert.equal(readEvents(stateOf(directory)).filter((event) => event.event === 'directory.unread').length, 1);
+});
+
+// proves R-STATE-17
+test('while a dispatch runs, its record entry carries the device and inode of its directory\'s real path', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const settled = dispatchIn(directory, { id: 'd-census', card: 1412, command: holdingInSub(directory) });
+  await until(() => existsSync(join(directory, 'ready')), t);
+
+  const group = Number(read(directory, 'command.pid'));
+  const entries = readGroups(stateOf(directory)).filter((entry) => entry.group === group);
+  const { dev, ino } = statSync(realpathSync.native(directory), { bigint: true });
+  writeFileSync(join(directory, 'release'), '');
+  await settled;
+
+  assert.deepEqual(entries.map(({ device, inode }) => ({ device, inode })), [{ device: String(dev), inode: String(ino) }]);
+});
+
+// proves R-STATE-17, R-STATE-7
+test('given a dispatch whose command removes its own directory and makes it again at the same path, leaving there a process outside its group, that process is not alive when the dispatch settles', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const workspace = join(directory, 'work');
+  mkdirSync(workspace);
+  const before = statSync(workspace, { bigint: true }).ino;
+  const command = fixture(directory, 'command', ['cd /', '/bin/rm -rf "$here/work"', '/bin/mkdir "$here/work"', leaveWorking('work', 'left'), 'exit 0'].join('\n'));
+  const state = stateOf(directory);
+  const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
+
+  const result = await dispatch({ id: 'd-census', card: 1412, directory: state, sink, command, args: [], cwd: workspace, workspace, env: {}, timeout: UNREACHED });
+
+  assert.equal(result.exit, 0);
+  assert.notEqual(statSync(workspace, { bigint: true }).ino, before, 'the command did not make its directory again, so the test proves nothing');
+  assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working in the directory made again is alive');
 });

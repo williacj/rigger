@@ -9,6 +9,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { statSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -193,6 +194,28 @@ export const leaveWorking = (where, name) => [
   `while [ ! -f "$here/${name}.pid" ]; do :; done`,
   `while ! /bin/ps -o ucomm= -p "$(/bin/cat "$here/${name}.pid")" | /usr/bin/grep -qx 'tail *'; do :; done`,
 ].join('\n');
+
+/** The state `ps` reads for `pid`: its first character is `T` for a stopped process. */
+export const processState = (pid) => spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
+
+/** Asserts that `pid` is alive and running: the census neither killed it nor left it stopped. */
+export function assertUntouched(pid, what) {
+  assert.equal(alive(pid), true, `${what} is not alive`);
+  assert.ok(!processState(pid).startsWith('T'), `${what} is stopped`);
+}
+
+/**
+ * Starts a `tail`, outside every process group Rigger created, working in `cwd`, as a test's own
+ * child, so it runs until killed. It follows `hold` in `directory`, which names the scratch
+ * directory in its command line, so the test's teardown ends it. Settles once it runs, on its pid.
+ */
+export async function tailIn(t, directory, cwd) {
+  mkdirSync(cwd, { recursive: true });
+  const child = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { cwd, detached: true, stdio: 'ignore' });
+  t.after(() => child.kill('SIGKILL'));
+  await until(() => processState(child.pid) !== '' && spawnSync('/bin/ps', ['-o', 'ucomm=', '-p', String(child.pid)], { encoding: 'utf8' }).stdout.startsWith('tail'), t);
+  return child.pid;
+}
 
 /** A survivor that runs until killed: `tail` following a file nothing writes to. */
 export const TAIL = '/usr/bin/tail -f "$here/hold"';

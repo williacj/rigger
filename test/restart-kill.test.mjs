@@ -18,6 +18,8 @@ import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
 import { leaveWorking } from './process-fixtures.mjs';
+import { assertUntouched, tailIn } from './process-fixtures.mjs';
+import { chmodSync, rmSync, statSync } from 'node:fs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -270,6 +272,92 @@ test('given the engine SIGKILLed while a dispatch runs with a process that left 
   assert.deepEqual(first.alive, [], ran.stderr);
   assert.match(first.call, /^call api graphql /, 'the first call is a board read');
   assertKillsFirst(world, [pids.command, pids.child]);
+});
+
+/**
+ * Restarts `world` through `rigger once`, and asserts that the start skipped the sweep of `path`,
+ * recording why under the dead dispatch with a reason matching `reason`, that it reached its first
+ * board read, and that it left `pid`, a process working at `path`, where there is one, alive and
+ * running. Answers the restart's events.
+ */
+async function sweepSkipped(world, path, reason, pid) {
+  const ran = await restart(world, 'once');
+
+  assert.match(atFirstCall(world).call, /^call api graphql /, `the start did not reach its first board read: ${ran.stderr}`);
+  // A dispatch the dead engine started has its start in the stream; an entry the test wrote is
+  // dispatch `d-dead` of card 10 (`entryFor`), and the stream holds nothing before the restart.
+  const events = readEvents(world.state);
+  const start = events.find((event) => event.event === 'dispatch.start');
+  const { dispatch, card } = start ?? { dispatch: 'd-dead', card: 10 };
+  const restarted = events.filter((event) => event.run !== start?.run);
+  const skipped = restarted.filter((event) => event.event === 'directory.skipped');
+  assert.deepEqual(skipped.map((event) => ({ layer: event.layer, dispatch: event.dispatch, card: event.card, directory: event.directory })), [{ layer: 'L0', dispatch, card, directory: path }], JSON.stringify(restarted));
+  assert.match(skipped[0].reason, reason);
+  if (pid !== undefined) assertUntouched(pid, `the process working at ${path}`);
+  return restarted;
+}
+
+// proves R-STATE-17, R-STATE-10
+test('given the engine SIGKILLed while a dispatch runs, and its directory then removed and made again at the same path, holding a process outside every group Rigger created, rigger once leaves that process alive and records that it skipped the sweep, naming the path and why', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const workspace = join(world.directory, 'work');
+  mkdirSync(workspace);
+  const command = fixture(world.directory, 'command', ['echo $$ > "$here/command.pid"', leaveWorking('work/sub', 'child'), ': > "$here/ready"', 'wait'].join('\n'));
+  await killedMidDispatch(t, world, command, { workspace });
+  rmSync(workspace, { recursive: true, force: true });
+  mkdirSync(workspace);
+  const fresh = await tailIn(t, world.directory, workspace);
+
+  await sweepSkipped(world, workspace, /is not the directory recorded/, fresh);
+});
+
+/**
+ * A group a dead engine left, as `startGroup` starts it in `world`, and its entry in the record,
+ * naming `workspace` as the dispatch's directory, with `extra`. Asserts, once the test has run
+ * the restart, that the start killed the group and recorded each kill.
+ */
+async function deadDispatchIn(t, world, workspace, extra = {}) {
+  const started = await startGroup(t, world.directory, 'group');
+  writeGroups(world.state, [entryFor(started, { workspace, ...extra })]);
+  return (restarted) => {
+    assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the recorded group is alive');
+    const kills = restarted.filter((event) => event.event === 'recorded.killed').map((event) => event.pid);
+    assert.deepEqual(kills.sort(), [started.leader, started.member].sort(), JSON.stringify(restarted));
+  };
+}
+
+// proves R-STATE-17, R-STATE-10
+test('given a record entry whose directory carries no device and inode, rigger once sweeps nothing there, records why naming the path, kills the entry\'s group, and reaches its first board read', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const workspace = join(world.directory, 'plain');
+  const there = await tailIn(t, world.directory, workspace);
+  const killedGroup = await deadDispatchIn(t, world, workspace);
+
+  killedGroup(await sweepSkipped(world, workspace, /carries no device and inode/, there));
+});
+
+// proves R-STATE-17, R-STATE-10
+test('given a record entry whose directory\'s path no longer exists, rigger once sweeps nothing there, records why naming the path, kills the entry\'s group, and reaches its first board read', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const workspace = join(world.directory, 'gone');
+  const killedGroup = await deadDispatchIn(t, world, workspace, { device: '1', inode: '1' });
+
+  killedGroup(await sweepSkipped(world, workspace, /ENOENT/));
+});
+
+// proves R-STATE-17, R-STATE-10
+test('given a record entry whose directory\'s device and inode cannot be read at its path, rigger once sweeps nothing there, records why naming the path, kills the entry\'s group, and reaches its first board read', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const locked = join(world.directory, 'locked');
+  const workspace = join(locked, 'work');
+  const there = await tailIn(t, world.directory, workspace);
+  const { dev, ino } = statSync(workspace, { bigint: true });
+  const killedGroup = await deadDispatchIn(t, world, workspace, { device: String(dev), inode: String(ino) });
+  // A directory no one may search, so `stat` of a path under it fails.
+  chmodSync(locked, 0o000);
+  t.after(() => chmodSync(locked, 0o755));
+
+  killedGroup(await sweepSkipped(world, workspace, /EACCES/, there));
 });
 
 /**

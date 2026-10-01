@@ -1054,6 +1054,39 @@ function end(pid) {
 }
 
 /**
+ * The identity of the directory at `path`, by which a later start tells it from another made at the
+ * same path since: its device and inode, as decimal strings, read by `stat` through any link.
+ *
+ * Where it can fail to tell them apart (`D16` rule 3): a directory made at a path after another
+ * there was removed could take the same device and inode. Measured on this host's APFS volume
+ * (`/System/Volumes/Data`, macOS 27.0, 26A428) on 2026-10-01: of 200 directories each removed and
+ * made again at once at the same path, none took the inode it had (`316037766` became
+ * `316037792` on the last), on the same device. That APFS gives inodes out from a counter that
+ * only grows is the architect's judgment (ruling 7), not a measurement.
+ */
+export function identityOf(path) {
+  const { dev, ino } = statSync(path, { bigint: true });
+  return { device: String(dev), inode: String(ino) };
+}
+
+/**
+ * Why the directory at `directory` may not be the one recorded with `identity`, or nothing where it
+ * is: the record carries no identity for it, its identity cannot be read at the path, as where it
+ * no longer exists, or the path now names another directory.
+ */
+function unconfirmed(directory, identity) {
+  if (identity?.device === undefined || identity?.inode === undefined) return 'the record carries no device and inode for it, so the start cannot tell it is the directory recorded';
+  let now;
+  try {
+    now = identityOf(directory);
+  } catch (error) {
+    return `its device and inode cannot be read: ${error.message}`;
+  }
+  if (now.device === identity.device && now.inode === identity.inode) return undefined;
+  return `it is not the directory recorded: it is device ${now.device}, inode ${now.inode}, where the record names device ${identity.device}, inode ${identity.inode}`;
+}
+
+/**
  * The census of working directories' tool, by absolute path, for the same reason as `PS`. It runs
  * under `PS_ENV` too, whose UTF-8 locale it needs to print `ü` as itself (`listing`).
  */
@@ -1450,12 +1483,17 @@ export async function runCommand({ command, args, cwd, env, timeout, emitter, on
  * Where L1 recorded the dispatch's `directory`, a real path, the census of that directory follows,
  * whether or not the group was the one recorded: the directory was made for that dispatch alone,
  * and the dead engine's dispatch can have left a process working there whatever became of its
- * group.
+ * group. It follows only where the directory at that path is still the one L1 recorded, by the
+ * `identity` it recorded (`unconfirmed`). Where it is not, or that cannot be told, it sweeps nothing
+ * there and records a `directory.skipped` event naming the path and why, and the group's kill
+ * stands as it is (the architect's ruling 7 on #467).
  */
-export async function killRecordedGroup({ group, started, emitter, directory, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT }) {
+export async function killRecordedGroup({ group, started, emitter, directory, identity, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT }) {
   const starts = await startsIn(ps, group, readTimeout);
   const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout }, 'recorded.killed') : [];
-  if (directory !== undefined) kills.push(...(await swept(directory, { ps, lsof, readTimeout }, 'recorded.killed')));
+  const replaced = directory === undefined ? undefined : unconfirmed(directory, identity);
+  if (replaced !== undefined) kills.push(['directory.skipped', { directory, reason: replaced }]);
+  else if (directory !== undefined) kills.push(...(await swept(directory, { ps, lsof, readTimeout }, 'recorded.killed')));
   const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
 }
