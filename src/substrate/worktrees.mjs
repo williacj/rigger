@@ -188,6 +188,53 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     },
 
     /**
+     * Makes a worktree at `path` with its `HEAD` detached at `commit`, making no branch.
+     *
+     * Measured with git 2.54.0 (Apple Git-157) on 2026-10-01, where git's answer can differ from
+     * what L1 expects (`D16` rule 3). `--detach` makes no branch, and neither does a commit named by
+     * its object name, so `git for-each-ref refs/heads` prints the same before and after. Git makes
+     * every missing directory leading to `path`. Onto a directory that is there and not empty, it
+     * exits 128 with `fatal: '<path>' already exists`; with a commit the repository does not hold,
+     * it exits 128 with `fatal: invalid reference: <commit>` and makes no directory, not even the
+     * leading ones. It names the worktree's
+     * administrative directory after `path`'s last name, adding a number where one of that name is
+     * already registered, so two judges' `main` trees never share one. Like `make`, it prunes first,
+     * since a registration whose directory was deleted without git refuses an add at its path, and a
+     * registration locked while `git worktree add` was killed is not pruned and so fails the add.
+     */
+    async makeDetached(path, commit) {
+      await answer(['worktree', 'prune']);
+      await answer(['worktree', 'add', '--quiet', '--detach', path, commit]);
+    },
+
+    /**
+     * Whether the repository holds `commit` as a commit once it has fetched it from `origin`, and
+     * where it does not, why. Git decides what names a commit (`D16` rule 1): `commit` is taken
+     * only where git, asked to verify it, prints it back unchanged, so it is a full object name and
+     * never a branch, an abbreviation or a refspec that a fetch could write a ref from.
+     *
+     * Measured with git 2.54.0 on 2026-10-01: `git rev-parse --verify` prints back any full-length
+     * hexadecimal name in lower case whether or not the object is there, prints a branch's commit for
+     * its name, and exits 1 for an abbreviation and for `main:refs/heads/x`. A fetch of a commit the
+     * repository already holds exits 0 without asking `origin`; one `origin` holds, reachable from
+     * any of its branches, is fetched under protocol version 2; one it does not hold exits 128 with
+     * `fatal: remote error: upload-pack: not our ref <commit>`. A fetch that fails is read through
+     * the check after it, so a commit held already is held whatever the fetch answered. A timeout
+     * rejects.
+     */
+    async holdsAfterFetch(commit) {
+      const named = await call(['rev-parse', '--verify', '--quiet', '--end-of-options', commit]);
+      if (named.timedOut) throw failed(git, named, timeout);
+      if (named.exit !== 0 || named.stdout.trim() !== commit) return { held: false, why: `git does not read ${commit} as a full object name` };
+      const fetch = await call(['fetch', '--no-write-fetch-head', '--end-of-options', ORIGIN, commit]);
+      if (fetch.timedOut) throw failed(git, fetch, timeout);
+      const held = await call(['cat-file', '-e', '--end-of-options', `${commit}^{commit}`]);
+      if (held.timedOut) throw failed(git, held, timeout);
+      if (held.exit === 0) return { held: true };
+      return { held: false, why: fetch.exit === 0 ? `${commit} is not a commit` : firstLine(fetch.stderr) };
+    },
+
+    /**
      * Removes the workspace at `path`, its directory and its registration, whatever an attempt
      * left in it. `--force` removes a worktree holding changes or untracked files, which git
      * otherwise refuses. Git itself refuses the repository's main working tree, exiting 128 with

@@ -1,5 +1,6 @@
 // ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, and makes
-// the workspace fresh from the main line for an attempt, through L0's workspace adapter.
+// the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
+// at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
 import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -58,7 +59,7 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, card, path, cause);
+      throw notMade(events, `card #${card}'s workspace`, { path }, cause);
     }
   };
   const removed = await step(async () => {
@@ -71,6 +72,36 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
   await step(() => adapter.make(path, branch));
   recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch };
+}
+
+/**
+ * Makes the directory judge `role` of card `card` runs in, `<root>/judges/<topic>/<role>`, and
+ * settles on its `path` and the paths of the two worktrees it holds, each at a detached commit:
+ * `main` at the commit the main line held on `origin` as L1 made it, and `head` at `head`, the
+ * pull request's head commit L1 was handed, fetched from `origin` (the owner's O3; ruling 1 Q3).
+ *
+ * L1 records under the card a `workspace.made` carrying `role`, the path and both commits, and a
+ * `workspace.failed` carrying `role`, the path and why (ruling 2 P5). Every failure rejects with
+ * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
+ * event on the way, as `makeWorkspace` does.
+ */
+export async function makeJudgeDirectory({ root, topic, card, role, head, repository, sink }) {
+  const events = sink.emitter({ layer: 'L1', card });
+  const path = join(root, 'judges', topicFor(topic, card), role);
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
+  const trees = { main: join(path, 'main'), head: join(path, 'head') };
+  let main;
+  try {
+    ({ commit: main } = await adapter.fetchMainLine());
+    const { held, why } = await adapter.holdsAfterFetch(head);
+    if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
+    await adapter.makeDetached(trees.main, main);
+    await adapter.makeDetached(trees.head, head);
+  } catch (cause) {
+    throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
+  }
+  recorded(events, card, 'workspace.made', { role, path, main, head });
+  return { path, ...trees };
 }
 
 /**
@@ -208,21 +239,23 @@ function present(path) {
 }
 
 /**
- * The failure for card `card`'s workspace at `path`, which `cause` kept L1 from making, once L1
- * has recorded it through `events`, or has added to it that the sink refused the record.
+ * The failure for `what`, at `fields.path`, which `cause` kept L1 from making, once L1 has recorded
+ * it through `events` as a `workspace.failed` carrying `fields` and why, or has added to it that the
+ * sink refused the record.
  *
  * Where the sink refused an event, L0's that `cause` carries or L1's `workspace.failed`, the
  * failure has the code `EVENT_REFUSED` and carries each such event in `unrecorded`: a refused
  * event is the halt, not a workspace L1 could not make (the owner's O4 on #423).
  */
-function notMade(events, card, path, cause) {
-  const failure = Object.assign(new Error(`L1 could not make card #${card}'s workspace at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
+function notMade(events, what, fields, cause) {
+  const { path } = fields;
+  const failure = Object.assign(new Error(`L1 could not make ${what} at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
   const unrecorded = cause.code === EVENT_REFUSED ? [...cause.unrecorded] : [];
   try {
-    events.emit('workspace.failed', { path, reason: cause.message });
+    events.emit('workspace.failed', { ...fields, reason: cause.message });
   } catch (refusal) {
     failure.message += `\nand the sink refused L1's workspace.failed, so it went unrecorded: ${refusal.message}`;
-    unrecorded.push({ event: 'workspace.failed', path, reason: cause.message, cause: refusal });
+    unrecorded.push({ event: 'workspace.failed', ...fields, reason: cause.message, cause: refusal });
   }
   if (unrecorded.length > 0) Object.assign(failure, { code: EVENT_REFUSED, unrecorded });
   return failure;
