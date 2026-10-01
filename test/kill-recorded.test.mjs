@@ -12,6 +12,7 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { killRecordedGroups } from '../src/execution/run.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
 import { alive, fixture, scratch, startGroup, startOf, until, withoutLeader } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
@@ -446,14 +447,16 @@ for (const [how, body] of Object.entries(FAILING_READS)) {
  * A stand-in for `ps` in `directory` whose start-time read lists every member of the group, the
  * read's third argument, with the start `lstart`, and which passes every other read through to
  * `ps`, so a group the start-time read admitted would be killed. `lstart` is shell text inside
- * double quotes, so a command substitution in it runs under the read's environment.
+ * double quotes, so a command substitution in it runs under the read's environment. It is
+ * `warmed`, because the start-time read is its first exec, which must reach its body within
+ * `readTimeout`.
  */
-const startsAs = (directory, lstart) => fixture(directory, 'ps', [
+const startsAs = (directory, lstart) => warmed(fixture(directory, 'ps', [
   'case "$*" in',
   `  *lstart*) /bin/ps -g "$3" -o pid=,stat= | /usr/bin/sed "s/\\$/ ${lstart}/" ;;`,
   '  *) exec /bin/ps "$@" ;;',
   'esac',
-].join('\n'));
+].join('\n')));
 
 /**
  * The second each malformed start below names, were it taken for a real start: 2026-09-28

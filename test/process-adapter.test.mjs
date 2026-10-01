@@ -332,8 +332,10 @@ test('given an onGroup and a start-time read that prints the start time and a fa
   const directory = holding(t);
   const command = fixture(directory, 'command', `exec ${TAIL}`);
   // The stand-in answers the read of the leader's start time as `ps` does, and then writes a
-  // failure to standard error as `ps` writes every failure it reports (`run`).
-  const ps = fixture(directory, 'ps', 'case "$*" in *lstart=*) /bin/ps "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec /bin/ps "$@"');
+  // failure to standard error as `ps` writes every failure it reports (`run`). It is `warmed`,
+  // because the read of the leader's start time is its first exec, which must reach its body
+  // within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', 'case "$*" in *lstart=*) /bin/ps "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec /bin/ps "$@"'));
   let called = false;
 
   await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .*ps: failing on purpose/);
@@ -490,11 +492,12 @@ test('a process that joins the group after the group is killed is dead when the 
  * moment as wide as it can be: it reads every other column, tells the survivor to go, waits until
  * the survivor runs `tail` or is stopped, then reads the command lines and joins the two row by
  * row. Any other read goes to `ps` as it is. `before` is shell run first, on the stand-in's first
- * call alone.
+ * call alone. The stand-in is `warmed`, because the census's first read is its first exec, which
+ * must reach its body within `readTimeout`.
  */
 function reExecuting(directory, before = '') {
   fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/go" ]; do :; done\nexec ${TAIL}`);
-  const ps = fixture(directory, 'ps', [
+  const ps = warmed(fixture(directory, 'ps', [
     `if /bin/mkdir "$here/called" 2>/dev/null; then ${before || ':'}; fi`,
     'case "$5" in *,command=) ;; *) exec /bin/ps "$@" ;; esac',
     '/bin/ps "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
@@ -503,7 +506,7 @@ function reExecuting(directory, before = '') {
     'until /bin/ps -o ucomm= -p "$survivor" | /usr/bin/grep -q "^tail" || /bin/ps -o stat= -p "$survivor" | /usr/bin/grep -q "^T"; do :; done',
     '/bin/ps "$1" "$2" "$3" -o command= > "$here/arguments"',
     '/usr/bin/paste -d " " "$here/names" "$here/arguments"',
-  ].join('\n'));
+  ].join('\n')));
   // `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
   const command = fixture(directory, 'command', `/bin/bash "$here/first" &\necho $! > "$here/survivor.pid"\nwhile [ ! -f "$here/running" ]; do :; done`);
   return { command, ps };
@@ -570,14 +573,16 @@ test('a survivor is recorded by its own name and command line whatever its execu
 test('a survivor whose state reads as ? is stopped and read again, not left unnamed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // `ps` prints the state `?` for a process caught mid-exec (the engineer judge on #354). This
-  // stand-in's first answer shows the survivor that way, in place of its stopped state.
-  const ps = fixture(directory, 'ps', [
+  // stand-in's first answer shows the survivor that way, in place of its stopped state. It is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'if /bin/mkdir "$here/called" 2>/dev/null; then',
     `  /bin/ps "$@" | /usr/bin/sed -E 's/(^ *[0-9]+ .*) T( |$)/\\1 ?\\2/'`,
     'else',
     '  exec /bin/ps "$@"',
     'fi',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   const { events } = await recorded(directory, { command, ps });
@@ -614,11 +619,13 @@ test('a zombie in the group is left out of the census, and only the living are r
 
 test('a survivor missing from one of the census\'s reads is read again, not left unnamed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The stand-in's first read of names finds nothing, as `ps` does when no process matches.
-  const ps = fixture(directory, 'ps', [
+  // The stand-in's first read of names finds nothing, as `ps` does when no process matches. It is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) /bin/mkdir "$here/names-read" 2>/dev/null && exit 1 ;; esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   const { events } = await recorded(directory, { command, ps });
@@ -998,9 +1005,11 @@ test('a survivor the census named that exits on its own before the kill is not r
   const directory = holding(t);
   // The quitter exits once told to go. The stand-in tells it to go, and resumes it, inside the
   // census's last read of states, which it answers as the table stood before, so the census names
-  // the quitter and has read the table for the last time before it is gone.
+  // the quitter and has read the table for the last time before it is gone. The stand-in is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
   fixture(directory, 'quitter', 'while [ ! -f "$here/go" ]; do :; done\nexit 0');
-  const ps = fixture(directory, 'ps', [
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     'case "$*" in *stat=*)',
     '  if [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null; then',
@@ -1014,7 +1023,7 @@ test('a survivor the census named that exits on its own before the kill is not r
     '  fi ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', [leave(TAIL, 'tail'), leave('"$here/quitter"', 'quitter', 'bash')].join('\n'));
 
   const { events } = await recorded(directory, { command, ps });
@@ -1090,7 +1099,9 @@ test('a survivor whose argv[0] differs from its executable\'s name is recorded b
  *
  * `at` is `census` for the census's last read of states, or `kill` for the read the adapter takes
  * after the census, just before its kill, which begins `-g` where the census's begin `-ww`. Every
- * read of states after that one runs `later`, shell, in place of `ps`, where one is given.
+ * read of states after that one runs `later`, shell, in place of `ps`, where one is given. The
+ * stand-in is `warmed`, because the census's first read is its first exec, which must reach its
+ * body within `readTimeout`.
  */
 function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"' } = {}) {
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
@@ -1102,7 +1113,7 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"
     'rename("$here/quitter.pid.tmp", "$here/quitter.pid");',
     'select(undef, undef, undef, undef);',
   ].join('\n'));
-  const ps = fixture(directory, 'ps', [
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     `case "$*" in *stat=*) ${at === 'kill' ? '[ "$1" = "-g" ]' : 'true'} ;; *) false ;; esac && [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {`,
     '  table=$(/bin/ps "$@")',
@@ -1115,7 +1126,7 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"
     '}',
     `case "$*" in *stat=*) [ -d "$here/told" ] && { ${later}; } ;; esac`,
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', [
     '/usr/bin/perl "$here/keeper" "$here" &',
     'echo $! > "$here/keeper.pid"',
@@ -1174,7 +1185,7 @@ test('a survivor the census named that exits on its own before the kill, and who
     'waitpid($quitter, 0);',
     'exec "/usr/bin/tail", "-f", "$here/hold";',
   ].join('\n'));
-  const ps = fixture(directory, 'ps', [
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     'case "$*" in *ppid=*) [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
     '  table=$(/bin/ps "$@")',
@@ -1186,7 +1197,7 @@ test('a survivor the census named that exits on its own before the kill, and who
     '  exit 0',
     '} ;; esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   // The quitter is the group's one member once the command exits. With another member stopped
   // there, the quitter's exit would leave the group orphaned, and the kernel would end that member
   // with `SIGHUP`.
@@ -1279,7 +1290,9 @@ test('while the call kills a group that takes many rounds, it uses less than a t
 test('a kill whose read of the table never answers records the group\'s kill with a reason that names the kill, not the census', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The stand-in answers every read of the census, and none of the kill's, which ask for `ppid`.
-  const ps = fixture(directory, 'ps', 'case "$*" in *ppid=*) exec /usr/bin/tail -f "$here/hold" ;; esac\nexec /bin/ps "$@"');
+  // It is `warmed`, because the census's first read is its first exec, which must reach its body
+  // within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', 'case "$*" in *ppid=*) exec /usr/bin/tail -f "$here/hold" ;; esac\nexec /bin/ps "$@"'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   // Long enough for the census to finish on a loaded host, where the whole suite runs at once.
@@ -1293,9 +1306,10 @@ test('a kill whose read of the table never answers records the group\'s kill wit
  * A `ps` stand-in that answers every read as `ps` does, except the kill's second read of the
  * table, the reads that ask for `ppid`, where it runs the shell lines `failing` instead and marks
  * `$here/failed`. By then the kill's first round has sent the kill to the chain's last process,
- * and every other process of the chain is still to be killed.
+ * and every other process of the chain is still to be killed. It is `warmed`, because the census's
+ * first read is its first exec, which must reach its body within `readTimeout`.
  */
-const failingOnce = (directory, failing) => fixture(directory, 'ps', [
+const failingOnce = (directory, failing) => warmed(fixture(directory, 'ps', [
   'case "$*" in *ppid=*)',
   '  if [ -f "$here/first" ] && /bin/mkdir "$here/failed" 2>/dev/null; then',
   failing,
@@ -1303,7 +1317,7 @@ const failingOnce = (directory, failing) => fixture(directory, 'ps', [
   '  : > "$here/first" ;;',
   'esac',
   'exec /bin/ps "$@"',
-].join('\n'));
+].join('\n')));
 
 /**
  * Runs a chain 3 deep through the adapter, the kill's second read of the table failing as
@@ -1347,8 +1361,9 @@ for (const [what, failing, options] of [
 test('a census whose every read of the group exits 1 and prints nothing while the group holds a survivor records the group\'s kill, saying why', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill and the wait read it without, so the
-  // stand-in fails every read of the census and none other.
-  const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec /bin/ps "$@"');
+  // stand-in fails every read of the census and none other. It is `warmed`, because the census's
+  // first read is its first exec, which must reach its body within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec /bin/ps "$@"'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
@@ -1362,15 +1377,17 @@ test('a census whose every read of the group exits 1 and prints nothing while th
 test('a census whose every read of the group lists only one of two survivors still has both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill and the wait read it without, so the
-  // stand-in cuts every read of the census down to the first survivor's row, and none other.
-  const ps = fixture(directory, 'ps', [
+  // stand-in cuts every read of the census down to the first survivor's row, and none other. It
+  // is `warmed`, because the census's first read is its first exec, which must reach its body
+  // within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*)',
     '  : > "$here/cut"',
     '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/one.pid") "',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
@@ -1412,15 +1429,17 @@ test('a census whose every read of the group lists only its zombie, while a surv
 test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
-  // second survivor's row from every read of both, and answers every other read as `ps` does.
-  const ps = fixture(directory, 'ps', [
+  // second survivor's row from every read of both, and answers every other read as `ps` does. It
+  // is `warmed`, because the census's first read is its first exec, which must reach its body
+  // within `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*|*ppid=*)',
     '  : > "$here/cut"',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
@@ -1436,15 +1455,17 @@ test('a census and a kill whose every read leaves out one of two survivors still
 test('a kill whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded, by name or by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // Every read of the group, by the census, the kill and the reads after it, is cut down to the
-  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it.
-  const ps = fixture(directory, 'ps', [
+  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it. It is `warmed`,
+  // because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
     '  [ -n "$rows" ] && : > "$here/cut" && echo "$rows"',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
   // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
   // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
   // ready within `OUTLIVED` of its spawn.

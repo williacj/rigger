@@ -17,6 +17,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -297,17 +298,18 @@ test('given the engine SIGKILLed while a dispatched command and its child run, a
 /**
  * A stand-in for `ps` in `directory` whose reads of a start time, which L0 makes of a command it
  * has just spawned before L1 records its group, mark `reading` and wait until the test opens the
- * FIFO `release`. Every other read is `ps`'s own.
+ * FIFO `release`. Every other read is `ps`'s own. It is `warmed`, because the start-time read is
+ * its first exec, which must reach its body within the engine's read timeout.
  */
 function heldStartRead(directory) {
   spawnSync('/usr/bin/mkfifo', [join(directory, 'release')]);
-  return fixture(directory, 'ps', [
+  return warmed(fixture(directory, 'ps', [
     'case "$*" in *lstart=*)',
     '  : > "$here/reading"',
     '  read line < "$here/release" ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n'));
+  ].join('\n')));
 }
 
 // proves R-STATE-10
