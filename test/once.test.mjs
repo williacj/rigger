@@ -1,11 +1,11 @@
 // ABOUTME: Tests `rigger once`: the real bin run in a consumer's repository with the fake `gh` first
-// on PATH, claiming one card through L3's claim-only call, dispatching nothing, saying so, and
-// refusing its own source tree.
+// on PATH, claiming one card through L3's single pull, making and provisioning its workspace,
+// dispatching no maker, saying so, and refusing its own source tree.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { once as onceVerb } from '../src/cli/once.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
-import { repositoryIn } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -36,11 +36,20 @@ const card = (number, column, extra = {}) => ({
   type: 'issue', repository: REPO, number, title: `Card ${number}`, body: ADMITTED, labels: ['type:change'], column, ...extra,
 });
 
-/** The consumer's config: the template's, with its repository, its board and N 3 filled in. */
-const config = () => ({ ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency: 3 });
+/** The template's kinds, each listing no provisioning step, so a claimed card's attempt runs none. */
+const KINDS = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
 
-/** A consumer's repository holding that config. */
-const consumerRepository = () => repositoryIn('rigger-once-', { 'rigger.config.mjs': `export default ${JSON.stringify(config())};\n` });
+/** The consumer's config: the template's, with its repository, its board and N 3 filled in, and kinds listing no provisioning. */
+const config = () => ({ ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency: 3, kinds: KINDS });
+
+/**
+ * A consumer's repository holding that config, with a local bare `origin` beside it, in a
+ * directory of its own, so the workspaces the default root names beside it are its alone.
+ */
+const consumerRepository = () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rigger-once-'));
+  return withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config())};\n` }), join(directory, 'origin.git'));
+};
 
 /**
  * A stand-in for the agent CLI every role in the template's config dispatches through, placed in
@@ -92,12 +101,13 @@ test('once, given N 3 and two ready cards L2 would dispatch and none in coding o
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready' }, ran.err);
 });
 
-test('once names the card it claimed, and says it was not worked because dispatch arrives with M2 and M4', () => {
+test('once names the card it claimed and its workspace, and says no maker runs before M4', () => {
   const ran = once({ items: [card(10, 'Ready')] });
 
-  assert.match(ran.err, /#10\b/, ran.err);
-  assert.match(ran.err, /not worked/, ran.err);
-  assert.match(ran.err, /dispatch arrives with M2 and M4/, ran.err);
+  const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
+  assert.ok(line, ran.err);
+  assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', 'rigger-10')), line);
+  assert.match(line, /no maker runs before M4/, line);
 });
 
 test('once exits non-zero after claiming a card it did not work', async () => {
@@ -149,14 +159,14 @@ test('once, given a ready card L2 ignores, leaves it in the ready column', async
   assert.doesNotMatch(ran.out, /#13\b/, ran.out);
 });
 
-test('once starts no dispatch: the agent CLI is never run, and no event arises under a dispatch or from L1', async () => {
+test('once dispatches the card\'s selected steps and no maker: the agent CLI is never run, and every L1 dispatch event names a step', async () => {
   const ran = once({ items: [card(10, 'Ready'), card(20, 'Ready')] });
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready' }, ran.err);
   assert.deepEqual(ran.agentRuns(), []);
   const events = eventsOf(ran);
   assert.ok(events.length > 0, 'the run recorded events');
-  assert.deepEqual(events.filter((event) => event.layer === 'L1' || event.dispatch !== undefined), []);
+  assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && typeof named.step === 'string')), []);
 });
 
 test('after once claims a card from the ready column, the state directory\'s event stream holds an L3 event and an L2 transition event', async () => {
@@ -267,11 +277,11 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
-test('--help\'s line for once says it dispatches no work before M4', () => {
+test('--help\'s line for once says it dispatches no maker before M4', () => {
   const shown = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });
 
   assert.equal(shown.status, 0, shown.stderr);
   const line = shown.stdout.split('\n').find((held) => /^\s*once\b/.test(held));
   assert.ok(line, shown.stdout);
-  assert.match(line, /dispatches no work before M4/, line);
+  assert.match(line, /dispatches no maker before M4/, line);
 });

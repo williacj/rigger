@@ -6,7 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,7 +15,7 @@ import template from '../templates/rigger.config.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { repositoryIn } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { childrenIn, ended, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,10 +39,16 @@ const card = (number) => ({
   type: 'issue', repository: REPO, number, title: `Card ${number}`, body: ADMITTED, labels: ['type:change'], column: template.board.columns.ready,
 });
 
-/** A consumer's repository holding the template's config for that board, and its event stream's path. */
+/**
+ * A consumer's repository holding the template's config for that board, with kinds listing no
+ * provisioning, and a local bare `origin` beside it in a directory of its own, and its event
+ * stream's path.
+ */
 function consumer() {
-  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } };
-  const where = repositoryIn('rigger-verb-kill-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
+  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds };
+  const directory = mkdtempSync(join(tmpdir(), 'rigger-verb-kill-'));
+  const where = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   return { where, stream: join(where, '.rigger', 'events.jsonl') };
 }
 

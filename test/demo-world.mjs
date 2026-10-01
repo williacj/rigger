@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import template from '../templates/rigger.config.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { repositoryAt } from './git-repository.mjs';
+import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { installFromTarball } from './installed-rigger.mjs';
 
 /** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
@@ -37,14 +37,16 @@ const BOARD = {
 /**
  * The world, built under `into`, a directory outside the checkout at `root`: `bin`, the whole
  * PATH the tape runs under, holding node, git, the installed `rigger` and the fake `gh`; and
- * `target`, the consumer's repository, holding the template's config with its repository and
- * board filled in.
+ * `target`, the consumer's repository, with a local bare `origin` beside it, holding the
+ * template's config with its repository and board filled in, and one provisioning step, whose
+ * `run` is `true`, which the demo card's kind lists and which reaches no network.
  */
 export function demoWorld(root, into) {
   const { rigger, path: bin } = installFromTarball(root, into);
   symlinkSync(rigger, join(bin, 'rigger'));
   installFakeGh(bin, { repo: REPO, project: PROJECT, board: BOARD });
-  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } };
-  const target = repositoryAt(join(into, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? ['ready'] : [] }]));
+  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds, provisioning: { ready: { run: 'true', required: true } } };
+  const target = withOrigin(repositoryAt(join(into, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(into, 'origin.git'));
   return { bin, target };
 }

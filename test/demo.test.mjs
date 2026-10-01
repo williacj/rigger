@@ -1,7 +1,7 @@
 // ABOUTME: Tests the demo tape's world without vhs: the shell `docs/demo.tape` records is left in a
 // consumer repository outside the checkout, running a `rigger` installed from the tarball, with
 // the fake `gh` as the only `gh` on PATH, and `rigger once` there claims the card and exits
-// non-zero saying it was not worked.
+// non-zero saying no maker runs before M4.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -85,7 +85,7 @@ const runCommands = (text = workflow) => [...text.matchAll(/^\s*-\s*run:\s*(\S.*
  */
 const SCREEN = [
   '> rigger once',
-  'rigger once: claimed #12 from board 3, and it was not worked: dispatch arrives with M2 and M4',
+  'rigger once: claimed #12 from board 3; no maker runs before M4, so it stopped at its workspace, /private/var/folders/rigger-demo.a1B2c3/widgets-worktrees/rigger-12',
   '> echo exit $?',
   'exit 1',
   '> ',
@@ -125,7 +125,7 @@ test('a CI check fails on a screen where rigger once exited zero after printing 
   assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the echo reporting a zero exit');
 });
 
-test('a CI check fails on a screen missing the claimed-but-not-worked message', () => {
+test('a CI check fails on a screen missing M3\'s once line', () => {
   const statuses = ciChecksOver('docs/demo.txt', SCREEN.replace(/^rigger once: .*\n/m, ''));
   assert.notDeepEqual(statuses.filter((status) => status !== 0), [], 'every check passed with the message missing');
 });
@@ -157,10 +157,10 @@ test('a CI check fails when the tape writes an empty GIF, or none beside the com
   assert.equal(gifStepsWhenTheTapeRuns('printf GIF89a > docs/demo.gif'), 0);
 });
 
-test('rigger once in the demo world claims a card, says it was not worked, and exits non-zero', () => {
+test('rigger once in the demo world claims a card, names its workspace, says no maker runs before M4, and exits non-zero', () => {
   const ran = inTheWorld('rigger once');
 
   assert.match(ran.err, /^rigger once: claimed #\d+ from board 3\b/m, ran.err);
-  assert.match(ran.err, /not worked: dispatch arrives with M2 and M4/, ran.err);
+  assert.match(ran.err, /no maker runs before M4, so it stopped at its workspace, \/\S*\/widgets-worktrees\/rigger-12$/m, ran.err);
   assert.notEqual(ran.code, 0, ran.out);
 });
