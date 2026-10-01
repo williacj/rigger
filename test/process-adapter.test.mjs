@@ -1436,12 +1436,13 @@ test('a census whose every read of the group lists only its zombie, while a surv
 test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
-  // second survivor's row from every read of both, and answers every other read as `ps` does. It
-  // is `warmed`, because the census's first read is its first exec, which must reach its body
-  // within `readTimeout`.
+  // second survivor's row from every read of both, and answers every other read as `ps` does. The
+  // census's reads and the kill's each mark that they were cut in a file of their own, so a read
+  // of one never stands in for the other. It is `warmed`, because the census's first read is its
+  // first exec, which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*|*ppid=*)',
-    '  : > "$here/cut"',
+    '  case "$*" in *ppid=*) : > "$here/kill.cut" ;; *) : > "$here/census.cut" ;; esac',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
     '  exit 0 ;;',
     'esac',
@@ -1452,7 +1453,8 @@ test('a census and a kill whose every read leaves out one of two survivors still
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
-  assert.equal(existsSync(join(directory, 'cut')), true, 'no read was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the kill was cut, so the test proves nothing');
   assert.deepEqual(survivors.map(alive), [false, false]);
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
@@ -1462,13 +1464,17 @@ test('a census and a kill whose every read leaves out one of two survivors still
 test('a kill whose every read of the group lists only its zombie, while its leader lives, still has the leader recorded, by name or by the group\'s kill, and leaves no process of the group alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // Every read of the group, by the census, the kill and the reads after it, is cut down to the
-  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it. It is `warmed`,
-  // because the census's first read is its first exec, which must reach its body within
+  // zombie's row and exits 0. A read of one pid is answered as `ps` answers it. The census's reads,
+  // with `-ww`, and the kill's, which ask for `ppid`, each mark that they listed the zombie in a
+  // file of their own, so neither, nor a read after both, stands in for the other. It is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
   // `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
-    '  [ -n "$rows" ] && : > "$here/cut" && echo "$rows"',
+    '  [ -z "$rows" ] && exit 0',
+    '  case "$*" in "-ww -g "*) : > "$here/census.cut" ;; *ppid=*) : > "$here/kill.cut" ;; esac',
+    '  echo "$rows"',
     '  exit 0 ;;',
     'esac',
     'exec /bin/ps "$@"',
@@ -1482,7 +1488,8 @@ test('a kill whose every read of the group lists only its zombie, while its lead
 
   ready(directory);
   const group = Number(read(directory, 'group'));
-  assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the group listed the zombie, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the group by the census listed the zombie, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the group by the kill listed the zombie, so the test proves nothing');
   assert.equal(alive(group), false);
   assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
   const leader = events.some(({ event }) => event === 'group.killed') || events.some(({ event, pid }) => event === 'timeout.killed' && pid === group);
