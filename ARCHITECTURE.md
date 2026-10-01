@@ -47,7 +47,9 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started. L2 gives L3 next actions. L3 gives L1 dispatches, and has L1 make the workspace each
+   started. L2 gives L3 next actions. A next action that dispatches a role carries what that
+   dispatch is handed, which L2 composes. L1 delivers it unread, through L0's provider adapter. L3
+   gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L0's workspace adapter, `src/substrate/worktrees.mjs`, makes and
    removes workspaces, and only L1 reaches it. L0's forge adapter gives L3 the board's items and L2
    a card's facts. It carries L2's column changes back to the board, and no
@@ -122,10 +124,10 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner; L1 for the worktree root, which the verb resolves and hands it, and the topic rule; L3 for N; L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
 | **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop and the gate | Yes |
-| **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, and the card labels that override that tier | L1 for dispatch; L2 for maker and judge identity | Yes |
-| **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/`, and a second adapter reads its own. `init` forks each template where its provider looks for it | L0, through the provider adapter | Fixed by the provider |
+| **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
+| **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
 | **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
@@ -134,7 +136,7 @@ workaround.
 | **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
-| **Provider adapters** | A module implementing the adapter interface for one agent CLI | L0 | Claude Code shipped; Codex next |
+| **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface | L0 | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
@@ -150,7 +152,7 @@ export default {
   concurrency: 3,
   worktrees: { root: '../rigger-worktrees', topic: 'rigger-{number}' },
   roles: {
-    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard' },
+    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard', labels: { 'tier:high': 'high' }, timeout: 14400000 },
     reviewer:      { agent: '.claude/agents/reviewer.md',       provider: 'claude', tier: 'high' },
     pm:            { agent: '.claude/agents/pm.md',             provider: 'claude', tier: 'high' },
     architect:     { agent: '.claude/agents/architect.md',      provider: 'claude', tier: 'high' },
@@ -216,10 +218,22 @@ topic names directly under `root`, and its line of work as the branch of the sam
 optional, and so is each key under it. Where one is absent, it takes the default the Engine
 settings row states.
 
+A provider adapter is the one place Rigger holds a fact about its agent CLI. That covers how
+`doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
+which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
+command line and standard input. L1 runs that command line as it runs a step's. The adapter
+passes the CLI no setting that widens what the consumer's own provider settings allow.
+
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
 the milliseconds it may run, and a step that declares none may run for 1,800,000 milliseconds,
 which is 30 minutes.
+
+A role's `tier` names one of the tiers Rigger fixes, `standard` or `high`, and its provider
+adapter maps each to a model. `labels` is optional, and maps a card label to the tier that label
+selects for this role. A role's `timeout` is the milliseconds its dispatch may run, as a step's
+is, and a role that declares none may run for 14,400,000 milliseconds, which is four hours. A
+role's name names a directory, so it holds no `/`.
 
 ## Triggers
 
@@ -312,6 +326,11 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 1. L3 has L1 make the workspace the attempt runs in.
 2. L3 dispatches each provisioning step L2 selected, one at a time, in that workspace.
 3. L3 dispatches the maker once L2 finds that no required step failed.
+4. L3 dispatches every agent judge L2 names, at once, once L2 finds the maker's work delivered.
+   For each judge, L3 first has L1 make the judge's directory, and dispatches the card's
+   selected steps there.
+
+A card L3 pulls from Review starts at step 4.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies three failures as
@@ -330,13 +349,28 @@ agent's own git commands in its workspace are outside the queue.
 
 A process still in the command's group when the direct child exits is terminated by L0 and recorded
 by name and command line; it never changes the exit code. A process that leaves its group is outside
-this containment. Where one holds the command's output open once the group is empty, L0 stops
+this containment.
+
+A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
+card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
+runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
+fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
+process of Rigger's own user whose working directory is that directory or lies under it. L0
+records each as it records a survivor. L1 hands L0 that directory and records it in the dispatch's
+entry, so a later start does the same. A command that is not a dispatch has no such directory, and
+its group remains its whole containment.
+
+A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
+the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
+the head of the card's pull request, and L3 dispatches the card's provisioning steps there.
+
+Where a process that left its group holds the command's output open once the group is empty, L0 stops
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
 the group's processes. L1 then records the dispatch's end. It records one end for every dispatch
 whose start it recorded, and a command that never started is included. Each end carries the exit
 code or why the command did not start. An end recorded as Rigger exits may instead say why the
-command's exit code could not be read. L3 frees the dispatch's slot only once L1 hands back the
-dispatch's outcome.
+command's exit code could not be read. L3 frees a card's slot only once L1 has handed back the
+outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
 is a pull, which claims a card, or a dispatch. L3 records each start before it acts outside
@@ -365,7 +399,9 @@ already running, as running cards finish under a closed admission (`R-SCHED-3`).
 L5 stamps every event with a timestamp, run id, layer, and the card and dispatch it arose under. The
 emitting layer supplies neither, which is how an L0 event carries a card id that L0 never knew. L3
 allocates a dispatch's id as it starts the dispatch, and the start's event carries it. L1's record
-of a dispatch's start names the workspace it runs in. No two dispatches recorded in one state
+of a dispatch's start names the workspace it runs in. For a role's dispatch it also names what L2
+composed for it: the facts that identify the work, and a digest of the evidence, so two judges
+handed the same evidence record the same digest. No two dispatches recorded in one state
 directory share an id, because a later start records its kills under a dispatch of the run that died.
 
 Each layer owns one event family and no layer writes another layer's events. L5 owns the sink, one

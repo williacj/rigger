@@ -83,6 +83,11 @@ export const SHAPES = {
     agent: { required: true },
     provider: { required: true },
     tier: { required: true },
+    // Optional: a card label mapped to the tier it selects for this role, and the milliseconds the
+    // role's dispatch may run. A role declaring neither runs at its `tier` for the default time
+    // (`ARCHITECTURE.md`, below the extension-point table).
+    labels: {},
+    timeout: {},
   },
   kind: {
     select: { required: true, keys: 'select' },
