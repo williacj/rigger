@@ -29,6 +29,12 @@ function consumer(t) {
   return { directory, agent };
 }
 
+/** Writes `value` as JSON at `path` under `directory`, making its parents. */
+function put(directory, path, value) {
+  mkdirSync(dirname(join(directory, path)), { recursive: true });
+  writeFileSync(join(directory, path), JSON.stringify(value));
+}
+
 /** The invocation for `directory`'s agent at `tier`, with `prompt` and any other input given. */
 const invoked = ({ directory, agent }, more = {}) => claude.invocation({ agent, tier: 'standard', prompt: 'the prompt', directory, ...more });
 
@@ -173,6 +179,44 @@ test('given reach naming a directory, the invocation is refused, naming reach an
   });
   const { args } = await invoked(repo, { reach: [] });
   assert.equal(args.includes('--add-dir'), false);
+});
+
+test('the invocation hands the session the permission rules the directory\'s own settings declare, and no other permission setting from them', async (t) => {
+  // Report, "A command the directory's settings do not allow": a `-p` session ignores an untrusted
+  // directory's own `permissions.allow` (c38), and honours the same rule passed in `--settings`
+  // (c42). So the consumer's own rules are what decide (ruling 1 Q1), and a mode or a directory
+  // that would skip or widen the checks is not carried across.
+  const repo = consumer(t);
+  const declared = { allow: ['mcp__c480__echo', 'Bash(npm test)'], deny: ['WebFetch'], ask: ['Bash(git push:*)'] };
+  put(repo.directory, '.claude/settings.json', { permissions: { ...declared, defaultMode: 'bypassPermissions', additionalDirectories: ['/'] }, hooks: {} });
+  assert.deepEqual(settings((await invoked(repo)).args).permissions, declared);
+});
+
+test('given no settings file, or one declaring no permissions, the invocation hands the session no permission rule', async (t) => {
+  const repo = consumer(t);
+  assert.equal(settings((await invoked(repo)).args).permissions, undefined);
+  put(repo.directory, '.claude/settings.json', { hooks: {} });
+  assert.equal(settings((await invoked(repo)).args).permissions, undefined);
+});
+
+test('a settings file that is no JSON object is refused, naming the file, since the CLI would silently ignore it', async (t) => {
+  // `claude --help`, `-p`: "Settings files that fail validation are silently ignored in this mode".
+  const repo = consumer(t);
+  mkdirSync(join(repo.directory, '.claude'), { recursive: true });
+  writeFileSync(join(repo.directory, '.claude', 'settings.json'), '{ "permissions": ');
+  await assert.rejects(invoked(repo), (failure) => failure.message.includes(join(repo.directory, '.claude', 'settings.json')));
+});
+
+test('the invocation withholds the tools that act through the owner\'s own account', async (t) => {
+  // `R-SAFE-9`: a built-in tool that acts through the owner's own sessions or login counts as
+  // declared only where the repository declares it. Claude Code 2.1.287 offers three, read off
+  // #480's live run's `init` record: `RemoteTrigger` starts the owner's cloud routines,
+  // `PushNotification` notifies the owner's devices, and `DesignSync` writes to the owner's
+  // claude.ai designs. `--no-chrome` keeps out Claude in Chrome, which drives the owner's browser.
+  const { args } = await invoked(consumer(t));
+  const withheld = after(args, '--disallowedTools').split(',');
+  for (const tool of ['RemoteTrigger', 'PushNotification', 'DesignSync']) assert.ok(withheld.includes(tool), tool);
+  assert.ok(args.includes('--no-chrome'));
 });
 
 test('the invocation withholds the worktree tools and every bundled skill', async (t) => {

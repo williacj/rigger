@@ -1,0 +1,76 @@
+// ABOUTME: A gated live run of a real `claude` session started from this checkout's Claude Code
+// adapter, reading what it loaded from the CLI's own start record. Skipped unless RIGGER_LIVE_CLAUDE=1.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, put, scratch, session, skip, textOf } from './claude-live.mjs';
+import { onPath } from './on-path.mjs';
+
+/** The adapter and the process adapter from this checkout. */
+async function fromCheckout() {
+  return {
+    invocation: (await import('../src/substrate/providers/claude.mjs')).invocation,
+    runCommand: (await import('../src/substrate/process.mjs')).runCommand,
+  };
+}
+
+// proves R-SAFE-7
+test('a live claude session started from the invocation loads exactly the directory\'s one MCP server, none of the owner\'s connectors or user sources, and its agent file\'s last sentence; it calls the server\'s tool and finds a connector absent', { skip, timeout: 2 * SESSION }, async (t) => {
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const base = scratch(t);
+  // A parent holding a `CLAUDE.md`, which the invocation's exclusions must keep out.
+  put(base, 'CLAUDE.md', 'If asked for a CLAUDE.md marker, the marker is HERON-parent-480.\n');
+  const directory = join(base, 'repo');
+  forgetting(t, directory);
+  put(directory, 'server/server.cjs', SERVER('HERON-mcpcall-480'));
+  put(directory, '.mcp.json', JSON.stringify({ mcpServers: { c480live: { type: 'stdio', command: process.execPath, args: [join(directory, 'server', 'server.cjs')] } } }));
+  put(directory, '.claude/agents/live.md', AGENT('HERON-agentend-480'));
+  // The directory's own declaration that the session may call its server's tool.
+  put(directory, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['mcp__c480live__echo'] } }));
+
+  const prompt = [
+    'Answer each item on its own line, and make exactly the two tool calls named.',
+    '1. Name every MCP server and every tool you have, as your tool list shows them.',
+    '2. Quote the marker at the end of your role file, or say NONE.',
+    '3. Quote any marker beginning HERON- that a CLAUDE.md in your context holds, or say NONE.',
+    '4. Call the tool mcp__c480live__echo once and quote what it answers.',
+    '5. Call the tool mcp__claude_ai_Claude_Docs__guide once with items ["topic.index"]. If you have no such tool, do not search for it: say ABSENT.',
+  ].join('\n');
+  const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt, directory });
+  t.diagnostic(`args: ${JSON.stringify(run.args)}`);
+  t.diagnostic(`init: ${JSON.stringify(run.init)}`);
+  t.diagnostic(`calls: ${JSON.stringify(callsOf(run.events))}`);
+  t.diagnostic(`answer: ${JSON.stringify(run.answer)}`);
+  t.diagnostic(`exit ${run.result.exit}; stderr: ${run.result.stderr.toString('utf8')}`);
+
+  assert.equal(run.result.exit, 0);
+  assert.deepEqual(run.killed, [], 'the session left processes L0 killed');
+  const { init } = run;
+  assert.ok(init, 'the run printed no init record');
+  assert.deepEqual(init.mcp_servers.map(({ name, status }) => [name, status]), [['c480live', 'connected']]);
+  assert.ok(existsSync(join(directory, 'server', 'started')), 'the server never started');
+  assert.deepEqual(init.tools.filter((tool) => tool.startsWith('mcp__')), ['mcp__c480live__echo']);
+  assert.deepEqual(init.skills ?? [], [], 'skills reached the session');
+  // Claude Code's own five agents, as #473's report read them (c2), and the directory's one.
+  const agents = ['claude', 'Explore', 'general-purpose', 'Plan', 'statusline-setup', 'live'];
+  assert.deepEqual(init.agents.filter((agent) => !agents.includes(agent)), [], 'an agent from outside the directory reached the session');
+  assert.deepEqual(init.plugins.filter((plugin) => plugin.path !== 'builtin'), [], 'a user plugin reached the session');
+  assert.equal(init.memory_paths?.auto, undefined, 'auto-memory reached the session');
+  assert.deepEqual(run.events.filter((event) => event.type === 'system' && /^hook_/.test(event.subtype ?? '')), [], 'a hook ran');
+
+  const calls = callsOf(run.events);
+  assert.deepEqual(calls.filter(({ name }) => name === 'Bash'), [], 'the session made a Bash call');
+  const echo = calls.filter(({ name }) => name === 'mcp__c480live__echo');
+  assert.equal(echo.length, 1, JSON.stringify(calls));
+  assert.notEqual(echo[0].result?.is_error, true);
+  assert.match(textOf(echo[0].result), /HERON-mcpcall-480/);
+  for (const call of calls.filter(({ name }) => name.startsWith('mcp__claude_ai'))) {
+    assert.equal(call.result?.is_error, true, `the connector call ${call.name} succeeded`);
+  }
+  assert.match(run.answer, /HERON-agentend-480/);
+  assert.doesNotMatch(run.answer, /HERON-parent-480/);
+  assert.match(run.answer, /ABSENT/);
+});
