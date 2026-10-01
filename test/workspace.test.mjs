@@ -23,6 +23,7 @@ import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
 import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
+import { createHash } from 'node:crypto';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -1146,18 +1147,34 @@ test('given a root whose directory on disk is spelled Worktrees, on a volume tha
 
 /**
  * What a refusal must leave unchanged in `here`'s repository and under `disk`, the root on disk:
- * every ref git holds, `refs/remotes` included, every object, git worktree list --porcelain, and
- * every file and directory under the repository's working tree, its `.git` included, and under the
- * root.
+ * every ref git holds, `refs/remotes` included, every object, git worktree list --porcelain, and,
+ * as `held` reads them, everything under the repository's working tree, its `.git` included, and
+ * under the root.
  */
 function untouched(here, disk) {
   return {
     refs: gitIn(here.repository, 'for-each-ref'),
     objects: gitIn(here.repository, 'cat-file', '--batch-all-objects', '--batch-check'),
     worktrees: worktreeList(here.repository),
-    repository: contents(here.repository),
-    root: contents(disk),
+    repository: held(here.repository),
+    root: held(disk),
   };
+}
+
+/**
+ * `directory` itself and everything under it, each as its path relative to `directory`, its mode
+ * bits and type as `lstat` reads them, and, for a file, the SHA-256 digest of its bytes, or, for a
+ * symbolic link, where it points. A digest rather than the bytes keeps a failing comparison short.
+ */
+function held(directory) {
+  const entry = (path) => {
+    const stat = lstatSync(path);
+    const what = stat.isFile() ? createHash('sha256').update(readFileSync(path)).digest('hex') : stat.isSymbolicLink() ? `-> ${readlinkSync(path)}` : '';
+    return `${stat.mode.toString(8)} ${what}`;
+  };
+  const found = { '.': entry(directory) };
+  for (const name of readdirSync(directory, { recursive: true })) found[name] = entry(join(directory, name));
+  return found;
 }
 
 // proves R-WORK-13, R-WORK-14
