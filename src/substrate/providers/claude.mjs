@@ -24,22 +24,18 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
  *   "Claude requested permissions to use mcp__…, but you haven't granted it yet", and the session
  *   still exits 0. A version that honours an untrusted directory's own `permissions.allow` makes
  *   `rulesOf` redundant, never wrong.
- * - The built-in tools offered under these flags were `Task`, `Bash`, `CronCreate`, `CronDelete`,
- *   `CronList`, `DesignSync`, `Edit`, `ListAgents`, `Monitor`, `NotebookEdit`, `PushNotification`,
- *   `Read`, `RemoteTrigger`, `ReportFindings`, `ScheduleWakeup`, `SendMessage`, `TaskStop`,
- *   `ToolSearch`, `WebFetch`, `WebSearch`, `Workflow` and `Write`. A version adding a tool that acts
- *   through the owner's account offers it until `WITHHELD` names it.
+ * - The tools a session is offered, and which act through the owner's account, are `OWNERS`'s
+ *   measurement on 2.1.287, and the built-in plugins `BUILTINS`'s. Each moves on a patch release.
  *
- * Two sources the report found are not withheld here, and where each goes is recorded:
+ * Two sources the reports found are not withheld here, and where each goes is recorded:
  *
  * - **Background-task output.** It is written under `/tmp/claude-<uid>/<encoded working
  *   directory>/<session>/tasks/`, outside the directory, whatever `TMPDIR` says (c33, c34). The
  *   report moved it under the directory with the variable `CLAUDE_CODE_TMPDIR` (c35), and
  *   `invocation` answers variables to unset but none to set (ruling 5 on #467), so it cannot pass
  *   one.
- * - **The built-in plugins**, `cc-plugin-agents-md` and `cc-plugin-telemetry`, and on 2.1.287 a
- *   third, `cc-plugin-plugin-authoring`, read off the live run's `init` record. The report leaves
- *   withholding them to the owner ("Built-in plugins and bundled skills").
+ * - **The owner's account email**, which #473's report found in every session's context (c47),
+ *   and for which it found no withholder.
  */
 
 /** The provider name a role's `provider` key names this adapter by. */
@@ -71,20 +67,41 @@ export const tiers = { standard: 'sonnet', high: 'opus' };
 const UNSET = [];
 
 /**
- * The built-in tools withheld from every session, by `--disallowedTools`, which the report found
- * withholds a built-in tool (c36):
- *
- * - the worktree tools, which the report found offered under both flags ("The worktree tool");
- * - the tools that act through the owner's own account, which `R-SAFE-9` withholds unless the
- *   repository declares them. On Claude Code 2.1.287, read off #480's live run's `init` record,
- *   they are `RemoteTrigger`, which starts the owner's cloud routines, `PushNotification`, which
- *   notifies the owner's devices, and `DesignSync`, which writes to the owner's claude.ai designs.
- *   Which tool acts through the account is a judgment from what each does, not a measurement.
- *   Nothing here yet reads a repository's declaration of one, so each is withheld always.
- *
- * Claude in Chrome, which drives the owner's browser, is kept out by `--no-chrome`.
+ * The worktree tools, which #473's report found offered under both flags and withheld by
+ * `--disallowedTools` (c36). They are withheld from every session.
  */
-const WITHHELD = ['EnterWorktree', 'ExitWorktree', 'RemoteTrigger', 'PushNotification', 'DesignSync'];
+const WORKTREE = ['EnterWorktree', 'ExitWorktree'];
+
+/**
+ * Every tool Claude Code offers a session that acts through the owner's own sessions or login,
+ * which `R-SAFE-9` withholds unless the repository declares it. Measured on Claude Code 2.1.287,
+ * by the definitions a session's request carried and the tools its `init` record listed:
+ *
+ * - `ListAgents` lists "other local Claude sessions on this machine" and the account's cloud
+ *   sessions; #519's report found it listing four of the owner's interactive sessions;
+ * - `SendMessage` sends a message to any session `ListAgents` names;
+ * - `PushNotification` "sends a desktop notification in the user's terminal", and to their phone;
+ * - `RemoteTrigger` creates and manages "routines: cloud agents on a schedule" on the account;
+ * - `DesignSync` reads and updates claude.ai designs "through their claude.ai login".
+ *
+ * Every other tool in that record acts within the session or on its host as the session's own
+ * user. `Task` (the agent tool), `Workflow`, `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`,
+ * `CronList` and `ScheduleWakeup` act within the session; `Bash`, `Read`, `Edit`, `Write` and
+ * `NotebookEdit` on the host; `ToolSearch` loads a deferred tool's definition; `ReportFindings`
+ * renders findings in the host's own interface; `WebFetch` and `WebSearch` reach the public web.
+ * Claude in Chrome, which drives the owner's browser, is kept out by `--no-chrome`. A version adding
+ * a tool that acts through the account offers it until this list names it.
+ *
+ * A repository declares one by naming it in its own `permissions.allow`.
+ */
+const OWNERS = ['ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+
+/**
+ * The built-in plugins Claude Code loads under `--setting-sources project`, each withheld by
+ * `enabledPlugins` unless the directory's own settings enable it. The first two are #473's (c36);
+ * the third is the one #519's report found under 2.1.287.
+ */
+const BUILTINS = ['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', 'cc-plugin-plugin-authoring@builtin'];
 
 /** The permission lists carried across from the directory's own settings, and nothing else. */
 const RULES = ['allow', 'deny', 'ask'];
@@ -117,19 +134,13 @@ function under(path, directory) {
 }
 
 /**
- * The permission rules `directory`'s own `.claude/settings.json` declares, as `{ allow, deny, ask }`
- * holding each it declares, or undefined where it declares none.
- *
- * A `-p` session ignores an untrusted directory's own `permissions.allow` and honours the same
- * rule passed in `--settings` (report, "A command the directory's settings do not allow"; c38,
- * c42). So the consumer's own rules decide, as ruling 1 Q1 has them decide, only once they are
- * carried across. A mode or a directory in the same block is not, since either would skip or
- * widen the checks. A file that is no JSON object is refused, because the CLI would ignore it in
- * silence and its hooks with it.
+ * What `directory`'s own `.claude/settings.json` declares, as a JSON object, or an empty one where
+ * there is no such file. A file that is no JSON object is refused, because the CLI would ignore it
+ * in silence and its hooks with it.
  */
-function rulesOf(directory) {
+function declaredIn(directory) {
   const file = join(directory, '.claude', 'settings.json');
-  if (!existsSync(file)) return undefined;
+  if (!existsSync(file)) return {};
   let declared;
   try {
     declared = JSON.parse(readFileSync(file, 'utf8'));
@@ -139,6 +150,20 @@ function rulesOf(directory) {
   if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
     throw new Error(`${file} holds no JSON object, so the Claude Code adapter started nothing`);
   }
+  return declared;
+}
+
+/**
+ * The permission rules `declared` holds, as `{ allow, deny, ask }` holding each it declares, or
+ * undefined where it declares none.
+ *
+ * A `-p` session ignores an untrusted directory's own `permissions.allow` and honours the same
+ * rule passed in `--settings` (#473's report, "A command the directory's settings do not allow";
+ * c38, c42). So the consumer's own rules decide, as ruling 1 Q1 has them decide, only once they are
+ * carried across. A mode or a directory in the same block is not, since either would skip or
+ * widen the checks.
+ */
+function rulesOf(declared) {
   const rules = Object.fromEntries(RULES.filter((list) => Array.isArray(declared.permissions?.[list])).map((list) => [list, declared.permissions[list]]));
   return Object.keys(rules).length === 0 ? undefined : rules;
 }
@@ -185,7 +210,11 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
     throw new Error(`the directory ${directory} lies under a path holding a glob character, as ${globbed} does, so its \`claudeMdExcludes\` entries would match other files`);
   }
   const mcp = join(directory, '.mcp.json');
-  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, permissions: rulesOf(directory) };
+  const declared = declaredIn(directory);
+  const allowed = rulesOf(declared)?.allow ?? [];
+  const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !allowed.includes(tool))];
+  const enabledPlugins = Object.fromEntries(BUILTINS.filter((id) => declared.enabledPlugins?.[id] !== true).map((id) => [id, false]));
+  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: rulesOf(declared) };
   return {
     command: 'claude',
     args: [
@@ -194,7 +223,8 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
       '--strict-mcp-config', ...(existsSync(mcp) ? ['--mcp-config', mcp] : []),
       '--setting-sources', 'project',
       '--settings', JSON.stringify(settings),
-      '--disallowedTools', WITHHELD.join(','),
+      '--disallowedTools', withheld.join(','),
+      '--no-session-persistence',
       '--disable-slash-commands',
       '--no-chrome',
       '--append-system-prompt-file', file,

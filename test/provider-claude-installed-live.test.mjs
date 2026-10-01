@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { AGENT, SESSION, callsOf, forgetting, pastRefusing, put, scratch, session, skip } from './claude-live.mjs';
+import { AGENT, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, withheldBy, put, scratch, session, skip } from './claude-live.mjs';
 import { installFromTarball } from './installed-rigger.mjs';
 import { onPath } from './on-path.mjs';
 
@@ -46,6 +46,9 @@ test('a live dispatch through the installed package loads the consumer\'s skill 
 
   assert.equal(run.result.exit, 0);
   assert.deepEqual(run.killed, [], 'the session left processes L0 killed');
+  assert.deepEqual(run.init.plugins, [], 'a plugin the directory does not declare reached the session');
+  assert.deepEqual(run.init.tools.filter((tool) => withheldBy(run.args).includes(tool)), [], 'a withheld tool reached the session');
+  assert.equal(existsSync(transcriptsOf(consumer)), false, 'the session left a transcript in the owner\'s home');
   assert.deepEqual(callsOf(run.events).filter(({ name }) => name === 'Bash'), [], 'the session made a Bash call');
   assert.ok(existsSync(join(base, 'consumer-hook-ran')), 'the consumer\'s hook did not run');
   assert.equal(existsSync(join(base, 'package-hook-ran')), false, 'the package\'s hook ran');

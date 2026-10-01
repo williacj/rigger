@@ -207,16 +207,52 @@ test('a settings file that is no JSON object is refused, naming the file, since 
   await assert.rejects(invoked(repo), (failure) => failure.message.includes(join(repo.directory, '.claude', 'settings.json')));
 });
 
-test('the invocation withholds the tools that act through the owner\'s own account', async (t) => {
-  // `R-SAFE-9`: a built-in tool that acts through the owner's own sessions or login counts as
-  // declared only where the repository declares it. Claude Code 2.1.287 offers three, read off
-  // #480's live run's `init` record: `RemoteTrigger` starts the owner's cloud routines,
-  // `PushNotification` notifies the owner's devices, and `DesignSync` writes to the owner's
-  // claude.ai designs. `--no-chrome` keeps out Claude in Chrome, which drives the owner's browser.
+/**
+ * The tools Claude Code 2.1.287 offers a session that act through the owner's own sessions or
+ * login, each by what its own definition says it does, as a session's request carried it:
+ * `ListAgents` lists "other local Claude sessions on this machine" and the account's cloud
+ * sessions; `SendMessage` sends to any of them; `PushNotification` "sends a desktop notification in
+ * the user's terminal" and to their phone; `RemoteTrigger` creates "routines: cloud agents on a
+ * schedule"; `DesignSync` reads and updates claude.ai designs "through their claude.ai login".
+ */
+const OWNERS = ['ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+
+test('the invocation withholds every tool that acts through the owner\'s own sessions or login', async (t) => {
+  // `R-SAFE-9`: such a tool counts as declared only where the repository declares it. #519's report
+  // found a `-p` session calling `ListAgents` and listing four of the owner's interactive sessions.
+  // `--no-chrome` keeps out Claude in Chrome, which drives the owner's browser.
   const { args } = await invoked(consumer(t));
   const withheld = after(args, '--disallowedTools').split(',');
-  for (const tool of ['RemoteTrigger', 'PushNotification', 'DesignSync']) assert.ok(withheld.includes(tool), tool);
+  for (const tool of OWNERS) assert.ok(withheld.includes(tool), tool);
   assert.ok(args.includes('--no-chrome'));
+});
+
+test('a tool acting through the owner\'s account that the directory\'s own settings allow is not withheld', async (t) => {
+  // The repository declares such a tool by naming it in its own permission rules, which the
+  // invocation hands the session. The others stay withheld.
+  const repo = consumer(t);
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['SendMessage'] } });
+  const withheld = after((await invoked(repo)).args, '--disallowedTools').split(',');
+  assert.equal(withheld.includes('SendMessage'), false);
+  for (const tool of OWNERS.filter((each) => each !== 'SendMessage')) assert.ok(withheld.includes(tool), tool);
+});
+
+test('the invocation withholds every built-in plugin the directory does not enable', async (t) => {
+  // #473's report withheld its two built-in plugins by `enabledPlugins` (c36), and #519's report
+  // found a third under `--setting-sources project` on 2.1.287, `cc-plugin-plugin-authoring`.
+  const repo = consumer(t);
+  const builtins = ['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', 'cc-plugin-plugin-authoring@builtin'];
+  assert.deepEqual(settings((await invoked(repo)).args).enabledPlugins, Object.fromEntries(builtins.map((id) => [id, false])));
+  put(repo.directory, '.claude/settings.json', { enabledPlugins: { 'cc-plugin-telemetry@builtin': true } });
+  const enabled = settings((await invoked(repo)).args).enabledPlugins;
+  assert.equal(Object.hasOwn(enabled, 'cc-plugin-telemetry@builtin'), false, 'a plugin the directory enables is switched off');
+  assert.equal(enabled['cc-plugin-plugin-authoring@builtin'], false);
+});
+
+test('the invocation keeps the session\'s transcript off disk', async (t) => {
+  // `claude --help`: `--no-session-persistence` means sessions "will not be saved to disk", which
+  // would otherwise land under the owner's `~/.claude/projects/`, outside the directory.
+  assert.ok((await invoked(consumer(t))).args.includes('--no-session-persistence'));
 });
 
 test('the invocation withholds the worktree tools and every bundled skill', async (t) => {

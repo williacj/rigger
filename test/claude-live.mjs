@@ -52,8 +52,14 @@ export function scratch(t) {
  * report shows. The removal names that one directory, which the run made, and nothing else.
  */
 export function forgetting(t, directory) {
-  t.after(() => rmSync(join(homedir(), '.claude', 'projects', directory.replace(/[^a-zA-Z0-9]/g, '-')), { recursive: true, force: true }));
+  t.after(() => rmSync(transcriptsOf(directory), { recursive: true, force: true }));
 }
+
+/** Where Claude Code keeps the transcripts of sessions run in `directory`, as `forgetting` names it. */
+export const transcriptsOf = (directory) => join(homedir(), '.claude', 'projects', directory.replace(/[^a-zA-Z0-9]/g, '-'));
+
+/** The tools the invocation `args` withhold by `--disallowedTools`. */
+export const withheldBy = (args) => args[args.indexOf('--disallowedTools') + 1].split(',');
 
 /** Writes `content` at `path` under `directory`, making its parents. */
 export function put(directory, path, content) {
