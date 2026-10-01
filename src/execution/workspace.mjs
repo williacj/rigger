@@ -1,8 +1,9 @@
 // ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, and makes
-// the workspace fresh from the main line for an attempt, through L0's workspace adapter.
+// the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
+// at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
-import { chmodSync, lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { chmodSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
@@ -58,7 +59,7 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, card, path, cause);
+      throw notMade(events, `card #${card}'s workspace`, { path }, cause);
     }
   };
   const removed = await step(async () => {
@@ -71,6 +72,138 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
   await step(() => adapter.make(path, branch));
   recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch };
+}
+
+/**
+ * Makes the directory judge `role` of card `card` runs in, `<root>/judges/<topic>/<role>`, and
+ * settles on its `path` and the paths of the two worktrees it holds, each at a detached commit:
+ * `main` at the commit the main line held on `origin` as L1 made it, and `head` at `head`, the
+ * pull request's head commit L1 was handed, fetched from `origin` (the owner's O3; ruling 1 Q3).
+ *
+ * L1 records under the card a `workspace.made` carrying `role`, the path and both commits, and a
+ * `workspace.failed` carrying `role`, the path and why (ruling 2 P5). Every failure rejects with
+ * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
+ * event on the way, as `makeWorkspace` does.
+ */
+export async function makeJudgeDirectory({ root, topic, card, role, head, repository, sink }) {
+  const events = sink.emitter({ layer: 'L1', card });
+  const path = join(root, 'judges', topicFor(topic, card), role);
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
+  const trees = { main: join(path, 'main'), head: join(path, 'head') };
+  /** Runs `work`, rejecting as a judge's directory L1 could not make where it rejects. */
+  const step = async (work) => {
+    try {
+      return await work();
+    } catch (cause) {
+      throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
+    }
+  };
+  const found = await step(() => judgeChecked({ adapter, path, repository }));
+  const main = await step(async () => {
+    const { commit } = await adapter.fetchMainLine();
+    const { held, why } = await adapter.holdsAfterFetch(head);
+    if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
+    return commit;
+  });
+  await step(() => judgeCleared(adapter, found));
+  if (found.present) recorded(events, card, 'workspace.removed', { role, path });
+  await step(async () => {
+    await adapter.makeDetached(trees.main, main);
+    await adapter.makeDetached(trees.head, head);
+  });
+  recorded(events, card, 'workspace.made', { role, path, main, head });
+  return { path, ...trees };
+}
+
+/**
+ * Checks what is at a judge's directory, `path`, against `R-WORK-20` to `R-WORK-23`, making no git
+ * call that writes, so a refusal changes nothing: no ref, no object, no file. It runs before any
+ * fetch for that reason. It hands back the directory's real path, whether anything is there, the
+ * worktrees in it, and the registrations L1 must unlock first.
+ *
+ * Nothing there passes. Otherwise the path must be a directory, not a symbolic link, and everything
+ * in it a directory L0 finds a linked worktree of the repository, which git lists at a detached
+ * commit, unlocked or locked with `ADDING`, the reason Rigger's own `git worktree add` writes while
+ * it makes one (#423's ruling 9); neither the path nor anything inside it, by real path, may be the
+ * worktree git reports for `repository`, the worktree L1 was handed; and git may list no other
+ * worktree of the repository inside it. A registration inside it whose directory is gone passes
+ * where it is unlocked, which the make's prune forgets, or detached and locked with `ADDING`, which
+ * L1 unlocks; any other lock is a person's, and fails. Anything else fails naming the path, as does
+ * a path whose real path or contents L1 cannot read, since L1 cannot tell what is there.
+ *
+ * Every path is compared by the file system's own real path, `realpath(3)`, on both sides, since
+ * git keeps the spelling a worktree was added through and a volume that folds case answers to
+ * either.
+ */
+async function judgeChecked({ adapter, path, repository }) {
+  const leaves = (why) => new Error(`${path} ${why}, so L1 leaves it as it is`);
+  /** `there`'s real path, or, where nothing is there, its parent's joined to its name. */
+  const real = (there) => {
+    try {
+      return realpathSync.native(there);
+    } catch (error) {
+      if (error.code !== 'ENOENT' || dirname(there) === there) throw leaves(`cannot be read at ${there}: ${error.message}`);
+      return join(real(dirname(there)), basename(there));
+    }
+  };
+  let there;
+  try {
+    there = lstatSync(path);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw leaves(`cannot be read: ${error.message}`);
+  }
+  if (there !== undefined && !there.isDirectory()) throw leaves('is not a directory');
+  const own = real(path);
+  let names = [];
+  if (there !== undefined) {
+    try {
+      names = readdirSync(own);
+    } catch (error) {
+      throw leaves(`cannot be read: ${error.message}`);
+    }
+  }
+  const inside = (at) => {
+    const from = relative(own, at);
+    return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
+  };
+  const handed = realpathSync.native(await adapter.topLevel());
+  if (handed === own || inside(handed)) throw leaves(`holds the worktree L1 was handed as the repository, at ${repository}`);
+  const listed = (await adapter.listing()).map((record) => ({ ...record, real: real(record.at) }));
+  const trees = [];
+  const unlocking = [];
+  /** Adds `record`'s worktree to those L1 unlocks where `ADDING` locks it, failing on any other lock. */
+  const lockOf = (record) => {
+    if (record.locked === undefined) return;
+    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`);
+    unlocking.push(record.real);
+  };
+  for (const name of names) {
+    const tree = join(own, name);
+    if (!lstatSync(tree).isDirectory() || !(await adapter.isWorktree(tree))) throw leaves(`holds ${tree}, which is not a worktree of the repository`);
+    const record = listed.find((each) => each.real === tree);
+    if (record === undefined) throw leaves(`holds ${tree}, a worktree where git lists no worktree of the repository`);
+    if (!record.detached) throw leaves(`holds ${tree}, a worktree of the repository on the branch ${record.branch}, not at a detached commit`);
+    lockOf(record);
+    trees.push(tree);
+  }
+  for (const record of listed.filter((each) => inside(each.real) && !trees.includes(each.real))) {
+    if (present(record.real)) throw leaves(`holds another worktree of the repository, at ${record.at}`);
+    lockOf(record);
+  }
+  return { real: own, present: there !== undefined, trees, unlocking };
+}
+
+/**
+ * Clears the judge's directory `judgeChecked` passed: unlocks each registration it named, then
+ * makes the directory removable, as `writable` says, and removes each worktree in it and the
+ * directory itself.
+ */
+async function judgeCleared(adapter, { real, present: there, trees, unlocking }) {
+  for (const tree of unlocking) await adapter.unlock(tree);
+  if (!there) return;
+  writable(real);
+  for (const tree of trees) await adapter.remove(tree);
+  rmdirSync(real);
 }
 
 /**
@@ -208,21 +341,23 @@ function present(path) {
 }
 
 /**
- * The failure for card `card`'s workspace at `path`, which `cause` kept L1 from making, once L1
- * has recorded it through `events`, or has added to it that the sink refused the record.
+ * The failure for `what`, at `fields.path`, which `cause` kept L1 from making, once L1 has recorded
+ * it through `events` as a `workspace.failed` carrying `fields` and why, or has added to it that the
+ * sink refused the record.
  *
  * Where the sink refused an event, L0's that `cause` carries or L1's `workspace.failed`, the
  * failure has the code `EVENT_REFUSED` and carries each such event in `unrecorded`: a refused
  * event is the halt, not a workspace L1 could not make (the owner's O4 on #423).
  */
-function notMade(events, card, path, cause) {
-  const failure = Object.assign(new Error(`L1 could not make card #${card}'s workspace at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
+function notMade(events, what, fields, cause) {
+  const { path } = fields;
+  const failure = Object.assign(new Error(`L1 could not make ${what} at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
   const unrecorded = cause.code === EVENT_REFUSED ? [...cause.unrecorded] : [];
   try {
-    events.emit('workspace.failed', { path, reason: cause.message });
+    events.emit('workspace.failed', { ...fields, reason: cause.message });
   } catch (refusal) {
     failure.message += `\nand the sink refused L1's workspace.failed, so it went unrecorded: ${refusal.message}`;
-    unrecorded.push({ event: 'workspace.failed', path, reason: cause.message, cause: refusal });
+    unrecorded.push({ event: 'workspace.failed', ...fields, reason: cause.message, cause: refusal });
   }
   if (unrecorded.length > 0) Object.assign(failure, { code: EVENT_REFUSED, unrecorded });
   return failure;
