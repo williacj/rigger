@@ -1,0 +1,1 @@
+{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":"Y3Vyc29yOnYyOpHPAAAAARh2c6w="},"nodes":[{"number":503,"state":"MERGED","headRefOid":"2241b82e646247db82dae465dd0d2fbcb7e098e0","baseRefName":"main","headRepository":{"nameWithOwner":"williacj/rigger"}}]}}}}
