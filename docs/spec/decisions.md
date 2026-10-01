@@ -203,7 +203,7 @@ measured until it has already been allowed, so the evidence only ever argues one
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
    the commit rule 1 promotes, so the engine promoted at the boundary is the one the exit run
-   tested. A commit that changes no file the packed tarball carries does not move the closing
+   tested. A commit that leaves the packed tarball's contents unchanged does not move the closing
    commit, so a milestone's exit-run evidence can merge after the run.
 
 ### Notes
