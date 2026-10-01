@@ -168,7 +168,7 @@ The baseline c1 carried none of these: only `--model haiku` and the output flags
 | `head`'s settings hook ran | no: no `head/HOOKRAN-*` file after any run; `main`'s hook files appeared | c2 to c5 .files |
 | The planted agent dispatched | no, and no subagent started. The session called `ListAgents`, which lists peer sessions, and said it could not find the agent (c4). Asked to use any tool, it wrote a `Workflow` script calling `agent(..., { agentType: 'c519-head-agent' })`, refused as "Review dynamic workflow before running" (c12) | c4, c12: no message with a `parent_tool_use_id`; c12 `permission_denials` lists the `Workflow` call |
 | `main`'s skill read by path | yes: `OSPREY-main-skill-1102` and `OSPREY-main-skillbody-1112` quoted | c5 |
-| Work in `head` | read `OSPREY-headfile-2299`; wrote the file; `npm test` ran with `head` as its working directory, which head/npm-test-cwd.txt shows. The tool result was not an error and printed no exit code, and the session reported 0. `permission_denials` empty | c5 and c5.files |
+| Work in `head` | read `OSPREY-headfile-2299`; wrote the file; `npm test` ran with `head` as its working directory, which head/npm-test-cwd.txt shows. The tool result was not an error and printed no exit code, and the session reported 0. `permission_denials` empty, so no permission prompt was left unanswered | c5 and c5.files |
 | `main`'s `CLAUDE.md`, hooks, .mcp.json | `CLAUDE.md` loaded; `SessionStart`, `UserPromptSubmit` and `PreToolUse` hooks ran; `c519main` connected, source `dynamic`. `main`'s skill and agent were not listed, because the flags withhold all skills and the agent tool | c2 to c5 |
 
 The `init` record from c2, abridged:
@@ -189,7 +189,7 @@ The `init` record from c2, abridged:
 | `head`'s settings hook ran | no `head/HOOKRAN-*` file after any run | c6 to c8, c13 to c19 .files |
 | The planted agent dispatched | no, and no subagent started: "not in the list of available agent types". Asked to use any tool, it checked `ListAgents` and gave the same answer, trying no workflow | c7, c13 |
 | `main`'s skill read by path | yes: both markers quoted | c8, c15 |
-| Work in `head` | read; wrote; `npm test` ran in `head` (head/npm-test-cwd.txt), and the tool added "Shell cwd was reset to `<main>`". The tool result printed no exit code: haiku reported 0, and sonnet said the output "didn't show an exit code". `permission_denials` empty | c8, c15 and their .files |
+| Work in `head` | read; wrote; `npm test` ran in `head` (head/npm-test-cwd.txt), and the tool added "Shell cwd was reset to `<main>`". The tool result printed no exit code: haiku reported 0, and sonnet said the output "didn't show an exit code". `permission_denials` empty, so no permission prompt was left unanswered | c8, c15 and their .files |
 | A failing command's exit code | reported by the tool as `Exit code 1`. sonnet appended ` .` to the command, so the script's `exit 3` failed with "too many arguments" and exited 1 | c19 |
 | `main`'s `CLAUDE.md`, hooks, .mcp.json | all three loaded as with no flag; `c519main` connected, source `dynamic` where c1 had source `project`. `main`'s skill and agent were listed too | c6 |
 
@@ -220,7 +220,7 @@ needing approval. And c16's `cd <head> && npm test; echo "npm-exit=$?"` was refu
 | `head`'s settings hook ran | no `head/HOOKRAN-*` file | c9 to c11 .files |
 | The planted agent dispatched | no, and no subagent started: "not listed in the available agent types" | c10 |
 | `main`'s skill read by path | yes | c11 |
-| Work in `head` | read; wrote; `npm test` ran in `head`, with no cwd reset. The session reported exit 0 from a non-error result. `permission_denials` empty | c11 and c11.files |
+| Work in `head` | read; wrote; `npm test` ran in `head`, with no cwd reset. The session reported exit 0 from a non-error result. `permission_denials` empty, so no permission prompt was left unanswered | c11 and c11.files |
 | `main`'s `CLAUDE.md`, hooks, .mcp.json | as route B | c9 |
 
 ## `main`'s sources with no route flag
