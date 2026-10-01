@@ -30,3 +30,11 @@ where that read listed the zombie while the leader, whose pid is the group's, an
 probe at the revised head shows the read happening with the leader answering, and the event that
 follows is `timeout.killed` for the leader. Every kill read after the leader was gone found it
 not answering, and none of them can write the mark.
+
+**Uncutting the census removed the only test of a behaviour.** The engineer judge found that, at
+the base, the leader-and-zombie test was the only test that failed when the census's refusal of a
+read hiding a live leader was replaced with `false`. Once that test read its census uncut, the
+whole suite passed under the mutation. A test-quality card must not leave the suite proving less
+than before. So a new test cuts every read of the group to the zombie, as the old test did, and
+asserts that the kill of the group is recorded. Its census mark, like the kill mark, counts only
+while the leader answers signal 0. Under the mutation it is the test that fails.
