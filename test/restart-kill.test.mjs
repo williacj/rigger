@@ -17,6 +17,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
+import { leaveWorking } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -97,12 +98,13 @@ function dispatchedCommand(directory, { exits = false } = {}) {
 /**
  * Starts the engine that stands in for Rigger mid-dispatch, a Node process of its own running one
  * pull of L3's loop over `world`'s board, with the fake `gh` first on its PATH, whose dispatch
- * runs `command` and reads the process table through `ps` where it is given. Its command line
- * names the scratch directory, so the teardown ends it.
+ * runs `command`, in `workspace` as the dispatch's directory where it is given, and reads the
+ * process table through `ps` where it is given. Its command line names the scratch directory, so
+ * the teardown ends it.
  */
-function startEngine(world, command, { ps } = {}) {
+function startEngine(world, command, { ps, workspace } = {}) {
   const harness = new URL('./mid-dispatch-engine.mjs', import.meta.url).href;
-  const given = { directory: world.directory, repository: world.repository, command, ps };
+  const given = { directory: world.directory, repository: world.repository, command, ps, workspace };
   const code = `const { engine } = await import(${JSON.stringify(harness)});\nawait engine(${JSON.stringify(given)});`;
   const engine = spawn(process.execPath, ['--input-type=module', '-e', code], {
     cwd: world.repository,
@@ -126,8 +128,8 @@ function groupRecorded(world) {
 }
 
 /**
- * The engine killed outright mid-dispatch: started over `world` on `command`, reading the process
- * table through `ps` where it is given, and sent SIGKILL once the command and its child have both
+ * The engine killed outright mid-dispatch: started over `world` on `command`, in `workspace` where
+ * it is given, reading the process table through `ps` where it is given, and sent SIGKILL once the command and its child have both
  * signalled they are running and the record names the command's group. Settles once the engine
  * has exited, on the pids of the command and its child.
  *
@@ -138,8 +140,8 @@ function groupRecorded(world) {
  * no restart ends: the window the owner left open (round 4, and the architect's ruling 3, §6, on
  * #332), as the note beside the entry's write in `src/execution/run.mjs` records.
  */
-async function killedMidDispatch(t, world, command, { ps } = {}) {
-  const engine = startEngine(world, command, { ps });
+async function killedMidDispatch(t, world, command, { ps, workspace } = {}) {
+  const engine = startEngine(world, command, { ps, workspace });
   const exited = once(engine, 'exit');
   await until(() => (existsSync(join(world.directory, 'ready')) && groupRecorded(world)) || engine.exitCode !== null, t);
   assert.ok(existsSync(join(world.directory, 'ready')) && groupRecorded(world), `the engine ended before its dispatch ran and was recorded: ${engine.said}`);
@@ -250,6 +252,25 @@ test('after that restart through rigger once, the stream holds each kill under t
 
 // proves R-STATE-10, R-STATE-12
 test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
+
+// proves R-STATE-17, R-STATE-10
+test('given the engine SIGKILLed while a dispatch runs with a process that left its group, working under the dispatch\'s directory, rigger once started afterwards leaves that process not alive when its first board read reaches the forge stand-in, and records its kill first', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10)]);
+  const workspace = join(world.directory, 'work');
+  mkdirSync(workspace);
+  // The process that leaves the group writes its pid to `child.pid`, which the `gh` in `first/`
+  // reads at its first call. The command then waits on it, which holds the command running.
+  const command = fixture(world.directory, 'command', ['echo $$ > "$here/command.pid"', leaveWorking('work/sub', 'child'), ': > "$here/ready"', 'wait'].join('\n'));
+  const pids = await killedMidDispatch(t, world, command, { workspace });
+  assert.equal(alive(pids.child), true, 'the process that left the group did not outlive the engine, so the test proves nothing');
+
+  const ran = await restart(world, 'once');
+
+  const first = atFirstCall(world);
+  assert.deepEqual(first.alive, [], ran.stderr);
+  assert.match(first.call, /^call api graphql /, 'the first call is a board read');
+  assertKillsFirst(world, [pids.command, pids.child]);
+});
 
 /**
  * Opens the FIFO `name` in `directory` for writing, and closes it, which lets its reader go on. The

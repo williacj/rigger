@@ -180,6 +180,20 @@ export const leave = (program, name, image = 'tail') => [
   `while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx '${image} *'; do :; done`,
 ].join('\n');
 
+/**
+ * The lines of a fixture that start a `tail` working in `$here/<where>`, which they make, outside
+ * the command's process group, so that it runs until killed and holds the command's output open,
+ * and write its pid to `$here/<name>.pid` once it runs `tail`. It follows `$here/hold`, so it names
+ * the scratch directory in its command line. On macOS no `setsid` binary exists, and perl's
+ * `setpgrp(0, 0)` leaves the group.
+ */
+export const leaveWorking = (where, name) => [
+  `/bin/mkdir -p "$here/${where}"`,
+  `(cd "$here/${where}" && exec /usr/bin/perl -e 'setpgrp(0, 0) or die "leave: $!"; open(my $f, ">", "$ARGV[0]/${name}.tmp") or die; print $f $$; close $f; rename "$ARGV[0]/${name}.tmp", "$ARGV[0]/${name}.pid" or die; exec "/usr/bin/tail", "-f", "$ARGV[0]/hold"' "$here") &`,
+  `while [ ! -f "$here/${name}.pid" ]; do :; done`,
+  `while ! /bin/ps -o ucomm= -p "$(/bin/cat "$here/${name}.pid")" | /usr/bin/grep -qx 'tail *'; do :; done`,
+].join('\n');
+
 /** A survivor that runs until killed: `tail` following a file nothing writes to. */
 export const TAIL = '/usr/bin/tail -f "$here/hold"';
 

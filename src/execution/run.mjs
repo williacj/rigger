@@ -31,6 +31,12 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * whose real path lies outside the workspace starts nothing, as a command that never started
  * (the architect's ruling 1, A7 and A8, on #423). Every `dispatch.start` carries the timeout.
  *
+ * The workspace's real path is the dispatch's directory. L1 hands it to L0, whose census kills
+ * every process of Rigger's own user working there once the group is empty, and records it in the
+ * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). A workspace that is
+ * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
+ * started, naming the directory. `lsof` stands in for L0's census tool where the caller gives it.
+ *
  * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
  * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
  * what is left of its group, and settles; L1 removes the entry, appends `dispatch.timeout` where
@@ -65,7 +71,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, workspace, env, timeout, ps, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, cwd, workspace, env, timeout, ps, lsof, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -93,7 +99,9 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     } catch (cause) {
       throw Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED });
     }
-    const escape = workspace === undefined ? undefined : escapes(cwd, workspace);
+    // The dispatch's directory, its workspace's real path, as the record names it and L0's census
+    // of it compares.
+    const { escape, place } = workspace === undefined ? {} : placed(cwd, workspace, directory);
     if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED });
     result = await runCommand({
       command,
@@ -104,7 +112,9 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
       env: workspace === undefined ? env : gitEnvironment(env),
       timeout,
       ps,
+      lsof,
       readTimeout,
+      directory: place,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
       onGroup: (group, started) => {
         // The window this leaves open. L0 spawns, then hands the group over in the same step, and
@@ -120,7 +130,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
         // dispatch's processes, so a restart could find them without the record. #335 read the
         // marker only from binaries that are not Apple's, and every survivor the Claude CLI left
         // was one of Apple's (`docs/spikes/what-leaves-the-process-group.md`).
-        addGroup(directory, { group, started, dispatch: id, card });
+        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place }) });
         recorded = group;
       },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
@@ -216,6 +226,28 @@ function escapes(cwd, workspace) {
 }
 
 /**
+ * The real path of `workspace` as `place`, the directory of a dispatch working in `cwd` there, or
+ * as `escape` why it cannot be one now: `cwd` is no directory in it (`escapes`), the workspace
+ * cannot be resolved, or an entry in the record in `directory` names a directory that is it, or
+ * that it lies under, or that lies under it. L0's census of either would end the other's processes
+ * (`ARCHITECTURE.md`, "Failure model"). Paths are compared by real path, as `escapes` compares them.
+ */
+function placed(cwd, workspace, directory) {
+  const escape = escapes(cwd, workspace);
+  if (escape !== undefined) return { escape };
+  let place;
+  try {
+    place = realpathSync.native(workspace);
+  } catch (cause) {
+    return { escape: `its workspace ${workspace} cannot be read: ${cause.message}` };
+  }
+  const within = (inner, outer) => inner === outer || inner.startsWith(`${outer}${sep}`);
+  const holder = readGroups(directory).find((entry) => entry.workspace !== undefined && (within(place, entry.workspace) || within(entry.workspace, place)));
+  if (holder === undefined) return { place };
+  return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}` };
+}
+
+/**
  * `refusal`, L1's failure for its unrecorded events, carried alongside the `failure` the dispatch
  * already had, where it had one. L0's own refusal takes L1's unrecorded events onto it, so the
  * caller reads every unrecorded event in one place. Any other failure becomes the refusal's cause,
@@ -254,8 +286,9 @@ function refused(id, card, unrecorded, result) {
 /**
  * Ends what a dead engine left: each process group the record in `directory` names, where L0
  * confirms the group is the one recorded, recording each kill through `sink` under the entry's
- * dispatch and card (`ARCHITECTURE.md`, "Failure model"). `ps` and `readTimeout` stand in for L0's
- * own where the caller gives them.
+ * dispatch and card (`ARCHITECTURE.md`, "Failure model"), and where the entry names the dispatch's
+ * directory, every process working there. `ps`, `lsof` and `readTimeout` stand in for L0's own
+ * where the caller gives them.
  *
  * A record that cannot be read as entries fails whole, naming its file, before anything is killed.
  * Every entry is tried whatever became of those before it. Afterwards the record keeps only the
@@ -271,11 +304,11 @@ function refused(id, card, unrecorded, result) {
  * names ("Failure model"). Where it cannot be removed, the call appends an L1 `record.partial-kept`
  * event naming it and why, and fails on that alone only where the sink refuses the event.
  */
-export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
+export async function killRecordedGroups({ directory, sink, ps, lsof, readTimeout }) {
   const entries = readGroups(directory);
   let failure;
   try {
-    await killEntries({ directory, sink, ps, readTimeout, entries });
+    await killEntries({ directory, sink, ps, lsof, readTimeout, entries });
   } catch (thrown) {
     failure = thrown;
   }
@@ -298,16 +331,16 @@ export async function killRecordedGroups({ directory, sink, ps, readTimeout }) {
 }
 
 /** Acts on each of the record's `entries`, as `killRecordedGroups` says. */
-async function killEntries({ directory, sink, ps, readTimeout, entries }) {
+async function killEntries({ directory, sink, ps, lsof, readTimeout, entries }) {
   if (entries.length === 0) return;
   const kept = [];
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
-    const { group, started, dispatch, card } = entry;
+    const { group, started, dispatch, card, workspace } = entry;
     const under = named(dispatch, card);
     try {
-      await killRecordedGroup({ group, started, ps, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, directory: workspace, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);
