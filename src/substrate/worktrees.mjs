@@ -197,11 +197,13 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * every missing directory leading to `path`. Onto a directory that is there and not empty, it
      * exits 128 with `fatal: '<path>' already exists`; with a commit the repository does not hold,
      * it exits 128 with `fatal: invalid reference: <commit>` and makes no directory, not even the
-     * leading ones. It names the worktree's
-     * administrative directory after `path`'s last name, adding a number where one of that name is
-     * already registered, so two judges' `main` trees never share one. Like `make`, it prunes first,
-     * since a registration whose directory was deleted without git refuses an add at its path, and a
-     * registration locked while `git worktree add` was killed is not pruned and so fails the add.
+     * leading ones. It names the worktree's administrative directory after `path`'s last name,
+     * adding a number where one of that name is already registered, so two judges' `main` trees
+     * never share one. Like `make`, it prunes first, since a registration whose directory was
+     * deleted without git refuses an add at its path, exiting 128 with `fatal: '<path>' is a missing
+     * but already registered worktree`. A registration locked with `initializing`, as a killed `git
+     * worktree add` leaves it, is not pruned, and the add exits 128 with `fatal: '<path>' is a
+     * missing but locked worktree`.
      */
     async makeDetached(path, commit) {
       await answer(['worktree', 'prune']);
