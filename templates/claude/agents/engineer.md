@@ -14,10 +14,10 @@ repository. Nothing here widens it; what follows is what is true of you in parti
 
 - **Finish against the acceptance.** The card's acceptance is the definition of done — not its
   title, and not your reading of it. Work every item.
-- **Write the test first.** Load `.claude/skills/tdd/` before the first test body.
-- **Work in the worktree you were given**, on its branch. Commit atomically and often, with
-  messages that say why.
+- **Work in the worktree you were given**, on its branch.
 - **Deliver the work as a pull request**, so a judge can read and rule on it before it lands.
+- **Dispatched by Rigger, you stop at a Self-hosting path.** Work that would change a path
+  `AGENTS.md`'s "Self-hosting" lists stops there: exit non-zero, naming it.
 
 ## What you never do
 
