@@ -52,6 +52,34 @@ test('the read runner sends `gh api <path>` given an explicit GET and nothing el
   }
 });
 
+test("the read runner sends `gh api <path> -X GET` carrying the header that asks for a pull request's diff", async () => {
+  // The one header a read needs: GitHub serves a pull request as its diff under this media type.
+  const args = ['api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'];
+  const send = recording();
+
+  await readRunner(args, { send });
+
+  assert.deepEqual(send.sent, [['gh', ...args]]);
+});
+
+test('the read runner refuses `gh api <path>` carrying any header but the diff media type, or that header anywhere but after `-X GET`, and sends nothing', async () => {
+  // The defect this catches is a runner admitting any `-H` once it admits one: a header can
+  // override the method, or ask for another media type than the diff.
+  const refused = [
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.raw'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '-H', 'X-HTTP-Method-Override: DELETE'],
+    ['api', 'rate_limit', '--method', 'GET', '-H', 'Accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '-H', 'Accept: application/vnd.github.diff', '-X', 'GET'],
+    ['api', 'rate_limit', '-X', 'POST', '-H', 'Accept: application/vnd.github.diff'],
+  ];
+  for (const args of refused) {
+    const send = recording();
+    await assert.rejects(readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
+    assert.deepEqual(send.sent, [], args.join(' '));
+  }
+});
+
 /** Forms of `gh api <path>` the read runner refuses: every one but an explicit GET alone. */
 const REFUSED_PATH_FORMS = [
   ['api', 'rate_limit'],
@@ -171,6 +199,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
   const forms = [
     ['api', 'rate_limit', '-X', 'GET'],
     ['api', 'rate_limit', '--method', 'GET'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'],
     ...REFUSED_PATH_FORMS.map((form) => form.map((word) => (word === 'body.json' ? body : word))),
     FLAG_IN_PATH_SLOT[0],
   ];

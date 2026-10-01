@@ -306,6 +306,9 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-SAFE-4 | An agent Rigger dispatches has the access of the account Rigger runs under, and no more. | the operating system | the operating system | |
 | R-SAFE-5 | Rigger never runs against the source tree it is running from. | the engine | the test suite | |
 | R-SAFE-6 | The role prompts, skills and hooks a consumer uses live in the consumer's repository. Rigger reads none of them from its own package at run time. | the engine | the test suite | |
+| R-SAFE-7 | An agent Rigger dispatches can use only the tools and connectors the consumer's repository declares. A tool in these rows is an action the agent CLI offers the agent. A connector is an outside service, such as mail or a shop, that the agent acts on through the owner's own sessions or login. What counts as declared: | the engine | the test suite | |
+| R-SAFE-8 | — a tool built into the agent CLI counts as declared unless the repository withholds it, except a tool `R-SAFE-9` names; | the engine | the test suite | |
+| R-SAFE-9 | — a connector, and a built-in tool that acts through the owner's own sessions or login, count as declared only where the repository declares them. Such a tool, for example, drives the owner's browser or desktop, or publishes as the owner. The agent never uses one the repository does not declare, even a connector the owner connected to their own account. | the engine | the test suite | |
 
 ## R-OPTION — what a consumer may leave out
 
