@@ -1,6 +1,7 @@
 # ABOUTME: The demo tape: `rigger once` claiming a card from a fake board, in a world
-# test/demo-world.sh builds outside the checkout, and exiting non-zero because nothing
-# dispatches before M2 and M4. Run from the checkout root as `vhs docs/demo.tape`; CI does.
+# test/demo-world.sh builds outside the checkout, making and provisioning the card's workspace,
+# and exiting non-zero naming that workspace because no maker runs before M4. Run from the
+# checkout root as `vhs docs/demo.tape`; CI does.
 
 Output docs/demo.gif
 # The screen as the recording ends, as text: what CI reads the claim, the message and the exit from.
