@@ -102,12 +102,8 @@ test('given a scratch directory holding a file and a directory whose write permi
 });
 
 test('given a process naming a scratch directory that the sweep cannot end, its teardown fails naming the process and leaves the directory', (t) => {
-  let asked = 0;
-  const unkillable = () => {
-    asked += 1;
-    if (asked > 1_000) throw new Error(`the teardown asked for the processes left ${asked} times, and would never have ended`);
-    return ['4242'];
-  };
+  // `sweep`'s own bound on its rounds, which test/process-fixtures.test.mjs holds, ends this.
+  const unkillable = () => ['4242'];
   const { directory, teardown } = held(t, unkillable);
   writeFileSync(join(directory, 'kept'), 'kept');
 
