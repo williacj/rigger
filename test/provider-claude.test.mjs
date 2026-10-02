@@ -223,6 +223,20 @@ test('given reach, a Bash rule the directory\'s settings declare for a compound 
   }
 });
 
+test('given reach whose real path holds a character a shell or a rule would read as more than a path, the invocation is refused, naming it', async (t) => {
+  // Codex's round-1 finding on #531: a real directory named `head;echo` made `Bash(cd …/head;echo)`,
+  // a rule for a compound line (#519's report, c17). A space or a quote would need quoting, which
+  // the session's `cd` would carry and the rule would not, and a glob character or `:` reads as
+  // pattern syntax in a rule.
+  const repo = consumer(t);
+  const base = scratch(t);
+  for (const name of ['head;echo', 'a b', 'x&&y', 'p|q', 's$t', "q'uote", 'g*lob', 'c:d', 'n\nl', 'b(r)']) {
+    const reached = join(base, name);
+    mkdirSync(reached);
+    await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(reached), name);
+  }
+});
+
 test('given reach naming a directory that does not exist, the invocation is refused, naming it', async (t) => {
   // A path that cannot be resolved fails safe: a rule on a spelling it does not resolve to was not
   // measured to match (#519's report, "What #520 must not assume").

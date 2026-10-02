@@ -198,6 +198,12 @@ function rulesOf(declared) {
 const COMPOUND = /&&|\|\||[;|]/;
 
 /**
+ * The characters a reached directory's real path may hold, so that `cd <head>` is one command a
+ * session types unquoted, and no rule reads part of the path as a separator, a glob or `:*`.
+ */
+const PLAIN = /^[A-Za-z0-9/._+-]+$/;
+
+/**
  * `rules` with the grant on each directory `reach` names added to its `allow` list, by route B of
  * #519's report ("Recommendation"): a `Read` and an `Edit` rule on the directory's real path, which
  * begins with `/`, so each rule begins `//`, Claude Code's form for an absolute path; and
@@ -210,7 +216,8 @@ const COMPOUND = /&&|\|\||[;|]/;
  * compound line admits nothing, not even that line (c16, c17, c19). Such a declared rule is
  * refused, naming it, rather than handed on as a grant it is not. A reached directory whose real
  * path cannot be read is refused, since a rule on a path it does not resolve to was not measured to
- * match.
+ * match; so is one whose real path holds a character outside `PLAIN`, which would make its `cd`
+ * rule compound, or one the session's quoted `cd` would not match.
  */
 function granting(rules, reach) {
   if (reach.length === 0) return rules;
@@ -218,7 +225,12 @@ function granting(rules, reach) {
   if (compound !== undefined) {
     throw new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`);
   }
-  const grants = reach.map((each) => realpathSync.native(each)).flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`, `Bash(cd ${head})`]);
+  const heads = reach.map((each) => realpathSync.native(each));
+  const unplain = heads.find((head) => !PLAIN.test(head));
+  if (unplain !== undefined) {
+    throw new Error(`the reached directory ${unplain} holds a character outside letters, digits and \`/._+-\`, so its \`cd\` rule would not name one plain command, and the Claude Code adapter started nothing`);
+  }
+  const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`, `Bash(cd ${head})`]);
   return { ...rules, allow: [...(rules?.allow ?? []), ...grants] };
 }
 
