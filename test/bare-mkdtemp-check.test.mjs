@@ -17,13 +17,25 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = 'temporary-directory.mjs';
 
 /**
- * Every `file:line` under `directory`, outside the helper, where the code names `mkdtempSync`: a
- * call, an import, an alias's source, a destructured key, a namespace's property, or a computed
- * member whose key is the string `mkdtempSync`, quoted or as a template. A file read as tokens
- * rather than lines, so a call split across lines is found, and a mention in a comment, or the
- * string in an array or as an object's key, is not. A key held in a variable, `fs[name]`, is not
- * found: what it holds is known only when the code runs. A file the tokenizer cannot read fails the
- * check, naming the file.
+ * The whole-value strings the check passes, each by its file, relative to `test/`, and its line.
+ * - `dispatch.test.mjs:357`: `WRITES`, the `node:fs` calls that create, change, move or remove a
+ *   path, which that test wraps to record every path a dispatch writes. It names `mkdtempSync` to
+ *   watch it, and makes no directory.
+ */
+const EXCEPTIONS = new Set(['dispatch.test.mjs:357']);
+
+/** The name the check looks for, built in two parts so that this file holds no token it names. */
+const NAME = 'mkdtemp' + 'Sync';
+
+/**
+ * Every `file:line` under `directory`, outside the helper, that names `mkdtempSync` (#540): a token
+ * that is the name, wherever it stands, or a string or template whose whole value is the name,
+ * unless its file and line are among `EXCEPTIONS`. Each file is read as tokens rather than lines,
+ * so a call split across lines is found, and a mention in a comment or inside a longer string is
+ * not. A file the tokenizer cannot read fails the check, naming the file.
+ *
+ * What this cannot catch: a name built when the code runs, such as a variable holding it
+ * (`fs[name]`) or a concatenation (`fs['mkdtemp' + 'Sync']`). Only running the code knows those.
  */
 function bareMkdtemps(directory) {
   return readdirSync(directory, { recursive: true, withFileTypes: true })
@@ -31,13 +43,14 @@ function bareMkdtemps(directory) {
     .map((entry) => relative(directory, join(entry.parentPath ?? entry.path, entry.name)))
     .filter((path) => path !== HELPER)
     .sort()
-    .flatMap((path) => namings(join(directory, path)).map((line) => `test/${path}:${line}`));
+    .flatMap((path) => namings(join(directory, path))
+      .filter(({ line, literal }) => !(literal && EXCEPTIONS.has(`${path}:${line}`)))
+      .map(({ line }) => `test/${path}:${line}`));
 }
 
 /**
- * The line of every token in the file at `path` that names `mkdtempSync`: the name itself, or the
- * string or template that is the whole key of a computed member. A `[` opens a member, not an
- * array, where what comes before it ends an expression: a name, `this`, `)`, `]` or `?.`.
+ * Every token in the file at `path` that names `mkdtempSync`, with its line and whether it is a
+ * string or template rather than the name.
  */
 function namings(path) {
   const source = readFileSync(path, 'utf8');
@@ -48,13 +61,9 @@ function namings(path) {
   } catch (error) {
     throw new Error(`the mkdtempSync check could not read ${path}: ${error.message}`);
   }
-  const label = (at) => tokens[at]?.type.label;
-  const opensMember = (at) => label(at) === '[' && ['name', 'this', ')', ']', '?.'].includes(label(at - 1));
-  const computedKey = (at) => (label(at) === 'string' && opensMember(at - 1) && label(at + 1) === ']')
-    || (label(at) === 'template' && label(at - 1) === '`' && opensMember(at - 2) && label(at + 1) === '`' && label(at + 2) === ']');
   return tokens
-    .map((token, at) => ((token.value === 'mkdtempSync' && (label(at) === 'name' || computedKey(at))) ? token.loc.start.line : null))
-    .filter((line) => line !== null);
+    .filter((token) => token.value === NAME && ['name', 'string', 'template'].includes(token.type.label))
+    .map((token) => ({ line: token.loc.start.line, literal: token.type.label !== 'name' }));
 }
 
 test('no file under test/ names mkdtempSync in its code but the shared temporary-directory helper', () => {
@@ -62,15 +71,14 @@ test('no file under test/ names mkdtempSync in its code but the shared temporary
   assert.deepEqual(found, [], `these lines name mkdtempSync, whose directory nothing removes; make it with temporaryDirectory from test/${HELPER} instead:\n${found.join('\n')}`);
 });
 
-test('the check names the file and the line of every mkdtempSync named in code, aliased, destructured, through its namespace or called on the next line, and passes the helper and mentions in strings and comments', () => {
+test('the check names the file and the line of every mkdtempSync named in code, aliased, destructured, through its namespace or called on the next line, and passes the helper, a comment and a longer string', () => {
   const root = temporaryDirectory('rigger-bare-mkdtemp-');
   mkdirSync(join(root, 'nested'));
-  // The name and its opening parenthesis are written apart, so that the git grep for the call that
-  // item 3 on #540 quotes finds no fixture here.
-  const call = 'mkdtempSync' + '(';
+  // The call is written in parts, so that neither the git grep item 3 on #540 quotes nor this check
+  // finds a fixture here.
+  const call = 'mkdtemp' + 'Sync(';
   writeFileSync(join(root, HELPER), `import { mkdtempSync } from 'node:fs';\nconst made = ${call}join(tmpdir(), 'x-'));\n`);
   writeFileSync(join(root, 'mentions.test.mjs'), [
-    "const WRITES = ['mkdtempSync', 'rmSync'];",
     `// ${call}join(tmpdir(), "a comment"))`,
     `const text = \`${call}\${WRITES})\`;`,
   ].join('\n'));
@@ -96,22 +104,34 @@ test('the check names the file and the line of every mkdtempSync named in code, 
   ]);
 });
 
-test('the check names the line of a computed member whose key is the string mkdtempSync, quoted or as a template, and passes the same string in an array, an object key or a longer key', () => {
+test('the check names the line of every string or template whose whole value is mkdtempSync, a computed key, a parenthesised key, an array\'s entry or an object\'s key, and passes a longer string and a name built when the code runs', () => {
   const root = temporaryDirectory('rigger-bare-mkdtemp-');
-  writeFileSync(join(root, 'computed.mjs'), [
+  writeFileSync(join(root, 'strings.mjs'), [
     "import * as fs from 'node:fs';",
     "const quoted = fs['mkdtempSync']('/tmp/rigger-leak-');",
     'const template = fs[`mkdtempSync`];',
     'const split = fs',
     '  ["mkdtempSync"];',
+    "const parenthesised = fs[('mkdtempSync')]('/tmp/rigger-leak-');",
     "const listed = ['mkdtempSync', 'rmSync'];",
-    "const first = ['rmSync', 'mkdtempSync'][0];",
-    "function returned() { return ['mkdtempSync']; }",
     "const keyed = { 'mkdtempSync': 1 };",
     "const longer = fs['mkdtempSyncLater'];",
+    "const built = fs['mkdtemp' + 'Sync'];",
   ].join('\n'));
 
-  assert.deepEqual(bareMkdtemps(root), ['test/computed.mjs:2', 'test/computed.mjs:3', 'test/computed.mjs:5']);
+  assert.deepEqual(bareMkdtemps(root), [2, 3, 5, 6, 7, 8].map((line) => `test/strings.mjs:${line}`));
+});
+
+test('the check passes a whole-value string on the file and line its exception list names, and nowhere else, and never the name itself there', () => {
+  const root = temporaryDirectory('rigger-bare-mkdtemp-');
+  // test/dispatch.test.mjs:357, the one exception, then the line after it.
+  const lines = Array.from({ length: 356 }, () => '');
+  lines.push("const WRITES = ['appendFileSync', 'mkdtempSync', 'writeFileSync']; const named = mkdtempSync;");
+  lines.push("const other = ['mkdtempSync'];");
+  writeFileSync(join(root, 'dispatch.test.mjs'), lines.join('\n'));
+  writeFileSync(join(root, 'elsewhere.mjs'), "const WRITES = ['appendFileSync', 'mkdtempSync', 'writeFileSync'];\n");
+
+  assert.deepEqual(bareMkdtemps(root), ['test/dispatch.test.mjs:357', 'test/dispatch.test.mjs:358', 'test/elsewhere.mjs:1']);
 });
 
 test('a file under the directory the tokenizer cannot read fails the check, naming the file', () => {
