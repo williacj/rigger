@@ -1433,14 +1433,31 @@ test('a census whose every read of the group lists only its zombie, while a surv
   }
 });
 
+/**
+ * What a reached check that found no read of the kill to check says: `nothing` where the stand-in
+ * marked, in `kill.read` in `directory`, that the kill read the group, and otherwise why the
+ * stream says the group went unnamed. The census reaches the kill whenever it returns, and the kill
+ * always reads the group at least once, so a kill that made no read is one whose census gave up. A
+ * census whose read fails, as one does where the host refuses its fork at the user's process limit,
+ * gives up and has the group killed unnamed, as designed (O48, O50).
+ */
+function unread(directory, events, nothing) {
+  if (existsSync(join(directory, 'kill.read'))) return nothing;
+  const why = [...new Set(events.filter(({ event }) => event === 'group.killed').map(({ census }) => census))];
+  return `the kill made no read, because the census gave up, as designed (O48, O50), and the stream records why the group went unnamed: ${why.length > 0 ? why.join('; ') : `nothing, among ${JSON.stringify(events)}`}`;
+}
+
 test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
   // second survivor's row from every read of both, and answers every other read as `ps` does. The
   // census's reads and the kill's each mark that they were cut in a file of their own, so a read
-  // of one never stands in for the other. It is `warmed`, because the census's first read is its
-  // first exec, which must reach its body within `readTimeout`.
+  // of one never stands in for the other. Every read of the kill also marks that it was made, in
+  // `kill.read`, so a kill that made no read, because its census gave up, is told apart from one
+  // whose reads went uncut. It is `warmed`, because the census's first read is its first exec,
+  // which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
     'case "$*" in "-ww -g "*|*ppid=*)',
     '  case "$*" in *ppid=*) : > "$here/kill.cut" ;; *) : > "$here/census.cut" ;; esac',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
@@ -1454,7 +1471,7 @@ test('a census and a kill whose every read leaves out one of two survivors still
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
   assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
-  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the kill was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, unread(directory, events, 'no read of the kill was cut, so the test proves nothing'));
   assert.deepEqual(survivors.map(alive), [false, false]);
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
@@ -1469,9 +1486,12 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   // to the zombie's row and exits 0. A read of one pid is answered as `ps` answers it. A read of
   // the kill, which asks for `ppid`, marks that it listed the zombie only while the leader, whose
   // pid is the group's, answers signal 0, so no read made after the leader is gone stands in for
-  // it. It is `warmed`, because the census's first read is its first exec, which must reach its
-  // body within `readTimeout`.
+  // it. Every read of the kill also marks that it was made, in `kill.read`, so a kill that made no
+  // read, because its census gave up, is told apart from one whose reads did not list the zombie
+  // while the leader lived. It is `warmed`, because the census's first read is its first exec,
+  // which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
     'case "$*" in "-ww -g "*) exec /bin/ps "$@" ;; esac',
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
@@ -1491,7 +1511,7 @@ test('a kill whose every read of the group lists only its zombie, while its lead
 
   ready(directory);
   const group = Number(read(directory, 'group'));
-  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the group by the kill listed the zombie while the leader answered signal 0, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, unread(directory, events, 'no read of the group by the kill listed the zombie while the leader answered signal 0, so the test proves nothing'));
   assert.equal(alive(group), false);
   assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
   const leader = events.some(({ event }) => event === 'group.killed') || events.some(({ event, pid }) => event === 'timeout.killed' && pid === group);
