@@ -62,6 +62,7 @@ test('a live claude session started from the invocation loads exactly the direct
   assert.deepEqual(init.plugins, [], 'a plugin the directory does not declare reached the session');
   assert.deepEqual(init.tools.filter((tool) => withheldBy(run.args).includes(tool)), [], 'a withheld tool reached the session');
   assert.deepEqual(unclassified(init.tools), [], 'the session was offered a tool nobody has classified');
+  assert.equal(init.tools.includes('Task') || init.tools.includes('Agent'), false, 'the agent tool reached the session (O45)');
   assert.equal(existsSync(transcriptsOf(directory)), false, 'the session left a transcript in the owner\'s home');
   assert.equal(init.memory_paths?.auto, undefined, 'auto-memory reached the session');
   assert.deepEqual(run.events.filter((event) => event.type === 'system' && /^hook_/.test(event.subtype ?? '')), [], 'a hook ran');

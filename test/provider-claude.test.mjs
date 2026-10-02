@@ -252,6 +252,20 @@ test('the invocation withholds every built-in plugin the directory does not enab
   assert.equal(enabled['cc-plugin-plugin-authoring@builtin'], false);
 });
 
+// proves R-SAFE-7
+test('the invocation withholds the agent tool, whose remote isolation acts through the owner\'s account, unless the directory\'s own settings allow it', async (t) => {
+  // O45 on #467: the agent tool's `isolation: "remote"` "launches the agent in a remote cloud
+  // environment" on the owner's account, and no flag withholds that form alone, so dispatched
+  // agents get no subagents. Claude Code names the tool `Task` in `init` and accepts `Task` or
+  // `Agent` in a rule (#519's report, c2, c3).
+  const repo = consumer(t);
+  assert.ok(after((await invoked(repo)).args, '--disallowedTools').split(',').includes('Task'));
+  for (const declared of ['Task', 'Agent']) {
+    put(repo.directory, '.claude/settings.json', { permissions: { allow: [declared] } });
+    assert.equal(after((await invoked(repo)).args, '--disallowedTools').split(',').includes('Task'), false, declared);
+  }
+});
+
 test('the invocation keeps the session\'s transcript off disk', async (t) => {
   // `claude --help`: `--no-session-persistence` means sessions "will not be saved to disk", which
   // would otherwise land under the owner's `~/.claude/projects/`, outside the directory.

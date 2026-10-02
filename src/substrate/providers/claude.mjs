@@ -94,7 +94,8 @@ const WORKTREE = ['EnterWorktree', 'ExitWorktree'];
  * where the owner is signed in to claude.ai, the directory has a git remote, `~/.claude.json` holds
  * `hasUsedRemoteSession` and `hasRemoteEnvironment`, and the flag `tengu_neapolitan` is on (its
  * gate, read from the 2.1.287 binary). No flag, setting or path the invocation may pass withholds
- * that form alone, so the agent tool stays offered while #480's escalation of it is open.
+ * that form alone, so the whole tool is withheld, and a dispatched agent gets no subagents (O45).
+ * A rule may name it `Task` or `Agent` (#519's report, c2, c3), so either declares it.
  *
  * Every other tool in that record acts within the session or on its host as the session's own
  * user. `Workflow`, `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`, `CronList` and
@@ -106,7 +107,10 @@ const WORKTREE = ['EnterWorktree', 'ExitWorktree'];
  *
  * A repository declares one by naming it in its own `permissions.allow`.
  */
-const OWNERS = ['ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+const OWNERS = ['Task', 'ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+
+/** The other names a rule may give a tool in `OWNERS`, each of which declares it. */
+const ALIASES = { Task: ['Agent'] };
 
 /**
  * The built-in plugins Claude Code loads under `--setting-sources project`, each withheld by
@@ -225,7 +229,8 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
   const mcp = join(directory, '.mcp.json');
   const declared = declaredIn(directory);
   const allowed = rulesOf(declared)?.allow ?? [];
-  const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !allowed.includes(tool))];
+  const declares = (tool) => [tool, ...(ALIASES[tool] ?? [])].some((each) => allowed.includes(each));
+  const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !declares(tool))];
   const enabledPlugins = Object.fromEntries(BUILTINS.filter((id) => declared.enabledPlugins?.[id] !== true).map((id) => [id, false]));
   const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: rulesOf(declared) };
   return {
