@@ -50,11 +50,14 @@ test('no file under test/ names mkdtempSync in its code but the shared temporary
 test('the check names the file and the line of every mkdtempSync named in code, aliased, destructured, through its namespace or called on the next line, and passes the helper and mentions in strings and comments', () => {
   const root = temporaryDirectory('rigger-bare-mkdtemp-');
   mkdirSync(join(root, 'nested'));
-  writeFileSync(join(root, HELPER), "import { mkdtempSync } from 'node:fs';\nconst made = mkdtempSync(join(tmpdir(), 'x-'));\n");
+  // The name and its opening parenthesis are written apart, so that the git grep for the call that
+  // item 3 on #540 quotes finds no fixture here.
+  const call = 'mkdtempSync' + '(';
+  writeFileSync(join(root, HELPER), `import { mkdtempSync } from 'node:fs';\nconst made = ${call}join(tmpdir(), 'x-'));\n`);
   writeFileSync(join(root, 'mentions.test.mjs'), [
     "const WRITES = ['mkdtempSync', 'rmSync'];",
-    '// mkdtempSync(join(tmpdir(), "a comment"))',
-    'const text = `mkdtempSync(${WRITES})`;',
+    `// ${call}join(tmpdir(), "a comment"))`,
+    `const text = \`${call}\${WRITES})\`;`,
   ].join('\n'));
   writeFileSync(join(root, 'nested', 'leaks.mjs'), [
     "import { mkdtempSync as make } from 'node:fs';",
@@ -62,7 +65,7 @@ test('the check names the file and the line of every mkdtempSync named in code, 
     'const { mkdtempSync: m } = fs;',
     'const split = make',
     "  (join(tmpdir(), 'rigger-leak-'));",
-    "const viaNamespace = fs.mkdtempSync('/tmp/rigger-leak-');",
+    `const viaNamespace = fs.${call}'/tmp/rigger-leak-');`,
     'const called = fs',
     "  .mkdtempSync.call(null, '/tmp/rigger-leak-');",
     'const bare = mkdtempSync',
