@@ -58,6 +58,19 @@ export function forgetting(t, directory) {
 /** Where Claude Code keeps the transcripts of sessions run in `directory`, as `forgetting` names it. */
 export const transcriptsOf = (directory) => join(homedir(), '.claude', 'projects', directory.replace(/[^a-zA-Z0-9]/g, '-'));
 
+/**
+ * Every built-in tool #480's pull request classifies as acting within the session or on its host,
+ * on Claude Code 2.1.287. A start record offering any tool outside this list and the withheld ones
+ * has a tool nobody has classified, which may act through the owner's account.
+ */
+export const CLASSIFIED = [
+  'Task', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'Edit', 'Monitor', 'NotebookEdit', 'Read',
+  'ReportFindings', 'ScheduleWakeup', 'TaskStop', 'ToolSearch', 'WebFetch', 'WebSearch', 'Workflow', 'Write',
+];
+
+/** The tools in a start record's `tools` that are neither classified nor the directory's own MCP tools. */
+export const unclassified = (tools) => tools.filter((tool) => !CLASSIFIED.includes(tool) && !tool.startsWith('mcp__'));
+
 /** The tools the invocation `args` withhold by `--disallowedTools`. */
 export const withheldBy = (args) => args[args.indexOf('--disallowedTools') + 1].split(',');
 

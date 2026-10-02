@@ -123,6 +123,7 @@ test('given a directory holding no .mcp.json, the session loads no MCP server', 
   assert.equal(args.includes('--mcp-config'), false);
 });
 
+// proves R-SAFE-7
 test('the invocation keeps user and local settings, user hooks, auto-memory and every CLAUDE.md above the directory out of the session', async (t) => {
   // Report, "Recommendation", items 1 and 3: `--setting-sources project` withholds user settings,
   // user hooks and the user `CLAUDE.md` (r1-c16); `autoMemoryEnabled: false` withholds the memory
@@ -217,6 +218,7 @@ test('a settings file that is no JSON object is refused, naming the file, since 
  */
 const OWNERS = ['ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
 
+// proves R-SAFE-7
 test('the invocation withholds every tool that acts through the owner\'s own sessions or login', async (t) => {
   // `R-SAFE-9`: such a tool counts as declared only where the repository declares it. #519's report
   // found a `-p` session calling `ListAgents` and listing four of the owner's interactive sessions.
@@ -237,6 +239,7 @@ test('a tool acting through the owner\'s account that the directory\'s own setti
   for (const tool of OWNERS.filter((each) => each !== 'SendMessage')) assert.ok(withheld.includes(tool), tool);
 });
 
+// proves R-SAFE-7
 test('the invocation withholds every built-in plugin the directory does not enable', async (t) => {
   // #473's report withheld its two built-in plugins by `enabledPlugins` (c36), and #519's report
   // found a third under `--setting-sources project` on 2.1.287, `cc-plugin-plugin-authoring`.

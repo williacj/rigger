@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
 
-import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
+import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, unclassified, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
 
 /** The adapter and the process adapter from this checkout. */
@@ -61,6 +61,7 @@ test('a live claude session started from the invocation loads exactly the direct
   assert.deepEqual(init.plugins.filter((plugin) => plugin.path !== 'builtin'), [], 'a user plugin reached the session');
   assert.deepEqual(init.plugins, [], 'a plugin the directory does not declare reached the session');
   assert.deepEqual(init.tools.filter((tool) => withheldBy(run.args).includes(tool)), [], 'a withheld tool reached the session');
+  assert.deepEqual(unclassified(init.tools), [], 'the session was offered a tool nobody has classified');
   assert.equal(existsSync(transcriptsOf(directory)), false, 'the session left a transcript in the owner\'s home');
   assert.equal(init.memory_paths?.auto, undefined, 'auto-memory reached the session');
   assert.deepEqual(run.events.filter((event) => event.type === 'system' && /^hook_/.test(event.subtype ?? '')), [], 'a hook ran');

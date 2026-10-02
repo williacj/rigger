@@ -89,9 +89,16 @@ const WORKTREE = ['EnterWorktree', 'ExitWorktree'];
  * - `RemoteTrigger` creates and manages "routines: cloud agents on a schedule" on the account;
  * - `DesignSync` reads and updates claude.ai designs "through their claude.ai login".
  *
+ * The agent tool, `Task` (sent as `Agent`), also acts through the account in one form: its
+ * `isolation: "remote"` "launches the agent in a remote cloud environment". The CLI runs it so only
+ * where the owner is signed in to claude.ai, the directory has a git remote, `~/.claude.json` holds
+ * `hasUsedRemoteSession` and `hasRemoteEnvironment`, and the flag `tengu_neapolitan` is on (its
+ * gate, read from the 2.1.287 binary). No flag, setting or path the invocation may pass withholds
+ * that form alone, so the agent tool stays offered while #480's escalation of it is open.
+ *
  * Every other tool in that record acts within the session or on its host as the session's own
- * user. `Task` (the agent tool), `Workflow`, `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`,
- * `CronList` and `ScheduleWakeup` act within the session; `Bash`, `Read`, `Edit`, `Write` and
+ * user. `Workflow`, `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`, `CronList` and
+ * `ScheduleWakeup` act within the session; `Bash`, `Read`, `Edit`, `Write` and
  * `NotebookEdit` on the host; `ToolSearch` loads a deferred tool's definition; `ReportFindings`
  * renders findings in the host's own interface; `WebFetch` and `WebSearch` reach the public web.
  * Claude in Chrome, which drives the owner's browser, is kept out by `--no-chrome`. A version adding
