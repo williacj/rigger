@@ -67,6 +67,27 @@ test('given a test that makes a temporary directory and fails, the directory is 
   assert.deepEqual(readdirSync(tmp), []);
 });
 
+test('given a test that leaves its temporary directory holding a read-only subdirectory with files, and the directory itself read-only, the directory is gone once the test has ended (O68)', (t) => {
+  const { ran, tmp, recorded } = running(scratch(t), [
+    "import { chmodSync, mkdirSync } from 'node:fs';",
+    "test('leaves part of its directory read-only', () => {",
+    "  const directory = temporaryDirectory('rigger-helper-');",
+    "  record('made', directory);",
+    "  mkdirSync(directory + '/state');",
+    "  writeFileSync(directory + '/state/groups.json', '{}');",
+    "  writeFileSync(directory + '/state/events.jsonl', '');",
+    "  chmodSync(directory + '/state/groups.json', 0o444);",
+    "  chmodSync(directory + '/state', 0o555);",
+    "  chmodSync(directory, 0o555);",
+    '});',
+  ]);
+
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  assert.ok(recorded('made').startsWith(tmp), `the directory ${recorded('made')} is not under the run's TMPDIR ${tmp}`);
+  assert.equal(existsSync(recorded('made')), false, `the run left ${recorded('made')}`);
+  assert.deepEqual(readdirSync(tmp), []);
+});
+
 test('given a function the test awaits that makes a temporary directory after an await, the directory is gone before the next test starts', (t) => {
   const { ran, tmp, recorded } = running(scratch(t), [
     'async function fixture() {',
