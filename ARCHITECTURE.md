@@ -359,8 +359,12 @@ A process still in the command's group when the direct child exits is terminated
 by name and command line where a read before the kill found it; it never changes the exit code. A
 process that leaves its group is outside this containment. L0 never stops a process group to contain
 it. It reads which processes the group holds, kills the group whole, then kills and reads it again
-until no member is left alive. A process the kill ended that no read before it found is recorded as
-the kill of the group, as when L0 cannot read the table.
+until no member is left alive, with two exceptions. Where it cannot read the table, it sends the
+kill on every look until a bound passes, then records the kill of the group and why, and settles
+without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
+for a second, longer bound, L0 records it by name and command line as a process it could not end,
+and settles. A process the kill ended that no read before it found is recorded as the kill of the
+group, as when L0 cannot read the table.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
