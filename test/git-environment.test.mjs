@@ -5,8 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -19,6 +18,7 @@ import { source } from '../scripts/absorption-check.mjs';
 import { REDIRECTING, gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -665,7 +665,7 @@ test('doctor still gets no repository for a directory that is none, whatever the
   // tree from where it was run; it does make git answer for a directory that is no repository at
   // all, which is the case below.
   const victim = repositoryHolding('only-in-victim.txt');
-  const plain = mkdtempSync(join(tmpdir(), 'rigger-gitenv-plain-'));
+  const plain = temporaryDirectory('rigger-gitenv-plain-');
 
   // `repoRoot` asks through L0's process adapter, which spawns in the step it is called in, so
   // the environment is read inside the hook's and the answer is awaited after it is put back.

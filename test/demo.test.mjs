@@ -6,12 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..'));
 
@@ -97,7 +97,7 @@ const SCREEN = [
  * commands naming that path, with a file holding `content` in its place.
  */
 function ciChecksOver(path, content) {
-  const file = join(mkdtempSync(join(tmpdir(), 'rigger-demo-check-')), basename(path));
+  const file = join(temporaryDirectory('rigger-demo-check-'), basename(path));
   writeFileSync(file, content);
   const checks = runCommands().filter((command) => command.includes(path));
   assert.ok(checks.length > 0, `CI runs no command over ${path}; it runs:\n${runCommands().join('\n')}`);
@@ -136,7 +136,7 @@ test('a CI check fails on a screen missing M3\'s once line', () => {
  * would. The first status that is not zero, or zero when every step passed.
  */
 function gifStepsWhenTheTapeRuns(tape) {
-  const checkout = mkdtempSync(join(tmpdir(), 'rigger-demo-job-'));
+  const checkout = temporaryDirectory('rigger-demo-job-');
   mkdirSync(join(checkout, 'docs'));
   writeFileSync(join(checkout, 'docs', 'demo.gif'), 'GIF89a, the recording the checkout holds');
   const job = runCommands(workflow.slice(workflow.search(/^ {2}demo:$/m)))

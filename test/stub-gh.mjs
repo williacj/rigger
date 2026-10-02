@@ -1,8 +1,8 @@
 // ABOUTME: A recording stand-in for the `gh` executable, for a test that has to put one on a path.
 
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, join } from 'node:path';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * A directory holding an executable named `gh` that records every call it receives and answers
@@ -15,7 +15,7 @@ import { basename, delimiter, join } from 'node:path';
  * hold `cat`, as `test/package.test.mjs` does.
  */
 export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-stub-gh-'));
+  const dir = temporaryDirectory('rigger-stub-gh-');
   const record = join(dir, 'calls');
   const [out, err] = [join(dir, 'stdout'), join(dir, 'stderr')];
   writeFileSync(out, stdout);

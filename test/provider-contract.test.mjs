@@ -3,11 +3,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** The tiers Rigger fixes (`O4` on #467), which every adapter maps to a model of its own. */
 const TIERS = ['standard', 'high'];
@@ -41,7 +41,7 @@ async function departures(key, adapter, directory) {
 
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
 function scratch(t) {
-  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigger-provider-contract-')));
+  const directory = realpathSync.native(temporaryDirectory('rigger-provider-contract-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -17,6 +16,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
 import riggerConfig from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -196,7 +196,7 @@ test('a template for a provider Rigger has no destination for is refused by name
   // The defect this catches is a second adapter's templates forked to a plausible guess — the
   // directory's own name, say — which puts a consumer's assets where nothing reads them. The
   // destination is the provider's to state, so a provider that has not stated one has none.
-  const templates = mkdtempSync(join(tmpdir(), 'rigger-templates-'));
+  const templates = temporaryDirectory('rigger-templates-');
   copyFileSync(join(TEMPLATES, CONFIG), join(templates, CONFIG));
   mkdirSync(join(templates, 'codex'));
   writeFileSync(join(templates, 'codex', 'AGENTS.md'), 'ABOUTME: a second adapter\n');
@@ -206,7 +206,7 @@ test('a template for a provider Rigger has no destination for is refused by name
 
 /** A templates directory holding the starter config and one provider directory with one file. */
 function templatesNaming(provider) {
-  const templates = mkdtempSync(join(tmpdir(), 'rigger-templates-'));
+  const templates = temporaryDirectory('rigger-templates-');
   copyFileSync(join(TEMPLATES, CONFIG), join(templates, CONFIG));
   mkdirSync(join(templates, provider));
   writeFileSync(join(templates, provider, 'a.md'), 'ABOUTME: a second adapter\n');
@@ -442,7 +442,7 @@ test('the config init writes is accepted once the consumer names its board, and 
  * exercised from outside this checkout, which is the arrangement `R-SAFE-5` asks for.
  */
 function installed() {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-package-'));
+  const dir = temporaryDirectory('rigger-package-');
   for (const part of ['package.json', 'src', 'templates']) {
     cpSync(join(root, part), join(dir, part), { recursive: true });
   }

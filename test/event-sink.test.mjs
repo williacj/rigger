@@ -5,8 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, mkdtempSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -14,12 +13,13 @@ import { productionFiles } from '../scripts/package-budget.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { scratch, turn, undrained } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
 
 /** A fresh state directory for one test, under the OS temp directory. */
-const stateDir = () => mkdtempSync(join(tmpdir(), 'rigger-events-'));
+const stateDir = () => temporaryDirectory('rigger-events-');
 
 /**
  * A clock the test drives. It hands out the instants given to it, in order, so an assertion

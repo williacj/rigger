@@ -3,13 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** A body whose acceptance passes the form check under the title `Add a verb`. */
 const PASSING = '## Acceptance\n\n- The verb prints its help.\n';
@@ -77,7 +76,7 @@ const twoSteps = (required) => ({
  * teardown, and a reader of the events it holds.
  */
 function sinkFor(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-steps-'));
+  const directory = temporaryDirectory('rigger-steps-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return { sink: openSink({ directory, run: 'r-test', now: () => 0 }), events: () => (existsSync(streamPath(directory)) ? readEvents(directory) : []) };
 }

@@ -1,9 +1,10 @@
 // ABOUTME: What the gated live runs of a real `claude` session share: the gate, the PATH past
 // npm test's refusing agent CLIs, the stand-in MCP server and agent file, and reading the run's record.
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /*
  * What these runs reach. Each starts one real `claude -p` session, signed in as the host's owner,
@@ -40,7 +41,7 @@ export function pastRefusing() {
 
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
 export function scratch(t) {
-  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigger-claude-live-')));
+  const directory = realpathSync.native(temporaryDirectory('rigger-claude-live-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

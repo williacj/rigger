@@ -3,19 +3,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as claude from '../src/substrate/providers/claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A fresh directory under `TMPDIR`, by its real path, removed when the test ends. */
 function scratch(t) {
-  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigger-claude-adapter-')));
+  const directory = realpathSync.native(temporaryDirectory('rigger-claude-adapter-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
