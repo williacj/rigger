@@ -266,6 +266,25 @@ test('the invocation withholds the agent tool, whose remote isolation acts throu
   }
 });
 
+// proves R-SAFE-7
+test('the invocation withholds Workflow, whose agents no flag limits, from a directory whose own settings do not allow it', async (t) => {
+  // O52 on #467: for the reason O45 withholds the agent tool, no flag limits what a workflow's
+  // agents may do, so a dispatched session is not given `Workflow` unless the repository declares it.
+  const repo = consumer(t);
+  assert.ok(after((await invoked(repo)).args, '--disallowedTools').split(',').includes('Workflow'), 'no settings file');
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Read'] } });
+  assert.ok(after((await invoked(repo)).args, '--disallowedTools').split(',').includes('Workflow'), 'settings allowing another tool');
+});
+
+// proves R-SAFE-7
+test('Workflow is not withheld where the directory\'s own settings allow it, and every other withheld tool stays withheld', async (t) => {
+  const repo = consumer(t);
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Workflow'] } });
+  const withheld = after((await invoked(repo)).args, '--disallowedTools').split(',');
+  assert.equal(withheld.includes('Workflow'), false);
+  for (const tool of ['Task', ...OWNERS, 'EnterWorktree', 'ExitWorktree']) assert.ok(withheld.includes(tool), tool);
+});
+
 test('the invocation keeps the session\'s transcript off disk', async (t) => {
   // `claude --help`: `--no-session-persistence` means sessions "will not be saved to disk", which
   // would otherwise land under the owner's `~/.claude/projects/`, outside the directory.
