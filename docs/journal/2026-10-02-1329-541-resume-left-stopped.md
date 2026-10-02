@@ -19,3 +19,14 @@ resume by name and command line.
 
 **Order.** This is a proposal, and the owner's merge ratifies it (`D21`). #539's fix merges only
 after it.
+
+**Revised under O62 (ruling 14).** The engineer judge on #545 showed that "never" promised more than
+L0 could find. Git's `daemonize()` exits the parent before its child calls `setsid`, so a route
+through the parent missed about a quarter of cases under load. Ruling 13 offered a narrowed promise,
+(A), or never stopping a group, (B). The owner chose (B) as O62. Ruling 11's resume sentence is
+withdrawn. The Failure model now says L0 never stops a process group to contain it. It reads the
+group, kills it whole, and kills and reads again until no member lives. A process the kill ended
+that no read before it found is recorded as the kill of the group. The first sentence of the
+paragraph now records a process by name only where a read before the kill found it. Nothing is ever
+left stopped, so a child that detaches mid-kill dies or leaves running. #539 builds (B) after a
+spike, and merges after this card.

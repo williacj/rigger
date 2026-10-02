@@ -355,10 +355,12 @@ retries, a bounded number of times, a fetch that another process's fetch beat to
 remote-tracking ref, and records each retry. This is not L3's repo lane, which orders merges. An
 agent's own git commands in its workspace are outside the queue.
 
-A process still in the command's group when the direct child exits is terminated by L0 and recorded
-by name and command line; it never changes the exit code. A process that leaves its group is outside
-this containment. L0 never leaves one stopped, though: where a process left the group while L0 held
-the group stopped, L0 resumes it, and records it by name and command line.
+A process still in the command's group when the direct child exits is terminated by L0, and recorded
+by name and command line where a read before the kill found it; it never changes the exit code. A
+process that leaves its group is outside this containment. L0 never stops a process group to contain
+it. It reads which processes the group holds, kills the group whole, then kills and reads it again
+until no member is left alive. A process the kill ended that no read before it found is recorded as
+the kill of the group, as when L0 cannot read the table.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
