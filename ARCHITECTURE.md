@@ -371,7 +371,9 @@ card's maker and its provisioning steps run one at a time in the card's workspac
 runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
 fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
 process of Rigger's own user whose working directory is that directory or lies under it. L0
-records each as it records a survivor. L1 hands L0 that directory and records it in the dispatch's
+records each as it records a survivor. Where such a process is one L0 may not signal, or outlives
+that kill for the longer bound above, L0 records it by name and command line as a process it could
+not end, and waits on it no further. L1 hands L0 that directory and records it in the dispatch's
 entry. A later start does the same only where the directory at that path is still the one recorded.
 Where it is not, or L0 cannot tell, the start sweeps nothing there and records why. A command that
 is not a dispatch has no such directory, and its group remains its whole containment.
