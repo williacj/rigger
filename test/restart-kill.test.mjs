@@ -22,6 +22,7 @@ import { assertUntouched, tailIn } from './process-fixtures.mjs';
 import { chmodSync, rmSync, statSync } from 'node:fs';
 import { warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { writeSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -146,7 +147,7 @@ function groupRecorded(world) {
 async function killedMidDispatch(t, world, command, { ps, workspace } = {}) {
   const engine = startEngine(world, command, { ps, workspace });
   const exited = once(engine, 'exit');
-  await until(() => (existsSync(join(world.directory, 'ready')) && groupRecorded(world)) || engine.exitCode !== null, t);
+  await awaiting(t, 'the command to mark ready and the record to name its group, or the engine to exit', until(() => (existsSync(join(world.directory, 'ready')) && groupRecorded(world)) || engine.exitCode !== null, t));
   assert.ok(existsSync(join(world.directory, 'ready')) && groupRecorded(world), `the engine ended before its dispatch ran and was recorded: ${engine.said}`);
   engine.kill('SIGKILL');
   await exited;
@@ -362,10 +363,60 @@ test('given a record entry whose directory\'s device and inode cannot be read at
 });
 
 /**
- * Opens the FIFO `name` in `directory` for writing, and closes it, which lets its reader go on. The
- * open fails until the reader is there, so it is retried each turn until the test `t` ends.
+ * Settles as `wait` does. Where the test `t` ends first, as its timeout ends it, the runner's report
+ * of the test names `what`, the condition `wait` was on, so the wait that never settled is named
+ * beside the timeout.
+ */
+async function awaiting(t, what, wait) {
+  const named = () => t.diagnostic(`the test ended while it waited for ${what}`);
+  t.signal.addEventListener('abort', named, { once: true });
+  try {
+    return await wait;
+  } finally {
+    t.signal.removeEventListener('abort', named);
+  }
+}
+
+/**
+ * Writes a line to the FIFO `name` in `directory`, which lets its reader go on, and settles once the
+ * reader has closed it. The open fails until the reader is there, so it is retried each turn until
+ * the test `t` ends.
+ *
+ * One open and close is not enough. Under load, a reader released so can stay blocked in its read
+ * for ever, with the FIFO open as its standard input and no writer left. Measured with Node 26.5.0
+ * on macOS 27.0 on 2026-10-01: of 5,800 shell readers released so, 5 were still blocked 3 s later,
+ * every one at a one-minute load of 40 or more (#515's journal entry). So each turn that finds a
+ * reader writes it a line, which its read returns however the close went, and the wait ends only
+ * once an open finds no reader left: the reader has read and gone on.
  */
 async function opened(t, directory, name) {
+  let reached = false;
+  await awaiting(t, `the reader of the FIFO ${name} to read a line and close it`, until(() => {
+    let writer;
+    try {
+      writer = openSync(join(directory, name), files.O_WRONLY | files.O_NONBLOCK);
+    } catch (error) {
+      if (error.code === 'ENXIO') return reached;
+      throw error;
+    }
+    reached = true;
+    try {
+      writeSync(writer, '\n');
+    } catch (error) {
+      // The reader closed between the open and the write: it has read and gone on.
+      if (error.code !== 'EPIPE') throw error;
+    } finally {
+      closeSync(writer);
+    }
+    return false;
+  }, t));
+}
+
+/**
+ * Opens the FIFO `name` in `directory` for writing, and answers the descriptor, once its reader is
+ * there: the open fails until it is, so it is tried each turn until the test `t` ends.
+ */
+async function writerOn(t, directory, name) {
   let writer;
   await until(() => {
     try {
@@ -376,8 +427,21 @@ async function opened(t, directory, name) {
       throw error;
     }
   }, t);
-  closeSync(writer);
+  return writer;
 }
+
+test('given a reader of a FIFO left blocked in its read while a writer it still counts holds the FIFO open, as a writer\'s close it missed leaves it, `opened` lets the reader go on', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  spawnSync('/usr/bin/mkfifo', [join(directory, 'go')]);
+  const reader = spawn('/bin/sh', [fixture(directory, 'reader', 'read line < "$here/go"\nexit 0')], { stdio: 'ignore' });
+  const exited = once(reader, 'exit');
+  const held = await writerOn(t, directory, 'go');
+  t.after(() => closeSync(held));
+
+  await opened(t, directory, 'go');
+
+  await awaiting(t, 'the reader to exit', exited);
+});
 
 /**
  * The engine killed outright while its command and child run, then the command exiting on its own
@@ -388,7 +452,7 @@ async function leaderGoneAfterDeath(t, world, { ps } = {}) {
   const pids = await killedMidDispatch(t, world, dispatchedCommand(world.directory, { exits: true }), { ps });
   // The command waits in its open of the FIFO for a writer.
   await opened(t, world.directory, 'exit-now');
-  await until(() => !alive(pids.command), t);
+  await awaiting(t, 'the command to exit', until(() => !alive(pids.command), t));
   assert.equal(alive(pids.child), true, 'the child outlived its command');
   return pids;
 }
@@ -398,7 +462,7 @@ test('given the engine SIGKILLed while a dispatched command and its child run, a
   const world = consumerIn(t, [card(10)]);
   const pids = await leaderGoneAfterDeath(t, world);
 
-  const ran = await restart(world, 'once');
+  const ran = await awaiting(t, '`rigger once` to exit and close its output', restart(world, 'once'));
 
   assert.deepEqual(atFirstCall(world).alive, [], ran.stderr);
   assert.equal(alive(pids.child), false);
