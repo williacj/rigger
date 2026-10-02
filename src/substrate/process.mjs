@@ -1586,7 +1586,8 @@ function startOf(ps, pid, timeout) {
  * and may not be listed (`occupied`), and where `timeout` passes first it fails, so nothing in the
  * group is killed. That failure says what the last read that answered left out, even where the
  * read after it was still running when `timeout` passed, so a read that answered short is never
- * reported as one that only timed out. A leader that has left the group for another holds the read to `timeout` the
+ * reported as one that only timed out. Where `timeout` passes before any read has answered, it
+ * fails saying the reads did not finish. A leader that has left the group for another holds the read to `timeout` the
  * same way, which kills nothing.
  *
  * So one class of read is left, and nothing but the process table can close it (`D16` rule 3), the
@@ -1627,7 +1628,7 @@ async function startsIn(ps, group, timeout) {
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw failure();
+    if (remaining <= 0) throw short === undefined ? late(timeout) : failure();
     let rows;
     try {
       rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));

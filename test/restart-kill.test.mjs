@@ -548,6 +548,7 @@ test('given a recorded group with a live member whose start-time read exits 1 an
   assert.match(ran.text, /listed no process of the group/, `the failure does not say why the read failed: ${ran.text}`);
   assert.deepEqual(ran.sent, []);
   assert.equal(alive(started.member), true, 'the member was killed');
+  assert.deepEqual(readGroups(world.state), [entryFor(started)], 'the record no longer holds the entry');
 });
 
 // proves R-STATE-11

@@ -589,6 +589,25 @@ for (const [how, [body, cause]] of Object.entries(ANSWERED_SHORT)) {
   });
 }
 
+test('given a recorded group and no time to read its start times, the call reads nothing, kills no process of that group, fails saying the reads ran out of time, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(t, directory, 'group');
+  const entry = entryFor(started, { dispatch: 'd-no-time', card: 37 });
+  writeGroups(stateOf(directory), [entry]);
+  // A read of `ps` that ran would mark `read`, and answer as `ps` does.
+  const ps = warmed(fixture(directory, 'ps', ': > "$here/read"\nexec /bin/ps "$@"'));
+
+  await assert.rejects(killIn(directory, { ps, readTimeout: 0 }), (failure) => {
+    for (const named of [`group ${started.group}`, 'd-no-time', '#37']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    assert.match(failure.message, /the reads of the process table did not finish within 0 ms/, `the failure does not say the reads ran out of time: ${failure.message}`);
+    return true;
+  });
+
+  assert.equal(existsSync(join(directory, 'read')), false, 'a read of the process table ran');
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
 /** A sink whose stream lies under a regular file in `directory`, so it refuses every append. */
 function refusingSink(directory) {
   writeFileSync(join(directory, 'blocked'), '');
