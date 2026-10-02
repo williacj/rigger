@@ -194,8 +194,12 @@ function rulesOf(declared) {
   return Object.keys(rules).length === 0 ? undefined : rules;
 }
 
-/** What makes a Bash rule name a compound command line rather than one command. */
-const COMPOUND = /&&|\|\||[;|]/;
+/**
+ * What makes a Bash rule name a compound command line rather than one command: any shell list or
+ * pipeline operator, `;`, `&`, `&&`, `|`, `||` or a line break. It is read as characters, so a rule
+ * holding one only inside quotes, such as `Bash(grep -E 'a|b' x)`, is refused too.
+ */
+const COMPOUND = /[;&|\n\r]/;
 
 /**
  * The characters a reached directory's real path may hold, so that `cd <head>` is one command a
@@ -249,8 +253,9 @@ function above(directory) {
  * The command line that runs the agent file `agent`, at `tier`, on `prompt`, in `directory`: the
  * CLI by its command name, its arguments, the prompt's bytes for its standard input, the variables
  * it must not inherit, and the variables it sets, each a path under `directory` (ruling 9 on
- * #467). Each directory `reach` names is granted by `granting`, and named to the session by its
- * absolute path in the prompt. It runs nothing, so it leaves `emitter` unused (ruling 5 on #467).
+ * #467). Each directory `reach` names is granted by `granting`; the prompt is handed over as given,
+ * so whoever composes it names the directory there. It runs nothing, so it leaves `emitter` unused
+ * (ruling 5 on #467).
  *
  * Refused, each naming what it refused: a tier Rigger does not fix; an agent file whose real path is not under `directory`
  * (`R-SAFE-6`), though the file is not read and need not exist; a directory under a path holding a

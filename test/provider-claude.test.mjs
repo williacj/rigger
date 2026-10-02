@@ -223,6 +223,26 @@ test('given reach, a Bash rule the directory\'s settings declare for a compound 
   }
 });
 
+test('given reach, a Bash rule the directory\'s settings declare with a lone & is refused, naming the rule', async (t) => {
+  // The engineer judge's B1 on #531: `Bash(echo alpha & echo beta)` was carried across, and a live
+  // session asked for that very command was denied it as using "the `&` background operator".
+  const repo = consumer(t);
+  const reached = scratch(t);
+  const rule = 'Bash(npm test & echo x)';
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
+  await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule));
+});
+
+test('given reach, a Bash rule the directory\'s settings declare with a line break is refused, naming the rule', async (t) => {
+  // The engineer judge's B1 on #531: a line break ends one command and starts the next.
+  const repo = consumer(t);
+  const reached = scratch(t);
+  for (const rule of ['Bash(npm test\necho x)', 'Bash(npm test\r\necho x)']) {
+    put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
+    await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule), JSON.stringify(rule));
+  }
+});
+
 /** Asserts each directory named in `names`, made under a scratch directory, is refused as `reach`, naming its path. */
 async function refusedAsReach(t, names) {
   const repo = consumer(t);
