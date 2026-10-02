@@ -60,13 +60,15 @@ export const transcriptsOf = (directory) => join(homedir(), '.claude', 'projects
 
 /**
  * Every built-in tool #480's pull request classifies as acting within the session or on its host,
- * on Claude Code 2.1.287. The agent tool is not one of them: its remote isolation acts through the
- * owner's account (O45). A start record offering any tool outside this list and the withheld ones
- * has a tool nobody has classified, which may act through the owner's account.
+ * on Claude Code 2.1.287. The agent tool and `Workflow` are not among them: both are withheld, the
+ * agent tool because its remote isolation acts through the owner's account (O45), and `Workflow`
+ * because no flag limits what a workflow's agents may do (O52). A start record offering any tool
+ * outside this list and the withheld ones has a tool nobody has classified, which may act through
+ * the owner's account.
  */
 export const CLASSIFIED = [
   'Bash', 'CronCreate', 'CronDelete', 'CronList', 'Edit', 'Monitor', 'NotebookEdit', 'Read',
-  'ReportFindings', 'ScheduleWakeup', 'TaskStop', 'ToolSearch', 'WebFetch', 'WebSearch', 'Workflow', 'Write',
+  'ReportFindings', 'ScheduleWakeup', 'TaskStop', 'ToolSearch', 'WebFetch', 'WebSearch', 'Write',
 ];
 
 /** The tools in a start record's `tools` that are neither classified nor the directory's own MCP tools. */
