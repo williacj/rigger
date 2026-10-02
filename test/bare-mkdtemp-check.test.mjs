@@ -18,9 +18,12 @@ const HELPER = 'temporary-directory.mjs';
 
 /**
  * Every `file:line` under `directory`, outside the helper, where the code names `mkdtempSync`: a
- * call, an import, an alias's source, a destructured key or a namespace's property. A file read as
- * tokens rather than lines, so a call split across lines is found and a mention in a string or a
- * comment is not. A file the tokenizer cannot read fails the check, naming the file.
+ * call, an import, an alias's source, a destructured key, a namespace's property, or a computed
+ * member whose key is the string `mkdtempSync`, quoted or as a template. A file read as tokens
+ * rather than lines, so a call split across lines is found, and a mention in a comment, or the
+ * string in an array or as an object's key, is not. A key held in a variable, `fs[name]`, is not
+ * found: what it holds is known only when the code runs. A file the tokenizer cannot read fails the
+ * check, naming the file.
  */
 function bareMkdtemps(directory) {
   return readdirSync(directory, { recursive: true, withFileTypes: true })
@@ -31,15 +34,27 @@ function bareMkdtemps(directory) {
     .flatMap((path) => namings(join(directory, path)).map((line) => `test/${path}:${line}`));
 }
 
-/** The line of every token in the file at `path` that is the name `mkdtempSync`. */
+/**
+ * The line of every token in the file at `path` that names `mkdtempSync`: the name itself, or the
+ * string or template that is the whole key of a computed member. A `[` opens a member, not an
+ * array, where what comes before it ends an expression: a name, `this`, `)`, `]` or `?.`.
+ */
 function namings(path) {
   const source = readFileSync(path, 'utf8');
   const options = { ecmaVersion: 'latest', sourceType: /\.cjs$/.test(path) ? 'script' : 'module', locations: true, allowHashBang: true };
+  let tokens;
   try {
-    return [...tokenizer(source, options)].filter((token) => token.type.label === 'name' && token.value === 'mkdtempSync').map((token) => token.loc.start.line);
+    tokens = [...tokenizer(source, options)];
   } catch (error) {
     throw new Error(`the mkdtempSync check could not read ${path}: ${error.message}`);
   }
+  const label = (at) => tokens[at]?.type.label;
+  const opensMember = (at) => label(at) === '[' && ['name', 'this', ')', ']', '?.'].includes(label(at - 1));
+  const computedKey = (at) => (label(at) === 'string' && opensMember(at - 1) && label(at + 1) === ']')
+    || (label(at) === 'template' && label(at - 1) === '`' && opensMember(at - 2) && label(at + 1) === '`' && label(at + 2) === ']');
+  return tokens
+    .map((token, at) => ((token.value === 'mkdtempSync' && (label(at) === 'name' || computedKey(at))) ? token.loc.start.line : null))
+    .filter((line) => line !== null);
 }
 
 test('no file under test/ names mkdtempSync in its code but the shared temporary-directory helper', () => {
@@ -79,6 +94,24 @@ test('the check names the file and the line of every mkdtempSync named in code, 
     'test/nested/leaks.mjs:8',
     'test/nested/leaks.mjs:9',
   ]);
+});
+
+test('the check names the line of a computed member whose key is the string mkdtempSync, quoted or as a template, and passes the same string in an array, an object key or a longer key', () => {
+  const root = temporaryDirectory('rigger-bare-mkdtemp-');
+  writeFileSync(join(root, 'computed.mjs'), [
+    "import * as fs from 'node:fs';",
+    "const quoted = fs['mkdtempSync']('/tmp/rigger-leak-');",
+    'const template = fs[`mkdtempSync`];',
+    'const split = fs',
+    '  ["mkdtempSync"];',
+    "const listed = ['mkdtempSync', 'rmSync'];",
+    "const first = ['rmSync', 'mkdtempSync'][0];",
+    "function returned() { return ['mkdtempSync']; }",
+    "const keyed = { 'mkdtempSync': 1 };",
+    "const longer = fs['mkdtempSyncLater'];",
+  ].join('\n'));
+
+  assert.deepEqual(bareMkdtemps(root), ['test/computed.mjs:2', 'test/computed.mjs:3', 'test/computed.mjs:5']);
 });
 
 test('a file under the directory the tokenizer cannot read fails the check, naming the file', () => {
