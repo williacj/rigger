@@ -247,19 +247,23 @@ test('given reach, a Bash rule the directory\'s settings declare with a line bre
 test('given reach, each Read or Edit deny rule relative to the working directory is copied, anchored at each reached directory\'s real path, and a // or ~/ rule is not', async (t) => {
   // O61 on #520: #531's engineer judge measured `Read(./.env)` and `Read(**/.secret)` protecting
   // main's copy and not head's under route B. Measured on Claude Code 2.1.287 and 2.1.288: a
-  // single-segment `./.env` or `.env` blocks at any depth, and a multi-segment `./a/b.txt` or
-  // `a/b.txt` at its own place only (#531's engineer judge, B3; the maker's probe, round 5).
+  // single-segment `./.env` or `.env` blocks at any depth, as do `secrets/**`, `secrets/` and
+  // `./secrets/**`, whose one segment comes before `/**` or a trailing `/`; a multi-segment
+  // `./a/b.txt` or `a/b.txt` blocks at its own place only (#531's engineer judge, B3; Codex round 3,
+  // item 7; the maker's probes, rounds 5 and 6).
   const repo = consumer(t);
   const one = scratch(t);
   const two = scratch(t);
   const declared = [
     'Read(./.env)', 'Read(.env)', 'Read(**/.secret)', 'Edit(secrets/**)', 'Read(src/config/**)', 'Read(./config/local.json)',
+    'Read(keys/)', 'Read(./vault/**)',
     'Read(//etc/hosts)', 'Edit(~/.ssh/**)', 'Bash(git push --force:*)',
   ];
   put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)'], deny: declared } });
   const { deny } = settings((await invoked(repo, { reach: [one, two] })).args).permissions;
   const copies = (head) => [
-    `Read(/${head}/**/.env)`, `Read(/${head}/**/.env)`, `Read(/${head}/**/.secret)`, `Edit(/${head}/secrets/**)`, `Read(/${head}/src/config/**)`,
+    `Read(/${head}/**/.env)`, `Read(/${head}/**/.env)`, `Read(/${head}/**/.secret)`, `Edit(/${head}/**/secrets/**)`, `Read(/${head}/src/config/**)`,
+    `Read(/${head}/**/keys/)`, `Read(/${head}/**/vault/**)`,
     `Read(/${head}/config/local.json)`,
   ];
   assert.deepEqual([...deny].sort(), [...declared, ...copies(one), ...copies(two)].sort());
@@ -302,9 +306,10 @@ async function refusedAsReach(t, names) {
   }
 }
 
-test('given reach whose real path holds a command separator, the invocation is refused, naming it, since its cd rule would be compound', async (t) => {
-  // Codex's round-1 finding on #531: a real directory named `head;echo` made `Bash(cd …/head;echo)`,
-  // a rule for a compound line (#519's report, c17), and so a command the consumer never allowed.
+test('given reach whose real path holds a command separator, the invocation is refused, naming it, since its rules would read the path as more than one', async (t) => {
+  // Codex's round-1 finding on #531: a real directory named `head;echo` once made a compound `cd`
+  // rule (#519's report, c17). No `cd` rule is written now (ruling 12), and the refusal stands for
+  // every character outside letters, digits, a space and `/._+-`.
   await refusedAsReach(t, ['head;echo', 'x&&y', 'x&y', 'p|q', 'n\nl']);
 });
 

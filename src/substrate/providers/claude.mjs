@@ -266,11 +266,13 @@ const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
  * code.claude.com/docs/en/permissions), and the copy blocks under `at` what the rule blocks under the
  * working directory, depth for depth:
  *
- * - `path` and `./path` alike: with no `/` but a trailing one, at any depth, as `**\/path`; holding
- *   a `/`, at its own place under the current directory only. Measured, each rule in a working
- *   directory's own settings: `Read(./.env)` denied `.env` and `sub/.env` (Claude Code 2.1.287,
- *   #531's engineer judge; 2.1.288, the maker's probe), and `Read(./a/b.txt)` and `Read(a/b.txt)`
- *   denied `a/b.txt` and not `x/a/b.txt` (2.1.288). These are copied to each reached directory,
+ * - `path` and `./path` alike: one segment, alone or before `/**` or a trailing `/`, at any depth, as
+ *   `**\/path`; more than one segment, at its own place under the current directory only.
+ *   Measured, each rule in a working directory's own settings: `Read(./.env)` denied `.env` and
+ *   `sub/.env` (Claude Code 2.1.287, #531's engineer judge; 2.1.288, the maker's probe);
+ *   `Read(secrets/**)`, `Read(secrets/)` and `Read(./secrets/**)` each denied `secrets/token` and
+ *   `sub/secrets/token`, and `Read(./a/b.txt)` and `Read(a/b.txt)` denied `a/b.txt` and not
+ *   `x/a/b.txt` (2.1.288, the maker's probes). These are copied to each reached directory,
  *   and not to the working directory, where they already hold. A version that reads `./` as the
  *   top only, as the docs' "relative to current directory" suggests, makes a single-segment copy
  *   stricter than the rule, never wider.
@@ -295,7 +297,7 @@ function anchoredAt(rule, at, fromRoot) {
   if (path.startsWith('/')) return `${tool}(/${at}${path})`;
   if (fromRoot) return undefined;
   const bare = path.startsWith('./') ? path.slice(2) : path;
-  const relative = bare.replace(/\/$/, '').includes('/') ? bare : `**/${bare}`;
+  const relative = bare.replace(/\/(\*\*)?$/, '').includes('/') ? bare : `**/${bare}`;
   return `${tool}(/${at}/${relative})`;
 }
 
