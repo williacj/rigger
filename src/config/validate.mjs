@@ -330,8 +330,11 @@ function readTimeout(holder, where, refusals) {
  * Whether a value is a plain object whose every key is a name holding a string: what an object
  * literal mapping names to strings is. A Map, a class instance, an inherited or computed entry,
  * and a symbol key each hold something `Object.entries` would never show, so the validator would
- * pass what the engine later reads differently. A key that is not enumerable is no entry to the
- * engine either, which reads the labels as `Object.entries` does.
+ * pass what the engine later reads differently.
+ *
+ * A key of `labels` is an enumerable own key, as for every declaration the validator reads. A key
+ * the config defines as non-enumerable is no declaration: the validator neither reads nor refuses
+ * it, as for every other declaration in the config (ruling 16 on #467).
  */
 function mapsNamesToStrings(value) {
   if (!declares(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
