@@ -168,18 +168,67 @@ test('a directory under a path holding a glob character is refused, naming the p
   }
 });
 
-test('given reach naming a directory, the invocation is refused, naming reach and #520, and answers no command', async (t) => {
-  // Ruling 8 on #467: `--add-dir` loads the reached directory's skills and agents, against
-  // `R-LOOP-14`, so no judge is started with a grant until #520 carries a route #519 measured.
+// proves R-LOOP-14, R-EVIDENCE-6
+test('given reach naming a directory, the invocation grants it by route B: no --add-dir, no additionalDirectories, and Read and Edit rules on its real path', async (t) => {
+  // #519's report, "Recommendation", items 1 and 2: `--add-dir` lists the reached directory's
+  // agents (c2, c12), and path-scoped rules in `--settings` reach it loading nothing (c6 to c8).
   const repo = consumer(t);
   const reached = scratch(t);
-  await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => {
-    assert.match(failure.message, /`reach`/);
-    assert.match(failure.message, /#520/);
-    return true;
-  });
-  const { args } = await invoked(repo, { reach: [] });
+  const { args } = await invoked(repo, { reach: [reached] });
   assert.equal(args.includes('--add-dir'), false);
+  const given = settings(args);
+  assert.equal(given.additionalDirectories, undefined);
+  assert.equal(given.permissions.additionalDirectories, undefined);
+  assert.ok(given.permissions.allow.includes(`Read(/${reached}/**)`), JSON.stringify(given.permissions));
+  assert.ok(given.permissions.allow.includes(`Edit(/${reached}/**)`), JSON.stringify(given.permissions));
+});
+
+// proves R-EVIDENCE-6
+test('given reach naming a directory through a link, the rules name its real path and never the link', async (t) => {
+  // #519's report, "What #520 must not assume": every run used the resolved path, and a rule on
+  // `/tmp/…` was not measured to match `/private/tmp/…`, or the reverse. macOS names `/tmp` by a link.
+  const repo = consumer(t);
+  const reached = scratch(t);
+  const link = join(scratch(t), 'linked');
+  symlinkSync(reached, link);
+  const { allow } = settings((await invoked(repo, { reach: [link] })).args).permissions;
+  assert.ok(allow.includes(`Read(/${reached}/**)`), JSON.stringify(allow));
+  assert.ok(allow.includes(`Edit(/${reached}/**)`), JSON.stringify(allow));
+  assert.deepEqual(allow.filter((rule) => rule.includes(link)), []);
+});
+
+// proves R-EVIDENCE-6
+test('given reach, the invocation allows cd into the reached directory as a rule of its own, beside a rule of its own for each command the directory\'s settings declare, and no compound line', async (t) => {
+  // #519's report, c16, c17 and c19: Claude Code matches a Bash rule against each part of a
+  // compound command, so `cd <head> && npm test` runs under `Bash(cd <head>)` and `Bash(npm test)`,
+  // and a rule naming the whole line admits nothing.
+  const repo = consumer(t);
+  const reached = scratch(t);
+  const declared = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(git diff:*)'];
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: declared } });
+  const { permissions } = settings((await invoked(repo, { reach: [reached] })).args);
+  assert.ok(permissions.allow.includes(`Bash(cd ${reached})`), JSON.stringify(permissions.allow));
+  for (const rule of declared) assert.ok(permissions.allow.includes(rule), rule);
+  const compound = Object.values(permissions).flat().filter((rule) => /^Bash\(.*(&&|\|\||;|\|)/.test(rule));
+  assert.deepEqual(compound, []);
+});
+
+test('given reach, a Bash rule the directory\'s settings declare for a compound line is refused, naming the rule, since it would admit nothing', async (t) => {
+  // #519's report, c17: `Bash(cd <head> && npm run fail)` did not admit that very command.
+  const repo = consumer(t);
+  const reached = scratch(t);
+  for (const rule of ['Bash(cd /x && npm test)', 'Bash(npm test; echo done)', 'Bash(npm test | tee log)', 'Bash(make || true)']) {
+    put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
+    await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule));
+  }
+});
+
+test('given reach naming a directory that does not exist, the invocation is refused, naming it', async (t) => {
+  // A path that cannot be resolved fails safe: a rule on a spelling it does not resolve to was not
+  // measured to match (#519's report, "What #520 must not assume").
+  const repo = consumer(t);
+  const absent = join(scratch(t), 'absent');
+  await assert.rejects(invoked(repo, { reach: [absent] }), (failure) => failure.message.includes(absent));
 });
 
 test('the invocation hands the session the permission rules the directory\'s own settings declare, and no other permission setting from them', async (t) => {

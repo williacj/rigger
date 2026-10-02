@@ -27,6 +27,19 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
  * - The tools a session is offered, and which act through the owner's account, are `OWNERS`'s
  *   measurement on 2.1.287, and the built-in plugins `BUILTINS`'s. Each moves on a patch release.
  *
+ * How a judge reaches its `head` (`reach`): route B of #519's report, `docs/spikes/how-a-judge-
+ * reaches-head.md`, measured with Claude Code 2.1.287. No `--add-dir`, which lists the reached
+ * directory's agents even with slash commands disabled and the agent tool withheld (route A, c2,
+ * c12), and no `permissions.additionalDirectories`; only path-scoped `Read`, `Edit` and `cd` rules
+ * in `--settings`, so nothing of `head`'s loads (c6 to c8, c13 to c19). The fallback is route C,
+ * `permissions.additionalDirectories: [<head>]` in the same `--settings` JSON, which the report
+ * found passing too, loading nothing from `head` and running `npm test` there with no reset of the
+ * shell's directory (c9 to c11). It is used only where a live run shows route B failing. Route B
+ * stops passing in a version that loads `head`'s `CLAUDE.md` or `.claude/` once a session reads
+ * there or enters it with `cd`, or in one where the `//` rules stop admitting the read, the write or
+ * the `cd` (report, "What would reverse the recommendation"); the gated live run
+ * `test/provider-claude-reach-live.test.mjs` reads both.
+ *
  * One source the reports found is not withheld here: the owner's account email, which #473's
  * report found in every session's context (c47), and for which it found no withholder.
  */
@@ -122,9 +135,6 @@ const BUILTINS = ['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', 
 /** The permission lists carried across from the directory's own settings, and nothing else. */
 const RULES = ['allow', 'deny', 'ask'];
 
-/** The card that carries `reach` once #519 has measured a route that loads nothing from it. */
-const REACH_CARD = '#520';
-
 /** What a `claudeMdExcludes` glob reads as other than itself. */
 const GLOB = /[*?[\]{}\\]|[!@+]\(/;
 
@@ -184,6 +194,34 @@ function rulesOf(declared) {
   return Object.keys(rules).length === 0 ? undefined : rules;
 }
 
+/** What makes a Bash rule name a compound command line rather than one command. */
+const COMPOUND = /&&|\|\||[;|]/;
+
+/**
+ * `rules` with the grant on each directory `reach` names added to its `allow` list, by route B of
+ * #519's report ("Recommendation"): a `Read` and an `Edit` rule on the directory's real path, which
+ * begins with `/`, so each rule begins `//`, Claude Code's form for an absolute path; and
+ * `Bash(cd <head>)` as a rule of its own. Without the two path rules a session can neither read,
+ * write nor `cd` there (c14, c18).
+ *
+ * The commands a role runs in `head` are those the directory's own settings allow, each already a
+ * rule of its own. Claude Code matches a Bash rule against each part of a compound command, so
+ * `cd <head> && npm test` runs under `Bash(cd <head>)` and `Bash(npm test)`, and a rule naming a
+ * compound line admits nothing, not even that line (c16, c17, c19). Such a declared rule is
+ * refused, naming it, rather than handed on as a grant it is not. A reached directory whose real
+ * path cannot be read is refused, since a rule on a path it does not resolve to was not measured to
+ * match.
+ */
+function granting(rules, reach) {
+  if (reach.length === 0) return rules;
+  const compound = Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule));
+  if (compound !== undefined) {
+    throw new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`);
+  }
+  const grants = reach.map((each) => realpathSync.native(each)).flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`, `Bash(cd ${head})`]);
+  return { ...rules, allow: [...(rules?.allow ?? []), ...grants] };
+}
+
 /** Every `CLAUDE.md` above `directory`, up to the root, as absolute paths. */
 function above(directory) {
   const files = [];
@@ -197,21 +235,16 @@ function above(directory) {
  * The command line that runs the agent file `agent`, at `tier`, on `prompt`, in `directory`: the
  * CLI by its command name, its arguments, the prompt's bytes for its standard input, the variables
  * it must not inherit, and the variables it sets, each a path under `directory` (ruling 9 on
- * #467). It runs nothing, so it leaves `emitter` unused (ruling 5 on #467).
+ * #467). Each directory `reach` names is granted by `granting`, and named to the session by its
+ * absolute path in the prompt. It runs nothing, so it leaves `emitter` unused (ruling 5 on #467).
  *
- * Refused, each naming what it refused: any `reach`, until `REACH_CARD` carries it (ruling 8 on
- * #467); a tier Rigger does not fix; an agent file whose real path is not under `directory`
+ * Refused, each naming what it refused: a tier Rigger does not fix; an agent file whose real path is not under `directory`
  * (`R-SAFE-6`), though the file is not read and need not exist; a directory under a path holding a
- * glob character, which its `CLAUDE.md` exclusions would read as a pattern; and a settings file in
- * `directory` that is no JSON object.
+ * glob character, which its `CLAUDE.md` exclusions would read as a pattern; a settings file in
+ * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path or a
+ * declared Bash rule for a compound line.
  */
 export async function invocation({ agent, tier, prompt, directory, reach = [], emitter }) {
-  if (reach.length > 0) {
-    throw new Error(
-      `the Claude Code adapter refuses \`reach\` (${reach.join(', ')}) until ${REACH_CARD}, because ` +
-      '`--add-dir` loads a reached directory\'s skills and agents (ruling 8 on #467), so it answered no command',
-    );
-  }
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Claude Code adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
@@ -232,7 +265,7 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
   const declares = (tool) => [tool, ...(ALIASES[tool] ?? [])].some((each) => allowed.includes(each));
   const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !declares(tool))];
   const enabledPlugins = Object.fromEntries(BUILTINS.filter((id) => declared.enabledPlugins?.[id] !== true).map((id) => [id, false]));
-  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: rulesOf(declared) };
+  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: granting(rulesOf(declared), reach) };
   return {
     command: 'claude',
     args: [
