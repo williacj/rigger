@@ -50,6 +50,7 @@ test('a live dispatch through the installed package loads the consumer\'s skill 
   assert.deepEqual(run.init.tools.filter((tool) => withheldBy(run.args).includes(tool)), [], 'a withheld tool reached the session');
   assert.deepEqual(unclassified(run.init.tools), [], 'the session was offered a tool nobody has classified');
   assert.equal(run.init.tools.includes('Task') || run.init.tools.includes('Agent'), false, 'the agent tool reached the session (O45)');
+  assert.equal(run.init.tools.includes('Workflow'), false, 'Workflow reached the session (O52)');
   assert.equal(existsSync(transcriptsOf(consumer)), false, 'the session left a transcript in the owner\'s home');
   assert.deepEqual(callsOf(run.events).filter(({ name }) => name === 'Bash'), [], 'the session made a Bash call');
   assert.ok(existsSync(join(base, 'consumer-hook-ran')), 'the consumer\'s hook did not run');

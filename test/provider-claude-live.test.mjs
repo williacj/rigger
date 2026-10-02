@@ -63,6 +63,7 @@ test('a live claude session started from the invocation loads exactly the direct
   assert.deepEqual(init.tools.filter((tool) => withheldBy(run.args).includes(tool)), [], 'a withheld tool reached the session');
   assert.deepEqual(unclassified(init.tools), [], 'the session was offered a tool nobody has classified');
   assert.equal(init.tools.includes('Task') || init.tools.includes('Agent'), false, 'the agent tool reached the session (O45)');
+  assert.equal(init.tools.includes('Workflow'), false, 'Workflow reached the session (O52)');
   assert.equal(existsSync(transcriptsOf(directory)), false, 'the session left a transcript in the owner\'s home');
   assert.equal(init.memory_paths?.auto, undefined, 'auto-memory reached the session');
   assert.deepEqual(run.events.filter((event) => event.type === 'system' && /^hook_/.test(event.subtype ?? '')), [], 'a hook ran');
@@ -114,6 +115,7 @@ test('a live claude session started from the invocation writes a background task
   const calls = callsOf(run.events);
   assert.deepEqual(calls.map(({ name, input }) => [name, input.command]), [['Monitor', 'echo HERON-background-480']], 'the session made a call other than the one Monitor');
   assert.equal(run.init.tools.includes('Task') || run.init.tools.includes('Agent'), false, 'the agent tool reached the session (O45)');
+  assert.equal(run.init.tools.includes('Workflow'), false, 'Workflow reached the session (O52)');
   assert.ok(kept.some((path) => readFileSync(path, 'utf8').includes('HERON-background-480')), 'no output under the directory\'s temporary directory holds the task\'s line');
   const outside = join('/tmp', `claude-${userInfo().uid}`, directory.replace(/[^a-zA-Z0-9]/g, '-'));
   assert.deepEqual(filesUnder(outside), [], `the task wrote under ${outside}`);
