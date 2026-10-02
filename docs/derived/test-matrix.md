@@ -100,14 +100,14 @@ reports no gap of its own; the register carries the reason.
 | R-LOOP-11 | `test/config.test.mjs` a kind naming the owner anywhere but last is refused, and the refusal names the position<br>`test/config.test.mjs` a role called owner is refused, because the owner is the one judge that is not a role |
 | R-LOOP-12 | **gap** |
 | R-LOOP-13 | **gap** |
-| R-LOOP-14 | `test/judge-directory.test.mjs` the judge's directory holds a worktree main with HEAD detached at the commit origin's main line held when L1 made it, not the repository's older copy |
+| R-LOOP-14 | `test/judge-directory.test.mjs` the judge's directory holds a worktree main with HEAD detached at the commit origin's main line held when L1 made it, not the repository's older copy<br>`test/provider-claude-reach-live.test.mjs` a live judge reaching head by route B is listed nothing of head's and names none of its markers, and head's hooks do not run<br>`test/provider-claude-reach-live.test.mjs` a live judge reaching head by route B cannot dispatch head's agent by name, and starts no subagent<br>`test/provider-claude.test.mjs` given reach naming a directory, the invocation grants it by route B: no --add-dir, no additionalDirectories, and Read and Edit rules on its real path |
 | R-LOOP-15 | **gap** |
 | R-EVIDENCE-1 | **gap** |
 | R-EVIDENCE-2 | **gap** |
 | R-EVIDENCE-3 | **gap** |
 | R-EVIDENCE-4 | **gap** |
 | R-EVIDENCE-5 | **gap** |
-| R-EVIDENCE-6 | **gap** |
+| R-EVIDENCE-6 | `test/provider-claude-reach-live.test.mjs` a live judge reaching head by route B reads main's skill by path, and headless reads, writes, runs npm test and a failing command in head, with no permission denied<br>`test/provider-claude-reach-live.test.mjs` a live judge reaching head by route B is denied head's .env, a nested .env, .secret and a nested secrets directory by the consumer's own relative deny rules<br>`test/provider-claude-reach-live.test.mjs` a live judge reaching a head whose path holds a space reads, writes and runs a command there, with no permission denied<br>`test/provider-claude-reach-live.test.mjs` a live judge reaching head by route B is denied a /path the consumer's settings deny, in the directory it runs in and in head<br>`test/provider-claude.test.mjs` given reach naming a directory, the invocation grants it by route B: no --add-dir, no additionalDirectories, and Read and Edit rules on its real path<br>`test/provider-claude.test.mjs` given reach naming a directory through a link, the rules name its real path and never the link<br>`test/provider-claude.test.mjs` given reach, the invocation writes no cd rule, keeps a rule of its own for each command the directory's settings declare, and no compound line |
 | R-VERDICT-1 | **gap** |
 | R-VERDICT-2 | **gap** |
 | R-VERDICT-3 | **gap** |
