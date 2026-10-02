@@ -95,13 +95,16 @@ test('a live claude session started from the invocation writes a background task
   const directory = join(scratch(t), 'repo');
   forgetting(t, directory);
   put(directory, '.claude/agents/live.md', AGENT('HERON-agentend-480c'));
-  put(directory, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Monitor'] } }));
+  // The directory's own settings allow the one `Monitor`, and turn off tool search, so that
+  // `Monitor` is offered at once rather than loaded by a `ToolSearch` call first.
+  put(directory, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Monitor'] }, env: { ENABLE_TOOL_SEARCH: 'false' } }));
   const prompt = [
     'Start exactly one Monitor whose command is: echo HERON-background-480',
     'Wait for its event, then answer with the line it printed. Use no other tool.',
   ].join('\n');
   const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt, directory });
   t.diagnostic(`env: ${JSON.stringify(run.env)}`);
+  t.diagnostic(`tools: ${JSON.stringify(run.init?.tools)}`);
   t.diagnostic(`calls: ${JSON.stringify(callsOf(run.events))}`);
   t.diagnostic(`answer: ${JSON.stringify(run.answer)}`);
   const kept = filesUnder(run.env.CLAUDE_CODE_TMPDIR);
@@ -109,8 +112,8 @@ test('a live claude session started from the invocation writes a background task
 
   assert.equal(run.result.exit, 0);
   const calls = callsOf(run.events);
-  assert.deepEqual(calls.filter(({ name }) => name === 'Bash'), [], 'the session made a Bash call');
-  assert.ok(calls.some(({ name }) => name === 'Monitor'), 'the session started no background task');
+  assert.deepEqual(calls.map(({ name, input }) => [name, input.command]), [['Monitor', 'echo HERON-background-480']], 'the session made a call other than the one Monitor');
+  assert.equal(run.init.tools.includes('Task') || run.init.tools.includes('Agent'), false, 'the agent tool reached the session (O45)');
   assert.ok(kept.some((path) => readFileSync(path, 'utf8').includes('HERON-background-480')), 'no output under the directory\'s temporary directory holds the task\'s line');
   const outside = join('/tmp', `claude-${userInfo().uid}`, directory.replace(/[^a-zA-Z0-9]/g, '-'));
   assert.deepEqual(filesUnder(outside), [], `the task wrote under ${outside}`);
