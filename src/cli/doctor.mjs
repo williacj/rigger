@@ -9,6 +9,7 @@ import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { COLUMNS, FORGE_TIMEOUT, readRunner } from '../substrate/forge/runners.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
+import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 import { recording } from './recording.mjs';
@@ -284,13 +285,11 @@ export async function ghAuth({ ask, emitter } = {}) {
 }
 
 /**
- * How each provider's CLI is asked whether it is authenticated, one argv per provider.
- *
- * Keyed by provider, as `init.mjs`'s `PROVIDER_ASSETS` is, and `test/doctor.test.mjs` holds the
- * two key sets to each other: a provider Rigger forks assets for and has no way to ask is a
- * provider this check would pass over in silence.
+ * How each provider's CLI is asked whether it is authenticated, one argv per provider, as each
+ * provider's adapter names it in `auth` (ruling 1 Q1 on #467), so that every provider the
+ * adapter map holds is asked.
  */
-export const AGENT_CLI = { claude: ['claude', 'auth', 'status', '--json'] };
+export const AGENT_CLI = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.auth]));
 
 /** What `loggedIn` a JSON answer states, or undefined where it states none this can read. */
 function states(output) {
