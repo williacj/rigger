@@ -353,7 +353,8 @@ agent's own git commands in its workspace are outside the queue.
 
 A process still in the command's group when the direct child exits is terminated by L0 and recorded
 by name and command line; it never changes the exit code. A process that leaves its group is outside
-this containment.
+this containment. L0 never leaves one stopped, though: where a process left the group while L0 held
+the group stopped, L0 resumes it, and records it by name and command line.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
