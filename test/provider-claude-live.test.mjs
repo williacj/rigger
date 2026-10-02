@@ -99,9 +99,13 @@ test('a live claude session started from the invocation writes a background task
   // The directory's own settings allow the one `Monitor`, and turn off tool search, so that
   // `Monitor` is offered at once rather than loaded by a `ToolSearch` call first.
   put(directory, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Monitor'] }, env: { ENABLE_TOOL_SEARCH: 'false' } }));
+  // The start result holds no event, and a session told only to wait for it sometimes started the
+  // `Monitor` again (#538). Its event comes as a task notification once the turn has ended.
   const prompt = [
     'Start exactly one Monitor whose command is: echo HERON-background-480',
-    'Wait for its event, then answer with the line it printed. Use no other tool.',
+    'Its start result holds no event. The event reaches you afterwards, as a task notification, once you end your turn.',
+    'So after that one call, end your turn at once with the word WAITING, and start nothing else, whatever the start result says.',
+    'When the notification arrives, answer with the line it printed. Use no other tool.',
   ].join('\n');
   const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt, directory });
   t.diagnostic(`env: ${JSON.stringify(run.env)}`);
