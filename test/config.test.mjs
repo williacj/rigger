@@ -896,6 +896,17 @@ test("a role's labels that is no plain object of label names to strings is refus
   }
 });
 
+// A key the config defines as non-enumerable is no declaration, so the validator neither reads nor
+// refuses it, whatever it holds (ruling 16 on #467). An enumerable one is a declaration, and a
+// symbol is no label name.
+// proves R-SCHED-10
+test("a role's labels with a non-enumerable symbol key is accepted, and one with an enumerable symbol key is refused", () => {
+  const hidden = Object.defineProperty({ 'tier:high': 'high' }, Symbol('tier:fast'), { value: 7, enumerable: false });
+  assert.deepEqual(validate(withRole({ labels: hidden })), []);
+  const shown = Object.defineProperty({ 'tier:high': 'high' }, Symbol('tier:fast'), { value: 'high', enumerable: true });
+  assert.match(refusal(withRole({ labels: shown })), /`roles\.engineer\.labels`/);
+});
+
 // proves R-SCHED-10
 test("a role's timeout that is not a positive whole number of milliseconds is refused, naming the path and the value", () => {
   for (const timeout of [0, -5, 1.5, '14400000', Number.NaN, Infinity, 14400000n, null, true, [14400000], { ms: 14400000 }]) {
