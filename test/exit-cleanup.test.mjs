@@ -189,6 +189,8 @@ function fixtures(directory) {
   const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) if [ "$2" = "$(/bin/cat "$here/group.1")" ]; then ${answer}; fi ;; esac\nexec /bin/ps "$@"`;
   fixture(directory, 'ps-status-fails', statusRead('echo "ps: the test refuses this read" >&2; exit 2'));
   fixture(directory, 'ps-status-hangs', statusRead('exec /usr/bin/tail -f "$here/ps-hold"'));
+  // `ps-status-exits` exits 2 at that read and writes nothing to either stream.
+  fixture(directory, 'ps-status-exits', statusRead('exit 2'));
   fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec /bin/ps "$@"');
   // `ps-start-hangs` answers every read as `ps` does, but never the read of a leader's start time.
   // `unready` records its group and runs until killed, and never starts the child that would put
@@ -1105,6 +1107,18 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
     assert.deepEqual(ends.map(({ exit, unread }) => ({ exit, unread })), [{ exit: 128 + constants.signals.SIGKILL, unread: undefined }]);
   });
 }
+
+test('given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), where the cleanup\'s read of its status exits 2 and writes nothing, its one dispatch end carries no exit code and names that status', ENDS_WITHIN, async (t) => {
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, ps: 'ps-status-exits', after: EXIT_UNREAPED });
+
+  assert.deepEqual({ status, signal }, { status: 0, signal: null }, stderr);
+  await assertNoneAlive(directory);
+  const ends = endsOf(streamOf(directory), 'd-1');
+  assert.equal(ends.length, 1, JSON.stringify(ends));
+  assert.equal('exit' in ends[0], false, JSON.stringify(ends[0]));
+  assert.match(ends[0].unread ?? '', /could not read the command's status/, JSON.stringify(ends[0]));
+  assert.match(ends[0].unread, /ps-status-exits [^\n]* ended with 2\b/, JSON.stringify(ends[0]));
+});
 
 // L0 ends a dispatch's group when the read of its leader's start time does not answer within the
 // call's read bound, which is how a loaded host once ended the dispatch above before its command

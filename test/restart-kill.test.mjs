@@ -605,12 +605,14 @@ test('given a recorded group with a live member whose start-time read exits 1 an
   const started = await withoutLeader(t, await startGroup(t, world.directory, 'group'));
   writeGroups(world.state, [entryFor(started)]);
 
-  const ran = await onceWithPs(world, fixture(world.directory, 'ps', 'exit 1'));
+  const ran = await onceWithPs(world, warmed(fixture(world.directory, 'ps', 'exit 1')));
 
   assert.notEqual(ran.code, 0, ran.text);
   assertNamesEntry(ran.text, started);
+  assert.match(ran.text, /listed no process of the group/, `the failure does not say why the read failed: ${ran.text}`);
   assert.deepEqual(ran.sent, []);
   assert.equal(alive(started.member), true, 'the member was killed');
+  assert.deepEqual(readGroups(world.state), [entryFor(started)], 'the record no longer holds the entry');
 });
 
 // proves R-STATE-11

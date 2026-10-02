@@ -416,25 +416,29 @@ test('given a recorded group whose start-time read never answers, the call kills
 
 /**
  * Stand-ins for `ps`, by how the start-time read fails, each the body of a script whose arguments
- * are the read's: the group's id is the third. The first is how `ps` reports that no process
- * matched, whatever it is asked. The partial table is the real read's first row alone.
+ * are the read's: the group's id is the third. Beside each, what the failure says of that read,
+ * which a read that never answered does not say. The first is how `ps` reports that no process
+ * matched, whatever it is asked. The partial table is the real read's first row alone. Each is
+ * `warmed`, because the start-time read is its first exec, which must reach its body within
+ * `readTimeout`.
  */
 const FAILING_READS = {
-  'exits 1 and prints nothing': 'exit 1',
-  'exits 2 and prints nothing': 'exit 2',
-  'prints part of the table and exits 1': '/bin/ps "$@" | /usr/bin/head -n 1; exit 1',
-  'prints a start time that cannot be parsed': 'echo "$3 Ss  the day before yesterday"',
+  'exits 1 and prints nothing': ['exit 1', /listed no process of the group/],
+  'exits 2 and prints nothing': ['exit 2', /ended with 2\b/],
+  'prints part of the table and exits 1': ['/bin/ps "$@" | /usr/bin/head -n 1; exit 1', /ended with 1\b/],
+  'prints a start time that cannot be parsed': ['echo "$3 Ss  the day before yesterday"', /a start time L0 cannot read: "the day before yesterday"/],
 };
 
-for (const [how, body] of Object.entries(FAILING_READS)) {
+for (const [how, [body, cause]] of Object.entries(FAILING_READS)) {
   test(`given a recorded group with a live member whose start-time read ${how}, the call kills no process of that group, fails naming its entry, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
     const directory = scratch(t);
     const started = await startGroup(t, directory, 'group');
     const entry = entryFor(started, { dispatch: 'd-unread', card: 32 });
     writeGroups(stateOf(directory), [entry]);
 
-    await assert.rejects(killIn(directory, { ps: fixture(directory, 'ps', body), readTimeout: 300 }), (failure) => {
+    await assert.rejects(killIn(directory, { ps: warmed(fixture(directory, 'ps', body)), readTimeout: 300 }), (failure) => {
       for (const named of [`group ${started.group}`, 'd-unread', '#32']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+      assert.match(failure.message, cause, `the failure does not say why the read failed: ${failure.message}`);
       return true;
     });
 
@@ -525,8 +529,9 @@ test('given a recorded group whose leader is dead and whose live member\'s start
   const entry = entryFor(started, { dispatch: 'd-unread-leaderless', card: 34 });
   writeGroups(stateOf(directory), [entry]);
 
-  await assert.rejects(killIn(directory, { ps: fixture(directory, 'ps', 'exit 1'), readTimeout: 300 }), (failure) => {
+  await assert.rejects(killIn(directory, { ps: warmed(fixture(directory, 'ps', 'exit 1')), readTimeout: 300 }), (failure) => {
     for (const named of [`group ${started.group}`, 'd-unread-leaderless', '#34']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    assert.match(failure.message, /listed no process of the group/, `the failure does not say why the read failed: ${failure.message}`);
     return true;
   });
 
@@ -542,13 +547,63 @@ test('given a live group that is not the recorded one, whose start-time read pri
   // group's id, which is its leader's pid.
   const entry = entryFor(started, { started: started.started - 5, dispatch: 'd-leaderless', card: 33 });
   writeGroups(stateOf(directory), [entry]);
-  const ps = fixture(directory, 'ps', '/bin/ps "$@" | /usr/bin/grep -v "^ *$3 "; exit 0');
+  const ps = warmed(fixture(directory, 'ps', '/bin/ps "$@" | /usr/bin/grep -v "^ *$3 "; exit 0'));
 
   await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
     for (const named of [`group ${started.group}`, 'd-leaderless', '#33']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    assert.match(failure.message, new RegExp(`left out its leader, pid ${started.group},`), `the failure does not say why the read failed: ${failure.message}`);
     return true;
   });
 
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
+/**
+ * Stand-ins for `ps` whose first start-time read answers short, by how it does, and whose every
+ * later read never answers, so the reads' deadline passes while one is running. Beside each, what
+ * the failure says of the read that answered, which a read that never answered does not say. The
+ * warming run exits before the body, so the read that answers is the first the call makes.
+ */
+const ANSWERED_SHORT = {
+  'lists no process of the group': ['exit 1', () => /listed no process of the group/],
+  'leaves out its live leader': ['/bin/ps "$@" | /usr/bin/grep -v "^ *$3 "; exit 0', (group) => new RegExp(`left out its leader, pid ${group},`)],
+};
+
+for (const [how, [body, cause]] of Object.entries(ANSWERED_SHORT)) {
+  test(`given a recorded group whose first start-time read ${how} and whose next never answers, the call kills no process of that group, fails saying what the read that answered left out, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
+    const directory = scratch(t);
+    const started = await startGroup(t, directory, 'group');
+    const entry = entryFor(started, { dispatch: 'd-short', card: 36 });
+    writeGroups(stateOf(directory), [entry]);
+    const ps = warmed(fixture(directory, 'ps', ['/bin/mkdir "$here/answered" 2>/dev/null || exec /usr/bin/tail -f "$here/hold"', body].join('\n')));
+
+    await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
+      for (const named of [`group ${started.group}`, 'd-short', '#36']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+      assert.match(failure.message, cause(started.group), `the failure does not say what the read that answered left out: ${failure.message}`);
+      return true;
+    });
+
+    assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+    assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+  });
+}
+
+test('given a recorded group and no time to read its start times, the call reads nothing, kills no process of that group, fails saying the reads ran out of time, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(t, directory, 'group');
+  const entry = entryFor(started, { dispatch: 'd-no-time', card: 37 });
+  writeGroups(stateOf(directory), [entry]);
+  // A read of `ps` that ran would mark `read`, and answer as `ps` does.
+  const ps = warmed(fixture(directory, 'ps', ': > "$here/read"\nexec /bin/ps "$@"'));
+
+  await assert.rejects(killIn(directory, { ps, readTimeout: 0 }), (failure) => {
+    for (const named of [`group ${started.group}`, 'd-no-time', '#37']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+    assert.match(failure.message, /the reads of the process table did not finish within 0 ms/, `the failure does not say the reads ran out of time: ${failure.message}`);
+    return true;
+  });
+
+  assert.equal(existsSync(join(directory, 'read')), false, 'a read of the process table ran');
   assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });

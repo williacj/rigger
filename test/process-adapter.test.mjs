@@ -319,10 +319,10 @@ test('the caller\'s onGroup is handed, with the group, its leader\'s start time 
 test('given an onGroup and a start-time read that fails, the call rejects naming that read, onGroup is not called, and no process of the command is alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `exec ${TAIL}`);
-  const ps = fixture(directory, 'ps', 'exit 2');
+  const ps = warmed(fixture(directory, 'ps', 'exit 2'));
   let called = false;
 
-  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started/);
+  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .* ended with 2$/);
 
   assert.equal(called, false, 'onGroup was called');
   assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
