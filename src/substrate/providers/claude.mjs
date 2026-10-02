@@ -97,17 +97,21 @@ const WORKTREE = ['EnterWorktree', 'ExitWorktree'];
  * that form alone, so the whole tool is withheld, and a dispatched agent gets no subagents (O45).
  * A rule may name it `Task` or `Agent` (#519's report, c2, c3), so either declares it.
  *
+ * `Workflow`, whose definition reads "Execute a workflow script that orchestrates multiple
+ * subagents", is withheld for the agent tool's reason: no flag limits what a workflow's agents may
+ * do, so a session offered it would have subagents after all (O52).
+ *
  * Every other tool in that record acts within the session or on its host as the session's own
- * user. `Workflow`, `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`, `CronList` and
- * `ScheduleWakeup` act within the session; `Bash`, `Read`, `Edit`, `Write` and
- * `NotebookEdit` on the host; `ToolSearch` loads a deferred tool's definition; `ReportFindings`
- * renders findings in the host's own interface; `WebFetch` and `WebSearch` reach the public web.
+ * user. `Monitor`, `TaskStop`, `CronCreate`, `CronDelete`, `CronList` and `ScheduleWakeup` act
+ * within the session; `Bash`, `Read`, `Edit`, `Write` and `NotebookEdit` on the host;
+ * `ToolSearch` loads a deferred tool's definition; `ReportFindings` renders findings in the host's
+ * own interface; `WebFetch` and `WebSearch` reach the public web.
  * Claude in Chrome, which drives the owner's browser, is kept out by `--no-chrome`. A version adding
  * a tool that acts through the account offers it until this list names it.
  *
  * A repository declares one by naming it in its own `permissions.allow`.
  */
-const OWNERS = ['Task', 'ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+const OWNERS = ['Task', 'Workflow', 'ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
 
 /** The other names a rule may give a tool in `OWNERS`, each of which declares it. */
 const ALIASES = { Task: ['Agent'] };
