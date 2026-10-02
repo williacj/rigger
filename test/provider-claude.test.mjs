@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,7 +16,6 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** A fresh directory under `TMPDIR`, by its real path, removed when the test ends. */
 function scratch(t) {
   const directory = realpathSync.native(temporaryDirectory('rigger-claude-adapter-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
 

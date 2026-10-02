@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
@@ -77,7 +77,6 @@ const twoSteps = (required) => ({
  */
 function sinkFor(t) {
   const directory = temporaryDirectory('rigger-steps-');
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   return { sink: openSink({ directory, run: 'r-test', now: () => 0 }), events: () => (existsSync(streamPath(directory)) ? readEvents(directory) : []) };
 }
 

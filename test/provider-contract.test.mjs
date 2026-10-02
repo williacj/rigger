@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
@@ -42,7 +42,6 @@ async function departures(key, adapter, directory) {
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
 function scratch(t) {
   const directory = realpathSync.native(temporaryDirectory('rigger-provider-contract-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
 

@@ -42,7 +42,6 @@ export function pastRefusing() {
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
 export function scratch(t) {
   const directory = realpathSync.native(temporaryDirectory('rigger-claude-live-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
 

@@ -3,7 +3,7 @@
 // may hold L3's dispatching entry point or L1's dispatching function, and to running no code it
 // builds at run time or runs in a worker.
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -681,7 +681,6 @@ test('the source tree carries a package.json under src/, so the whole-tree run m
     const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
     assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
   } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 

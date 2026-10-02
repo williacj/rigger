@@ -23,7 +23,7 @@ const WORLD = 'test/demo-world.sh';
  * `script` in the shell the world left behind. What it printed and its exit status.
  */
 function inTheWorld(script) {
-  const ran = spawnSync('bash', ['-c', `. ${WORLD} || exit 9\n${script}`], { cwd: root, encoding: 'utf8', env: gitEnvironment() });
+  const ran = spawnSync('bash', ['-c', `. ${WORLD} || exit 9\n${script}`], { cwd: root, encoding: 'utf8', env: { ...gitEnvironment(), TMPDIR: temporaryDirectory('rigger-demo-tmp-') } });
   assert.equal(ran.error, undefined);
   assert.notEqual(ran.status, 9, `sourcing ${WORLD} failed:\n${ran.stderr}`);
   return { out: ran.stdout, err: ran.stderr, code: ran.status };
