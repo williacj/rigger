@@ -30,11 +30,12 @@ async function departures(key, adapter, directory) {
   if (found.length > 0) return found;
   const answer = adapter.invocation({ agent: join(directory, 'agent.md'), tier: 'standard', prompt: 'the prompt', directory, emitter: silent });
   if (!(answer instanceof Promise)) return [...found, 'answers its invocation with no promise'];
-  const { command, args, input, unset } = await answer;
+  const { command, args, input, unset, env } = await answer;
   if (typeof command !== 'string' || command.includes('/')) says(`answers the command ${JSON.stringify(command)}, which is no command name`);
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) says('answers `args` that are not all strings');
   if (!Buffer.from(input ?? '').equals(Buffer.from('the prompt'))) says('answers an `input` that is not the prompt\'s bytes');
   if (!Array.isArray(unset) || !unset.every((variable) => typeof variable === 'string')) says('answers no list of variables as `unset`');
+  if (env === null || typeof env !== 'object' || Array.isArray(env) || !Object.values(env).every((value) => typeof value === 'string')) says('answers no object of variables to set as `env`');
   return found;
 }
 
@@ -48,7 +49,7 @@ function scratch(t) {
 test('every module in the adapter map answers the provider adapter interface', async (t) => {
   // Ruling 5 on #467: one declared contract, so that one test holds the Claude Code module now and
   // the Codex module once #489 adds it. The defect this catches is an adapter L1 cannot await, or
-  // one that answers no `unset` for L1 to drop.
+  // one that answers no `unset` for L1 to drop or no `env` for it to set (ruling 9 on #467).
   const directory = scratch(t);
   for (const [key, adapter] of Object.entries(ADAPTERS)) {
     const repo = join(directory, key);
@@ -67,11 +68,12 @@ test('the contract names the module that answers otherwise, and how', async (t) 
   assert.ok(found.includes('the other adapter maps no model to the tier `high`'), found.join('\n'));
   assert.ok(found.includes('the other adapter does not declare `invocation` async'), found.join('\n'));
 
-  const misnamed = { ...plain, tiers: { standard: 's', high: 'h' }, invocation: async () => ({ command: '/usr/bin/other', args: [], input: 'x', unset: 'HOME' }) };
+  const misnamed = { ...plain, tiers: { standard: 's', high: 'h' }, invocation: async () => ({ command: '/usr/bin/other', args: [], input: 'x', unset: 'HOME', env: ['TMPDIR'] }) };
   const answered = await departures('other', misnamed, directory);
   assert.deepEqual(answered, [
     'the other adapter answers the command "/usr/bin/other", which is no command name',
     'the other adapter answers an `input` that is not the prompt\'s bytes',
     'the other adapter answers no list of variables as `unset`',
+    'the other adapter answers no object of variables to set as `env`',
   ]);
 });

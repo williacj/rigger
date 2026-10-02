@@ -133,16 +133,18 @@ export const textOf = (result) => (typeof result?.content === 'string' ? result.
 
 /**
  * Runs the invocation `invocation` answers through the process adapter `runCommand`, with an L0
- * emitter that fails on any kill, under this process's environment less the variables it names,
- * and the real `claude` first on PATH. It hands back the run's events and its result.
+ * emitter that records any kill, under this process's environment less the variables it names to
+ * unset, then with the variables it names to set, in the order ruling 9 on #467 gives
+ * `roleDispatch`, and the real `claude` first on PATH. It hands back the run's events and its result.
  */
 export async function session({ invocation, runCommand }, request) {
   const killed = [];
   const emitter = { emit: (event, fields) => killed.push({ event, ...fields }) };
-  const { command, args, input, unset } = await invocation({ ...request, emitter });
+  const { command, args, input, unset, env: set } = await invocation({ ...request, emitter });
   const env = { ...process.env, PATH: pastRefusing() };
   for (const variable of unset) delete env[variable];
+  Object.assign(env, set);
   const result = await runCommand({ command, args, input, cwd: request.directory, env, timeout: SESSION, emitter });
   const events = eventsOf(result.stdout);
-  return { command, args, result, events, killed, init: events.find((event) => event.type === 'system' && event.subtype === 'init'), answer: events.find((event) => event.type === 'result')?.result ?? '' };
+  return { command, args, env: set, result, events, killed, init: events.find((event) => event.type === 'system' && event.subtype === 'init'), answer: events.find((event) => event.type === 'result')?.result ?? '' };
 }

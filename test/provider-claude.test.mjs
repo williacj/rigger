@@ -272,6 +272,21 @@ test('the invocation answers an empty list of variables to unset, as #473\'s rep
   assert.deepEqual(unset, []);
 });
 
+test('the invocation sets CLAUDE_CODE_TMPDIR to one fixed, dot-named directory under the dispatch\'s directory', async (t) => {
+  // #473's report, c35: `CLAUDE_CODE_TMPDIR` moved background-task output under the session's
+  // directory, where `TMPDIR` left it under `/tmp/claude-<uid>/` (c34). Ruling 9 on #467 has the
+  // invocation answer it in `env`, as a path under the directory, never one L1 removes.
+  const repo = consumer(t);
+  const { env, unset } = await invoked(repo);
+  assert.deepEqual(Object.keys(env), ['CLAUDE_CODE_TMPDIR']);
+  const value = env.CLAUDE_CODE_TMPDIR;
+  assert.equal(dirname(value), repo.directory, 'the directory is not directly under the dispatch\'s');
+  assert.match(value.slice(repo.directory.length + 1), /^\.[^/]+$/, 'the directory is not dot-named');
+  assert.equal(unset.includes('CLAUDE_CODE_TMPDIR'), false);
+  const other = consumer(t);
+  assert.equal((await invoked(other)).env.CLAUDE_CODE_TMPDIR.slice(other.directory.length), value.slice(repo.directory.length), 'the name is not fixed');
+});
+
 test('the agent file the invocation hands the CLI is the one given, under the directory, and is not read', async (t) => {
   // The adapter does not check that the file exists: the CLI reports a missing one.
   const repo = consumer(t);

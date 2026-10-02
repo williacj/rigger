@@ -3,8 +3,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { userInfo } from 'node:os';
 
 import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
@@ -76,4 +77,39 @@ test('a live claude session started from the invocation loads exactly the direct
   assert.match(run.answer, /HERON-agentend-480/);
   assert.doesNotMatch(run.answer, /HERON-parent-480/);
   assert.match(run.answer, /ABSENT/);
+});
+
+/** Every file under `directory`, by its path, or none where it does not exist. */
+function filesUnder(directory) {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { recursive: true }).map((name) => join(directory, name)).filter((path) => statSync(path).isFile());
+}
+
+test('a live claude session started from the invocation writes a background task\'s output under the directory\'s own temporary directory, and none under /tmp', { skip, timeout: 2 * SESSION }, async (t) => {
+  // Item 14 on #480, after ruling 9 on #467: `CLAUDE_CODE_TMPDIR` in the invocation's `env`. #473's
+  // c33 found the output under `/tmp/claude-<uid>/<encoded working directory>/` without it. The
+  // background task is a `Monitor`, which runs one `echo` and no Bash tool call.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const directory = join(scratch(t), 'repo');
+  forgetting(t, directory);
+  put(directory, '.claude/agents/live.md', AGENT('HERON-agentend-480c'));
+  put(directory, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Monitor'] } }));
+  const prompt = [
+    'Start exactly one Monitor whose command is: echo HERON-background-480',
+    'Wait for its event, then answer with the line it printed. Use no other tool.',
+  ].join('\n');
+  const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt, directory });
+  t.diagnostic(`env: ${JSON.stringify(run.env)}`);
+  t.diagnostic(`calls: ${JSON.stringify(callsOf(run.events))}`);
+  t.diagnostic(`answer: ${JSON.stringify(run.answer)}`);
+  const kept = filesUnder(run.env.CLAUDE_CODE_TMPDIR);
+  t.diagnostic(`files under ${run.env.CLAUDE_CODE_TMPDIR}: ${JSON.stringify(kept)}`);
+
+  assert.equal(run.result.exit, 0);
+  const calls = callsOf(run.events);
+  assert.deepEqual(calls.filter(({ name }) => name === 'Bash'), [], 'the session made a Bash call');
+  assert.ok(calls.some(({ name }) => name === 'Monitor'), 'the session started no background task');
+  assert.ok(kept.some((path) => readFileSync(path, 'utf8').includes('HERON-background-480')), 'no output under the directory\'s temporary directory holds the task\'s line');
+  const outside = join('/tmp', `claude-${userInfo().uid}`, directory.replace(/[^a-zA-Z0-9]/g, '-'));
+  assert.deepEqual(filesUnder(outside), [], `the task wrote under ${outside}`);
 });

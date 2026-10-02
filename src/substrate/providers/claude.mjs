@@ -27,15 +27,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
  * - The tools a session is offered, and which act through the owner's account, are `OWNERS`'s
  *   measurement on 2.1.287, and the built-in plugins `BUILTINS`'s. Each moves on a patch release.
  *
- * Two sources the reports found are not withheld here, and where each goes is recorded:
- *
- * - **Background-task output.** It is written under `/tmp/claude-<uid>/<encoded working
- *   directory>/<session>/tasks/`, outside the directory, whatever `TMPDIR` says (c33, c34). The
- *   report moved it under the directory with the variable `CLAUDE_CODE_TMPDIR` (c35), and
- *   `invocation` answers variables to unset but none to set (ruling 5 on #467), so it cannot pass
- *   one.
- * - **The owner's account email**, which #473's report found in every session's context (c47),
- *   and for which it found no withholder.
+ * One source the reports found is not withheld here: the owner's account email, which #473's
+ * report found in every session's context (c47), and for which it found no withholder.
  */
 
 /** The provider name a role's `provider` key names this adapter by. */
@@ -65,6 +58,18 @@ export const tiers = { standard: 'sonnet', high: 'opus' };
  * every run without them signed in ("Inherited environment variables").
  */
 const UNSET = [];
+
+/**
+ * The variable that keeps background-task output under the session's directory, and the fixed,
+ * dot-named directory under it that the invocation sets it to (ruling 9 on #467). #473's report
+ * found that output written under `/tmp/claude-<uid>/<encoded working directory>/<session>/tasks/`,
+ * outside the directory, whatever `TMPDIR` said (c33, c34), and moved under the directory by
+ * `CLAUDE_CODE_TMPDIR` (c35). #480's live run measured it on Claude Code 2.1.287: a background
+ * task's output landed under `<directory>/.claude-tmp/`. For a maker those files lie in its
+ * worktree, untracked, under the one name.
+ */
+const TMPDIR_KEY = 'CLAUDE_CODE_TMPDIR';
+const TMPDIR_NAME = '.claude-tmp';
 
 /**
  * The worktree tools, which #473's report found offered under both flags and withheld by
@@ -179,8 +184,9 @@ function above(directory) {
 
 /**
  * The command line that runs the agent file `agent`, at `tier`, on `prompt`, in `directory`: the
- * CLI by its command name, its arguments, the prompt's bytes for its standard input, and the
- * variables it must not inherit. It runs nothing, so it leaves `emitter` unused (ruling 5 on #467).
+ * CLI by its command name, its arguments, the prompt's bytes for its standard input, the variables
+ * it must not inherit, and the variables it sets, each a path under `directory` (ruling 9 on
+ * #467). It runs nothing, so it leaves `emitter` unused (ruling 5 on #467).
  *
  * Refused, each naming what it refused: any `reach`, until `REACH_CARD` carries it (ruling 8 on
  * #467); a tier Rigger does not fix; an agent file whose real path is not under `directory`
@@ -231,5 +237,6 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
     ],
     input: Buffer.from(prompt, 'utf8'),
     unset: [...UNSET],
+    env: { [TMPDIR_KEY]: join(real, TMPDIR_NAME) },
   };
 }
