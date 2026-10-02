@@ -1,6 +1,6 @@
 // ABOUTME: The suite's one maker of temporary directories under TMPDIR, each removed when the test
-// that made it ends, passed or failed, after that test's own teardown, or, for a directory a file's
-// tests share, when the file's run ends.
+// that made it ends, passed or failed, after that test's own teardown, or, made at a file's top
+// level, once the file's tests have ended.
 
 import { after } from 'node:test';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
@@ -9,24 +9,19 @@ import { join } from 'node:path';
 
 /**
  * A new directory under `TMPDIR`, its name `prefix` and six random characters, removed when the
- * test that made it ends. No test under `test/` calls `mkdtempSync` but this one
+ * test that made it ends. No test under `test/` names `mkdtempSync` but this one
  * (test/bare-mkdtemp-check.test.mjs).
  *
  * The removal is registered on the running test: on `context` where the caller passes one, and
  * otherwise through `node:test`'s own `after`, which registers it on whichever test is running,
- * made in its body or in a function it awaited. `beforeRemoval` runs before the removal, at the
- * start of the test's teardown and again just before the removal, and where it throws, the
- * directory is left.
- *
- * Where `forFile`, the directory is one a file's tests share, and it is removed when the file's
- * process exits, which `node --test` gives every test file.
+ * made in its body or in a function it awaited. Made at a test file's top level, outside every
+ * test, the directory is the file's, and is removed once all of the file's tests have ended. Made
+ * in a suite's `before` hook, it is removed before the suite's tests run, so none is made there.
+ * `beforeRemoval` runs before the removal, at the start of the test's teardown and again just
+ * before the removal, and where it throws, the directory is left.
  */
-export function temporaryDirectory(prefix, { context, beforeRemoval = () => {}, forFile = false } = {}) {
+export function temporaryDirectory(prefix, { context, beforeRemoval = () => {} } = {}) {
   const directory = mkdtempSync(join(tmpdir(), prefix));
-  if (forFile) {
-    process.once('exit', () => removed(directory));
-    return directory;
-  }
   let ran = false;
   const removal = () => {
     if (ran) return;

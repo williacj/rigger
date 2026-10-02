@@ -1,6 +1,6 @@
 // ABOUTME: Tests that a temporary directory the shared helper makes under TMPDIR is gone once the test
 // that made it has ended, passed or failed, made in the test or in a function it awaited, after the
-// test's own teardown; and that one made for the whole file lasts until the file's run ends.
+// test's own teardown; and that one made at a file's top level lasts until the file's tests have ended.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -89,20 +89,26 @@ test('given a function the test awaits that makes a temporary directory after an
   assert.deepEqual(readdirSync(tmp), []);
 });
 
-test('given a temporary directory made for the whole file, it lasts into the next test and is gone once the file has run', (t) => {
+test('given a temporary directory made at the top level of a test file, it lasts through the file\'s tests, passing or failing, and is gone once they have ended, before the process exits', (t) => {
   const { ran, tmp, recorded } = running(scratch(t), [
-    'let shared;',
-    "test('makes a directory for the file', () => {",
-    "  shared = temporaryDirectory('rigger-helper-', { forFile: true });",
-    "  record('made', shared);",
+    // Registered before the directory is made, so that it runs before any exit handler the helper adds.
+    "let shared;",
+    "process.once('exit', () => record('seen-at-exit', existsSync(shared)));",
+    "shared = temporaryDirectory('rigger-helper-');",
+    "record('made', shared);",
+    "test('fails while the directory is there', () => {",
+    "  record('seen-by-first', existsSync(shared));",
+    "  throw new Error('this test fails as its caller asked');",
     '});',
     "test('reads it next', () => {",
     "  record('seen-by-next', existsSync(shared));",
     '});',
   ]);
 
-  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  assert.equal(ran.status, 1, ran.stdout + ran.stderr);
+  assert.equal(recorded('seen-by-first'), 'true', 'the directory made for the file was gone before its first test ran');
   assert.equal(recorded('seen-by-next'), 'true', 'the directory made for the file was gone before its next test ran');
-  assert.equal(existsSync(recorded('made')), false, `the run left ${recorded('made')}`);
+  assert.equal(recorded('seen-at-exit'), 'false', 'the directory made for the file was still there when its process exited, so no teardown of node:test removed it');
+  assert.ok(recorded('made').startsWith(tmp), `the directory ${recorded('made')} is not under the run's TMPDIR ${tmp}`);
   assert.deepEqual(readdirSync(tmp), []);
 });

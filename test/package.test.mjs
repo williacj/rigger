@@ -141,8 +141,10 @@ test('the tarball holds every file under src/, templates/ and scripts/, and of t
  * slow part and the tests below only read it.
  */
 let installed;
+// Made at the file's top level, so it is the file's: removed once all of its tests have ended.
+const installedUnder = temporaryDirectory('rigger-installed-');
 function installFromTarball() {
-  installed ??= installRigger(root, temporaryDirectory('rigger-installed-', { forFile: true }));
+  installed ??= installRigger(root, installedUnder);
   return installed;
 }
 
