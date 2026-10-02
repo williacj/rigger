@@ -245,7 +245,7 @@ reads both files. A group with no requirements yet is not written until it has o
 | R-STATE-14 | A command's result is its exit code and what reached its output until Rigger stopped reading that output. | the engine | the test suite | |
 | R-STATE-15 | A command that returns on its own gives its result's exit code, and no process that outlives it changes that code. | the engine | the test suite | |
 | R-STATE-16 | A command that Rigger ended at its time has a result that never reads as success, whatever it exited with. The same holds for a command whose ending Rigger saw was by a signal. | the engine | the test suite | |
-| R-STATE-18 | Rigger leaves no process in a stop it sent, whether or not the process is still in a process group Rigger created. | the engine | the test suite | |
+| R-STATE-18 | Rigger leaves no process stopped that it stopped, whether or not the process is still in a process group Rigger created. This holds unless Rigger is killed outright, as `R-STATE-9` defines it. | the engine | the test suite | |
 
 ## R-FAIL — infrastructure failure
 
