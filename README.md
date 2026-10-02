@@ -147,7 +147,10 @@ containment. Rigger cannot make an agent more restricted than the account it run
 **Agents use only what your repository declares.** A dispatched agent uses only the tools and
 connectors your repository declares. A connector is an outside service, such as mail or a shop,
 that an agent acts on through your own login. A dispatched agent never uses a connector you
-connected to your own account. `docs/spec/requirements.md` says what counts as declared.
+connected to your own account unless your repository declares it. Where your repository allows a
+Bash command that runs an agent CLI, such as `claude` or `codex`, a dispatched agent running it
+acts with your account. So that rule gives the agent your account.
+`docs/spec/requirements.md` says what counts as declared.
 
 **Telemetry is yours.** See [Telemetry](#telemetry).
 
