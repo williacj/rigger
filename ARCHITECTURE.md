@@ -224,8 +224,11 @@ which model each tier selects, and how an agent file, a prompt and a directory b
 command line, standard input and environment. A variable the adapter sets holds a path under the
 dispatch's directory, and is never one that L1 removes. L1 runs that command line as it runs a
 step's. The adapter passes the CLI no setting that widens what the consumer's own provider
-settings allow, with one exception. For each directory a dispatch reaches, it lets the agent read
-and edit there and change into it. It allows no command there that those settings do not allow.
+settings allow, with one exception. A directory a dispatch reaches is one Rigger gives the dispatch
+beside the directory it runs in, and today that is only a judge's `head`. For each such directory,
+the adapter lets the agent read and edit there and change into it. Changing into it is entry, and
+allows no command. Every command run there still needs a rule the consumer's settings declare, and
+the consumer's deny rules still apply there.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
