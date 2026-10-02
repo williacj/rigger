@@ -137,9 +137,20 @@ and inherits exactly the permissions you gave them. Scope those permissions with
 settings.
 
 **Agents run as you.** A maker or judge runs with your user's access to the machine and to the
-repository. Rigger contains only the process groups it creates, and ends every process left in
-them unless Rigger itself is killed outright. A process that leaves its group is outside that
+repository. Rigger contains the process groups it creates, and the processes of your user that
+work in the directory it made for a dispatch or below it. When a dispatch ends, Rigger ends every
+process left in its group or working in its directory, unless Rigger itself is killed outright.
+Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
+that dispatch ends. A process that leaves its group and works elsewhere is outside that
 containment. Rigger cannot make an agent more restricted than the account it runs under.
+
+**Agents use only what your repository declares.** A dispatched agent uses only the tools and
+connectors your repository declares. A connector is an outside service, such as mail or a shop,
+that an agent acts on through your own login. A dispatched agent never uses a connector you
+connected to your own account unless your repository declares it. Where your repository allows a
+Bash command that runs an agent CLI, such as `claude` or `codex`, a dispatched agent running it
+acts with your account. So that rule gives the agent your account.
+`docs/spec/requirements.md` says what counts as declared.
 
 **Telemetry is yours.** See [Telemetry](#telemetry).
 
