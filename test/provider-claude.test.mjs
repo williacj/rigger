@@ -246,20 +246,21 @@ test('given reach, a Bash rule the directory\'s settings declare with a line bre
 
 test('given reach, each Read or Edit deny rule relative to the working directory is copied, anchored at each reached directory\'s real path, and a // or ~/ rule is not', async (t) => {
   // O61 on #520: #531's engineer judge measured `Read(./.env)` and `Read(**/.secret)` protecting
-  // main's copy and not head's under route B. Claude Code reads these rules as gitignore patterns
-  // relative to the current directory: `./.env` at the top only, a bare `.env` at any depth, and a
-  // multi-segment pattern at its own place ("Read and Edit", code.claude.com/docs/en/permissions).
+  // main's copy and not head's under route B. Measured on Claude Code 2.1.287 and 2.1.288: a
+  // single-segment `./.env` or `.env` blocks at any depth, and a multi-segment `./a/b.txt` or
+  // `a/b.txt` at its own place only (#531's engineer judge, B3; the maker's probe, round 5).
   const repo = consumer(t);
   const one = scratch(t);
   const two = scratch(t);
   const declared = [
-    'Read(./.env)', 'Read(.env)', 'Read(**/.secret)', 'Edit(secrets/**)', 'Read(src/config/**)',
+    'Read(./.env)', 'Read(.env)', 'Read(**/.secret)', 'Edit(secrets/**)', 'Read(src/config/**)', 'Read(./config/local.json)',
     'Read(//etc/hosts)', 'Edit(~/.ssh/**)', 'Bash(git push --force:*)',
   ];
   put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)'], deny: declared } });
   const { deny } = settings((await invoked(repo, { reach: [one, two] })).args).permissions;
   const copies = (head) => [
-    `Read(/${head}/.env)`, `Read(/${head}/**/.env)`, `Read(/${head}/**/.secret)`, `Edit(/${head}/secrets/**)`, `Read(/${head}/src/config/**)`,
+    `Read(/${head}/**/.env)`, `Read(/${head}/**/.env)`, `Read(/${head}/**/.secret)`, `Edit(/${head}/secrets/**)`, `Read(/${head}/src/config/**)`,
+    `Read(/${head}/config/local.json)`,
   ];
   assert.deepEqual([...deny].sort(), [...declared, ...copies(one), ...copies(two)].sort());
 });

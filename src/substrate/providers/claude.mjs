@@ -266,9 +266,14 @@ const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
  * code.claude.com/docs/en/permissions), and the copy blocks under `at` what the rule blocks under the
  * working directory, depth for depth:
  *
- * - `./path` from the current directory only; a bare `path` with no `/` but a trailing one at any
- *   depth, as `**\/path`; a `path` holding a `/` from the current directory, as written. These are
- *   copied to each reached directory, and not to the working directory, where they already hold.
+ * - `path` and `./path` alike: with no `/` but a trailing one, at any depth, as `**\/path`; holding
+ *   a `/`, at its own place under the current directory only. Measured, each rule in a working
+ *   directory's own settings: `Read(./.env)` denied `.env` and `sub/.env` (Claude Code 2.1.287,
+ *   #531's engineer judge; 2.1.288, the maker's probe), and `Read(./a/b.txt)` and `Read(a/b.txt)`
+ *   denied `a/b.txt` and not `x/a/b.txt` (2.1.288). These are copied to each reached directory,
+ *   and not to the working directory, where they already hold. A version that reads `./` as the
+ *   top only, as the docs' "relative to current directory" suggests, makes a single-segment copy
+ *   stricter than the rule, never wider.
  * - `/path` is "relative to the settings source", which for the consumer's project settings is the
  *   repository's root. Passed inline in `--settings` it does not hold there: #531 measured on Claude
  *   Code 2.1.287 that `Read(/secret.txt)` passed inline let a session read the working directory's
@@ -289,7 +294,8 @@ function anchoredAt(rule, at, fromRoot) {
   if (path.startsWith('//') || path.startsWith('~/') || path.startsWith('!')) return undefined;
   if (path.startsWith('/')) return `${tool}(/${at}${path})`;
   if (fromRoot) return undefined;
-  const relative = path.startsWith('./') ? path.slice(2) : (path.replace(/\/$/, '').includes('/') ? path : `**/${path}`);
+  const bare = path.startsWith('./') ? path.slice(2) : path;
+  const relative = bare.replace(/\/$/, '').includes('/') ? bare : `**/${bare}`;
   return `${tool}(/${at}/${relative})`;
 }
 
