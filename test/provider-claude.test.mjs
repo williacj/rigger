@@ -14,14 +14,14 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A fresh directory under `TMPDIR`, by its real path, removed when the test ends. */
-function scratch(t) {
+function scratch() {
   const directory = realpathSync.native(temporaryDirectory('rigger-claude-adapter-'));
   return directory;
 }
 
 /** A consumer's repository under `t`'s scratch, holding the role's agent file. */
 function consumer(t) {
-  const directory = join(scratch(t), 'repo');
+  const directory = join(scratch(), 'repo');
   mkdirSync(join(directory, '.claude', 'agents'), { recursive: true });
   const agent = join(directory, '.claude', 'agents', 'engineer.md');
   writeFileSync(agent, '---\nname: engineer\n---\n\n# Engineer\n');
@@ -146,7 +146,7 @@ test('the invocation excludes the CLAUDE.md above the directory as given, where 
   // macOS names `/tmp` and `/var` through links. Claude Code walks up from the directory it was
   // started in, so each spelling's ancestors are excluded.
   const repo = consumer(t);
-  const link = join(scratch(t), 'linked');
+  const link = join(scratch(), 'linked');
   symlinkSync(repo.directory, link);
   const given = settings((await invoked({ directory: link, agent: join(link, '.claude', 'agents', 'engineer.md') })).args);
   assert.ok(given.claudeMdExcludes.includes(join(dirname(link), 'CLAUDE.md')));
@@ -156,7 +156,7 @@ test('the invocation excludes the CLAUDE.md above the directory as given, where 
 test('a directory under a path holding a glob character is refused, naming the path, since its CLAUDE.md exclusions would match other files', async (t) => {
   // `claudeMdExcludes` holds globs. An ancestor named `set[1]` would exclude `set1/CLAUDE.md` and
   // leave its own in the session.
-  const base = scratch(t);
+  const base = scratch();
   for (const name of ['star*', 'brace{x}', 'set[1]', 'at@(x)']) {
     const directory = join(base, name, 'repo');
     mkdirSync(directory, { recursive: true });
@@ -171,7 +171,7 @@ test('given reach naming a directory, the invocation is refused, naming reach an
   // Ruling 8 on #467: `--add-dir` loads the reached directory's skills and agents, against
   // `R-LOOP-14`, so no judge is started with a grant until #520 carries a route #519 measured.
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => {
     assert.match(failure.message, /`reach`/);
     assert.match(failure.message, /#520/);

@@ -672,16 +672,13 @@ test('a package.json under src/ is refused, because it can make the .js modules 
 
 test('the source tree carries a package.json under src/, so the whole-tree run meets it', () => {
   const root = temporaryDirectory('layer-boundaries-');
-  try {
-    const files = { ...ADAPTER, 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/move.js': 'export const move = 1;' };
-    for (const [path, source] of Object.entries(files)) {
-      mkdirSync(dirname(join(root, path)), { recursive: true });
-      writeFileSync(join(root, path), source);
-    }
-    const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
-    assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
-  } finally {
+  const files = { ...ADAPTER, 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/move.js': 'export const move = 1;' };
+  for (const [path, source] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), source);
   }
+  const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
+  assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
 });
 
 test('importing node:module fails, because its loaders reach require by routes this test cannot follow', () => {
