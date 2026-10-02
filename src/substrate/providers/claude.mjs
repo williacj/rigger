@@ -30,8 +30,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
  * How a judge reaches its `head` (`reach`): route B of #519's report, `docs/spikes/how-a-judge-
  * reaches-head.md`, measured with Claude Code 2.1.287. No `--add-dir`, which lists the reached
  * directory's agents even with slash commands disabled and the agent tool withheld (route A, c2,
- * c12), and no `permissions.additionalDirectories`; only path-scoped `Read`, `Edit` and `cd` rules
- * in `--settings`, so nothing of `head`'s loads (c6 to c8, c13 to c19). The fallback is route C,
+ * c12), and no `permissions.additionalDirectories`; only path-scoped `Read` and `Edit` rules in
+ * `--settings`, so nothing of `head`'s loads (c6 to c8, c13 to c19). The fallback is route C,
  * `permissions.additionalDirectories: [<head>]` in the same `--settings` JSON, which the report
  * found passing too, loading nothing from `head` and running `npm test` there with no reset of the
  * shell's directory (c9 to c11). It is used only where a live run shows route B failing. Route B
@@ -206,30 +206,40 @@ function rulesOf(declared) {
 const COMPOUND = /[;&|\n\r]/;
 
 /**
- * The characters a reached directory's real path may hold, so that `cd <head>` is one command a
- * session types unquoted, and no rule reads part of the path as a separator, a glob or `:*`: a
- * glob character would let `Read(/<head>/**)` and `Edit(/<head>/**)` match directories beside it.
+ * The characters a reached directory's real path may hold, so that no rule reads part of the path
+ * as a separator, a glob or `:*`: a glob character would let `Read(/<head>/**)` and
+ * `Edit(/<head>/**)` match directories beside it. A space is admitted (ruling 12 on #520), since the
+ * default worktree root sits beside the consumer's checkout, under a home that may hold one; #531's
+ * live run read, wrote and ran a command in a `head` whose path held one, with no denial. Should
+ * Claude Code stop matching `Read(//<path with a space>/**)`, refusing the space is the fallback,
+ * and that carries a README line, which is the owner's.
  */
-const PLAIN = /^[A-Za-z0-9/._+-]+$/;
+const PLAIN = /^[A-Za-z0-9/._+ -]+$/;
 
 /**
- * `rules` with the grant on each directory `reach` names added to its `allow` list, by route B of
- * #519's report ("Recommendation"): a `Read` and an `Edit` rule on the directory's real path, which
- * begins with `/`, so each rule begins `//`, Claude Code's form for an absolute path; and
- * `Bash(cd <head>)` as a rule of its own. Without the two path rules a session can neither read,
- * write nor `cd` there (c14, c18).
+ * `rules` with the grant on each directory `reach` names, by route B of #519's report
+ * ("Recommendation"): a `Read` and an `Edit` rule on the directory's real path, which begins with
+ * `/`, so each rule begins `//`, Claude Code's form for an absolute path. Without them a session can
+ * neither read, write nor `cd` there (c14, c18).
+ *
+ * No `cd` rule is written (ruling 12 on #520). #531 measured on Claude Code 2.1.287 that with the
+ * two path rules and no `Bash(cd <head>)`, `cd <head> && npm test` ran with no permission denied. A
+ * version that denies a `cd` into `head` with no rule brings the rule back, written only for a path
+ * whose characters a Bash rule takes plainly.
  *
  * The commands a role runs in `head` are those the directory's own settings allow, each already a
  * rule of its own. Claude Code matches a Bash rule against each part of a compound command, so
- * `cd <head> && npm test` runs under `Bash(cd <head>)` and `Bash(npm test)`, and a rule naming a
- * compound line admits nothing, not even that line (c16, c17, c19). Such a declared rule is
- * refused, naming it, rather than handed on as a grant it is not. A reached directory whose real
- * path cannot be read is refused, since a rule on a path it does not resolve to was not measured to
- * match; so is one whose real path holds a character outside `PLAIN`, which would make its `cd`
- * rule compound or one the session's quoted `cd` would not match, or widen its `Read` and `Edit`
- * rules past it.
+ * `cd <head> && npm test` runs under `Bash(npm test)`, and a rule naming a compound line admits
+ * nothing, not even that line (c16, c17, c19). Such a declared rule is refused, naming it, rather
+ * than handed on as a grant it is not. A reached directory whose real path cannot be read is
+ * refused, since a rule on a path it does not resolve to was not measured to match; so is one whose
+ * real path holds a character outside `PLAIN`.
+ *
+ * Each deny rule the directory's settings declare for a path relative to it is written again for
+ * each reached directory by `anchoredAt`, so the consumer's deny rules apply there too (O61 on #520;
+ * ruling 12). `real` is the working directory's real path, at which a `/path` rule is anchored too.
  */
-function granting(rules, reach) {
+function granting(rules, reach, real) {
   if (reach.length === 0) return rules;
   const compound = Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule));
   if (compound !== undefined) {
@@ -238,10 +248,49 @@ function granting(rules, reach) {
   const heads = reach.map((each) => realpathSync.native(each));
   const unplain = heads.find((head) => !PLAIN.test(head));
   if (unplain !== undefined) {
-    throw new Error(`the reached directory ${unplain} holds a character outside letters, digits and \`/._+-\`, so its \`cd\` rule would not name one plain command, and the Claude Code adapter started nothing`);
+    throw new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`);
   }
-  const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`, `Bash(cd ${head})`]);
-  return { ...rules, allow: [...(rules?.allow ?? []), ...grants] };
+  const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`]);
+  const denied = rules?.deny ?? [];
+  const copied = (at, fromRoot) => denied.map((rule) => anchoredAt(rule, at, fromRoot)).filter((copy) => copy !== undefined);
+  const copies = [...heads.flatMap((head) => copied(head, false)), ...copied(real, true)];
+  return { ...rules, allow: [...(rules?.allow ?? []), ...grants], ...(copies.length > 0 ? { deny: [...denied, ...copies] } : {}) };
+}
+
+/** A Read or Edit rule naming a path, as its tool and its path. */
+const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
+
+/**
+ * The deny rule `rule` anchored at the directory `at`, or undefined where it is not copied there.
+ * Claude Code reads a Read or Edit path as a gitignore pattern ("Read and Edit",
+ * code.claude.com/docs/en/permissions), and the copy blocks under `at` what the rule blocks under the
+ * working directory, depth for depth:
+ *
+ * - `./path` from the current directory only; a bare `path` with no `/` but a trailing one at any
+ *   depth, as `**\/path`; a `path` holding a `/` from the current directory, as written. These are
+ *   copied to each reached directory, and not to the working directory, where they already hold.
+ * - `/path` is "relative to the settings source", which for the consumer's project settings is the
+ *   repository's root. Passed inline in `--settings` it does not hold there: #531 measured on Claude
+ *   Code 2.1.287 that `Read(/secret.txt)` passed inline let a session read the working directory's
+ *   `secret.txt`, while the same rule in the project's own `.claude/settings.json` denied it. Where
+ *   the inline rule does resolve was not measured. So it is copied to each reached directory and,
+ *   with `fromRoot`, to the working directory too (ruling 12 on #520).
+ * - `//path` and `~/path` name one place already and are not copied.
+ * - A `!` pattern is read relative to the current directory and cannot carve anything out of an
+ *   anchored rule, so it is not copied, and a reached directory's copies may block what the working
+ *   directory spares. That errs toward the consumer's deny intent and never widens (ruling 12). A
+ *   judge measured unable to do its card's work for a negation its copies could not carry reverses
+ *   it, as a placement question for the architect.
+ */
+function anchoredAt(rule, at, fromRoot) {
+  const match = PATH_RULE.exec(rule);
+  if (match === null) return undefined;
+  const [, tool, path] = match;
+  if (path.startsWith('//') || path.startsWith('~/') || path.startsWith('!')) return undefined;
+  if (path.startsWith('/')) return `${tool}(/${at}${path})`;
+  if (fromRoot) return undefined;
+  const relative = path.startsWith('./') ? path.slice(2) : (path.replace(/\/$/, '').includes('/') ? path : `**/${path}`);
+  return `${tool}(/${at}/${relative})`;
 }
 
 /** Every `CLAUDE.md` above `directory`, up to the root, as absolute paths. */
@@ -264,8 +313,8 @@ function above(directory) {
  * Refused, each naming what it refused: a tier Rigger does not fix; an agent file whose real path is not under `directory`
  * (`R-SAFE-6`), though the file is not read and need not exist; a directory under a path holding a
  * glob character, which its `CLAUDE.md` exclusions would read as a pattern; a settings file in
- * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path or a
- * declared Bash rule for a compound line.
+ * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path, one
+ * whose real path holds a character outside `PLAIN`, or a declared Bash rule for a compound line.
  */
 export async function invocation({ agent, tier, prompt, directory, reach = [], emitter }) {
   if (!Object.hasOwn(tiers, tier)) {
@@ -288,7 +337,7 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
   const declares = (tool) => [tool, ...(ALIASES[tool] ?? [])].some((each) => allowed.includes(each));
   const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !declares(tool))];
   const enabledPlugins = Object.fromEntries(BUILTINS.filter((id) => declared.enabledPlugins?.[id] !== true).map((id) => [id, false]));
-  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: granting(rulesOf(declared), reach) };
+  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: granting(rulesOf(declared), reach, real) };
   return {
     command: 'claude',
     args: [

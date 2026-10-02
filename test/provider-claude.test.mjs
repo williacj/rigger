@@ -198,16 +198,17 @@ test('given reach naming a directory through a link, the rules name its real pat
 });
 
 // proves R-EVIDENCE-6
-test('given reach, the invocation allows cd into the reached directory as a rule of its own, beside a rule of its own for each command the directory\'s settings declare, and no compound line', async (t) => {
-  // #519's report, c16, c17 and c19: Claude Code matches a Bash rule against each part of a
-  // compound command, so `cd <head> && npm test` runs under `Bash(cd <head>)` and `Bash(npm test)`,
-  // and a rule naming the whole line admits nothing.
+test('given reach, the invocation writes no cd rule, keeps a rule of its own for each command the directory\'s settings declare, and no compound line', async (t) => {
+  // Ruling 12 on #520: #531 measured that changing into `<head>` needed no rule on Claude Code
+  // 2.1.287. #519's report, c16, c17 and c19: Claude Code matches a Bash rule against each part of
+  // a compound command, so `cd <head> && npm test` runs under `Bash(npm test)`, and a rule naming
+  // the whole line admits nothing.
   const repo = consumer(t);
   const reached = scratch(t);
   const declared = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(git diff:*)'];
   put(repo.directory, '.claude/settings.json', { permissions: { allow: declared } });
   const { permissions } = settings((await invoked(repo, { reach: [reached] })).args);
-  assert.ok(permissions.allow.includes(`Bash(cd ${reached})`), JSON.stringify(permissions.allow));
+  assert.deepEqual(permissions.allow.filter((rule) => rule.startsWith('Bash(cd')), [], JSON.stringify(permissions.allow));
   for (const rule of declared) assert.ok(permissions.allow.includes(rule), rule);
   const compound = Object.values(permissions).flat().filter((rule) => /^Bash\(.*(&&|\|\||;|\|)/.test(rule));
   assert.deepEqual(compound, []);
@@ -243,6 +244,52 @@ test('given reach, a Bash rule the directory\'s settings declare with a line bre
   }
 });
 
+test('given reach, each Read or Edit deny rule relative to the working directory is copied, anchored at each reached directory\'s real path, and a // or ~/ rule is not', async (t) => {
+  // O61 on #520: #531's engineer judge measured `Read(./.env)` and `Read(**/.secret)` protecting
+  // main's copy and not head's under route B. Claude Code reads these rules as gitignore patterns
+  // relative to the current directory: `./.env` at the top only, a bare `.env` at any depth, and a
+  // multi-segment pattern at its own place ("Read and Edit", code.claude.com/docs/en/permissions).
+  const repo = consumer(t);
+  const one = scratch(t);
+  const two = scratch(t);
+  const declared = [
+    'Read(./.env)', 'Read(.env)', 'Read(**/.secret)', 'Edit(secrets/**)', 'Read(src/config/**)',
+    'Read(//etc/hosts)', 'Edit(~/.ssh/**)', 'Bash(git push --force:*)',
+  ];
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)'], deny: declared } });
+  const { deny } = settings((await invoked(repo, { reach: [one, two] })).args).permissions;
+  const copies = (head) => [
+    `Read(/${head}/.env)`, `Read(/${head}/**/.env)`, `Read(/${head}/**/.secret)`, `Edit(/${head}/secrets/**)`, `Read(/${head}/src/config/**)`,
+  ];
+  assert.deepEqual([...deny].sort(), [...declared, ...copies(one), ...copies(two)].sort());
+});
+
+test('given reach, a /path deny rule is copied to each reached directory\'s real path and anchored at the working directory\'s real path too, and a ! rule is not copied', async (t) => {
+  // Ruling 12 on #520: `/path` is "this path in the repository". #531 measured on Claude Code
+  // 2.1.287 that `Read(/secret.txt)` passed inline in `--settings` did not block the working
+  // directory's `secret.txt`, so the rule is anchored there too. A `!` pattern cannot carry over to
+  // an anchored copy, so the reached directory stands stricter.
+  const repo = consumer(t);
+  const one = scratch(t);
+  const two = scratch(t);
+  const declared = ['Read(/secret.txt)', 'Edit(/config/**)', 'Read(!keep.txt)'];
+  put(repo.directory, '.claude/settings.json', { permissions: { deny: declared } });
+  const { deny } = settings((await invoked(repo, { reach: [one, two] })).args).permissions;
+  const copies = (at) => [`Read(/${at}/secret.txt)`, `Edit(/${at}/config/**)`];
+  assert.deepEqual([...deny].sort(), [...declared, ...copies(one), ...copies(two), ...copies(repo.directory)].sort());
+});
+
+test('given reach whose real path holds a space, the invocation grants it, naming the path as it is', async (t) => {
+  // Ruling 12 on #520: the default worktree root sits beside the consumer's checkout, so a home
+  // directory holding a space must not be refused.
+  const repo = consumer(t);
+  const reached = join(scratch(t), 'with space');
+  mkdirSync(reached);
+  const { allow } = settings((await invoked(repo, { reach: [reached] })).args).permissions;
+  assert.ok(allow.includes(`Read(/${reached}/**)`), JSON.stringify(allow));
+  assert.ok(allow.includes(`Edit(/${reached}/**)`), JSON.stringify(allow));
+});
+
 /** Asserts each directory named in `names`, made under a scratch directory, is refused as `reach`, naming its path. */
 async function refusedAsReach(t, names) {
   const repo = consumer(t);
@@ -260,9 +307,9 @@ test('given reach whose real path holds a command separator, the invocation is r
   await refusedAsReach(t, ['head;echo', 'x&&y', 'x&y', 'p|q', 'n\nl']);
 });
 
-test('given reach whose real path holds a character a shell would need quoted, the invocation is refused, naming it, since the session\'s cd would not match its rule', async (t) => {
-  // The session types such a path quoted or escaped, and the rule names it bare.
-  await refusedAsReach(t, ['a b', "q'uote", 'd"q', 's$t', 'b(r)', 'b`t', 'l<g', 'h#sh', 't~l']);
+test('given reach whose real path holds a character a shell would read as more than a path, other than a space, the invocation is refused, naming it', async (t) => {
+  // Ruling 12 on #520: a space is admitted and every other such character is still refused.
+  await refusedAsReach(t, ["q'uote", 'd"q', 's$t', 'b(r)', 'b`t', 'l<g', 'h#sh', 't~l']);
 });
 
 test('given reach whose real path holds a glob or rule character, the invocation is refused, naming it, since its Read and Edit rules would match past it', async (t) => {

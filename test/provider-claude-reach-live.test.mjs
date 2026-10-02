@@ -48,11 +48,14 @@ const ROLE = [
   '',
 ].join('\n');
 
-/** A `main` and a `head` side by side under a scratch directory, by their real paths. */
-function pair(t) {
+/**
+ * A `main` and a `head` side by side under a scratch directory, by their real paths, with `deny`
+ * as the deny rules of `main`'s own settings and `head` named `name`.
+ */
+function pair(t, deny = [], name = 'head') {
   const base = scratch(t);
   const main = join(base, 'main');
-  const head = join(base, 'head');
+  const head = join(base, name);
   forgetting(t, main);
   put(main, 'CLAUDE.md', 'If asked for markers, this directory\'s CLAUDE.md marker is OSPREY-main-claudemd-520.\n');
   put(main, '.claude/agents/live.md', ROLE);
@@ -61,7 +64,7 @@ function pair(t) {
   // the working directory's own hook and MCP server, which load as they do with no `reach` (ruling 8
   // on #467, item 5; #519's report, c6).
   put(main, '.claude/settings.json', JSON.stringify({
-    permissions: { allow: ['Bash(npm test:*)', 'Bash(npm run:*)'] },
+    permissions: { allow: ['Bash(npm test:*)', 'Bash(npm run:*)'], ...(deny.length > 0 ? { deny } : {}) },
     hooks: { SessionStart: [{ hooks: [{ type: 'command', command: `/usr/bin/touch "${join(main, 'HOOKRAN-main-SessionStart')}"; echo OSPREY-main-hook-520` }] }] },
   }));
   put(main, 'server/server.cjs', SERVER('OSPREY-main-mcp-520'));
@@ -186,4 +189,87 @@ test('a live judge reaching head by route B reads main\'s skill by path, and hea
   assert.match(textOf(failing[0].result), /Exit code [1-9]\d*/, 'the failing command\'s result shows no exit code');
   const record = run.events.find((event) => event.type === 'result');
   assert.deepEqual(record.permission_denials, [], 'a permission prompt was left unanswered');
+});
+
+// proves R-EVIDENCE-6
+test('a live judge reaching head by route B is denied head\'s .env and .secret by the consumer\'s own relative deny rules', { skip, timeout: 2 * SESSION }, async (t) => {
+  // O61 on #520: #531's engineer judge measured `Read(./.env)` and `Read(**/.secret)` protecting
+  // main's copies and not head's under route B, so the invocation copies each, anchored at head.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const dirs = pair(t, ['Read(./.env)', 'Read(**/.secret)']);
+  const { main, head } = dirs;
+  for (const [directory, name] of [[main, 'main'], [head, 'head']]) {
+    put(directory, '.env', `OSPREY-${name}-env-520\n`);
+    put(directory, 'sub/.secret', `OSPREY-${name}-secret-520\n`);
+  }
+  const prompt = [
+    'Do these three steps in order, each with one Read call, and if a read is refused, say REFUSED for it and go on.',
+    `1. Read the file ${join(head, 'only-in-head.txt')} and quote the marker it holds.`,
+    `2. Read the file ${join(head, '.env')} and quote what it holds.`,
+    `3. Read the file ${join(head, 'sub', '.secret')} and quote what it holds.`,
+  ].join('\n');
+  const run = await judged(dirs, prompt);
+  told(t, run);
+  const record = run.events.find((event) => event.type === 'result');
+  t.diagnostic(`permission_denials: ${JSON.stringify(record?.permission_denials)}`);
+  assert.equal(run.result.exit, 0);
+  assert.match(run.answer, /OSPREY-headfile-520/, 'the file only head holds was not read, so the denials show nothing');
+  const stream = run.result.stdout.toString('utf8');
+  assert.equal(stream.includes('OSPREY-head-env-520'), false, 'head\'s .env was read');
+  assert.equal(stream.includes('OSPREY-head-secret-520'), false, 'head\'s .secret was read');
+  const denied = (record?.permission_denials ?? []).map((denial) => denial.tool_input?.file_path);
+  assert.ok(denied.includes(join(head, '.env')), `head's .env is not among the denials: ${JSON.stringify(denied)}`);
+  assert.ok(denied.includes(join(head, 'sub', '.secret')), `head's .secret is not among the denials: ${JSON.stringify(denied)}`);
+});
+
+// proves R-EVIDENCE-6
+test('a live judge reaching a head whose path holds a space reads, writes and runs a command there, with no permission denied', { skip, timeout: 2 * SESSION }, async (t) => {
+  // Ruling 12 on #520: the adapter admits a space in a reached directory's real path, and writes
+  // no `cd` rule.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const dirs = pair(t, [], 'head with space');
+  const { head } = dirs;
+  const prompt = [
+    'Do these three steps in order, each with one tool call.',
+    `1. Read the file ${join(head, 'only-in-head.txt')} and quote the marker it holds.`,
+    `2. Write the file ${join(head, 'written-by-session.txt')} holding exactly WRITTEN-520.`,
+    `3. Run exactly this as one Bash command: cd "${head}" && npm test`,
+    'Then report the marker and what npm test printed.',
+  ].join('\n');
+  const run = await judged(dirs, prompt);
+  told(t, run);
+  nothingLoadedFrom(head, run);
+  assert.match(run.answer, /OSPREY-headfile-520/, 'the file only head holds was not read');
+  assert.match(readFileSync(join(head, 'written-by-session.txt'), 'utf8'), /WRITTEN-520/);
+  assert.equal(readFileSync(join(head, 'npm-test-cwd.txt'), 'utf8'), head, 'npm test did not run with head as its working directory');
+  const record = run.events.find((event) => event.type === 'result');
+  assert.deepEqual(record.permission_denials, [], 'a permission was denied');
+});
+
+// proves R-EVIDENCE-6
+test('a live judge reaching head by route B is denied a /path the consumer\'s settings deny, in the directory it runs in and in head', { skip, timeout: 2 * SESSION }, async (t) => {
+  // Ruling 12 on #520: `/path` is "this path in the repository", and an inline `/path` rule did not
+  // hold at the working directory on Claude Code 2.1.287, so the invocation anchors it at both.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const dirs = pair(t, ['Read(/secret.txt)']);
+  const { main, head } = dirs;
+  for (const [directory, name] of [[main, 'main'], [head, 'head']]) put(directory, 'secret.txt', `OSPREY-${name}-slashsecret-520\n`);
+  const prompt = [
+    'Do these three steps in order, each with one Read call, and if a read is refused, say REFUSED for it and go on.',
+    `1. Read the file ${join(head, 'only-in-head.txt')} and quote the marker it holds.`,
+    `2. Read the file ${join(main, 'secret.txt')} and quote what it holds.`,
+    `3. Read the file ${join(head, 'secret.txt')} and quote what it holds.`,
+  ].join('\n');
+  const run = await judged(dirs, prompt);
+  told(t, run);
+  const record = run.events.find((event) => event.type === 'result');
+  t.diagnostic(`permission_denials: ${JSON.stringify(record?.permission_denials)}`);
+  assert.equal(run.result.exit, 0);
+  assert.match(run.answer, /OSPREY-headfile-520/, 'the file only head holds was not read, so the denials show nothing');
+  const stream = run.result.stdout.toString('utf8');
+  assert.equal(stream.includes('OSPREY-main-slashsecret-520'), false, 'main\'s secret.txt was read');
+  assert.equal(stream.includes('OSPREY-head-slashsecret-520'), false, 'head\'s secret.txt was read');
+  const denied = (record?.permission_denials ?? []).map((denial) => denial.tool_input?.file_path);
+  assert.ok(denied.includes(join(main, 'secret.txt')), `main's secret.txt is not among the denials: ${JSON.stringify(denied)}`);
+  assert.ok(denied.includes(join(head, 'secret.txt')), `head's secret.txt is not among the denials: ${JSON.stringify(denied)}`);
 });
