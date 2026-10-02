@@ -6,9 +6,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inspect } from 'node:util';
 
 import { CATEGORIES, SHAPES, declaredLabels, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
+import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { roleTimeout } from '../src/config/validate.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -839,4 +842,125 @@ test('a config declaring no worktrees, or a worktrees declaring only a root or o
   assert.deepEqual(validate(placedAt({ root: '../rigger-worktrees' })), []);
   assert.deepEqual(validate(placedAt({ topic: 'rigger-{number}' })), []);
   assert.deepEqual(validate(placedAt({ topic: 'card{number}-work' })), []);
+});
+
+/** This repository's config with its engineer role altered, which is what the role rules bind. */
+const withRole = (change) => ({
+  ...rigger,
+  roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, ...change } },
+});
+
+// proves R-SCHED-10
+test("a role's tier other than standard or high is refused, and the refusal names the role's tier and the value", () => {
+  for (const tier of ['fast', 'Standard', 'HIGH', '', 1, null, ['high']]) {
+    const earned = refusal(withRole({ tier }));
+    assert.match(earned, /`roles\.engineer\.tier`/, String(tier));
+    assert.ok(earned.includes(inspect(tier)), `${earned} does not name ${inspect(tier)}`);
+  }
+});
+
+test("a role's tier of standard or high is accepted", () => {
+  for (const tier of ['standard', 'high']) assert.deepEqual(validate(withRole({ tier })), [], tier);
+});
+
+// proves R-SCHED-10
+test("a role's labels mapping a label to a tier other than standard or high is refused, naming the path and the value", () => {
+  for (const tier of ['fast', 'High', '']) {
+    const earned = refusal(withRole({ labels: { 'tier:high': 'high', 'tier:fast': tier } }));
+    assert.match(earned, /`roles\.engineer\.labels`/, tier);
+    assert.ok(earned.includes(inspect(tier)), `${earned} does not name ${inspect(tier)}`);
+  }
+});
+
+// proves R-SCHED-10
+test("a role's labels that is not an object of label names to strings is refused, naming the path", () => {
+  for (const labels of ['tier:high', ['tier:high'], null, 7, { 'tier:high': 1 }, { 'tier:high': null }, { 'tier:high': ['high'] }, { '  ': 'high' }, { '': 'high' }]) {
+    assert.match(refusal(withRole({ labels })), /`roles\.engineer\.labels`/, inspect(labels));
+  }
+});
+
+// proves R-SCHED-10
+test("a role's timeout that is not a positive whole number of milliseconds is refused, naming the path and the value", () => {
+  for (const timeout of [0, -5, 1.5, '14400000', Number.NaN, Infinity, 14400000n, null, true, [14400000], { ms: 14400000 }]) {
+    const earned = refusal(withRole({ timeout }));
+    assert.match(earned, /`roles\.engineer\.timeout`/, inspect(timeout));
+    assert.ok(earned.includes(inspect(timeout)), `${earned} does not name ${inspect(timeout)}`);
+  }
+});
+
+test("a role's timeout that is a positive whole number of milliseconds is accepted", () => {
+  for (const timeout of [1, 60000, 14400000]) assert.deepEqual(validate(withRole({ timeout })), [], String(timeout));
+});
+
+// proves R-SCHED-10
+test('a kind naming one judge twice is refused, and the refusal names the kind and the judge', () => {
+  for (const judges of [['reviewer', 'reviewer'], ['reviewer', 'pm', 'reviewer', 'owner']]) {
+    const earned = refusal(withKind({ judges }));
+    assert.match(earned, /`kinds\.change/, judges.join());
+    assert.match(earned, /`reviewer`/, judges.join());
+  }
+});
+
+test('a kind naming each judge once is accepted', () => {
+  assert.deepEqual(validate(withKind({ judges: ['reviewer', 'pm', 'owner'] })), []);
+});
+
+// proves R-SCHED-10
+test('a role whose name holds a / is refused, and the refusal names the role', () => {
+  for (const name of ['team/engineer', '/engineer', 'engineer/', '../engineer']) {
+    const declared = { ...rigger, roles: { ...rigger.roles, [name]: { agent: 'a.md', provider: 'claude', tier: 'high' } } };
+    assert.ok(refusal(declared).includes(`\`roles.${name}\``), name);
+  }
+});
+
+// proves R-SCHED-10
+test('a role naming a provider the adapter map does not hold is refused, and the refusal names the role and the provider', () => {
+  for (const provider of ['codex', 'Claude', 'toString', '', 7, null, ['claude']]) {
+    assert.ok(!Object.hasOwn(ADAPTERS, provider) || typeof provider !== 'string', `the adapter map holds ${inspect(provider)}`);
+    const earned = refusal(withRole({ provider }));
+    assert.match(earned, /`roles\.engineer/, inspect(provider));
+    assert.ok(earned.includes(inspect(provider)), `${earned} does not name ${inspect(provider)}`);
+  }
+});
+
+test('a role naming any provider the adapter map holds is accepted', () => {
+  assert.ok(Object.keys(ADAPTERS).length > 0, 'the adapter map holds no provider, so nothing was checked');
+  for (const provider of Object.keys(ADAPTERS)) assert.deepEqual(validate(withRole({ provider })), [], provider);
+});
+
+test('the validator types no provider name, reading every one from the adapter map', () => {
+  const source = readFileSync(join(root, 'src', 'config', 'validate.mjs'), 'utf8');
+  for (const provider of Object.keys(ADAPTERS)) {
+    assert.ok(!new RegExp(`['"\`]${provider}['"\`]`).test(source), `src/config/validate.mjs types the provider name ${provider}`);
+  }
+});
+
+test("a role's time is four hours where it declares no timeout, and its own timeout where it declares one", () => {
+  // Four hours is 4 × 60 × 60 × 1000 milliseconds (`O7` on #467; ARCHITECTURE.md's role paragraph).
+  assert.equal(roleTimeout(rigger.roles.engineer), 14400000);
+  assert.equal(roleTimeout({ ...rigger.roles.engineer, timeout: 60000 }), 60000);
+});
+
+test("the labels a config declares include every label a role's labels names, each once, alongside those it declared before", () => {
+  // Written out by hand from this repository's config and the two roles' labels below. `tier:high`
+  // is named by two roles, and `Type:Change` is GitHub's one label with `type:change`, which a
+  // kind selects, so each is declared once.
+  const config = {
+    ...rigger,
+    roles: {
+      ...rigger.roles,
+      engineer: { ...rigger.roles.engineer, labels: { 'tier:high': 'high', 'Type:Change': 'high' } },
+      reviewer: { ...rigger.roles.reviewer, labels: { 'tier:high': 'high', 'tier:standard': 'standard' } },
+    },
+  };
+  assert.deepEqual(validate(config), []);
+  assert.deepEqual(declaredLabels(config), [
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard',
+  ]);
+});
+
+test("a role's labels mapping label names to standard or high is accepted, and so is one mapping none", () => {
+  for (const labels of [{ 'tier:high': 'high' }, { 'tier:high': 'high', 'tier:standard': 'standard' }, {}]) {
+    assert.deepEqual(validate(withRole({ labels })), [], inspect(labels));
+  }
 });
