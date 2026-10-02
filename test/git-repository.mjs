@@ -42,6 +42,22 @@ export function gitIn(root, ...args) {
 }
 
 /**
+ * The configuration every repository this fixture makes or clones is given, so that no git call in
+ * it starts git's automatic maintenance.
+ *
+ * Git starts it by default from a fetch, a commit and the receiving side of a push, among others,
+ * and detaches it into a session of its own whose command line names no directory. So it writes
+ * under `.git` on its own time, racing a test that compares what is under a repository, and it can
+ * outlive the test: no teardown that finds a test's processes by their group or their command line
+ * ends it. Card #528's runs, which found such processes stopped under pid 1 in this fixture's
+ * clones, are in `docs/journal/2026-10-02-0915-528-the-fixture-clones-ran-git-maintenance.md`.
+ */
+const UNMAINTAINED = { 'maintenance.auto': 'false', 'gc.auto': '0' };
+
+/** `UNMAINTAINED` as the `-c` options by which `git clone` writes it into the repository it makes. */
+const unmaintained = () => Object.entries(UNMAINTAINED).flatMap(([key, value]) => ['-c', `${key}=${value}`]);
+
+/**
  * A repository at `root` holding `files`, each key a relative posix-spelled path, with an identity
  * of its own so that a commit needs none from the host.
  *
@@ -59,10 +75,7 @@ export function repositoryAt(root, files = {}) {
   gitIn(root, 'init', '-q');
   gitIn(root, 'config', 'user.email', 'fixture@example.invalid');
   gitIn(root, 'config', 'user.name', 'fixture');
-  // No commit here starts git's maintenance in the background, which writes under `.git` on its
-  // own time, so a test comparing what is under a repository races nothing but what it runs.
-  gitIn(root, 'config', 'maintenance.auto', 'false');
-  gitIn(root, 'config', 'gc.auto', '0');
+  for (const [key, value] of Object.entries(UNMAINTAINED)) gitIn(root, 'config', key, value);
   if (Object.keys(files).length > 0) {
     gitIn(root, 'add', '-A');
     gitIn(root, 'commit', '-qm', 'fixture');
@@ -88,7 +101,7 @@ export function repositoryIn(prefix, files = {}) {
  */
 export function cloneInto(from, into) {
   try {
-    execFileSync('git', ['clone', '--quiet', '--no-hardlinks', from, into], {
+    execFileSync('git', ['clone', '--quiet', '--no-hardlinks', ...unmaintained(), from, into], {
       encoding: 'utf8', env: gitEnvironment(),
     });
   } catch (refused) {
@@ -102,7 +115,7 @@ export function cloneInto(from, into) {
  * fetches from is. Git runs in the directory `into` will be made in, which already exists.
  */
 export function bareCloneInto(from, into) {
-  gitIn(dirname(into), 'clone', '--quiet', '--bare', '--no-hardlinks', from, into);
+  gitIn(dirname(into), 'clone', '--quiet', '--bare', '--no-hardlinks', ...unmaintained(), from, into);
   return into;
 }
 
