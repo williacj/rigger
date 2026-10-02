@@ -199,7 +199,8 @@ const COMPOUND = /&&|\|\||[;|]/;
 
 /**
  * The characters a reached directory's real path may hold, so that `cd <head>` is one command a
- * session types unquoted, and no rule reads part of the path as a separator, a glob or `:*`.
+ * session types unquoted, and no rule reads part of the path as a separator, a glob or `:*`: a
+ * glob character would let `Read(/<head>/**)` and `Edit(/<head>/**)` match directories beside it.
  */
 const PLAIN = /^[A-Za-z0-9/._+-]+$/;
 
@@ -217,7 +218,8 @@ const PLAIN = /^[A-Za-z0-9/._+-]+$/;
  * refused, naming it, rather than handed on as a grant it is not. A reached directory whose real
  * path cannot be read is refused, since a rule on a path it does not resolve to was not measured to
  * match; so is one whose real path holds a character outside `PLAIN`, which would make its `cd`
- * rule compound, or one the session's quoted `cd` would not match.
+ * rule compound or one the session's quoted `cd` would not match, or widen its `Read` and `Edit`
+ * rules past it.
  */
 function granting(rules, reach) {
   if (reach.length === 0) return rules;

@@ -223,18 +223,33 @@ test('given reach, a Bash rule the directory\'s settings declare for a compound 
   }
 });
 
-test('given reach whose real path holds a character a shell or a rule would read as more than a path, the invocation is refused, naming it', async (t) => {
-  // Codex's round-1 finding on #531: a real directory named `head;echo` made `Bash(cd …/head;echo)`,
-  // a rule for a compound line (#519's report, c17). A space or a quote would need quoting, which
-  // the session's `cd` would carry and the rule would not, and a glob character or `:` reads as
-  // pattern syntax in a rule.
+/** Asserts each directory named in `names`, made under a scratch directory, is refused as `reach`, naming its path. */
+async function refusedAsReach(t, names) {
   const repo = consumer(t);
   const base = scratch(t);
-  for (const name of ['head;echo', 'a b', 'x&&y', 'p|q', 's$t', "q'uote", 'g*lob', 'c:d', 'n\nl', 'b(r)']) {
+  for (const name of names) {
     const reached = join(base, name);
     mkdirSync(reached);
     await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(reached), name);
   }
+}
+
+test('given reach whose real path holds a command separator, the invocation is refused, naming it, since its cd rule would be compound', async (t) => {
+  // Codex's round-1 finding on #531: a real directory named `head;echo` made `Bash(cd …/head;echo)`,
+  // a rule for a compound line (#519's report, c17), and so a command the consumer never allowed.
+  await refusedAsReach(t, ['head;echo', 'x&&y', 'x&y', 'p|q', 'n\nl']);
+});
+
+test('given reach whose real path holds a character a shell would need quoted, the invocation is refused, naming it, since the session\'s cd would not match its rule', async (t) => {
+  // The session types such a path quoted or escaped, and the rule names it bare.
+  await refusedAsReach(t, ['a b', "q'uote", 'd"q', 's$t', 'b(r)', 'b`t', 'l<g', 'h#sh', 't~l']);
+});
+
+test('given reach whose real path holds a glob or rule character, the invocation is refused, naming it, since its Read and Edit rules would match past it', async (t) => {
+  // #534's engineer judge, N1: `Read(/<head>/**)` written with `head` holding `*`, `?`, `[` or `]`
+  // matches directories other than `head`, against ruling 10's delta. A brace or `!` is glob
+  // syntax too, and `:` reads as a rule's `:*` prefix form.
+  await refusedAsReach(t, ['g*lob', 'q?m', 'set[1]', 'r]b', 'br{a,b}', 'n!t', 'c:d']);
 });
 
 test('given reach naming a directory that does not exist, the invocation is refused, naming it', async (t) => {
