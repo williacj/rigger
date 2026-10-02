@@ -327,11 +327,24 @@ function readTimeout(holder, where, refusals) {
 }
 
 /**
+ * Whether a value is a plain object whose every key is a name holding a string: what an object
+ * literal mapping names to strings is. A Map, a class instance, an inherited or computed entry,
+ * and a symbol key each hold something `Object.entries` would never show, so the validator would
+ * pass what the engine later reads differently. A key that is not enumerable is no entry to the
+ * engine either, which reads the labels as `Object.entries` does.
+ */
+function mapsNamesToStrings(value) {
+  if (!declares(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  return Object.keys(value).every((key) => names(key) && typeof Object.getOwnPropertyDescriptor(value, key).value === 'string');
+}
+
+/**
  * What a role's `labels` may be: card labels, each mapped to the tier it selects for the role.
  * A card carries labels by name, and the tier a label selects is one of the tiers Rigger fixes.
  */
 function readTierLabels(labels, where, refusals) {
-  if (!declares(labels) || Object.entries(labels).some(([label, tier]) => !names(label) || typeof tier !== 'string')) {
+  if (!mapsNamesToStrings(labels)) {
     refusals.push(`\`${where}\` must map label names to tiers, and the config gives ${inspect(labels)}`);
     return;
   }

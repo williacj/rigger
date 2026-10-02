@@ -879,6 +879,23 @@ test("a role's labels that is not an object of label names to strings is refused
   }
 });
 
+// A config module can hand the validator any value, and only a plain object's own entries are the
+// labels the consumer wrote: a Map holds its entries where `Object.entries` never looks, and an
+// inherited entry was written by nobody.
+// proves R-SCHED-10
+test("a role's labels that is no plain object of label names to strings is refused, naming the path", () => {
+  class Labels { constructor() { this['tier:high'] = 'high'; } }
+  const bare = Object.create(null);
+  bare['tier:high'] = 'high';
+  const inherited = Object.create({ 'tier:high': 7 });
+  const computed = Object.defineProperty({}, 'tier:high', { get: () => 'high', enumerable: true });
+  const symbolic = { [Symbol('tier:high')]: 7 };
+  const cases = [new Map([['tier:high', 7]]), new Map([['tier:high', 'high']]), new Set(['tier:high']), new Labels(), bare, inherited, computed, symbolic, new Date(0), /tier:high/];
+  for (const labels of cases) {
+    assert.match(refusal(withRole({ labels })), /`roles\.engineer\.labels`/, inspect(labels, { showHidden: true }));
+  }
+});
+
 // proves R-SCHED-10
 test("a role's timeout that is not a positive whole number of milliseconds is refused, naming the path and the value", () => {
   for (const timeout of [0, -5, 1.5, '14400000', Number.NaN, Infinity, 14400000n, null, true, [14400000], { ms: 14400000 }]) {
