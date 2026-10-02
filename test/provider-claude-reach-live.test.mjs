@@ -14,8 +14,8 @@ import { onPath } from './on-path.mjs';
  * which reaches Anthropic's service and nothing else: no forge, no board and no connector, since
  * the invocation withholds every one and no prompt asks for one. `npm` runs two scripts in `head`
  * that start `node` and exit; `head`'s `.npmrc` turns off npm's update and funding checks, so npm
- * makes no request. The MCP server `head` plants is the stand-in from `claude-live.mjs`, which
- * opens no socket and is meant never to start.
+ * makes no request. The MCP servers `main` declares and `head` plants are the stand-in from
+ * `claude-live.mjs`, which opens no socket; `head`'s is meant never to start.
  *
  * The pair is built as #519's report built it ("The pair of directories"): `main` holds the role
  * and its skill, and `head`, a sibling, plants a `CLAUDE.md`, a skill, an agent, settings hooks and
@@ -57,8 +57,15 @@ function pair(t) {
   put(main, 'CLAUDE.md', 'If asked for markers, this directory\'s CLAUDE.md marker is OSPREY-main-claudemd-520.\n');
   put(main, '.claude/agents/live.md', ROLE);
   put(main, '.claude/skills/c520-main-skill/SKILL.md', '---\nname: c520-main-skill\ndescription: A skill for one live run.\n---\n\nThis skill\'s marker is OSPREY-main-skill-520.\n');
-  // The consumer's own rules, one per command, as `templates/claude/settings.json` writes them.
-  put(main, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(npm test:*)', 'Bash(npm run:*)'] } }));
+  // The consumer's own rules, one per command, as `templates/claude/settings.json` writes them, and
+  // the working directory's own hook and MCP server, which load as they do with no `reach` (ruling 8
+  // on #467, item 5; #519's report, c6).
+  put(main, '.claude/settings.json', JSON.stringify({
+    permissions: { allow: ['Bash(npm test:*)', 'Bash(npm run:*)'] },
+    hooks: { SessionStart: [{ hooks: [{ type: 'command', command: `/usr/bin/touch "${join(main, 'HOOKRAN-main-SessionStart')}"; echo OSPREY-main-hook-520` }] }] },
+  }));
+  put(main, 'server/server.cjs', SERVER('OSPREY-main-mcp-520'));
+  put(main, '.mcp.json', JSON.stringify({ mcpServers: { c520main: { type: 'stdio', command: process.execPath, args: [join(main, 'server', 'server.cjs')] } } }));
 
   put(head, 'CLAUDE.md', `If asked for markers, this directory's CLAUDE.md marker is ${PLANTED.claudemd}.\n`);
   put(head, '.claude/skills/c520-head-skill/SKILL.md', `---\nname: c520-head-skill\ndescription: A planted skill, marker ${PLANTED.skill}.\n---\n\nThe marker is ${PLANTED.skill}.\n`);
@@ -111,6 +118,17 @@ function nothingLoadedFrom(head, run) {
   assert.equal(existsSync(join(head, 'server', 'started')), false, 'head\'s MCP server started');
 }
 
+/**
+ * Ruling 8's item 5, held in every run: the working directory's own sources load as they do with no
+ * `reach`. Its `SessionStart` hook wrote its file, and its `.mcp.json` server is connected and
+ * started. Its `CLAUDE.md` marker is asserted where the session is asked what it holds.
+ */
+function mainLoaded(main, run) {
+  assert.ok(existsSync(join(main, 'HOOKRAN-main-SessionStart')), 'main\'s own SessionStart hook did not run');
+  assert.deepEqual(run.init.mcp_servers.filter(({ name }) => name === 'c520main').map(({ status }) => status), ['connected'], 'main\'s own MCP server is not connected');
+  assert.ok(existsSync(join(main, 'server', 'started')), 'main\'s own MCP server never started');
+}
+
 // proves R-LOOP-14
 test('a live judge reaching head by route B is listed nothing of head\'s and names none of its markers, and head\'s hooks do not run', { skip, timeout: 2 * SESSION }, async (t) => {
   // Ruling 8 on #467, item 1; #519's report, c6.
@@ -120,6 +138,7 @@ test('a live judge reaching head by route B is listed nothing of head\'s and nam
   const run = await judged(dirs, prompt);
   told(t, run);
   nothingLoadedFrom(dirs.head, run);
+  mainLoaded(dirs.main, run);
   assert.match(run.answer, /OSPREY-main-claudemd-520/, 'main\'s own CLAUDE.md did not reach the session, so the answer shows nothing');
 });
 
@@ -132,6 +151,7 @@ test('a live judge reaching head by route B cannot dispatch head\'s agent by nam
   const run = await judged(dirs, prompt);
   told(t, run);
   nothingLoadedFrom(dirs.head, run);
+  mainLoaded(dirs.main, run);
   assert.deepEqual(run.events.filter((event) => event.parent_tool_use_id), [], 'a subagent started');
   assert.match(run.answer, /CANNOT/);
 });
@@ -155,6 +175,7 @@ test('a live judge reaching head by route B reads main\'s skill by path, and hea
   const run = await judged(dirs, prompt);
   told(t, run);
   nothingLoadedFrom(head, run);
+  mainLoaded(main, run);
   assert.match(run.answer, /OSPREY-main-skill-520/, 'main\'s skill was not read by path');
   assert.match(run.answer, /OSPREY-headfile-520/, 'the file only head holds was not read');
   assert.match(readFileSync(join(head, 'written-by-session.txt'), 'utf8'), /WRITTEN-520/);
