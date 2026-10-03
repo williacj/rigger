@@ -5,6 +5,7 @@
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
+import { within as underOrAt } from './run.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
 
@@ -147,9 +148,9 @@ export async function makeScratch({ base, role, card, repository, sink }) {
     }
   };
   const there = await step(() => scratchChecked(base, path));
+  await step(() => unregistered({ path, there, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
   if (there) {
     await step(async () => {
-      await noneRegistered({ path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) });
       const checkout = checkoutIn(path);
       if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`);
       writable(path);
@@ -168,7 +169,7 @@ export async function makeScratch({ base, role, card, repository, sink }) {
  * and the base must each be a directory, not a symbolic link, where they exist, so nothing L1
  * removes or makes lies elsewhere. At `path` must be nothing, or a directory, not a symbolic link,
  * whose real path resolves. Anything else fails naming the path, as does a path L1 cannot read,
- * since L1 cannot tell what is there. `makeScratch` then asks git (`noneRegistered`) and walks the
+ * since L1 cannot tell what is there. `makeScratch` then asks git (`unregistered`) and walks the
  * directory (`checkoutIn`) before it removes anything.
  */
 function scratchChecked(base, path) {
@@ -190,19 +191,44 @@ function scratchChecked(base, path) {
 
 /**
  * Fails naming `path` and the worktree where git, asked through L0's workspace adapter `adapter`
- * over `repository`, lists a worktree whose real path is `path`'s or lies inside it (the
- * architect's ruling 21 on #467): registration is git's fact (`D16` rule 1), so a worktree whose
- * `.git` was moved aside is still found. A registration whose directory is gone lies nowhere; one
- * L1 cannot resolve for any other reason fails, as `within` says.
+ * over `repository`, lists a worktree, the main working tree included, that `path` is or lies in,
+ * by the real path of `path` or, where it is not there yet, of its nearest existing parent; or,
+ * where a directory is `there`, a worktree that lies in it (the architect's ruling 21 on #467). So
+ * L1 makes and removes nothing in a worktree, and removes none. Registration is git's fact (`D16`
+ * rule 1), so a worktree whose `.git` was moved aside is still found. A registration whose
+ * directory is gone lies nowhere; one L1 cannot resolve for any other reason fails, since L1 cannot
+ * tell where it lies.
  *
  * Where it can be wrong (`D16` rule 3): this git lists only this repository's worktrees, and
  * `checkoutIn`, the second check, finds another repository's only by its `.git`. So a worktree of
  * another repository whose `.git` was moved aside is found by neither, and is removed.
  */
-async function noneRegistered({ path, repository, adapter }) {
-  const real = realpathSync.native(path);
-  const held = (await adapter.registered()).find((listed) => within(path, real, listed, true));
-  if (held !== undefined) throw new Error(`${path} holds ${held}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
+async function unregistered({ path, there, repository, adapter }) {
+  const real = nearestReal(path);
+  for (const listed of await adapter.registered()) {
+    let tree;
+    try {
+      tree = realpathSync.native(listed);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw new Error(`${path} may lie in or hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
+    }
+    if (underOrAt(real, tree)) throw new Error(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`);
+    if (there && underOrAt(tree, real)) throw new Error(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
+  }
+}
+
+/**
+ * The real path of `path`, or, where nothing is there, its nearest existing parent's joined to
+ * the rest of it. Any failure but absence throws, so L1 cannot take an unreadable path for absent.
+ */
+function nearestReal(path) {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    if (error.code !== 'ENOENT' || dirname(path) === path) throw error;
+    return join(nearestReal(dirname(path)), basename(path));
+  }
 }
 
 /** The failure for `path`, which `lstat` read as `there`, no directory: a symbolic link, which is never followed, or anything else. */
@@ -437,8 +463,8 @@ function writable(path) {
 }
 
 /**
- * Whether the worktree git lists at `listed` lies inside the directory at `path`, whose real
- * path is `real`, or, where `itself` says so, is that directory, compared by the file system's own real path, `realpath(3)`, whatever spelling git
+ * Whether the worktree git lists at `listed` lies inside the card's workspace at `path`, whose real
+ * path is `real`, compared by the file system's own real path, `realpath(3)`, whatever spelling git
  * lists it under. On a volume that folds case, Node's JavaScript `realpathSync` keeps the case it
  * was handed, so two spellings of one directory would compare as two.
  *
@@ -447,7 +473,7 @@ function writable(path) {
  * other failure to resolve it, such as a directory on the way that cannot be searched, fails the
  * attempt naming the path, since L1 cannot tell that it lies outside.
  */
-function within(path, real, listed, itself = false) {
+function within(path, real, listed) {
   let there;
   try {
     there = realpathSync.native(listed);
@@ -456,8 +482,7 @@ function within(path, real, listed, itself = false) {
     throw new Error(`${path} may hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
   }
   const from = relative(real, there);
-  if (from === '') return itself;
-  return !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
+  return from !== '' && !from.startsWith(`..${sep}`) && from !== '..' && !isAbsolute(from);
 }
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */

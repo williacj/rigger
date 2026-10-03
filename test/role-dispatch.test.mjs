@@ -1028,3 +1028,45 @@ test('given a worktree of another repository, which the repository\'s git does n
   assert.deepEqual({ files: contents(tree), list: worktreeList(another) }, before);
   assert.equal(gitIn(another, 'rev-parse', 'refs/heads/held'), branch);
 });
+
+/**
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * naming `<base>/engineer` and the worktree `tree`, and that nothing under `tree` changed, as
+ * `before` held it, and no `<base>/engineer` was made.
+ */
+async function assertInsideRefused(placed, base, tree) {
+  const before = contents(tree);
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+  assert.deepEqual(contents(tree), before, `${tree}: something changed`);
+  assert.equal(existsSync(join(base, 'engineer')), false, 'L1 made the scratch directory inside the worktree');
+}
+
+test('given a scratch base that is a registered worktree of the repository, holding a staged file, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+  mkdirSync(join(tree, 'engineer'));
+  writeFileSync(join(tree, 'engineer', 'staged.txt'), 'staged\n');
+  gitIn(tree, 'add', 'engineer/staged.txt');
+
+  await assertScratchRefused(placed, tree, join(tree, 'engineer')).then((failure) => assert.ok(failure.message.includes(tree), failure.message));
+
+  assert.equal(readFileSync(join(tree, 'engineer', 'staged.txt'), 'utf8'), 'staged\n');
+  assert.match(gitIn(tree, 'status', '--porcelain'), /^A {2}engineer\/staged\.txt$/m);
+});
+
+test('given a scratch base lying inside a registered worktree of the repository, not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+
+  await assertInsideRefused(placed, join(tree, 'scratch', 'rigger-1412'), tree);
+});
+
+test('given a scratch base lying inside the repository\'s main working tree, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+
+  await assertInsideRefused(placed, join(placed.repository, 'scratch', 'rigger-1412'), placed.repository);
+});
