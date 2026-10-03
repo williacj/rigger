@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /*
- * What these runs reach. Each starts one real `claude -p` session, signed in as the host's owner,
+ * What the session runs reach. Each starts one `claude -p` session, signed in as the host's owner,
  * which reaches Anthropic's service and nothing else these tests start: no forge, no board, and no
  * connector, since the invocation withholds every one and the attempt on one is meant to find it
  * absent. The MCP server a session may call is a stand-in written here, which answers on standard
