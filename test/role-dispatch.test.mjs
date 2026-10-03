@@ -1161,3 +1161,16 @@ test('given a scratch base inside a registered worktree of the repository whose 
     assert.equal(existsSync(join(tree, 'scratch')), false, `${spelled}: L1 made the scratch base inside the worktree`);
   }
 });
+
+test('given a scratch base deeper inside the repository\'s main working tree than the worktree root, where no ancestor up to that root holds a .git, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const base = join(placed.repository, 'x', 'y', 'scratch', 'rigger-1412');
+  const before = modes(placed.repository);
+
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+
+  assert.ok(failure.message.includes(placed.repository), `the failure does not name the main working tree: ${failure.message}`);
+  assert.deepEqual(modes(placed.repository), before, 'something changed in the main working tree');
+  assert.equal(existsSync(join(placed.repository, 'x')), false, 'L1 made a directory inside the main working tree');
+});
