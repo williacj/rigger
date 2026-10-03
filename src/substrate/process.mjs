@@ -434,6 +434,17 @@ function unended(live, kill, late, bound, refused) {
   return live.map((pid) => ({ pid, reason: now.has(pid) ? 'EPERM' : `still alive ${bound} ms after L0's first kill` }));
 }
 
+/**
+ * Whether the leader of `group`, whose pid is the group's id, answers `EPERM` to signal 0 through
+ * `kill` on two looks in a row with L0's kill of the group sent between them, as `unended` takes a
+ * member L0 may not signal.
+ */
+function refusedAcross(group, kill) {
+  if (!forbidden(group, kill)) return false;
+  signal(group, 'SIGKILL', kill);
+  return forbidden(group, kill);
+}
+
 /** Whether signal 0 sent through `kill` to `pid` answers `EPERM`: L0 may not signal it. */
 function forbidden(pid, kill) {
   try {
@@ -982,7 +993,10 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     // No read after the kill showed the members ended, so each the read before it found alive that
     // signal 0 still reaches is not shown to have ended, but the leader, whose zombie Node reaps only
     // once this process exits (`D16` rule 3: another member's zombie, not yet reaped, is counted too).
+    // A leader that answers `EPERM` is not that zombie, which signal 0 reaches, so it is one L0 may
+    // not signal, and the cleanup hands the caller's step no exit code for it.
     stuck = (named ?? []).filter(({ pid }) => pid !== group && answers(pid, kill)).map(({ pid }) => ({ pid, reason: `not shown to have ended: the process table could not be read within the exit cleanup's read bound of ${readTimeout} ms` }));
+    if ((named ?? []).some(({ pid }) => pid === group) && refusedAcross(group, kill)) stuck.push({ pid: group, reason: 'EPERM' });
   }
   // Every member the census named was read alive or gone just before the kill, so a live one the
   // confirmation finds that no read before it named joined the group after that read.

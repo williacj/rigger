@@ -618,6 +618,24 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
 });
 
+// proves R-STATE-19, R-STATE-9
+test('given a leader L0 may not signal, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as a process it could not end because of EPERM, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+  hanging(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', refused: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0);
+  assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
+  assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+  assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event, reason }) => ({ event, reason })), [{ event: 'survivor.unended', reason: 'EPERM' }]);
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', /could not end the command: EPERM/, JSON.stringify(ending));
+});
+
 // proves R-STATE-12, R-STATE-19
 test('given a member that answers signal 0 with EPERM once, as it is being killed, the call records it as killed, not as a process it could not end', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
