@@ -19,6 +19,9 @@ import { repositoryIn } from './git-repository.mjs';
 import { waitFor } from './loop-world.mjs';
 import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { positive } from './loop-world.mjs';
+import { standInAgent } from './stub-claude.mjs';
+import { mkdirSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -40,8 +43,9 @@ const START = Date.parse('2026-01-01T00:00:00.000Z');
 /**
  * Records one run of L3's real loop, over the fake board holding ready cards `cards`, into the
  * state directory `directory`, through L5's real sink, with L2's real column changes. The run's N
- * is `concurrency`. Every dispatch is held until `releases` frees it: each entry is a minute and
- * the cards whose dispatches return at that minute, exiting zero. The run's clock reads `START`
+ * is `concurrency`. Each card's maker is a stand-in agent L1 runs, first on the PATH L3 hands it,
+ * which holds until the test releases it at the minute `releases` gives: each entry is a minute
+ * and the cards whose makers are released at that minute, exiting zero. The run's clock reads `START`
  * plus the minute of the entry being released, so every event carries a time the test chose.
  * `entry` is the loop's entry point the run goes through: `run`, or `pull` to fire the pull
  * trigger once, which records no `run.start` and so no N.
@@ -59,16 +63,12 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
     },
     readPriority: () => fake.operations.readPriority(),
   };
-  const held = new Map();
+  const agent = standInAgent(Object.fromEntries(cards.map((number) => [number, { engineer: { hold: true } }])));
   const returned = new Set();
-  const dispatch = ({ card }) => new Promise((resolve) => {
-    held.set(card.number, () => {
-      returned.add(card.number);
-      resolve({ exit: 0, output: '' });
-    });
-  });
-  // A card whose dispatch returned has nothing more for L2 to do in this run.
-  const decide = (card) => (returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS));
+  // The cards whose maker stand-in has started and is unreleased, by its started marker.
+  const held = () => cards.filter((number) => !returned.has(number) && agent.held(number));
+  // A card whose maker the test released has nothing more for L2 to do in this run.
+  const decide = (card, outcomes, attempt) => (returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...attempt }));
   /** How many slot releases this run has recorded so far. */
   const releasesRecorded = () => (existsSync(streamPath(directory)) ? readEvents(directory) : [])
     .filter((event) => event.run === run && event.layer === 'L3' && event.event === 'slot.release').length;
@@ -78,22 +78,29 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
    * yet returned where fewer remain, and under `pull`, which refills no slot, every card the pull
    * claimed less those returned.
    */
-  const everyStartMade = () => releasesRecorded() === returned.size && held.size === (entry === 'run'
+  const everyStartMade = () => releasesRecorded() === returned.size && held().length === (entry === 'run'
     ? Math.min(concurrency, cards.length - returned.size)
     : Math.min(concurrency, cards.length) - returned.size);
-  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory, environment: process.env })[entry]();
-  await waitFor(everyStartMade);
+  const workspace = async (card) => {
+    const path = join(directory, 'workspaces', `rigger-${card}`);
+    mkdirSync(path, { recursive: true });
+    return { path };
+  };
+  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
+  // Positive: until every start the loop can make is held.
+  await positive(everyStartMade);
   for (const [at, numbers] of releases) {
     minute = at;
     for (const number of numbers) {
-      assert.ok(held.has(number), `card #${number} is not being dispatched at minute ${at}`);
-      held.get(number)();
-      held.delete(number);
+      assert.ok(held().includes(number), `card #${number}'s maker is not held at minute ${at}`);
+      returned.add(number);
+      agent.release(number);
     }
-    await waitFor(everyStartMade);
+    // Positive: until every start the loop can make is held.
+    await positive(everyStartMade);
   }
   await running;
-  assert.equal(held.size, 0, `cards ${[...held.keys()]} were still dispatched when the run ended`);
+  assert.deepEqual(cards.filter((number) => agent.held(number)), [], 'a maker stand-in was still held when the run ended');
 }
 
 /**
@@ -171,11 +178,12 @@ test('report computes utilization from the N the run recorded, not the concurren
   assert.equal(printed(ran.out, 'utilization'), 0.8, ran.out);
 });
 
-test('report over a stream holding only L2 and L3 events prints no signal for any other layer', async () => {
+test('report over a stream holding the layers a maker\'s dispatch records prints no signal for any other layer', async () => {
   const consumer = realpathSync(repositoryIn('rigger-report-'));
   await recordRun(join(consumer, '.rigger'), FIVE_CARDS);
   const layers = new Set(readFileSync(streamIn(consumer), 'utf8').trim().split('\n').map((line) => JSON.parse(line).layer));
-  assert.deepEqual([...layers].sort(), ['L2', 'L3']);
+  // L0 records only where it kills or sweeps something, which a clean exit may not need.
+  assert.deepEqual([...layers].filter((layer) => layer !== 'L0').sort(), ['L1', 'L2', 'L3']);
 
   const ran = report(consumer);
 

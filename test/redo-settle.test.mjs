@@ -7,11 +7,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { COLUMNS, boardOf, cardIn, columnsOf, waitFor, world } from './loop-world.mjs';
+import { settling } from './loop-world.mjs';
 
 /**
- * The most rounds a run is driven before the test gives up on it. Each round lets every queued
- * step run and then releases every held dispatch; a run over these boards needs one round per
- * dispatch and one to end, so a run still going after this many never would.
+ * The most rounds a run is driven before the test gives up on it. Each round waits until the world
+ * has settled and then releases every held maker stand-in. A judgment, whose premise is a
+ * measurement: across three full `npm test` runs with Node 26.5.0 on macOS 27.0 on this 12-CPU
+ * host on 2026-10-03, at one-minute loads of 20.85, 19.38 and 20.00 as each began, each of the 8
+ * runs here ended within 2 rounds, so a run still going after this many never would.
  */
 const ROUNDS = 10;
 
@@ -27,7 +30,7 @@ async function bounded(built, most) {
   });
   run.catch(() => {});
   for (let round = 0; round < ROUNDS && !ended; round += 1) {
-    await waitFor(() => ended || built.dispatches.held() > 0);
+    await settling(built, () => ended);
     assert.ok(built.dispatches.started.length <= most, `the run started ${built.dispatches.started.length} dispatches: ${built.dispatches.started}`);
     built.dispatches.releaseAll();
   }

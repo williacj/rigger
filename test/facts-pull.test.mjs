@@ -18,6 +18,7 @@ import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { positive } from './loop-world.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH a loop is handed. */
@@ -69,18 +70,21 @@ test('L3 awaits L2\'s facts call between its board read and its claims: while th
   const facts = async (cards) => {
     read.push(cards.map((card) => card.number));
     await held;
-    return (card) => nextAction(card, KINDS);
+    return (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} });
   };
-  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS), facts, l2: built.l2, dispatch: built.dispatches.dispatch, sink: { emitter: () => ({ emit: () => {} }) }, kill: async () => {}, workspace: async () => ({ path: '/nowhere' }), state: built.directory, environment: process.env });
+  built.agent.plan(1, 'engineer', { hold: true });
+  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} }), facts, l2: built.l2, sink: built.sink, kill: async () => {}, workspace: makingWorkspaces(temporaryDirectory('rigger-facts-held-')), state: built.directory, environment: { ...process.env, PATH: built.agent.first() } });
 
   const pulled = l3.pull();
-  await waitFor(() => read.length === 1);
+  // Positive: until the facts call is held.
+  await positive(() => read.length === 1);
   assert.deepEqual(read, [[1]], 'the facts call was handed the cards L3 read');
   assert.deepEqual(built.fake.writes(), []);
   assert.deepEqual(built.dispatches.started, []);
 
   release();
-  await waitFor(() => built.dispatches.held() === 1);
+  // Positive: until card 1's stand-in is held.
+  await positive(() => built.dispatches.held() === 1);
   built.dispatches.releaseAll();
   await pulled.catch(() => {});
   assert.deepEqual(built.dispatches.started, [1]);
@@ -161,19 +165,18 @@ test('given a Review card with no pull request and no line of work on the forge,
   const workspace = makingWorkspaces(temporaryDirectory('rigger-review-redo-'));
   const built = world({ cards: [cardIn(8, COLUMNS.review)], concurrency: 1, kinds, provisioning: { ready: { run: 'true', required: true } }, workspace });
   const columnsAtStart = [];
-  const dispatch = built.dispatches.dispatch;
-  built.dispatches.dispatch = async (start) => {
-    columnsAtStart.push(await columnsOf(built.fake));
-    return dispatch(start);
-  };
 
   const pulled = built.loop.pull();
-  await until(() => built.dispatches.held() === 1, t);
+  // Positive: until card 8's stand-in is held, when the board is read as its maker started.
+  await positive(() => built.dispatches.holding().includes(8), SETTLES_WITHIN.timeout / 2);
+  columnsAtStart.push(await columnsOf(built.fake));
   built.dispatches.releaseAll();
   await pulled;
 
   assert.deepEqual(workspace.made.map(({ card }) => card), [8]);
-  assert.deepEqual(built.l3Events().filter((event) => event.event === 'dispatch').map((event) => event.step), ['ready']);
+  const starts = built.l3Events().filter((event) => event.event === 'dispatch');
+  assert.deepEqual(starts.filter((event) => event.step !== undefined).map((event) => event.step), ['ready']);
+  assert.equal(starts.at(-1).role, 'engineer', 'the maker\'s dispatch follows the step\'s');
   assert.deepEqual(built.dispatches.started, [8]);
   assert.deepEqual(columnsAtStart, [{ 8: COLUMNS.coding }], 'the board as the maker stand-in was dispatched');
 });
@@ -183,7 +186,8 @@ test('given a Review card the forge holds nothing for, L2 moves it from review t
   const built = world({ cards: [cardIn(9, COLUMNS.review)], concurrency: 1 });
 
   const pulled = built.loop.pull();
-  await waitFor(() => built.dispatches.held() === 1);
+  // Positive: until card 9's stand-in is held.
+  await positive(() => built.dispatches.holding().includes(9));
   const transitions = built.events().filter((event) => event.layer === 'L2' && event.event === 'transition');
   built.dispatches.releaseAll();
   await pulled;
