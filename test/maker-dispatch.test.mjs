@@ -155,6 +155,18 @@ test('L3 hands L1 what roleDispatch answered for L2\'s role answer, in the card\
   assert.equal(start?.workspace, realpathSync(built.workspace(1)), JSON.stringify(built.events()));
 });
 
+/**
+ * Settles once card 2's stand-in holds and `refused()` says card 1's start was refused, or once
+ * `pull` has settled without that, failing then with what the stand-in and the stream recorded, so
+ * a maker that never held is named rather than left to the test's bound.
+ */
+async function untilHeld(built, pull, refused, t) {
+  let settled = false;
+  pull.then(() => { settled = true; }, () => { settled = true; });
+  await until(() => (refused() && built.agent.held(2)) || settled, t);
+  assert.ok(refused() && built.agent.held(2), `the pull settled before card 2's maker held: runs ${JSON.stringify(built.agent.runs())}, events ${JSON.stringify(built.events())}`);
+}
+
 /** Whether `context` and `event` are L3's start of a role's dispatch for card `number`. */
 const makerStart = (number) => (context, event, fields) => context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined && context.card === number;
 
@@ -254,7 +266,7 @@ test('given two cards claimed in one pull, where the sink refuses card 1\'s make
 
   // What L2 had recorded is read in the same step the pull's rejection is handled.
   const pull = built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => ({ failure: thrown, transitions: named(built.events(), 'L2', 'transition') }));
-  await until(() => refusedOne && built.agent.held(2), t);
+  await untilHeld(built, pull, () => refusedOne, t);
   built.agent.release(2);
   const { failure, transitions } = await pull;
 
@@ -278,7 +290,7 @@ test('in that pull, card 2\'s maker process is not killed by card 1\'s refusal: 
   built.agent.plan(2, 'engineer', { hold: true, write: true });
 
   const pull = built.loop.pull().catch(() => {});
-  await until(() => refusedOne && built.agent.held(2), t);
+  await untilHeld(built, pull, () => refusedOne, t);
   assert.equal(built.agent.wrote(2), false, 'the stand-in wrote before it was released');
   built.agent.release(2);
   await pull;

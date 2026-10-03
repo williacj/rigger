@@ -208,7 +208,7 @@ function assertKillsFirst(world, pids) {
  * the card it claimed exactly its maker's outcome and its workspace. The world's kinds list no step,
  * so the maker's is the restart's one dispatch.
  */
-function assertNoMakerOfItsOwn(world, verb, ran) {
+function assertOneMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
   const own = restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed');
   assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L1 dispatch.start', 'L1 dispatch.end'], JSON.stringify(own));
@@ -248,7 +248,7 @@ async function killsRecordedFirst(t, verb) {
   const ran = await restart(world, verb);
 
   assertKillsFirst(world, [pids.command, pids.child]);
-  assertNoMakerOfItsOwn(world, verb, ran);
+  assertOneMakerOfItsOwn(world, verb, ran);
 }
 
 // proves R-STATE-10
@@ -518,7 +518,7 @@ test('after that restart through rigger once, the stream holds the child\'s kill
   const ran = await restart(world, 'once');
 
   assertKillsFirst(world, [pids.child]);
-  assertNoMakerOfItsOwn(world, 'once', ran);
+  assertOneMakerOfItsOwn(world, 'once', ran);
 });
 
 test('the engine standing in for Rigger mid-dispatch allocates each dispatch an id that no other dispatch in the same state directory holds, across runs', SETTLES_WITHIN, async (t) => {

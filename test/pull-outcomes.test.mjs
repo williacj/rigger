@@ -12,7 +12,7 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { COLUMNS, KINDS, boardOf, cardIn, handleOn, makingWorkspaces } from './loop-world.mjs';
-import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
+import { factsOverNothing } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
