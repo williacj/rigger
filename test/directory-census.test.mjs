@@ -15,6 +15,7 @@ import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { listingOf } from './listing-stand-in.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
@@ -420,8 +421,9 @@ test('given a census whose read fails after it has stopped a process it listed i
   const directory = holding(t);
   const under = await tailIn(t, directory, join(directory, 'sub'));
   writeFileSync(join(directory, 'lsof-hold'), '');
-  // The first list is the real `lsof`'s, and every later read never answers.
-  const lsof = warmed(fixture(directory, 'lsof', 'if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\nexec /usr/sbin/lsof "$@"'));
+  writeFileSync(join(directory, 'under.pid'), String(under));
+  // The first list names `under`, working in `sub`, as `lsof` lists it, and every later read never answers.
+  const lsof = warmed(fixture(directory, 'lsof', `if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\n${listingOf('under', realpathSync.native(join(directory, 'sub')))}`));
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', lsof, readTimeout: 2_000 });
 

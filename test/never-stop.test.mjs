@@ -15,6 +15,8 @@ import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand }
 import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { realpathSync } from 'node:fs';
+import { listingOf } from './listing-stand-in.mjs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -109,7 +111,8 @@ async function startKilled(started, options) {
 /**
  * A Node process of its own, whose arguments are a scratch directory and a JSON object of options:
  * it starts `$here/command` through L0's adapter with the `ps` stand-in `ps` names where it names
- * one, read timeout `readTimeout`, dispatch directory `directory` where given, and `signalStandIn`'s
+ * one, and the `lsof` stand-in `lsof` names where it names one, read timeout `readTimeout`, dispatch
+ * directory `directory` where given, and `signalStandIn`'s
  * signal call refusing `refused` and leaving `unkept`, as `standIn` does. It appends each `L0`
  * event, and each signal sent, to `events` and `pairs` as lines of JSON. Where `hangAfter` names a
  * pid file, or `group` for `group.pid`'s group, it marks `hang` as it first sends that target the
@@ -131,7 +134,7 @@ const CALLER = [
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) appendFileSync(join(here, 'hang'), ''); return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`) };",
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
-  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps) });",
+  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "appendFileSync(join(here, 'exiting'), String(Date.now()));",
   'process.exit(0);',
@@ -526,7 +529,8 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
-  const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, refused: 'outside' });
+  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, lsof: 'lsof', refused: 'outside' });
 
   assert.equal(status, 0);
   assertUnended(directory, events, 'survivor.unended', 'EPERM');
@@ -602,7 +606,8 @@ test('given a process table that stops answering once the exit cleanup\'s census
   holdingNone(directory);
   hanging(directory);
 
-  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', directory: work, lsof: 'lsof', hangAfter: 'outside', unkept: 'outside' });
 
   const outside = pidIn(directory, 'outside');
   assert.equal(status, 0);
