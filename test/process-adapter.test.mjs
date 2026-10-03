@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
-import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, turn, warmed } from './process-fixtures.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
@@ -1212,15 +1212,6 @@ test('a survivor the census named that exits on its own before the kill, and who
   assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), []);
 });
-
-/** Compiles the C `source` to the executable `$here/<name>`, and hands back its path. */
-function compiled(directory, name, source) {
-  const path = join(directory, name);
-  writeFileSync(`${path}.c`, source.join('\n'));
-  const built = spawnSync('/usr/bin/cc', ['-o', path, `${path}.c`], { encoding: 'utf8' });
-  assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
-  return path;
-}
 
 /**
  * A command that leaves a chain of processes `depth` deep in its group, each the parent of the

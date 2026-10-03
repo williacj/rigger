@@ -45,8 +45,6 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  * - `signalInOutputWait`: whether the caller raises SIGTERM as the adapter starts waiting out its
  *   bound on a command's output.
  * - `ps`, a fixture's name, and `readTimeout`: handed to the adapter for every command, where given.
- * - `stopped`: whether the first command exits at once, leaving its child for a census whose first
- *   read of the process table does not answer, so that group is stopped when the caller ends.
  * - `filler`: a string each command takes as its second argument, which lengthens its command line.
  * - `timed`: whether the caller writes to `end.took` how many milliseconds its sink's end took,
  *   where the exit cleanup takes it.
@@ -90,7 +88,7 @@ const CALLER = [
   'let settled = 0;',
   'const over = new Map();',
   'function begin(label) {',
-  "  const command = join(directory, label === 1 && options.stopped ? 'leaving' : options.commands?.[label] ?? 'command');",
+  "  const command = join(directory, options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
   "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
   "  const started = options.dispatch?.includes(label)",
@@ -128,11 +126,6 @@ const CALLER = [
   '  const labels = Array.from({ length: options.count ?? 2 }, (_, n) => n + 1);',
   '  for (const label of labels) begin(label);',
   '  await Promise.all(labels.map(up));',
-  '  if (options.stopped) {',
-  "    const child = readFileSync(join(directory, 'child.1'), 'utf8').trim();",
-  "    const state = () => spawnSync('/bin/ps', ['-o', 'stat=', '-p', child], { encoding: 'utf8' }).stdout;",
-  "    while (!existsSync(join(directory, 'ps-asked')) || !state().startsWith('T')) await turn();",
-  '  }',
   '}',
   'if (options.after) eval(options.after);',
   "process.stdout.write('ready\\n');",
@@ -786,7 +779,7 @@ for (const untouched of [false, true]) {
   });
 }
 
-// Item 37: a group the census has stopped when the caller ends.
+// Item 37: a group whose census is reading the process table when the caller ends.
 
 /**
  * Code a caller runs once its groups are up (`after`), so that it says `ready` only once its first
