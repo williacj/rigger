@@ -151,16 +151,23 @@ test('endStandIns ends every stand-in a world made in a scratch directory its ca
   await pull.catch(() => {});
 });
 
-/** The source of a test file whose one test holds a world's maker, writes its pid, and then fails. */
-const failingWorld = (harness, pidFile) => [
+/**
+ * The source of a test file whose one test holds a world's maker, writes its pid, and then fails.
+ * A teardown hook of its own, registered after the world's, writes to `aliveFile` whether that
+ * maker is alive once the world's teardown has run, before the child's own exit can end it.
+ */
+const failingWorld = (harness, fixtures, pidFile, aliveFile) => [
   "import { test } from 'node:test';",
   "import { writeFileSync } from 'node:fs';",
   `const { positive, world } = await import(${JSON.stringify(harness)});`,
-  "test('a world that fails while its maker is held', async () => {",
+  `const { alive } = await import(${JSON.stringify(fixtures)});`,
+  "test('a world that fails while its maker is held', async (t) => {",
   '  const built = world({ cards: [1], concurrency: 1 });',
   '  built.loop.pull().catch(() => {});',
   '  await positive(() => built.dispatches.held() === 1);',
-  `  writeFileSync(${JSON.stringify(pidFile)}, String(built.agent.holder(1)));`,
+  '  const pid = built.agent.holder(1);',
+  `  writeFileSync(${JSON.stringify(pidFile)}, String(pid));`,
+  `  t.after(() => writeFileSync(${JSON.stringify(aliveFile)}, String(alive(pid))));`,
   "  throw new Error('this world fails');",
   '});',
   '',
@@ -172,7 +179,8 @@ test('every stand-in a failing test\'s worlds started is gone once that test has
   const temporary = temporaryDirectory('rigger-loop-world-tmp-', { beforeRemoval: () => sweep(temporary) });
   const pidFile = join(directory, 'held.pid');
   const file = join(directory, 'failing.test.mjs');
-  writeFileSync(file, failingWorld(new URL('./loop-world.mjs', import.meta.url).href, pidFile));
+  const aliveFile = join(directory, 'alive-after-teardown');
+  writeFileSync(file, failingWorld(new URL('./loop-world.mjs', import.meta.url).href, new URL('./process-fixtures.mjs', import.meta.url).href, pidFile, aliveFile));
 
   // A child inheriting `NODE_TEST_CONTEXT` would report to this run rather than run its own.
   const { NODE_TEST_CONTEXT, ...env } = process.env;
@@ -183,6 +191,9 @@ test('every stand-in a failing test\'s worlds started is gone once that test has
   assert.equal(ran.status, 1, ran.stdout + ran.stderr);
   assert.match(ran.stdout, /this world fails/);
   const pid = Number(readFileSync(pidFile, 'utf8'));
+  // A teardown hook that throws stops every hook after it, the one writing this file included.
+  const afterTeardown = existsSync(aliveFile) ? readFileSync(aliveFile, 'utf8') : 'unwritten, as a teardown hook before it threw';
+  assert.equal(afterTeardown, 'false', `whether the stand-in ${pid} was alive once its test's teardown had run: ${afterTeardown}\n${ran.stdout}`);
   assert.ok(pid > 1, `the failing test held a stand-in: ${pid}`);
   assert.equal(alive(pid), false, `the stand-in ${pid} outlived its test`);
   assert.deepEqual(running(temporary), []);
