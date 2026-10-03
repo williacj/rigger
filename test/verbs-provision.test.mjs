@@ -1,6 +1,6 @@
 // ABOUTME: Tests `rigger once` and `rigger run` making and provisioning each claimed card's
 // workspace through L3's single pull, over a fixture repository with a local `origin` and a fake
-// board, and stopping short of a maker, which no verb runs before M4.
+// board, and then dispatching its maker through L1 to a stand-in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +17,10 @@ import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, GIT, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { standInAgent } from './stub-claude.mjs';
+
+/** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
+const agent = standInAgent();
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -54,7 +58,8 @@ const ONE_STEP = { steps: { ready: { run: 'true', required: true } }, listed: ['
  * under N `concurrency`, whose `change` kind lists `listed` of the provisioning `steps` and whose
  * other kinds list none, with `worktrees` in place of the template's where it is given; and a fake
  * `gh` holding `items`. The scratch directory is `directory` where the caller made it. `verb(name, cwd)` runs the real bin's verb from `cwd`, the target unless
- * given, with the fake `gh` first on PATH.
+ * given, with this file's stand-in agent first on PATH, the maker every claimed card runs as, and
+ * the fake `gh` after it.
  */
 function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees }, directory = scratch(t)) {
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? listed : [] }]));
@@ -64,7 +69,7 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
   });
-  const env = { ...process.env, PATH: [join(directory, 'fake'), process.env.PATH].join(delimiter) };
+  const env = { ...process.env, PATH: [agent.dir, join(directory, 'fake'), process.env.PATH].join(delimiter) };
   const verb = (name, cwd = target) => {
     const ran = spawnSync(process.execPath, [bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
     assert.equal(ran.error, undefined);
@@ -113,7 +118,7 @@ test('given that world, the event stream shows the step dispatched, exiting 0, w
 
   const events = here.events();
   const dispatched = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch');
-  assert.deepEqual(dispatched.map(({ card: number, step }) => ({ card: number, step })), [{ card: 10, step: 'ready' }], ran.said);
+  assert.deepEqual(dispatched.map(({ card: number, step, role, tier }) => ({ card: number, step, role, tier })), [{ card: 10, step: 'ready', role: undefined, tier: undefined }, { card: 10, step: undefined, role: 'engineer', tier: 'standard' }], ran.said);
   const [{ dispatch: id }] = dispatched;
   const start = events.find((event) => event.event === 'dispatch.start' && event.dispatch === id);
   const end = events.find((event) => event.event === 'dispatch.end' && event.dispatch === id);
@@ -121,7 +126,7 @@ test('given that world, the event stream shows the step dispatched, exiting 0, w
   assert.equal(end?.exit, 0, JSON.stringify(end));
 });
 
-test('given that world, rigger once prints a line naming the card, its workspace\'s path, and that no maker runs before M4', (t) => {
+test('given that world, rigger once prints a line naming the card, its workspace\'s path, and its maker\'s outcome', (t) => {
   const here = world(t, { items: THREE });
 
   const ran = here.verb('once');
@@ -129,7 +134,7 @@ test('given that world, rigger once prints a line naming the card, its workspace
   const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
   assert.ok(line, ran.said);
   assert.ok(line.includes(derived(here, 10)), line);
-  assert.match(line, /no maker runs before M4/, line);
+  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
 });
 
 test('given that world, rigger once exits non-zero', (t) => {
@@ -222,7 +227,7 @@ test('given an optional step whose L1 dispatch.end the sink refuses, rigger once
 });
 
 // proves R-RECORD-9
-test('given an optional step followed by a second selected step, where the sink refuses the optional step\'s L1 dispatch.end, rigger once starts neither the second step nor a second attempt, and reaches no maker, as the event stream shows', (t) => {
+test('given an optional step followed by a second selected step, where the sink refuses the optional step\'s L1 dispatch.end, rigger once starts neither the second step nor a second attempt, and reaches no maker, as the event stream and the stand-in show', (t) => {
   const here = refusingEnd(t);
 
   const ran = here.verb('once');
@@ -233,7 +238,8 @@ test('given an optional step followed by a second selected step, where the sink 
   assert.equal(events.filter((event) => event.event === 'workspace.made').length, 1, ran.said);
   assert.equal(events.at(-1).event, 'dispatch.start', `the stream went on past the step that broke it: ${JSON.stringify(events.at(-1))}`);
   assert.equal(existsSync(here.marker), false, 'the second step ran');
-  assert.doesNotMatch(ran.err, /no maker runs before M4/, ran.said);
+  assert.deepEqual(starts.filter((event) => event.card === 10 && event.role !== undefined), [], ran.said);
+  assert.deepEqual(agent.runs().filter((run) => run.cwd === derived(here, 10)), [], ran.said);
   assert.doesNotMatch(ran.err, /`after`/, ran.said);
 });
 
@@ -304,7 +310,7 @@ test('given rigger once run from a subdirectory of the target, the repository L1
   // L0's workspace adapter runs every call in the repository it was handed.
   mkdirSync(join(here.directory, 'recording'));
   fixture(join(here.directory, 'recording'), 'git', ['printf \'%s | %s\\n\' "$(pwd -P)" "$*" >> "$here/git-calls"', `exec '${GIT}' "$@"`].join('\n'));
-  const path = [join(here.directory, 'recording'), join(here.directory, 'fake'), process.env.PATH].join(delimiter);
+  const path = [join(here.directory, 'recording'), join(here.directory, 'fake'), agent.dir, process.env.PATH].join(delimiter);
 
   const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: below, encoding: 'utf8', env: { ...process.env, PATH: path }, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
 
@@ -379,7 +385,7 @@ test('given that world, the event stream shows the step dispatched for each card
   const events = here.events();
   for (const number of [10, 20, 30]) {
     const dispatched = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.card === number);
-    assert.deepEqual(dispatched.map(({ step }) => step), ['ready'], ran.said);
+    assert.deepEqual(dispatched.map(({ step }) => step), ['ready', undefined], ran.said);
     const [{ dispatch: id }] = dispatched;
     const start = events.find((event) => event.event === 'dispatch.start' && event.dispatch === id);
     const end = events.find((event) => event.event === 'dispatch.end' && event.dispatch === id);
@@ -388,7 +394,7 @@ test('given that world, the event stream shows the step dispatched for each card
   }
 });
 
-test('given that world, rigger run prints a line for each claimed card naming the card, its workspace\'s path, and that no maker runs before M4', (t) => {
+test('given that world, rigger run prints a line for each claimed card naming the card, its workspace\'s path, and its maker\'s outcome', (t) => {
   const here = world(t, { items: FOUR });
 
   const ran = here.verb('run');
@@ -397,7 +403,7 @@ test('given that world, rigger run prints a line for each claimed card naming th
     const line = ran.err.split('\n').find((held) => new RegExp(`^rigger run: claimed #${number} from board 3\\b`).test(held));
     assert.ok(line, ran.said);
     assert.ok(line.includes(derived(here, number)), line);
-    assert.match(line, /no maker runs before M4/, line);
+    assert.match(line, new RegExp(`; its maker exited 0 and opened no pull request from rigger-${number}, in its workspace, `), line);
   }
 });
 
@@ -463,24 +469,24 @@ function claimedLine(text, number, said) {
   return line;
 }
 
-test('given a pull claiming #10, #20 and #30, where #20\'s required step exits non-zero on both attempts, rigger run prints a line for #10 naming its workspace\'s path and that no maker runs before M4', (t) => {
+test('given a pull claiming #10, #20 and #30, where #20\'s required step exits non-zero on both attempts, rigger run prints a line for #10 naming its workspace\'s path and its maker\'s outcome', (t) => {
   const here = world(t, { items: ONE_FAILING, ...FAILING });
 
   const ran = here.verb('run');
 
   const line = claimedLine(ran.err, 10, ran.said);
   assert.ok(line.includes(derived(here, 10)), line);
-  assert.match(line, /no maker runs before M4/, line);
+  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
 });
 
-test('given that world, rigger run prints a line for #30 naming its workspace\'s path and that no maker runs before M4', (t) => {
+test('given that world, rigger run prints a line for #30 naming its workspace\'s path and its maker\'s outcome', (t) => {
   const here = world(t, { items: ONE_FAILING, ...FAILING });
 
   const ran = here.verb('run');
 
   const line = claimedLine(ran.err, 30, ran.said);
   assert.ok(line.includes(derived(here, 30)), line);
-  assert.match(line, /no maker runs before M4/, line);
+  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-30, in its workspace, /, line);
 });
 
 test('given that world, rigger run prints #20\'s two attempts\' failures, each naming the step and its exit code', (t) => {

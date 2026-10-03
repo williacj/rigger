@@ -89,7 +89,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
     makerCalls.push({ start, at: events().length });
     return maker(start);
   };
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace, state });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace, state, environment: process.env });
   return { directory, root, path: join(root, `rigger-${card}`), fake, loop: built, events, made, makerCalls, settled };
 }
 

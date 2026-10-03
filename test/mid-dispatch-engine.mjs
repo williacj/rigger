@@ -1,4 +1,4 @@
-// ABOUTME: What stands in for Rigger mid-dispatch until a verb dispatches a maker (M4): L3's loop over a
+// ABOUTME: What stands in for Rigger mid-dispatch with an injected maker: L3's loop over a
 // consumer's board through the `gh` on PATH, whose dispatch allocates an id and calls L1's function.
 
 import { randomUUID } from 'node:crypto';
@@ -42,5 +42,5 @@ export async function engine({ directory, repository, command, ps, workspace }) 
     id: `d-${randomUUID()}`, card: card.number, directory: state, sink, command: '/bin/sh', args: [command], cwd: workspace ?? directory, workspace, env: { PATH: '/usr/bin:/bin' }, timeout: UNREACHED, ps,
   });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, dispatch: dispatching, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, dispatch: dispatching, sink, kill, workspace: async () => ({ path: directory }), state, environment: process.env }).pull();
 }

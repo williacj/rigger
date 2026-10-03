@@ -285,7 +285,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, dispatch, sink: l3Sink, kill, workspace, state: directory }),
+    loop: loop({ config: settings, board, decide, facts, l2, dispatch, sink: l3Sink, kill, workspace, state: directory, environment: process.env }),
   };
 }
 
