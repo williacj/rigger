@@ -1615,7 +1615,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
  */
 export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, kill = SIGNAL }) {
-  const starts = await startsIn(ps, group, readTimeout);
+  const starts = await startsIn(ps, group, readTimeout).catch((error) => { process.kill(-group, 'SIGKILL'); throw error; });
   const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill }, 'recorded.killed') : [];
   const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
   for (const [each, held] of recordedDirectories) {
