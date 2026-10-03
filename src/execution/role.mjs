@@ -33,15 +33,16 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * evidence itself reaches no event.
  *
  * `scratch` is the card's scratch base, and `repository` the repository L1 made from, each of which
- * L3 hands unread from L1's make (the architect's rulings 19 and 21 on #467). Once the provider is found, and before the adapter is asked for the
- * invocation, L1 makes the role's scratch directory, `<scratch>/<role>`, fresh (`makeScratch`),
- * hands the adapter its absolute path as `scratch`, and answers it as `scratch` for `dispatch`,
- * whose census sweeps it and whose record names it (ruling 20).
+ * L3 hands unread from L1's make (the architect's rulings 19 and 21 on #467). Once the provider is
+ * found, and before the adapter is asked for the invocation, L1 makes the role's scratch
+ * directory, `<scratch>/<role>`, fresh (`makeScratch`), hands the adapter its absolute path as
+ * `scratch`, and answers it as `scratch` for `dispatch`, whose census sweeps it and whose record
+ * names it (ruling 20).
  *
  * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
  * `dispatch.start` for it: a provider the map does not hold, naming it; a `scratch` or `repository`
- * that is no absolute path, naming it; a scratch directory L1 could not make, naming its path and why; an
- * `invocation` that rejects, naming its reason; and a variable the adapter may not set
+ * that is no absolute path, naming it; a scratch directory L1 could not make, naming its path and
+ * why; an `invocation` that rejects, naming its reason; and a variable the adapter may not set
  * (`unsettable`), naming it. A sink that refused one of L1's scratch events rejects as the refused
  * event it is (`EVENT_REFUSED`).
  */

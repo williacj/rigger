@@ -1,7 +1,7 @@
 // ABOUTME: Tests L3 driving a card's attempt under one claim: it has L1 make the workspace, dispatches
 // each step L2's next action names one at a time, each under an id and a start event of its own,
-// halts on a refused append, and reaches the maker only once no required step failed: the one
-// injected, or, with none injected, the maker L1 dispatches to a stand-in.
+// halts on a refused append, and reaches the maker only once no required step failed: the maker
+// L1 dispatches to a stand-in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +22,9 @@ import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { makerRuns, positive } from './loop-world.mjs';
+import { mkdirSync } from 'node:fs';
+import { repositoryAt } from './git-repository.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH each loop is handed. */
 const agent = standInAgent();
@@ -40,13 +43,13 @@ const step = (run, required = true) => ({ run, required });
  * A world in which L3's real loop drives cards through the real L2 next action and column
  * changes, L1's real dispatch, a fake board holding `cards` and one real sink, under N
  * `concurrency`. The card's kind lists `steps`, each of which `provisioning` declares, or the
- * function `provisioning` answers for the world's state directory. `maker`
- * is the maker L3 is handed; where it is undefined none is injected, and L1 dispatches the maker
- * L2 answers from the live config's roles to this file's stand-in agent, first on the PATH of the
- * environment L3 is handed. L2's settle reads a forge holding, from a card's line of work, one open
- * pull request where the test set that card's stand-in to open one or injected a maker it was
- * handed, and none otherwise. `makerCalls` records each call's
- * argument with the number of events recorded when it was made. The workspace handle is
+ * function `provisioning` answers for the world's state directory. L1 dispatches the maker L2
+ * answers from the live config's roles to this file's stand-in agent, first on the PATH of the
+ * environment L3 is handed, and `maker`, where it is given, names what the stand-in does for each
+ * of the world's cards. L2's settle reads a forge holding, from a card's line of work, one open
+ * pull request where the test set that card's stand-in to open one or named its `maker` and it
+ * ran, and none otherwise. `makerCalls` is a live view of the stand-in's runs in this world where
+ * `maker` is named, each with the index of its L1 dispatch.start, and holds none where it is not. The workspace handle is
  * `workspace`, or one that makes and answers `workspaces/rigger-<card>` under the world's
  * directory, recording each call in `made`. `decide` stands in for L2's next action where it is
  * given, handed the real one; `config` is what L3 and L2's column changes are handed, the live
@@ -76,7 +79,7 @@ function attemptWorld({
   const events = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
   const settledCards = [];
   // The forge holds, from a card's line of work, one open pull request where the test set that
-  // card's stand-in agent to open one, or where a maker the test injected was handed the card,
+  // card's stand-in agent to open one, or where the stand-in the test named as its maker ran for the card,
   // as a maker that opened one leaves it, and none otherwise.
   const forgeOfAgent = async (branch) => {
     const number = Number(/^rigger-(\d+)$/.exec(branch)?.[1]);
@@ -100,18 +103,18 @@ function attemptWorld({
     return standIn ? standIn(card, outcomes, l2Answer) : l2Answer(card, outcomes, attempt);
   };
   const making = workspace ?? makingWorkspaces(join(directory, 'workspaces'));
-  const makerCalls = [];
-  const injected = maker === undefined ? undefined : async (start) => {
-    makerCalls.push({ start, at: events().length });
-    return maker(start);
-  };
+  // `maker` names what the stand-in does as each card's maker; `makerCalls` is a live view of the
+  // stand-in's runs in this world's workspaces where one is named, each as its card and the index
+  // of the maker's L1 dispatch.start, and holds none where none is.
+  if (maker !== undefined) for (const card of cards) agent.plan(card, 'engineer', maker);
+  const makerCalls = makerRuns(agent, directory, events, maker !== undefined);
   const handle = handleOn(fake);
   let requests = 0;
   const board = {
     readColumns: () => { requests += 1; return handle.readColumns(); },
     readPriority: () => { requests += 1; return handle.readPriority(); },
   };
-  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace: making, state: directory, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: making, state: directory, environment: { ...process.env, PATH: agent.first() } });
   return { directory, fake, loop: built, events, asks, made: making.made, makerCalls, settled: settledCards, requests: () => requests };
 }
 
@@ -222,7 +225,7 @@ test('given a sink that refuses a step\'s L3 start event, that step\'s command n
     cards: [4],
     steps: ['a', 'b'],
     provisioning: { a: step('true'), b: step('touch b-ran') },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
     refuse: ({ layer }, event, fields) => layer === 'L3' && event === 'dispatch' && fields.step === 'b',
   });
 
@@ -231,7 +234,7 @@ test('given a sink that refuses a step\'s L3 start event, that step\'s command n
   const events = built.events();
   assert.equal(existsSync(join(built.directory, 'workspaces', 'rigger-4', 'b-ran')), false, 'step b ran');
   assert.equal(named(events, 'L1', 'dispatch.start').length, 1, JSON.stringify(events));
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'the maker stand-in never started');
 });
 
 test('given no maker injected and the maker stand-in exiting non-zero, a card whose steps all exit 0 stays in coding, and the pull\'s answer names the card, its workspace and its maker\'s exit', async () => {
@@ -261,7 +264,7 @@ test('given every selected step exits 0, the maker stand-in exits 0 and the forg
 });
 
 test('given a step\'s dispatch exits 0 with a later step selected, the event stream holds no L2 transition event for the card between that step\'s dispatch.end and the next step\'s dispatch.start', async () => {
-  const built = attemptWorld({ cards: [6], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: async () => ({ exit: 0 }) });
+  const built = attemptWorld({ cards: [6], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
@@ -272,25 +275,27 @@ test('given a step\'s dispatch exits 0 with a later step selected, the event str
 });
 
 // proves R-PROV-4
-test('given a maker stand-in injected and every required step exiting 0, the stand-in is called once, after the last step\'s dispatch.end', async () => {
-  const built = attemptWorld({ cards: [7], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: async () => ({ exit: 0 }) });
+test('given the maker stand-in exiting 0 and every required step exiting 0, the stand-in starts once, after the last step\'s dispatch.end', async () => {
+  const built = attemptWorld({ cards: [7], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
   const events = built.events();
-  assert.equal(built.makerCalls.length, 1);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
   const lastEnd = l1Index(events, 'b', 'dispatch.end');
-  assert.ok(lastEnd >= 0 && built.makerCalls[0].at > lastEnd, `the maker was called with ${built.makerCalls[0].at} events recorded: ${JSON.stringify(events)}`);
+  assert.ok(lastEnd >= 0 && built.makerCalls[0].at > lastEnd, `the maker's dispatch.start is at ${built.makerCalls[0].at}: ${JSON.stringify(events)}`);
 });
 
-test('the injected maker is handed an object whose keys are exactly card and kind', async () => {
-  const built = attemptWorld({ cards: [7], steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }) });
+test('the maker\'s L3 dispatch event names card 7, role engineer and its tier, and the stand-in\'s prompt names card #7', async () => {
+  const built = attemptWorld({ cards: [7], steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
-  assert.deepEqual(Object.keys(built.makerCalls[0].start).sort(), ['card', 'kind']);
-  assert.equal(built.makerCalls[0].start.card.number, 7);
-  assert.equal(built.makerCalls[0].start.kind, 'change');
+  const maker = named(built.events(), 'L3', 'dispatch').find((each) => each.role !== undefined);
+  assert.deepEqual({ card: maker.card, role: maker.role, tier: maker.tier, step: maker.step }, { card: 7, role: 'engineer', tier: 'standard', step: undefined });
+  const runs = agent.runs().filter((run) => run.card === 7 && existsSync(run.cwd) && realpathSync(run.cwd).startsWith(realpathSync(built.directory)));
+  assert.equal(runs.length, 1);
+  assert.match(runs[0].input, /maker for card #7\./);
 });
 
 /** The cards L3 recorded a pull of among `events`. */
@@ -325,11 +330,11 @@ test('given a limit that is not a positive whole number, loop\'s single pull ref
 });
 
 test('settled is called once for a claimed card whose maker ran, and never for a card whose claim move the board refuses', async () => {
-  const moved = attemptWorld({ cards: [1], steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }) });
+  const moved = attemptWorld({ cards: [1], steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 } });
   await moved.loop.pull();
   assert.deepEqual(moved.settled, [1]);
 
-  const refused = attemptWorld({ cards: [2], steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuseMoves: true });
+  const refused = attemptWorld({ cards: [2], steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, refuseMoves: true });
   await assert.rejects(refused.loop.pull(), (failure) => failure.errors.some((each) => /card #2's move from ready to coding/.test(each.message)));
   assert.deepEqual(refused.settled, []);
   assert.deepEqual(refused.made, [], 'no workspace was made for a card whose start was not made');
@@ -346,18 +351,18 @@ test('settled is called once for a card whose maker the stand-in ran', async () 
 test('for a card selecting no step, L3 asks decide once, at the pull, and the answer carries action dispatch', async () => {
   const answers = [];
   const built = attemptWorld({
-    cards: [1], maker: async () => ({ exit: 0 }), decide: (card, outcomes, answer) => { const given = answer(card, outcomes); answers.push(given); return given; },
+    cards: [1], maker: { exit: 0 }, decide: (card, outcomes, answer) => { const given = answer(card, outcomes); answers.push(given); return given; },
   });
 
   await built.loop.pull();
 
   assert.deepEqual(built.asks, { 1: 1 });
   assert.equal(answers[0].action, 'dispatch');
-  assert.equal(built.makerCalls.length, 1);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
 });
 
 test('for a card selecting two steps, L3 asks decide once at the pull and once after each step\'s outcome', async () => {
-  const built = attemptWorld({ cards: [1], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: async () => ({ exit: 0 }) });
+  const built = attemptWorld({ cards: [1], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
@@ -374,27 +379,29 @@ test('the steps loop dispatches, and whether it dispatches another after an outc
   const handedOutcomes = [];
   const built = attemptWorld({
     cards: [1],
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
     decide: (card, outcomes = []) => { handedOutcomes.push(outcomes.map((outcome) => outcome.value.exit)); return script[outcomes.length]; },
   });
 
   await built.loop.pull();
 
-  assert.deepEqual(named(built.events(), 'L3', 'dispatch').map((each) => each.step), ['first', 'second']);
+  assert.deepEqual(named(built.events(), 'L3', 'dispatch').filter((each) => each.step !== undefined).map((each) => each.step), ['first', 'second']);
+  assert.equal(named(built.events(), 'L3', 'dispatch').at(-1).role, 'engineer', 'the maker\'s event follows the steps\'');
   assert.deepEqual(handedOutcomes, [[], [0], [0, 5]], 'each outcome was handed back unread, a non-zero exit included');
-  assert.equal(built.makerCalls.length, 1, 'the maker ran because decide answered it, whatever the second step exited');
+  assert.equal(built.makerCalls.length, 1, 'the maker stand-in started once, because decide answered it, whatever the second step exited');
 });
 
 test('given an l2 built on a config whose kinds list a required step, and a decide built on kinds listing none, no step is dispatched', async () => {
   const { change } = config.kinds;
   assert.ok(change.provisioning.some((name) => config.provisioning[name].required === true), 'the config handed lists a required step for the card\'s kind');
-  const built = attemptWorld({ cards: [1], maker: async () => ({ exit: 0 }), settings: { ...config, concurrency: 1 } });
+  const built = attemptWorld({ cards: [1], maker: { exit: 0 }, settings: { ...config, concurrency: 1 } });
 
   await built.loop.pull();
 
   const events = built.events();
-  assert.deepEqual(named(events, 'L3', 'dispatch'), []);
-  assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
+  const starts = named(events, 'L3', 'dispatch');
+  assert.deepEqual(starts.map(({ step: name, role }) => ({ step: name, role })), [{ step: undefined, role: 'engineer' }]);
+  assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.dispatch), [starts[0].dispatch]);
   assert.equal(built.makerCalls.length, 1);
 });
 
@@ -439,13 +446,13 @@ test('given an optional step whose L1 dispatch.end the sink refuses, the refusal
   assert.deepEqual(built.events().filter((each) => each.event === 'step.failed'), []);
 });
 
-test('given a card whose kind selects an optional step followed by a second selected step, with a maker stand-in injected, where the sink refuses the optional step\'s L1 dispatch.end, neither the second step, nor the maker stand-in, nor a second attempt starts', async () => {
+test('given a card whose kind selects an optional step followed by a second selected step, with the maker stand-in on the environment\'s PATH, where the sink refuses the optional step\'s L1 dispatch.end, neither the second step, nor the maker stand-in, nor a second attempt starts', async () => {
   let optional;
   const built = attemptWorld({
     cards: [8],
     steps: ['opt', 'b'],
     provisioning: { opt: step('exit 1', false), b: step('true') },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
     refuse: (context, event, fields) => {
       if (context.layer === 'L3' && event === 'dispatch' && fields.step === 'opt') optional = context.dispatch;
       return context.layer === 'L1' && event === 'dispatch.end' && context.dispatch === optional;
@@ -457,7 +464,7 @@ test('given a card whose kind selects an optional step followed by a second sele
   const events = built.events();
   assert.deepEqual(named(events, 'L3', 'dispatch').map((each) => each.step), ['opt']);
   assert.equal(named(events, 'L1', 'dispatch.start').length, 1);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'the maker stand-in never started');
   assert.equal(built.made.length, 1, 'one attempt made one workspace');
   assert.deepEqual(named(events, 'L3', 'pull').map((each) => each.card), [8]);
 });
@@ -474,7 +481,7 @@ test('given a step whose command ran and whose record removal L1\'s record refus
       a: { ...step(`until /usr/bin/grep -q "\\"group\\":$$," '${join(state, 'groups.json')}'; do :; done; mkdir '${join(state, 'groups.json.partial')}'`), timeout: 30_000 },
       b: step('true'),
     }),
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
   });
 
   const failure = await built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
@@ -483,7 +490,7 @@ test('given a step whose command ran and whose record removal L1\'s record refus
   assert.match(said, /card #9\b/);
   assert.match(said, /kept the entry/);
   assert.deepEqual(named(built.events(), 'L3', 'dispatch').map((each) => each.step), ['a']);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'the maker stand-in never started');
 });
 
 test('given a loop world whose kinds option lists one step for the card\'s kind, and whose workspace stand-in makes the directory it answers, L3 dispatches that step in that directory, as the event stream shows', SETTLES_WITHIN, async (t) => {
@@ -492,14 +499,14 @@ test('given a loop world whose kinds option lists one step for the card\'s kind,
   const built = world({ cards: [1], concurrency: 1, kinds: kindListing(['mark']), provisioning: { mark: step('pwd -P > where') }, workspace });
 
   const pull = built.loop.pull();
-  // The step runs as a real command, so the maker's hold is released once it is reached.
-  await until(() => built.dispatches.held() > 0, t);
-  built.dispatches.releaseAll();
+  // The step runs as a real command. Positive: until card 1's stand-in has recorded its started marker; then it is released.
+  await positive(() => built.dispatches.holding().includes(1), SETTLES_WITHIN.timeout / 2);
+  built.dispatches.release(1);
   await pull;
 
   const [made] = workspace.made;
   const starts = built.events().filter((each) => each.layer === 'L1' && each.event === 'dispatch.start');
-  assert.deepEqual(starts.map((each) => each.workspace), [made.path]);
+  assert.deepEqual(starts.map((each) => each.workspace), [made.path, made.path], 'the step and the maker');
   const l3 = built.events().find((each) => each.layer === 'L3' && each.event === 'dispatch');
   assert.equal(l3.step, 'mark');
   assert.equal(starts[0].dispatch, l3.dispatch);
@@ -508,15 +515,20 @@ test('given a loop world whose kinds option lists one step for the card\'s kind,
 
 test('given a loop world whose kinds option lists no step, L3 still calls its workspace stand-in once per attempt, and dispatches no step', async () => {
   const calls = [];
-  const built = world({ cards: [1, 2], concurrency: 2, workspace: async (card) => { calls.push(card); return { path: `/nowhere/rigger-${card}` }; } });
+  const under = temporaryDirectory('rigger-attempt-workspaces-');
+  const repository = repositoryAt(join(under, 'repository'));
+  const built = world({ cards: [1, 2], concurrency: 2, workspace: async (card) => { calls.push(card); const path = join(under, `rigger-${card}`); mkdirSync(path, { recursive: true }); return { path, scratch: join(under, 'scratch', `rigger-${card}`), repository }; } });
 
   const pull = built.loop.pull();
-  await waitFor(() => built.dispatches.held() === 2);
+  // Positive: until both cards' stand-ins are held.
+  await positive(() => built.dispatches.held() === 2, SETTLES_WITHIN.timeout / 2);
   built.dispatches.releaseAll();
   await pull;
 
   assert.deepEqual([...calls].sort(), [1, 2]);
-  assert.deepEqual(built.events().filter((each) => each.layer === 'L1' || (each.layer === 'L3' && each.event === 'dispatch')), []);
+  const dispatched = built.events().filter((each) => each.layer === 'L1' || (each.layer === 'L3' && each.event === 'dispatch'));
+  assert.deepEqual(dispatched.filter((each) => each.step !== undefined), [], 'no step was dispatched');
+  assert.deepEqual(dispatched.map(({ layer, event, card }) => `${card} ${layer} ${event}`).sort(), ['1 L1 dispatch.end', '1 L1 dispatch.start', '1 L1 workspace.made', '1 L3 dispatch', '2 L1 dispatch.end', '2 L1 dispatch.start', '2 L1 workspace.made', '2 L3 dispatch']);
   assert.deepEqual([...built.dispatches.started].sort(), [1, 2]);
 });
 

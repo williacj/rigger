@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { dirname } from 'node:path';
 
 import config from '../rigger.config.mjs';
 import { workspaceHandle } from '../src/execution/workspace.mjs';
@@ -21,6 +22,8 @@ import { scratch } from './process-fixtures.mjs';
 import { worktreeAt } from './git-repository.mjs';
 import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { makerRuns } from './loop-world.mjs';
+import { standInAgent } from './stub-claude.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
@@ -35,8 +38,10 @@ const step = (run, required = true) => ({ run, required });
  * a local bare repository, a fake board holding the card in Ready and one real sink, all in a
  * scratch directory torn down with every process naming it. The card's kind lists `steps`, each
  * of which `provisioning` declares, or the function `provisioning` answers for the scratch
- * directory. `maker` is the maker stand-in L3 is handed, none where it is undefined, and
- * `makerCalls` records each call with the number of events recorded when it was made.
+ * directory. Every maker L1 dispatches runs as a stand-in agent of the world's own, first on the
+ * PATH of the environment L3 is handed; `maker` names what it does for the card, and `makerCalls`
+ * is a live view of its runs, each with the index of its L1 dispatch.start, holding none where
+ * `maker` is undefined.
  *
  * `made` records each call L3 made on the workspace handle, in order. `before(call)` runs as each
  * call begins, numbered from 1, before L1 makes anything. `refuse(context, event, fields)` answers
@@ -76,7 +81,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   };
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const declared = typeof provisioning === 'function' ? provisioning(directory) : provisioning;
-  const decide = (held, outcomes, attempt) => altered(nextAction(held, kinds, undefined, { columns: COLUMNS, provisioning: declared, outcomes, sink, ...attempt }));
+  const decide = (held, outcomes, attempt) => altered(nextAction(held, kinds, undefined, { columns: COLUMNS, roles: settings.roles, provisioning: declared, outcomes, sink, ...attempt }));
   const handle = await workspaceHandle({ root, topic: 'rigger-{number}', repository, sink });
   const made = [];
   const workspace = async (number) => {
@@ -84,12 +89,9 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
     before(made.length);
     return handle(number);
   };
-  const makerCalls = [];
-  const injected = maker === undefined ? undefined : async (start) => {
-    makerCalls.push({ start, at: events().length });
-    return maker(start);
-  };
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace, state, environment: process.env });
+  const agent = standInAgent(maker === undefined ? {} : { [card]: { engineer: maker } });
+  const makerCalls = makerRuns(agent, directory, events, maker !== undefined);
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, state, environment: { ...process.env, PATH: agent.first() } });
   return { directory, root, path: join(root, `rigger-${card}`), fake, loop: built, events, made, makerCalls, settled };
 }
 
@@ -97,17 +99,17 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
 const named = (events, layer, event) => events.filter((each) => each.layer === layer && each.event === event);
 
 // proves R-PROV-3
-test('given a required step that exits non-zero on both attempts, the injected maker stand-in is never called', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }) });
+test('given a required step that exits non-zero on both attempts, the maker stand-in never starts', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
 
   await assert.rejects(built.loop.pull());
 
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 // proves R-FAIL-2
 test('given a required step that exits non-zero on both attempts, the card is attempted exactly twice in that call', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }) });
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
 
   await assert.rejects(built.loop.pull());
 
@@ -115,9 +117,9 @@ test('given a required step that exits non-zero on both attempts, the card is at
   assert.deepEqual(named(built.events(), 'L3', 'dispatch').map((each) => each.attempt), [1, 2]);
 });
 
-/** The index in `events` of L1's `event`, `dispatch.start` or `dispatch.end`, of the last dispatch L3 started. */
+/** The index in `events` of L1's `event`, `dispatch.start` or `dispatch.end`, of the last step's dispatch L3 started. */
 function lastL1(events, event) {
-  const starts = named(events, 'L3', 'dispatch');
+  const starts = named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined);
   const last = starts[starts.length - 1];
   assert.ok(last, `L3 recorded no dispatch: ${JSON.stringify(events)}`);
   return events.findIndex((each) => each.layer === 'L1' && each.event === event && each.dispatch === last.dispatch);
@@ -139,16 +141,16 @@ const looksFor = (left, seen) => `if [ -e ${left} ]; then echo held >> '${seen}'
 const linesOf = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean) : []);
 
 // proves R-FAIL-1
-test('given a required step that exits non-zero on the first attempt and 0 on the second, the injected maker stand-in is called exactly once, after the second attempt\'s last step has ended', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a', 'b'], provisioning: (dir) => ({ a: step('true'), b: step(firstOnly(join(dir, 'failed-once'), 'exit 3')) }), maker: async () => ({ exit: 0 }) });
+test('given a required step that exits non-zero on the first attempt and 0 on the second, the maker stand-in starts exactly once, after the second attempt\'s last step has ended', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a', 'b'], provisioning: (dir) => ({ a: step('true'), b: step(firstOnly(join(dir, 'failed-once'), 'exit 3')) }), maker: { exit: 0 } });
 
   await built.loop.pull();
 
   const events = built.events();
-  assert.deepEqual(named(events, 'L3', 'dispatch').map(({ step: name, attempt }) => [name, attempt]), [['a', 1], ['b', 1], ['a', 2], ['b', 2]]);
-  assert.equal(built.makerCalls.length, 1);
+  assert.deepEqual(named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined).map(({ step: name, attempt }) => [name, attempt]), [['a', 1], ['b', 1], ['a', 2], ['b', 2]]);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
   const lastEnd = lastL1(events, 'dispatch.end');
-  assert.ok(lastEnd >= 0 && built.makerCalls[0].at > lastEnd, `the maker was called with ${built.makerCalls[0].at} events recorded: ${JSON.stringify(events)}`);
+  assert.ok(lastEnd >= 0 && built.makerCalls[0].at > lastEnd, `the maker's dispatch.start is at ${built.makerCalls[0].at}: ${JSON.stringify(events)}`);
 });
 
 // proves R-FAIL-1
@@ -156,12 +158,12 @@ test('given a required step that writes a file into the workspace and then exits
   const built = await retryWorld(t, {
     steps: ['a'],
     provisioning: (dir) => ({ a: step(`${looksFor('left', join(dir, 'seen'))}; ${firstOnly(join(dir, 'failed-once'), ': > left; exit 3')}`) }),
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
   });
 
   await built.loop.pull();
 
-  assert.deepEqual(named(built.events(), 'L3', 'dispatch').map((each) => each.attempt), [1, 2]);
+  assert.deepEqual(named(built.events(), 'L3', 'dispatch').filter((each) => each.step !== undefined).map((each) => each.attempt), [1, 2]);
   assert.deepEqual(linesOf(join(built.directory, 'seen')), ['clean', 'clean']);
 });
 
@@ -171,7 +173,7 @@ test('given a workspace that cannot be made on the first attempt and can on the 
   const built = await retryWorld(t, {
     steps: ['a'],
     provisioning: { a: step('true') },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
     // A directory that is not a workspace of the repository stands where the first attempt's
     // workspace goes, so L1 refuses to replace it; it is gone before the second attempt.
     before: (call) => (call === 1 ? mkdirSync(path, { recursive: true }) : rmSync(path, { recursive: true })),
@@ -183,38 +185,38 @@ test('given a workspace that cannot be made on the first attempt and can on the 
   const events = built.events();
   assert.deepEqual(built.made, [1, 1]);
   assert.deepEqual(named(events, 'L1', 'workspace.failed').map((each) => each.path), [path]);
-  assert.deepEqual(named(events, 'L1', 'workspace.made').map((each) => each.path), [path]);
-  assert.deepEqual(named(events, 'L3', 'dispatch').map(({ step: name, attempt }) => [name, attempt]), [['a', 2]]);
-  assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.workspace), [path]);
+  assert.deepEqual(named(events, 'L1', 'workspace.made').map(({ role, path: at }) => ({ role, path: at })), [{ role: undefined, path }, { role: 'engineer', path: join(dirname(path), 'scratch', 'rigger-1', 'engineer') }]);
+  assert.deepEqual(named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined).map(({ step: name, attempt }) => [name, attempt]), [['a', 2]]);
+  assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.workspace), [path, path]);
 });
 
 // proves R-PROV-3, R-FAIL-2
-test('given a required step whose command cannot be started on either attempt, the injected maker stand-in is never called, and the card is attempted exactly twice', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: { ...step('true'), cwd: 'missing' } }, maker: async () => ({ exit: 0 }) });
+test('given a required step whose command cannot be started on either attempt, the maker stand-in never starts, and the card is attempted exactly twice', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: { ...step('true'), cwd: 'missing' } }, maker: { exit: 0 } });
 
   await assert.rejects(built.loop.pull());
 
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
   assert.deepEqual(built.made, [1, 1]);
   assert.deepEqual(named(built.events(), 'L1', 'dispatch.end').map((each) => each.exit === undefined && typeof each.reason === 'string'), [true, true]);
 });
 
-test('given an optional step that exits non-zero and every required step exiting 0, the card is attempted once, and the injected maker stand-in is called once', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['opt', 'b'], provisioning: { opt: step('exit 4', false), b: step('true') }, maker: async () => ({ exit: 0 }) });
+test('given an optional step that exits non-zero and every required step exiting 0, the card is attempted once, and the maker stand-in starts once', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['opt', 'b'], provisioning: { opt: step('exit 4', false), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
   assert.deepEqual(built.made, [1]);
-  assert.equal(built.makerCalls.length, 1);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
 });
 
 test('given an optional step whose command cannot be started, followed by a required step, the required step\'s dispatch.start follows, the card is attempted once, and the event stream records the optional step\'s failure', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['opt', 'b'], provisioning: { opt: { ...step('true', false), cwd: 'missing' }, b: step('true') }, maker: async () => ({ exit: 0 }) });
+  const built = await retryWorld(t, { steps: ['opt', 'b'], provisioning: { opt: { ...step('true', false), cwd: 'missing' }, b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
   const events = built.events();
-  assert.deepEqual(named(events, 'L3', 'dispatch').map((each) => each.step), ['opt', 'b']);
+  assert.deepEqual(named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined).map((each) => each.step), ['opt', 'b']);
   assert.ok(lastL1(events, 'dispatch.start') > events.findIndex((each) => each.layer === 'L1' && each.event === 'dispatch.end'), JSON.stringify(events));
   assert.deepEqual(built.made, [1]);
   const failed = named(events, 'L2', 'step.failed');
@@ -222,12 +224,12 @@ test('given an optional step whose command cannot be started, followed by a requ
   assert.equal(typeof failed[0].reason, 'string');
 });
 
-test('given an optional step whose command cannot be started as the last selected step, the injected maker stand-in is called once', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a', 'opt'], provisioning: { a: step('true'), opt: { ...step('true', false), cwd: 'missing' } }, maker: async () => ({ exit: 0 }) });
+test('given an optional step whose command cannot be started as the last selected step, the maker stand-in starts once', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a', 'opt'], provisioning: { a: step('true'), opt: { ...step('true', false), cwd: 'missing' } }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
-  assert.equal(built.makerCalls.length, 1);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
   assert.deepEqual(built.made, [1]);
 });
 
@@ -241,41 +243,41 @@ const BLOCKED_WITHIN = 2_000;
 const blocking = (hold) => `exec /usr/bin/tail -f '${hold}'`;
 
 // proves R-FAIL-1
-test('given a required step its timeout ends on the first attempt and that exits 0 on the second, the injected maker stand-in is called once, after the second attempt\'s last step, and the second attempt\'s workspace holds no file the first attempt\'s step wrote', SETTLES_WITHIN, async (t) => {
+test('given a required step its timeout ends on the first attempt and that exits 0 on the second, the maker stand-in starts once, after the second attempt\'s last step, and the second attempt\'s workspace holds no file the first attempt\'s step wrote', SETTLES_WITHIN, async (t) => {
   const built = await retryWorld(t, {
     steps: ['a'],
     provisioning: (dir) => {
       writeFileSync(join(dir, 'hold'), '');
       return { a: { ...step(`${looksFor('written', join(dir, 'seen'))}; ${firstOnly(join(dir, 'timed-once'), `: > written; ${blocking(join(dir, 'hold'))}`)}`), timeout: BLOCKED_WITHIN } };
     },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
   });
 
   await built.loop.pull();
 
   const events = built.events();
   assert.equal(named(events, 'L1', 'dispatch.timeout').length, 1, JSON.stringify(events));
-  assert.equal(built.makerCalls.length, 1);
+  assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
   const lastEnd = lastL1(events, 'dispatch.end');
   assert.ok(lastEnd >= 0 && built.makerCalls[0].at > lastEnd, JSON.stringify(events));
   assert.deepEqual(linesOf(join(built.directory, 'seen')), ['clean', 'clean']);
 });
 
 // proves R-PROV-3, R-FAIL-2
-test('given a required step its timeout ends on both attempts, the injected maker stand-in is never called, and the card is attempted exactly twice', SETTLES_WITHIN, async (t) => {
+test('given a required step its timeout ends on both attempts, the maker stand-in never starts, and the card is attempted exactly twice', SETTLES_WITHIN, async (t) => {
   const built = await retryWorld(t, {
     steps: ['a'],
     provisioning: (dir) => {
       writeFileSync(join(dir, 'hold'), '');
       return { a: { ...step(blocking(join(dir, 'hold'))), timeout: 500 } };
     },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
   });
 
   await assert.rejects(built.loop.pull());
 
   assert.equal(named(built.events(), 'L1', 'dispatch.timeout').length, 2);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
   assert.deepEqual(built.made, [1, 1]);
 });
 
@@ -283,7 +285,7 @@ test('given a required step its timeout ends on both attempts, the injected make
 async function neverMade(t) {
   let path;
   const built = await retryWorld(t, {
-    steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), before: () => mkdirSync(path, { recursive: true }),
+    steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, before: () => mkdirSync(path, { recursive: true }),
   });
   ({ path } = built);
   const failure = await built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
@@ -299,10 +301,10 @@ test('given a workspace that cannot be made on either attempt, the card is attem
 });
 
 // proves R-FAIL-2
-test('given a workspace that cannot be made on either attempt, the injected maker stand-in is never called', SETTLES_WITHIN, async (t) => {
+test('given a workspace that cannot be made on either attempt, the maker stand-in never starts', SETTLES_WITHIN, async (t) => {
   const built = await neverMade(t);
 
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 test('given a workspace that cannot be made on either attempt, the card is in the coding column afterwards', SETTLES_WITHIN, async (t) => {
@@ -331,13 +333,13 @@ test('given a workspace that cannot be made on either attempt, the call\'s failu
 
 test('given an answer to attempt a card again that names an attempt other than the next, L3 makes no further attempt, and its failure names the card and L2\'s answer', SETTLES_WITHIN, async (t) => {
   const built = await retryWorld(t, {
-    steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }), altered: (answer) => (answer.action === 'again' ? { ...answer, attempt: 3 } : answer),
+    steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 }, altered: (answer) => (answer.action === 'again' ? { ...answer, attempt: 3 } : answer),
   });
 
   await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /card #1\b/.test(each.message) && each.message.includes('"attempt":3')));
 
   assert.deepEqual(built.made, [1]);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 /** A refusal of L1's `dispatch.end` for the dispatch L3 started of the step named `name`, on its first attempt. */
@@ -350,7 +352,7 @@ function refusingEnd(name) {
 }
 
 test('given a card whose first step\'s L1 dispatch.end the sink refuses, the card is not attempted a second time', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }), refuse: refusingEnd('a') });
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 }, refuse: refusingEnd('a') });
 
   await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /dispatch\.end/.test(each.message)));
 
@@ -358,22 +360,22 @@ test('given a card whose first step\'s L1 dispatch.end the sink refuses, the car
   assert.deepEqual(named(built.events(), 'L3', 'dispatch').map((each) => each.attempt), [1]);
 });
 
-test('given a card whose kind selects two steps, with a maker stand-in injected, where the sink refuses the first step\'s L1 dispatch.end, neither the second step nor the maker stand-in starts', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: async () => ({ exit: 0 }), refuse: refusingEnd('a') });
+test('given a card whose kind selects two steps, with the maker stand-in first on PATH, where the sink refuses the first step\'s L1 dispatch.end, neither the second step nor the maker stand-in starts', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 }, refuse: refusingEnd('a') });
 
   await assert.rejects(built.loop.pull());
 
   const events = built.events();
   assert.deepEqual(named(events, 'L3', 'dispatch').map((each) => each.step), ['a']);
   assert.equal(named(events, 'L1', 'dispatch.start').length, 1);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 // proves R-FAIL-1
 test('the event stream holds an L2 event per failed attempt under the card, naming its attempt number, what failed, the workspace or a step, why, and that its class is the environment\'s', SETTLES_WITHIN, async (t) => {
   let path;
   const built = await retryWorld(t, {
-    steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }), before: (call) => (call === 1 ? mkdirSync(path, { recursive: true }) : rmSync(path, { recursive: true })),
+    steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 }, before: (call) => (call === 1 ? mkdirSync(path, { recursive: true }) : rmSync(path, { recursive: true })),
   });
   ({ path } = built);
 
@@ -390,7 +392,7 @@ test('the event stream holds an L2 event per failed attempt under the card, nami
 
 // proves R-FAIL-2
 test('the event stream holds an L2 event under the card for each decision to attempt it again or stop it, naming the attempt number', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }) });
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
 
   await assert.rejects(built.loop.pull());
 
@@ -402,7 +404,7 @@ test('the event stream holds an L2 event under the card for each decision to att
 
 /** A world whose card's one required step exits 3 on both attempts, pulled once. */
 async function bothFail(t) {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: async () => ({ exit: 0 }) });
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
   const failure = await built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
   return { ...built, failure };
 }
@@ -463,7 +465,7 @@ test('given a failed attempt whose record the sink refuses, L2 answers no action
 const refusingL1 = (name) => (context, event) => context.layer === 'L1' && event === name;
 
 test('given a card whose attempt\'s workspace.made event the sink refuses, the card is not attempted a second time: the refusal is the halt, and spends no retry', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse: refusingL1('workspace.made') });
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, refuse: refusingL1('workspace.made') });
 
   await assert.rejects(built.loop.pull(), (failure) => failure.errors.some((each) => /workspace\.made/.test(each.message)));
 
@@ -471,15 +473,15 @@ test('given a card whose attempt\'s workspace.made event the sink refuses, the c
   assert.deepEqual(named(built.events(), 'L2', 'attempt.failed'), []);
 });
 
-test('given a card whose kind selects a step, with a maker stand-in injected, where the sink refuses the attempt\'s workspace.made event, neither the step nor the maker stand-in starts', SETTLES_WITHIN, async (t) => {
-  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse: refusingL1('workspace.made') });
+test('given a card whose kind selects a step, with the maker stand-in first on PATH, where the sink refuses the attempt\'s workspace.made event, neither the step nor the maker stand-in starts', SETTLES_WITHIN, async (t) => {
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, refuse: refusingL1('workspace.made') });
 
   await assert.rejects(built.loop.pull());
 
   const events = built.events();
   assert.deepEqual(named(events, 'L3', 'dispatch'), []);
   assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 test('given a card whose earlier workspace\'s workspace.removed event the sink refuses, the card is not attempted a second time, and no step starts', SETTLES_WITHIN, async (t) => {
@@ -487,7 +489,7 @@ test('given a card whose earlier workspace\'s workspace.removed event the sink r
   built = await retryWorld(t, {
     steps: ['a'],
     provisioning: { a: step('true') },
-    maker: async () => ({ exit: 0 }),
+    maker: { exit: 0 },
     refuse: refusingL1('workspace.removed'),
     // The card's earlier workspace, on its own branch, stands at its path when the first attempt begins.
     before: (call) => {
@@ -503,18 +505,18 @@ test('given a card whose earlier workspace\'s workspace.removed event the sink r
   assert.deepEqual(built.made, [1]);
   assert.deepEqual(named(events, 'L3', 'dispatch'), []);
   assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
-  assert.deepEqual(built.makerCalls, []);
+  assert.equal(built.makerCalls.length, 0, 'no started marker');
 });
 
 /**
- * A world whose card's kind selects the step `a`, with a maker stand-in injected, pulled once with
+ * A world whose card's kind selects the step `a`, with the maker stand-in first on PATH, pulled once with
  * `stand`'s git first on the path where one is given, whose attempt meets the refusal `refuse`
  * names. `before` is handed the world and the call, as `retryWorld`'s is. Hands back the world and
  * the pull's failure.
  */
 async function refusedWorld(t, { refuse, stand, before = () => {} }) {
   let built;
-  built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: async () => ({ exit: 0 }), refuse, before: (call) => before(built, call) });
+  built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, refuse, before: (call) => before(built, call) });
   const pull = () => built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
   const failure = stand === undefined ? await pull() : await withFirstOnPath(stand, pull);
   return { ...built, failure };
@@ -572,13 +574,13 @@ for (const [name, world] of [['fetch.retried', refusedFetchRetried], ['L0 kill e
     assert.deepEqual(named(built.events(), 'L2', 'attempt.failed'), []);
   });
 
-  test(`given a card whose kind selects a step, with a maker stand-in injected, whose attempt meets a refused ${name}, neither the step nor the maker stand-in starts`, SETTLES_WITHIN, async (t) => {
+  test(`given a card whose kind selects a step, with the maker stand-in first on PATH, whose attempt meets a refused ${name}, neither the step nor the maker stand-in starts`, SETTLES_WITHIN, async (t) => {
     const built = await world(t);
 
     const events = built.events();
     assert.ok(said(built.failure).includes(event), said(built.failure));
     assert.deepEqual(named(events, 'L3', 'dispatch'), []);
     assert.deepEqual(named(events, 'L1', 'dispatch.start'), []);
-    assert.deepEqual(built.makerCalls, []);
+    assert.equal(built.makerCalls.length, 0, 'no started marker');
   });
 }
