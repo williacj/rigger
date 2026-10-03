@@ -39,8 +39,10 @@ const headingText = (text = '') => text.trim().replace(/#+$/, '').trim();
  * text is exactly `Acceptance` to the next heading with as many `#` or fewer. Lines inside a
  * fence are skipped, and an unclosed fence runs to the end of the body. Thematic breaks,
  * task-list items, bullets with no text and bullets whose text is only HTML comments are no items.
+ * This is how a card's acceptance is read from its body's source text (`R-CARD-12`), so L2's maker
+ * prompt carries these items too.
  */
-function acceptanceItems(body) {
+export function acceptanceItems(body) {
   const items = [];
   let section = null;
   let fence = null;

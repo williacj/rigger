@@ -10,22 +10,26 @@ import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * A fake board holding the columns `columns` names, in its key order, or the display names in
  * `held` instead, with one issue per number in `cards`, each in the column `columns.ready` names.
  * Its sink records into a fresh state `directory`, and `l2` is L2's column changes over both.
+ * Beside the board, a fake repository holds, for each card, one open pull request from its line of
+ * work, and `pullRequests`, its pull-request read, is the read L2 settles a maker's outcome by.
  */
 function world({ columns = config.board.columns, cards = [12], held = Object.values(columns) } = {}) {
   const fake = createFakeBoard({
     columns: held,
     items: cards.map((number) => ({ type: 'issue', repository: config.repo, number, title: `Card ${number}`, column: columns.ready })),
   });
+  const { readPullRequests: pullRequests } = createFakeRepository({ pullRequests: cards.map((number) => ({ number: 100 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') })) }).operations;
   const directory = temporaryDirectory('rigger-transitions-');
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
-  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations });
-  return { fake, l2, sink, directory, events: () => readEvents(directory) };
+  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations, pullRequests });
+  return { fake, l2, sink, directory, pullRequests, events: () => readEvents(directory) };
 }
 
 /** The board items the fake holds, as its reads answer them. */
@@ -166,7 +170,7 @@ test('a move the board takes and the sink will not record is reported, naming th
 // reported loudly as the one before it was.
 for (const [name, settler] of [
   ['the same L2 instance', ({ l2 }) => l2],
-  ['a second L2 instance over the same board and sink', ({ fake, sink }) => columnChanges({ config, sink, items: fake.operations })],
+  ['a second L2 instance over the same board and sink', ({ fake, sink, pullRequests }) => columnChanges({ config, sink, items: fake.operations, pullRequests })],
 ]) {
   test(`while the sink still refuses, a card whose claim went unrecorded moves to review on a zero exit, settled by ${name}`, async () => {
     const w = world();

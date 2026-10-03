@@ -12,6 +12,10 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
+import { factsCall } from '../src/workflow/facts.mjs';
+import { worktreeTopic } from '../src/config/validate.mjs';
+import { topicFor } from '../src/execution/workspace.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
@@ -170,6 +174,13 @@ export function readingLater(fake) {
  * `handed` records every start the dispatch was handed, whole, and `decisions` every next action
  * L2 gave L3, as `{ card, action, pull }`, where `pull` counts the pull triggers fired so far.
  *
+ * `repository` is the fake repository the forge holds beside the board, seeded with `forge`, and
+ * by default it holds nothing for any card. L2's facts call, which L3 awaits before it claims, is
+ * the real one over its reads, and L2's column changes read its pull requests to settle a maker's
+ * outcome. A card whose dispatch returned exit 0 holds an open pull request from its line of work
+ * from then on, as a maker that opened one would leave it. Both answer from memory, with no
+ * process or file read, so a wait on the event loop still sees them settle.
+ *
  * `sequence` records, in the one order they happened, each board move once the board has made
  * it, as `{ move, column }` with the item's id and the column's display name, each dispatch
  * start, as `{ start }` with the item's id, and each append the sink accepted, as
@@ -185,7 +196,7 @@ export function readingLater(fake) {
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
-  kill = async () => {}, kinds = KINDS, provisioning = {},
+  kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {},
   workspace = async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }),
 } = {}) {
   const settings = { ...config, board: { ...config.board, columns } };
@@ -228,7 +239,8 @@ export function world({
       return sink.emitter(context);
     },
   };
-  const l2 = columnChanges({ config: settings, sink, items: moving });
+  const repository = createFakeRepository(forge);
+  const l2 = columnChanges({ config: settings, sink, items: moving, pullRequests: repository.operations.readPullRequests });
   const returned = new Set();
   const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
@@ -238,19 +250,30 @@ export function world({
     decisions.push({ card: card.number, action, pull: pulls() });
     return action;
   };
+  const facts = factsCall({ config: settings, reads: repository.operations, decide });
+  /** Opens a pull request from card `number`'s line of work, where none is open from it yet. */
+  const openFrom = (number) => {
+    const head = topicFor(worktreeTopic(settings), number);
+    const { pullRequests } = repository.held();
+    if (pullRequests.some((pull) => pull.head === head && !pull.merged)) return;
+    repository.open({ number: 1000 + pullRequests.length, head, sha: String(number).padStart(40, '0') });
+  };
   const dispatches = heldDispatch(answer);
   const handed = [];
   const dispatch = async (start) => {
     handed.push(structuredClone(start));
     sequence.push({ start: start.card.id });
     try {
-      return await dispatches.dispatch(start);
+      const result = await dispatches.dispatch(start);
+      if (result?.exit === 0) openFrom(start.card.number);
+      return result;
     } finally {
       returned.add(start.card.number);
     }
   };
   return {
     fake, l2, dispatches, sequence, layers, handed, decisions, directory,
+    repository,
     /** Has the shared sink refuse the next `next` appends, or every one from now on, each with an error carrying `reason`. */
     refuseAppends: (reason = 'the event sink refuses every append', next = Infinity) => {
       refusing = reason;
@@ -262,9 +285,25 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, l2, dispatch, sink: l3Sink, kill, workspace, state: directory }),
+    loop: loop({ config: settings, board, decide, facts, l2, dispatch, sink: l3Sink, kill, workspace, state: directory }),
   };
 }
+
+/**
+ * L2's facts call over the board `config` names, handing `decide` each card with what the forge
+ * holds of it: through a fake repository holding nothing for any card, so the forge holds nothing
+ * for any card. It answers from memory, with no process or file read.
+ */
+export const factsOverNothing = (config, decide) => factsCall({ config, reads: createFakeRepository().operations, decide });
+
+/** The SHA the pull request `oneOpenFromEveryLine` answers is at. */
+const OPEN_HEAD = '0'.repeat(40);
+
+/**
+ * A pull-request read, standing in for the read side's, that answers one open pull request, #1,
+ * from every line of work it is asked about, from memory.
+ */
+export const oneOpenFromEveryLine = async () => ({ open: [{ number: 1, head: OPEN_HEAD, base: 'main' }], merged: [] });
 
 /**
  * A workspace stand-in that makes the directory it answers, `rigger-<card>` under `under`, and

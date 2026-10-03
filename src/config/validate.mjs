@@ -609,6 +609,13 @@ export const stepTimeout = (step) => step.timeout ?? 1_800_000;
 export const roleTimeout = (role) => role.timeout ?? 14_400_000;
 
 /**
+ * The rule that derives a card's workspace and line of work from its number: the config's
+ * `worktrees.topic`, or `rigger-{number}` where it declares none (`ARCHITECTURE.md`, the Engine
+ * settings row). This is the one place the default is held, for L1's workspace and L2's line of work.
+ */
+export const worktreeTopic = (config = {}) => config.worktrees?.topic ?? 'rigger-{number}';
+
+/**
  * Every label an accepted config's kinds and provisioning steps select, each once, kinds first and
  * each in the order declared: the labels a card carries to be selected. The epic label is not
  * among them, because no selector names it.

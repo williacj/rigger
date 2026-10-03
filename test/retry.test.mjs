@@ -16,6 +16,7 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { clonedFromOrigin } from './git-repository.mjs';
 import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs';
+import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { worktreeAt } from './git-repository.mjs';
 import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.mjs';
@@ -64,7 +65,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   const events = () => (existsSync(streamPath(state)) ? readEvents(state) : []);
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(card)] });
   const settings = { ...config, concurrency: 1 };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
   const settled = [];
   const l2 = {
     claimed: changes.claimed,
@@ -88,7 +89,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
     makerCalls.push({ start, at: events().length });
     return maker(start);
   };
-  const built = loop({ config: settings, board: handleOn(fake), decide, l2, dispatch: injected, sink, kill: async () => {}, workspace, state });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace, state });
   return { directory, root, path: join(root, `rigger-${card}`), fake, loop: built, events, made, makerCalls, settled };
 }
 
