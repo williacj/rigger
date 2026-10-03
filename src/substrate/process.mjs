@@ -1615,7 +1615,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
  */
 export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, kill = SIGNAL }) {
-  const starts = await startsIn(ps, group, readTimeout).catch((error) => { process.kill(-group, 'SIGKILL'); throw error; });
+  const starts = await startsIn(ps, group, readTimeout);
   const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill }, 'recorded.killed') : [];
   const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
   for (const [each, held] of recordedDirectories) {
@@ -1765,7 +1765,7 @@ async function startsIn(ps, group, timeout) {
       throw new Error(`${failure().message}, and the read running at that point was given up: ${error.message}`);
     }
     if (rows.size === 0 && occupied(group)) short = 'listed no process of the group while signal 0 still reached it';
-    else if (!rows.has(group) && answers(group)) short = `left out its leader, pid ${group}, while signal 0 still reached that pid`;
+    else if (!rows.has(group) && answers(group)) short = 'answered short';
     else short = undefined;
     if (short !== undefined) continue;
     const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
