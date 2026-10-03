@@ -18,6 +18,7 @@ import { COLUMNS, KINDS, columnsOf, factsOverNothing, handleOn, makingWorkspaces
 import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { oneOpenFromEveryLine } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 // A bound on a test that waits on real processes, so one whose pull never settles fails here
@@ -321,4 +322,67 @@ test('in that pull, card 2\'s maker process is not killed by card 1\'s refusal: 
 
   assert.equal(built.agent.wrote(2), true, JSON.stringify(failure.reached));
   assert.equal(failure.reached[0]?.outcome.value?.exit, 0, JSON.stringify(failure.reached));
+});
+
+/**
+ * A `ps` stand-in in a directory of its own: it records each call's arguments to `ps-calls`
+ * beside itself, then runs the real `ps` on them. Answers its path and a read of its record.
+ */
+function recordingPs() {
+  const directory = temporaryDirectory('rigger-maker-ps-');
+  const path = join(directory, 'ps');
+  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${join(directory, 'ps-calls')}'\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  const calls = () => (existsSync(join(directory, 'ps-calls')) ? readFileSync(join(directory, 'ps-calls'), 'utf8').split('\n').filter(Boolean) : []);
+  return { path, calls };
+}
+
+/**
+ * L3's loop over a fake board holding ready card 1, whose kind lists `steps` as `provisioning`
+ * declares them, built with `ps` and `readTimeout` where a test gives them, the maker running as a
+ * stand-in agent first on the environment's PATH. Answers the loop and the stand-in.
+ */
+function psWorld({ steps = [], provisioning = {}, ...handed } = {}) {
+  const agent = standInAgent();
+  const directory = temporaryDirectory('rigger-maker-ps-world-');
+  const settings = { ...config, concurrency: 1 };
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)] });
+  const sink = openSink({ directory, run: 'r-ps', now: Date.now });
+  const kinds = { change: { ...KINDS.change, provisioning: steps } };
+  const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: settings.roles, provisioning, outcomes, sink, ...attempt });
+  const built = loop({
+    config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine }), sink, kill: async () => {}, workspace: makingWorkspaces(join(directory, 'workspaces')), state: directory, environment: { ...process.env, PATH: agent.first() }, ...handed,
+  });
+  return { loop: built, agent };
+}
+
+test('given loop built with a `ps` stand-in, a role\'s dispatch reaches L1 with it: the stand-in records the process table reads L0 made for the maker', SETTLES_WITHIN, async () => {
+  const ps = recordingPs();
+  const built = psWorld({ ps: ps.path, readTimeout: 5_000 });
+
+  await built.loop.pull();
+
+  assert.equal(built.agent.runs().length, 1, 'the maker ran');
+  assert.ok(ps.calls().length > 0, 'L0 read the process table through the stand-in');
+});
+
+test('given loop built with a `ps` stand-in, a step\'s dispatch reaches L1 with it too', SETTLES_WITHIN, async () => {
+  const ps = recordingPs();
+  const built = psWorld({ ps: ps.path, steps: ['a'], provisioning: { a: { run: 'true', required: true } } });
+  built.agent.plan(1, 'engineer', { exit: 1 });
+
+  await built.loop.pull();
+
+  // The step and the maker each spawn one group, and L0 reads each one's start time through `ps`.
+  const starts = ps.calls().filter((call) => /\blstart=/.test(call));
+  assert.ok(starts.length >= 2, JSON.stringify(ps.calls()));
+});
+
+test('given loop built with neither `ps` nor a read bound, a role\'s dispatch still runs to its end through L0\'s own `ps`, and a stand-in it was not handed records nothing', SETTLES_WITHIN, async () => {
+  const ps = recordingPs();
+  const built = psWorld();
+
+  await built.loop.pull();
+
+  assert.equal(built.agent.runs().length, 1, 'the maker ran');
+  assert.deepEqual(ps.calls(), []);
 });
