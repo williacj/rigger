@@ -1163,9 +1163,9 @@ function sent(pid, name, kill) {
  * branch is proven through a stand-in for the signal call alone (#545's engineer judge, N2).
  */
 function* settled(found, kill, bound) {
-  const stuck = new Set(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound));
+  const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound));
+  const stuck = new Set(why.keys());
   for (const pid of stuck) sent(pid, 'SIGCONT', kill);
-  const reason = `still alive ${bound} ms after L0's kill`;
   let refused = (found.refused ?? []).map((pid) => ({ pid, reason: 'EPERM' }));
   try {
     refused = yield* described(refused);
@@ -1176,16 +1176,19 @@ function* settled(found, kill, bound) {
     ...found,
     kills: found.kills.filter(({ pid }) => !stuck.has(pid)),
     unnamed: (found.unnamed ?? []).filter((pid) => !stuck.has(pid)),
-    unended: [...found.kills.filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason })), ...(found.unnamed ?? []).filter((pid) => stuck.has(pid)).map((pid) => ({ pid, reason })), ...refused],
+    unended: [...found.kills.filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason: why.get(each.pid) })), ...(found.unnamed ?? []).filter((pid) => stuck.has(pid)).map((pid) => ({ pid, reason: why.get(pid) })), ...refused],
   };
 }
 
 /**
- * Each of `pids`, each one the census killed through `kill`, still alive `bound` milliseconds after
- * it began, or none: it settles once none answers signal 0, or a read of their states finds only
- * zombies, yielding each pause. A killed process answers until its parent reaps it, and the census
- * kills a process whatever its parent, so a zombie whose parent never reaps it is taken as ended.
- * Where the reads fail, it settles once `UNREAPED_BOUND` has passed, with none taken as still alive.
+ * Each of `pids`, each one the census killed through `kill`, that L0 cannot show has ended, as a
+ * pair of its pid and why, or none: it settles once none answers signal 0, or a read of their states
+ * finds only zombies, yielding each pause. A killed process answers until its parent reaps it, and
+ * the census kills a process whatever its parent, so a zombie whose parent never reaps it is taken
+ * as ended. One a read finds alive `bound` milliseconds after it began is still alive at the bound.
+ * Where the reads fail, it settles once `UNREAPED_BOUND` has passed, and each that still answers
+ * signal 0 is one the table could not show has ended: the census stopped it, so `settled` resumes it
+ * rather than leave it stopped (`R-STATE-18`), though a zombie answers signal 0 too (`D16` rule 3).
  */
 function* reaped(pids, kill, bound) {
   const since = Date.now();
@@ -1199,7 +1202,8 @@ function* reaped(pids, kill, bound) {
       living = undefined;
     }
     if (living?.length === 0) return [];
-    if (Date.now() - since >= (living === undefined ? UNREAPED_BOUND : bound)) return living ?? [];
+    if (living !== undefined && Date.now() - since >= bound) return living.map((pid) => [pid, `still alive ${bound} ms after L0's kill`]);
+    if (living === undefined && Date.now() - since >= UNREAPED_BOUND) return left.map((pid) => [pid, `not shown to have ended ${UNREAPED_BOUND} ms after L0's kill: the process table could not be read`]);
     yield wait;
   }
 }

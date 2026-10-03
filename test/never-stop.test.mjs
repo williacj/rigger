@@ -64,21 +64,28 @@ const failing = (directory) => warmed(fixture(directory, 'ps', 'case "$*" in *ls
 
 /**
  * A signal call for a test in `directory`: `signalStandIn`'s, with the pid `$here/<refused>.pid`
- * names refused and the one `$here/<unkept>.pid` names unkept, each once it is there, and the time
- * of its first kill of a group in `first.at`.
+ * names refused and the one `$here/<unkept>.pid` names unkept, each once it is there, the time of
+ * its first kill of a group in `first.at`, and `killedAt(target)`, when it first sent `target` the
+ * kill, or nothing where it never did.
  */
 function standIn(directory, { refused, unkept, pairs = [] } = {}) {
   const first = {};
+  const kills = new Map();
   const kill = signalStandIn({ pairs, refused: () => refused && pidIn(directory, refused), unkept: () => unkept && pidIn(directory, unkept) });
   return {
     pairs,
     first,
+    killedAt: (target) => kills.get(target),
     kill: (target, name) => {
+      if (name === 'SIGKILL' && !kills.has(target)) kills.set(target, Date.now());
       if (target < 0 && name === 'SIGKILL') first.at ??= Date.now();
       return kill(target, name);
     },
   };
 }
+
+/** When `pairs`, the signals a caller sent, as `[target, signal, time]`, first sent the kill to `target`. */
+const killedIn = (pairs, target) => pairs.find(([to, name]) => to === target && name === 'SIGKILL')?.[2];
 
 /** Runs `command` through L0's adapter in `directory`, and hands back its events and when it settled. */
 async function called(directory, { command, ...options }) {
@@ -361,7 +368,10 @@ test('given a member the kill does not end, the exit cleanup records it as a pro
   assert.deepEqual(events.filter(({ pid }) => pid === one).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason })), [
     { event: 'survivor.unended', ...tailOf(directory), reason: `still alive ${CLEANUP_BOUND} ms after L0's first kill` },
   ]);
-  const first = pairs.find(([target, name]) => target < 0 && name === 'SIGKILL')[2];
+  // The caller records each signal before it is sent, and ends once its cleanup has recorded the
+  // member, so the cleanup's wait on it lies inside this span.
+  const first = killedIn(pairs, -pidIn(directory, 'group'));
+  assert.ok(ended - first >= CLEANUP_BOUND, `the caller ended ${ended - first} ms after its first kill, before the cleanup's own bound of ${CLEANUP_BOUND} ms`);
   assert.ok(ended - first < KILL_BOUND, `the caller ended ${ended - first} ms after its first kill`);
 });
 
@@ -406,8 +416,9 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
   const { events, settled } = await called(directory, { command: '/usr/bin/true', directory: work, kill: signals.kill });
 
   assertUnended(directory, events, 'survivor.unended', `still alive ${KILL_BOUND} ms after L0's kill`);
-  const killed = signals.pairs.findIndex(([target, name]) => target === outside && name === 'SIGKILL');
-  assert.ok(killed >= 0, 'the census never sent the outside process its kill, so the test proves nothing');
+  const killed = signals.killedAt(outside);
+  assert.ok(killed !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
+  assert.ok(settled - killed >= KILL_BOUND, `the call settled ${settled - killed} ms after the census's kill of the outside process`);
 });
 
 // proves R-STATE-19, R-STATE-10
@@ -430,12 +441,13 @@ test('given a recorded dispatch\'s directory holding a process the kill does not
   const work = await workedIn(t, directory);
   const started = await startGroup(t, directory, 'group');
   const signals = standIn(directory, { unkept: 'outside' });
-  const began = Date.now();
 
   const { events, settled } = await startKilled(started, { directory: work, identity: identityOf(work), kill: signals.kill });
 
   assertUnended(directory, events, 'recorded.unended', `still alive ${KILL_BOUND} ms after L0's kill`);
-  assert.ok(settled - began >= KILL_BOUND, `the start settled ${settled - began} ms after it began`);
+  const killed = signals.killedAt(pidIn(directory, 'outside'));
+  assert.ok(killed !== undefined, 'the sweep never sent the outside process its kill, so the test proves nothing');
+  assert.ok(settled - killed >= KILL_BOUND, `the start settled ${settled - killed} ms after the sweep's kill of the outside process`);
 });
 
 // proves R-STATE-19, R-STATE-9
@@ -457,9 +469,36 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
-  const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, unkept: 'outside' });
+  const { status, events, pairs, ended } = await cleanedUp(directory, { directory: work, unkept: 'outside' });
 
   assert.equal(status, 0);
   assertUnended(directory, events, 'survivor.unended', `still alive ${CLEANUP_BOUND} ms after L0's kill`);
-  assert.ok(ended - exiting < KILL_BOUND, `the caller ended ${ended - exiting} ms after it began to exit`);
+  const killed = killedIn(pairs, pidIn(directory, 'outside'));
+  assert.ok(killed !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
+  assert.ok(ended - killed >= CLEANUP_BOUND, `the caller ended ${ended - killed} ms after the census's kill of the outside process, before the cleanup's own bound of ${CLEANUP_BOUND} ms`);
+  assert.ok(ended - killed < KILL_BOUND, `the caller ended ${ended - killed} ms after the census's kill of the outside process`);
+});
+
+// proves R-STATE-18, R-STATE-19
+test('given a dispatch\'s directory holding a process the kill does not end, and a process table that cannot be read once the census has sent that kill, the census resumes the process and records it as a process it could not end, not as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const signals = standIn(directory, { unkept: 'outside' });
+  const outside = pidIn(directory, 'outside');
+  // The signal call marks `killed` once the census has sent the outside process its kill, and the
+  // stand-in for `ps` fails every read from then on.
+  const kill = (target, name) => {
+    if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'killed'), '');
+    return signals.kill(target, name);
+  };
+  const ps = warmed(fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+
+  const { events } = await called(directory, { command: '/usr/bin/true', directory: work, kill, ps });
+
+  assert.ok(signals.killedAt(outside) !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
+  const recorded = events.filter(({ pid }) => pid === outside);
+  assert.deepEqual(recorded.map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.unended', ...tailOf(directory) }]);
+  assert.match(recorded[0].reason, /could not be read/);
+  assert.equal(alive(outside), true, 'the census ended the outside process, so the test proves nothing');
+  assert.ok(!processState(outside).startsWith('T'), `the census left the outside process stopped: ${processState(outside)}`);
 });
