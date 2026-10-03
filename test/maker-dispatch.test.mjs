@@ -3,7 +3,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { closeSync, constants as files, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import config from '../rigger.config.mjs';
@@ -155,18 +156,6 @@ test('L3 hands L1 what roleDispatch answered for L2\'s role answer, in the card\
   assert.equal(start?.workspace, realpathSync(built.workspace(1)), JSON.stringify(built.events()));
 });
 
-/**
- * Settles once card 2's stand-in holds and `refused()` says card 1's start was refused, or once
- * `pull` has settled without that, failing then with what the stand-in and the stream recorded, so
- * a maker that never held is named rather than left to the test's bound.
- */
-async function untilHeld(built, pull, refused, t) {
-  let settled = false;
-  pull.then(() => { settled = true; }, () => { settled = true; });
-  await until(() => (refused() && built.agent.held(2)) || settled, t);
-  assert.ok(refused() && built.agent.held(2), `the pull settled before card 2's maker held: runs ${JSON.stringify(built.agent.runs())}, events ${JSON.stringify(built.events())}`);
-}
-
 /** Whether `context` and `event` are L3's start of a role's dispatch for card `number`. */
 const makerStart = (number) => (context, event, fields) => context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined && context.card === number;
 
@@ -251,22 +240,62 @@ test('given a card whose maker stand-in exits non-zero, the card ends in Coding,
   assert.equal(reached[0].outcome.value.exit, 3);
 });
 
-test('given two cards claimed in one pull, where the sink refuses card 1\'s maker dispatch event while card 2\'s maker runs, card 2\'s outcome reaches L2 before the pull settles and card 2 moves as it says, and the pull\'s failure carries card 2\'s outcome', SETTLES_WITHIN, async (t) => {
-  let refusedOne = false;
-  const built = makerWorld({
+/**
+ * Opens the FIFO at `path` for writing without blocking and closes it at once, which ends a `read`
+ * waiting on it; answers whether it could, which it cannot until a reader has it open.
+ */
+function opened(path) {
+  try {
+    closeSync(openSync(path, files.O_WRONLY | files.O_NONBLOCK));
+    return true;
+  } catch (failure) {
+    if (failure.code === 'ENXIO') return false;
+    throw failure;
+  }
+}
+
+/**
+ * Cards 1 and 2 claimed in one pull, where the sink refuses card 1's maker dispatch event while
+ * card 2's maker runs: card 2's stand-in holds as `plan` says, and card 1 is held at a step, a
+ * `read` on a FIFO, until card 2's stand-in holds, so card 1's refusal comes while card 2's maker
+ * runs. It answers once card 1's slot is released, which is once its refusal has done all it does:
+ * the world, what the refusal saw of card 2's stand-in as `atRefusal`, and the pull, settled on its
+ * failure and the L2 transition events recorded in the step its rejection is handled, once the
+ * test releases card 2.
+ */
+async function refusedWhileTwoRuns(t, plan) {
+  const gate = join(temporaryDirectory('rigger-maker-gate-'), 'gate');
+  execFileSync('/usr/bin/mkfifo', [gate]);
+  let atRefusal;
+  let built;
+  built = makerWorld({
     cards: [1, 2],
     concurrency: 2,
+    steps: ['gate'],
+    provisioning: { gate: { run: `case "$PWD" in */rigger-1) read _ < '${gate}' || true ;; esac`, required: true } },
     refuse: (context, event, fields) => {
       if (!makerStart(1)(context, event, fields)) return false;
-      refusedOne = true;
+      atRefusal = { held: built.agent.held(2), runs: built.agent.runs().filter((run) => run.card === 2).length, wrote: built.agent.wrote(2) };
       return true;
     },
   });
-  built.agent.plan(2, 'engineer', { hold: true, write: true, pr: true });
-
-  // What L2 had recorded is read in the same step the pull's rejection is handled.
+  built.agent.plan(2, 'engineer', plan);
+  let settled = false;
   const pull = built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => ({ failure: thrown, transitions: named(built.events(), 'L2', 'transition') }));
-  await untilHeld(built, pull, () => refusedOne, t);
+  pull.then(() => { settled = true; }, () => { settled = true; });
+  await until(() => built.agent.held(2) || settled, t);
+  assert.ok(built.agent.held(2), `card 2's maker never held: ${JSON.stringify(built.events())}`);
+  await until(() => opened(gate) || settled, t);
+  await until(() => atRefusal !== undefined || settled, t);
+  assert.deepEqual(atRefusal, { held: true, runs: 1, wrote: false }, 'card 1\'s refusal came while card 2\'s maker held');
+  // Card 1's slot is released only once its work has failed, after whatever its refusal did.
+  await until(() => named(built.events(), 'L3', 'slot.release').some((event) => event.card === 1) || settled, t);
+  return { built, atRefusal, pull };
+}
+
+test('given two cards claimed in one pull, where the sink refuses card 1\'s maker dispatch event while card 2\'s maker runs, card 2\'s outcome reaches L2 before the pull settles and card 2 moves as it says, and the pull\'s failure carries card 2\'s outcome', SETTLES_WITHIN, async (t) => {
+  const { built, pull } = await refusedWhileTwoRuns(t, { hold: true, write: true, pr: true });
+  assert.equal(built.agent.alive(2), true, 'card 2\'s stand-in was killed after card 1\'s refusal');
   built.agent.release(2);
   const { failure, transitions } = await pull;
 
@@ -276,24 +305,12 @@ test('given two cards claimed in one pull, where the sink refuses card 1\'s make
   assert.equal(failure.reached[0].outcome.value.exit, 0);
 });
 
-test('in that pull, card 2\'s maker process is not killed by card 1\'s refusal: its stand-in writes a file after the refusal', SETTLES_WITHIN, async (t) => {
-  let refusedOne = false;
-  const built = makerWorld({
-    cards: [1, 2],
-    concurrency: 2,
-    refuse: (context, event, fields) => {
-      if (!makerStart(1)(context, event, fields)) return false;
-      refusedOne = true;
-      return true;
-    },
-  });
-  built.agent.plan(2, 'engineer', { hold: true, write: true });
-
-  const pull = built.loop.pull().catch(() => {});
-  await untilHeld(built, pull, () => refusedOne, t);
-  assert.equal(built.agent.wrote(2), false, 'the stand-in wrote before it was released');
+test('in that pull, card 2\'s maker process is not killed by card 1\'s refusal: holding when the refusal came, its stand-in writes a file once released after it', SETTLES_WITHIN, async (t) => {
+  const { built, pull } = await refusedWhileTwoRuns(t, { hold: true, write: true });
+  assert.equal(built.agent.alive(2), true, 'card 2\'s stand-in was killed after card 1\'s refusal');
   built.agent.release(2);
-  await pull;
+  const { failure } = await pull;
 
-  assert.equal(built.agent.wrote(2), true);
+  assert.equal(built.agent.wrote(2), true, JSON.stringify(failure.reached));
+  assert.equal(failure.reached[0]?.outcome.value?.exit, 0, JSON.stringify(failure.reached));
 });

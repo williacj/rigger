@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, readFileSync, watch, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -38,7 +38,7 @@ export const RECORDED = 'RIGGER_STAND_IN_';
 const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
 
 /**
- * The stand-in agent: an executable installed as `claude` and as `codex` in a directory of its own
+ * The stand-in agent: an executable installed as `claude` in a directory of its own
  * under `TMPDIR`, which a test puts first on the `PATH` it hands the engine. Each run reads its
  * standard input to its end, takes its role from the agent file it is handed, the file
  * `--append-system-prompt-file` names, by that file's name less `.md`, and its card from the
@@ -47,7 +47,10 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *
  * An act holds, in the order the run does them:
  *
- * - `hold`: writes `held-<card>-<role>` beside itself, and waits until the test releases it;
+ * - `hold`: writes its pid to `held-<card>-<role>` beside itself, and waits until the test releases
+ *   it with `SIGUSR1`, whose listener it adds before it writes that file, so a release sent at any
+ *   moment after the file appears is heard. A wait on a change to its directory missed one sent in
+ *   the moment after (the engineer's review on #556);
  * - `write`: writes `wrote-<card>-<role>` beside itself;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
@@ -71,10 +74,8 @@ export function standInAgent(plan = {}) {
 export function installStandInAgent(dir, plan = {}) {
   writeFileSync(join(dir, PLAN), JSON.stringify(plan));
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
-  for (const name of ['claude', 'codex']) {
-    writeFileSync(join(dir, name), `#!${process.execPath}\n${entry}`);
-    chmodSync(join(dir, name), 0o755);
-  }
+  writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
+  chmodSync(join(dir, 'claude'), 0o755);
   const read = () => JSON.parse(readFileSync(join(dir, PLAN), 'utf8'));
   return {
     dir,
@@ -91,8 +92,22 @@ export function installStandInAgent(dir, plan = {}) {
     runs: () => (existsSync(join(dir, RUNS)) ? readFileSync(join(dir, RUNS), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []),
     /** Whether a run for `card` in `role` is holding. */
     held: (card, role = 'engineer') => existsSync(marker(dir, 'held', card, role)),
-    /** Releases a run for `card` in `role` that holds, or one that will. */
-    release: (card, role = 'engineer') => writeFileSync(marker(dir, 'release', card, role), ''),
+    /** Whether the run for `card` in `role` that held is still alive. */
+    alive: (card, role = 'engineer') => {
+      try {
+        process.kill(Number(readFileSync(marker(dir, 'held', card, role), 'utf8')), 0);
+        return true;
+      } catch (failure) {
+        if (failure.code === 'ESRCH') return false;
+        throw failure;
+      }
+    },
+    /** Releases the run for `card` in `role` that holds, which `held` has said it does. */
+    release: (card, role = 'engineer') => {
+      const pid = Number(readFileSync(marker(dir, 'held', card, role), 'utf8'));
+      if (!Number.isInteger(pid) || pid <= 1) throw new Error(`the stand-in's hold for card ${card} names no pid it could release`);
+      process.kill(pid, 'SIGUSR1');
+    },
     /** Whether a run for `card` in `role` wrote its file. */
     wrote: (card, role = 'engineer') => existsSync(marker(dir, 'wrote', card, role)),
   };
@@ -104,19 +119,18 @@ const following = (args, flag) => {
   return at === -1 ? undefined : args[at + 1];
 };
 
-/** Settles once the file `path` exists, woken by changes to its directory and never by a clock. */
-function existing(path) {
-  return new Promise((resolve) => {
-    const watcher = watch(dirname(path), () => {
-      if (!existsSync(path)) return;
-      watcher.close();
-      resolve();
-    });
-    if (existsSync(path)) {
-      watcher.close();
-      resolve();
-    }
-  });
+/**
+ * Writes this run's pid to `held`, whole, and settles once the run hears `SIGUSR1`. The listener is added
+ * before the file is written, and a timer that never fires keeps the run alive while it waits.
+ */
+async function holding(held) {
+  const heard = new Promise((resolve) => { process.once('SIGUSR1', resolve); });
+  const alive = setInterval(() => {}, 2 ** 30);
+  // Written whole and then renamed into place, so `held` never shows a reader a pid half written.
+  writeFileSync(`${held}.partial`, String(process.pid));
+  renameSync(`${held}.partial`, held);
+  await heard;
+  clearInterval(alive);
 }
 
 /**
@@ -147,8 +161,7 @@ export async function standInMain() {
   appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
   const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
   if (act.hold) {
-    writeFileSync(marker(dir, 'held', card, role), '');
-    await existing(marker(dir, 'release', card, role));
+    await holding(marker(dir, 'held', card, role));
   }
   if (act.write) writeFileSync(marker(dir, 'wrote', card, role), '');
   if (act.pr && inWorktree()) {

@@ -327,7 +327,9 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
    * for the next trigger rather than starting another pull at once, by the owner's ruling on
    * #228, so a board refusing every claim, or a sink refusing every event, cannot keep a run
    * pulling. A failure of the work and a refused release event are both reported, as `released`
-   * says, and L2's report of a refused transition event passes through unchanged.
+   * says. L2's report of a refused transition event passes through unchanged as the work's failure
+   * where it comes from the claim or from an injected maker's settle; for a maker dispatched
+   * through L1 it comes back in the card's `settled`, as `attempt` says.
    */
   const work = async (claim, freed) => {
     const { card, kind, next } = claim;
