@@ -288,18 +288,9 @@ export async function ghAuth({ ask, emitter } = {}) {
 /**
  * How each provider's CLI is asked whether it is authenticated, one argv per provider, as each
  * provider's adapter names it in `auth` (ruling 1 Q1 on #467), so that every provider the
- * adapter map holds is asked.
+ * adapter map holds can be asked.
  */
 export const AGENT_CLI = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.auth]));
-
-/** What `loggedIn` a JSON answer states, or undefined where it states none this can read. */
-function states(output) {
-  try {
-    return JSON.parse(output).loggedIn;
-  } catch {
-    return undefined;
-  }
-}
 
 /** The verdict a set of them folds to: unknown if any is, failed if any is, passed otherwise. */
 const folded = (verdicts) => {
@@ -308,32 +299,44 @@ const folded = (verdicts) => {
 };
 
 /**
+ * The adapters whose CLIs `doctor` asks for the consumer in `target`: those of the providers the
+ * roles of the config it holds name, where that config earns no refusals, and every adapter in the
+ * map otherwise, as where it is handed no `target` (the architect's ruling 18 on #467). A consumer
+ * that uses no Codex sees no Codex line it cannot act on (`R-OPTION-1`).
+ */
+async function adaptersAsked(target) {
+  if (target === undefined) return ADAPTERS;
+  const { config } = await consumerConfig(target);
+  let refusals;
+  try {
+    refusals = config === undefined ? undefined : validate(config);
+  } catch {
+    refusals = undefined;
+  }
+  if (refusals === undefined || refusals.length > 0) return ADAPTERS;
+  const named = new Set(Object.values(config.roles).map((role) => role.provider));
+  return Object.fromEntries(Object.entries(ADAPTERS).filter(([provider]) => named.has(provider)));
+}
+
+/**
  * Whether each agent CLI is authenticated, which is that CLI's answer and not this code's.
  *
- * `D16` rule 1: Claude Code owns whether Claude Code is signed in, and `claude auth status
- * --json` is the question it answers. The `loggedIn` it states is read rather than its exit
- * status, because the statement is the fact and the status is a second telling of it that could
- * drift from the first. Where its answer can differ (`D16` rule 3), measured with Claude Code
- * 2.1.281 on this host:
+ * `D16` rule 1: each CLI owns whether it is signed in. Each adapter names the question in `auth`
+ * and reads the answer with its own `signedIn`, which answers true, false, or unknown (the
+ * architect's ruling 18 on #467), so this code holds no reader of any CLI's words. An answer the
+ * adapter reads as neither is reported unread, never as a refusal.
  *
- * - signed in it states `loggedIn: true` and exits 0; pointed at an empty `CLAUDE_CONFIG_DIR` it
- *   states `loggedIn: false` and exits 1. The two agreed in both runs, which is why either could
- *   have been read and why the drift between them is worth guarding against;
- * - `--json` is the default the command documents, and it is passed anyway, because a default is
- *   the one part of a tool's answer that changes without notice;
- * - an answer carrying no `loggedIn` this can read is reported unread. That is not a measured
- *   version of this CLI but the shape a later one could take, and reading a missing key as
- *   `false` would report a consumer signed out on a day the CLI merely reworded itself.
- *
- * Each CLI is asked through L0 (`asked`), with `emitter` for L0's kills and `timeout` for the
- * call. A CLI L0 could not start, or whose timeout ended it, is reported unread, and a kill the
- * sink refused rejects, as the adapter rejects. `ask` stands in for that in tests.
+ * `adapters` are the adapters asked, where the caller hands them; otherwise those `adaptersAsked`
+ * answers for `target`. Each CLI is asked through L0 (`asked`), with `emitter` for L0's kills and
+ * `timeout` for the call. A CLI L0 could not start, or whose timeout ended it, is reported unread,
+ * and a kill the sink refused rejects, as the adapter rejects. `ask` stands in for that in tests.
  */
-export async function agentAuth({ ask = asked, clis = AGENT_CLI, emitter, timeout = CALL_TIMEOUT } = {}) {
+export async function agentAuth({ ask = asked, adapters, target, emitter, timeout = CALL_TIMEOUT } = {}) {
   const name = 'agent CLI authentication';
   const verdicts = [];
   const lines = [];
-  for (const [command, ...args] of Object.values(clis)) {
+  for (const adapter of Object.values(adapters ?? await adaptersAsked(target))) {
+    const [command, ...args] = adapter.auth;
     const spelled = `\`${[command, ...args].join(' ')}\``;
     let said;
     try {
@@ -344,15 +347,16 @@ export async function agentAuth({ ask = asked, clis = AGENT_CLI, emitter, timeou
       lines.push(`${spelled} could not be run here: ${oneLine(failure.message)}`);
       continue;
     }
+    const state = said.timedOut ? undefined : adapter.signedIn(said);
     if (said.timedOut) {
       verdicts.push(null);
       lines.push(`the timeout of ${timeout} ms ended ${spelled}, so nothing was read from it`);
-    } else if (typeof states(said.stdout) !== 'boolean') {
+    } else if (typeof state !== 'boolean') {
       verdicts.push(null);
-      lines.push(`${spelled} exited ${said.status} and stated no \`loggedIn\`, so nothing was read from it`);
+      lines.push(`${spelled} exited ${said.status} and said nothing its adapter reads as signed in or out, so nothing was read from it`);
     } else {
-      verdicts.push(states(said.stdout));
-      lines.push(`${spelled} states \`loggedIn: ${states(said.stdout)}\``);
+      verdicts.push(state);
+      lines.push(`${spelled} says it is signed ${state ? 'in' : 'out'}`);
     }
   }
   return { name, ok: folded(verdicts), detail: lines.join('; ') };

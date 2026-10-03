@@ -47,7 +47,7 @@ test('the agent CLI check answers the `loggedIn` the installed claude states', {
       stated = undefined;
     }
 
-    const here = await agentAuth({ emitter: UNKILLED });
+    const here = await agentAuth({ emitter: UNKILLED, adapters: { claude: claudeAdapter } });
 
     assert.equal(here.ok, typeof stated === 'boolean' ? stated : null, `${here.detail} against ${tool.stdout}`);
   } finally {

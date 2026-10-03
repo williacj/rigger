@@ -8,6 +8,8 @@ import { join } from 'node:path';
 
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { writeFileSync } from 'node:fs';
+import { standInCodex } from './stub-claude.mjs';
 
 /** The tiers Rigger fixes (`O4` on #467), which every adapter maps to a model of its own. */
 const TIERS = ['standard', 'high'];
@@ -28,7 +30,10 @@ async function departures(key, adapter, directory) {
   for (const tier of TIERS) if (typeof adapter.tiers?.[tier] !== 'string') says(`maps no model to the tier \`${tier}\``);
   if (adapter.invocation?.constructor?.name !== 'AsyncFunction') says('does not declare `invocation` async');
   if (found.length > 0) return found;
-  const answer = adapter.invocation({ agent: join(directory, 'agent.md'), tier: 'standard', prompt: 'the prompt', directory, emitter: silent });
+  const made = join(directory, '.scratch');
+  mkdirSync(made);
+  writeFileSync(join(directory, 'agent.md'), '# The agent file\n');
+  const answer = adapter.invocation({ agent: join(directory, 'agent.md'), tier: 'standard', prompt: 'the prompt', directory, scratch: made, emitter: silent });
   if (!(answer instanceof Promise)) return [...found, 'answers its invocation with no promise'];
   const { command, args, input, unset, env } = await answer;
   if (typeof command !== 'string' || command.includes('/')) says(`answers the command ${JSON.stringify(command)}, which is no command name`);
@@ -50,6 +55,11 @@ test('every module in the adapter map answers the provider adapter interface', a
   // the Codex module once #489 adds it. The defect this catches is an adapter L1 cannot await, or
   // one that answers no `unset` for L1 to drop or no `env` for it to set (ruling 9 on #467).
   const directory = scratch();
+  // A module whose invocation runs its CLI, as the Codex module's skill probe does, finds the
+  // stand-in agent first on the PATH it reads, so no installed CLI runs (O82).
+  const inherited = process.env.PATH;
+  process.env.PATH = standInCodex().first();
+  t.after(() => { process.env.PATH = inherited; });
   for (const [key, adapter] of Object.entries(ADAPTERS)) {
     const repo = join(directory, key);
     mkdirSync(repo);

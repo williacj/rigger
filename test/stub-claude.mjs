@@ -221,3 +221,82 @@ export async function standInMain() {
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;
 }
+
+/**
+ * A directory holding an executable named `codex` that records every call it receives and answers
+ * `answer`, as `stubClaude` builds one named `claude`.
+ */
+export function stubCodex(answer) {
+  const stub = stubGh(answer);
+  renameSync(join(stub.dir, 'gh'), join(stub.dir, 'codex'));
+  return stub;
+}
+
+/** The file the stand-in agent installed as `codex` reads its answer to the skill probe from. */
+const PROBED = 'probed.json';
+
+/**
+ * The skill list `skills`, each an absolute `SKILL.md` path, as `codex debug prompt-input` prints
+ * one: a JSON array of model-visible messages whose first, a developer message, holds the
+ * `<skills_instructions>` block, with each skill root numbered `rN` in a table and each skill's
+ * file written under its root's number. The shape is copied from codex-cli 0.159.2's own answer,
+ * recorded at `test/fixtures/codex-prompt-input-0.159.2.json`; a skill's root is the directory two
+ * above its `SKILL.md`, as Codex reports `<root>/<name>/SKILL.md`.
+ */
+export function codexSkillAnswer(skills) {
+  const roots = [...new Set(skills.map((path) => dirname(dirname(path))))];
+  const text = [
+    '<skills_instructions>',
+    '## Skills',
+    'A skill is a set of local instructions to follow that is stored in a `SKILL.md` file.',
+    '### Skill roots',
+    ...roots.map((root, at) => `- \`r${at}\` = \`${root}\``),
+    '### Available skills',
+    ...skills.map((path) => `- ${basename(dirname(path))}: A skill the test names. (file: r${roots.indexOf(dirname(dirname(path)))}/${basename(dirname(path))}/SKILL.md)`),
+    '</skills_instructions>',
+  ].join('\n');
+  return `${JSON.stringify([{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }], null, 2)}\n`;
+}
+
+/**
+ * The stand-in agent `standInAgent` describes, installed as `codex` beside `claude` in its own
+ * directory. Asked `codex … debug prompt-input`, it records the call, with the `CODEX_HOME` it was
+ * handed as `home`, and prints `answer`, or else `skills` as `codexSkillAnswer` prints them, exiting
+ * `exit`; given `hang`, it prints nothing and never exits until it is killed. Every other run is a
+ * session: it reads its standard input to its end, records itself as the stand-in agent's runs are
+ * recorded, with `home` beside them, and exits 0.
+ */
+export function standInCodex({ skills = [], answer, exit = 0, hang = false } = {}) {
+  const agent = standInAgent();
+  writeFileSync(join(agent.dir, PROBED), JSON.stringify({ text: answer ?? codexSkillAnswer(skills), exit, hang }));
+  const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInCodexMain }) => standInCodexMain());\n`;
+  writeFileSync(join(agent.dir, 'codex'), `#!${process.execPath}\n${entry}`);
+  chmodSync(join(agent.dir, 'codex'), 0o755);
+  return {
+    ...agent,
+    /** Every probe the stand-in answered, oldest first. */
+    probes: () => agent.runs().filter((run) => run.probe),
+    /** Every session the stand-in ran, oldest first. */
+    sessions: () => agent.runs().filter((run) => run.name === 'codex' && !run.probe),
+  };
+}
+
+/** The run of the stand-in agent installed as `codex`, as `standInCodex` describes it. */
+export async function standInCodexMain() {
+  const dir = dirname(process.argv[1]);
+  const args = process.argv.slice(2);
+  const home = process.env.CODEX_HOME;
+  if (args.includes('debug') && args.includes('prompt-input')) {
+    const probed = JSON.parse(readFileSync(join(dir, PROBED), 'utf8'));
+    appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', probe: true, args, cwd: process.cwd(), home, pid: process.pid })}\n`);
+    if (probed.hang) {
+      setInterval(() => {}, 2 ** 30);
+      return;
+    }
+    process.stdout.write(probed.text);
+    process.exitCode = probed.exit;
+    return;
+  }
+  const input = readFileSync(0, 'utf8');
+  appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', args, cwd: process.cwd(), input, home, pid: process.pid })}\n`);
+}

@@ -20,6 +20,7 @@ import { cloneInto, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { stubClaude } from './stub-claude.mjs';
+import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -424,14 +425,14 @@ test('the agent CLI check answers the `loggedIn` a recorded answer states, and a
 
   const signedIn = answering(RECORDED.agentIn);
   const out = answering(RECORDED.agentOut);
-  assert.equal((await agentAuth({ ask: signedIn })).ok, true);
-  assert.equal((await agentAuth({ ask: out })).ok, false);
+  assert.equal((await agentAuth({ ask: signedIn, adapters: { claude: ADAPTERS.claude } })).ok, true);
+  assert.equal((await agentAuth({ ask: out, adapters: { claude: ADAPTERS.claude } })).ok, false);
   assert.deepEqual(signedIn.asked, ['claude auth status --json']);
 
   // An answer stating no `loggedIn` this can read is unread, never read as a refusal: a CLI that
   // reworded itself would otherwise have a signed-in consumer told they are signed out.
   const reworded = answering({ status: 0, stdout: '{\n  "authenticated": true\n}\n', stderr: '' });
-  const unread = await agentAuth({ ask: reworded });
+  const unread = await agentAuth({ ask: reworded, adapters: { claude: ADAPTERS.claude } });
   assert.equal(unread.ok, null, unread.detail);
 });
 
@@ -522,7 +523,7 @@ test('a config that throws anything at all is one failed line, and the other thr
   // The whole report is read rather than the check alone, because "the other three still report"
   // is the half of the claim a check-level assertion cannot make.
   for (const thrown of THROWS) {
-    const ran = await doctor(against(checked(thrown), { gh: RECORDED.ghIn, claude: RECORDED.agentIn }));
+    const ran = await doctor(against(checked(thrown), { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn }));
 
     // A config Rigger cannot read names no board to read, so one board line says so.
     assert.equal(checkLines(ran.text).length, UNREAD.length, `\`${thrown}\` cost the report its lines:\n${ran.text}`);
@@ -544,7 +545,7 @@ test('doctor prints its report when validation throws from a BigInt or a getter'
   for (const [source, reason] of cases) {
     const gh = stubGh(RECORDED.ghIn);
     const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], {
-      cwd: checked(source), encoding: 'utf8', env: { ...process.env, PATH: stubClaude(RECORDED.agentIn).first(gh.first()) },
+      cwd: checked(source), encoding: 'utf8', env: { ...process.env, PATH: stubClaude(RECORDED.agentIn).first(stubCodex(CODEX.signedIn).first(gh.first())) },
     });
     const printed = ran.stdout + ran.stderr;
 
@@ -644,7 +645,7 @@ test('doctor exits zero when every check passes and non-zero when any does not',
     await doctor({ ...against(good, { gh: RECORDED.ghIn, claude: RECORDED.agentIn }), packageRoot: packageDeclaring('>=999') }),
     await doctor(against(good, { gh: RECORDED.ghOut, claude: RECORDED.agentIn })),
     await doctor(against(good, { gh: RECORDED.ghIn, claude: RECORDED.agentOut })),
-    await doctor(against(bad, { gh: RECORDED.ghIn, claude: RECORDED.agentIn })),
+    await doctor(against(bad, { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn })),
   ];
   for (const ran of each) assert.notEqual(ran.code, 0, ran.text);
 });
@@ -681,7 +682,7 @@ test('the whole report is lines, and carries no stack trace', async () => {
   // The card asks for a line per check without a stack trace. The defect this catches is an error
   // from any check reaching the report whole: `doctor` is run by a consumer setting Rigger up for
   // the first time, and twenty frames of Node internals is what makes them stop reading.
-  const ran = await doctor(against(checked('export default {\n'), { gh: RECORDED.ghOut, claude: RECORDED.agentOut }));
+  const ran = await doctor(against(checked('export default {\n'), { gh: RECORDED.ghOut, claude: RECORDED.agentOut, codex: CODEX.signedOut }));
 
   assert.notEqual(ran.code, 0);
   // A config that will not load names no board to read, so one board line says so.
@@ -772,7 +773,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   assert.equal(ran.status === 0, /^rigger doctor: (\d+) of \1 checks passed/.test(printed), printed);
   // The agent CLI line as this repository's `doctor` prints it, read off a run at 4f017db: the
   // defect this catches is the adapter map handing `doctor` another question, or none.
-  assert.ok(printed.includes('\n  ok         agent CLI authentication: `claude auth status --json` states `loggedIn: true`\n'), printed);
+  assert.ok(printed.includes('\n  ok         agent CLI authentication: `claude auth status --json` says it is signed in\n'), printed);
 });
 
 /** The repository and board the starter config names, which the fake `gh` answers for. */
@@ -815,6 +816,8 @@ async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.
   const path = `${dirname(fake.gh)}${delimiter}${process.env.PATH}`;
   const ask = (command, args) => {
     if (command === 'claude') return RECORDED.agentIn;
+    // A config Rigger refuses has every adapter asked (ruling 18 on #467), Codex among them.
+    if (command === 'codex') return CODEX.signedIn;
     if (command === 'gh' && auth && args[0] === 'auth') return RECORDED.ghIn;
     return spawnSync(command, args, { encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
   };
@@ -1185,4 +1188,65 @@ test('doctor asks each provider\'s CLI whether it is signed in with the argv tha
   const asked = [];
   await agentAuth({ ask: async (command, args) => { asked.push([command, ...args]); return RECORDED.agentIn; } });
   assert.deepEqual(asked, Object.values(ADAPTERS).map((adapter) => adapter.auth));
+});
+
+/**
+ * What `codex login status` answered, recorded with codex-cli 0.159.2 on 2026-10-03: signed in with
+ * ChatGPT, and with `CODEX_HOME` an empty directory. It writes its line to standard error.
+ */
+const CODEX = {
+  signedIn: { status: 0, stdout: '', stderr: 'Logged in using ChatGPT\n' },
+  signedOut: { status: 1, stdout: '', stderr: 'Not logged in\n' },
+};
+
+/** The starter config with its engineer role run by Codex. */
+const codexStarter = () => {
+  const source = starter().replace("engineer: { agent: '.claude/agents/engineer.md', provider: 'claude'", "engineer: { agent: '.claude/agents/engineer.md', provider: 'codex'");
+  assert.notEqual(source, starter(), 'the starter config names no engineer run by Claude Code to change');
+  return source;
+};
+
+test('the agent CLI check reads each adapter\'s own answer to whether its CLI is signed in, and holds no reader of its own', async () => {
+  // Ruling 18 on #467: the adapter carries the reader beside its `auth`. The defect this catches is
+  // a reader left in `doctor`, which reads every CLI's answer as Claude Code's JSON.
+  const asked = [];
+  const ask = async (command, args) => { asked.push([command, ...args].join(' ')); return { status: 0, stdout: 'anything', stderr: '' }; };
+  const yes = { name: 'yes', auth: ['yes-cli', 'whoami'], signedIn: () => true };
+  const no = { name: 'no', auth: ['no-cli', 'whoami'], signedIn: () => false };
+
+  assert.equal((await agentAuth({ ask, adapters: { yes } })).ok, true);
+  assert.equal((await agentAuth({ ask, adapters: { no } })).ok, false);
+  assert.equal((await agentAuth({ ask, adapters: { yes, no } })).ok, false);
+  assert.deepEqual(asked, ['yes-cli whoami', 'no-cli whoami', 'yes-cli whoami', 'no-cli whoami']);
+
+  const source = readFileSync(join(root, 'src', 'cli', 'doctor.mjs'), 'utf8');
+  assert.doesNotMatch(source, /loggedIn/, 'doctor.mjs reads Claude Code\'s `loggedIn` itself');
+});
+
+test('the agent CLI check reads the recorded answers of `codex login status` through the Codex adapter, signed in and signed out', async () => {
+  assert.equal((await agentAuth({ ask: answering(CODEX.signedIn), adapters: { codex: ADAPTERS.codex } })).ok, true);
+  assert.equal((await agentAuth({ ask: answering(CODEX.signedOut), adapters: { codex: ADAPTERS.codex } })).ok, false);
+  const said = await agentAuth({ ask: answering(CODEX.signedIn), adapters: { codex: ADAPTERS.codex } });
+  assert.equal(said.detail, '`codex login status` says it is signed in');
+});
+
+test('given a config naming only claude, the agent CLI check asks only Claude Code, and given none it can read, every adapter', async () => {
+  // Ruling 18 on #467: `doctor` asks the providers the config's roles name, so a consumer using no
+  // Codex sees no Codex line it cannot act on (`R-OPTION-1`), and every adapter where it reads no
+  // valid config.
+  const named = answering(RECORDED.agentIn);
+  await agentAuth({ ask: named, target: checked(starter()) });
+  assert.deepEqual(named.asked, ['claude auth status --json']);
+
+  const unread = answering(RECORDED.agentIn);
+  await agentAuth({ ask: unread, target: checked('export default {\n') });
+  assert.deepEqual(unread.asked, Object.values(ADAPTERS).map((adapter) => adapter.auth.join(' ')));
+});
+
+test('rigger doctor, given a config whose role names provider codex, prints an agent CLI authentication line for Codex', async () => {
+  const ran = await doctor(against(checked(codexStarter()), { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn }));
+
+  const [line] = checkLines(ran.text).filter((each) => each.includes('agent CLI authentication'));
+  assert.ok(line.includes('`codex login status` says it is signed in'), ran.text);
+  assert.ok(line.includes('`claude auth status --json` says it is signed in'), ran.text);
 });
