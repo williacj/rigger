@@ -12,6 +12,7 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { COLUMNS, KINDS, boardOf, cardIn, handleOn, makingWorkspaces } from './loop-world.mjs';
+import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -41,10 +42,10 @@ async function threeCards(t) {
   const fake = boardOf([30, 10, failing]);
   const kinds = { change: { ...KINDS.change, provisioning: ['ready', 'fails'] } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, provisioning: PROVISIONING, outcomes, sink, ...attempt });
-  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations });
+  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
   const workspaces = join(directory, 'workspaces');
   const built = loop({
-    config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), state,
+    config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), state,
   });
   const failure = await built.pull().then(() => assert.fail('the pull settled, though #20 failed'), (thrown) => thrown);
   return { failure, fake, workspaces, events: () => readEvents(state) };

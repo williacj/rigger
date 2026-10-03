@@ -11,6 +11,8 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { factsCall } from '../src/workflow/facts.mjs';
 
 /**
  * Fires one pull of L3's loop over the board the config in `repository` names, recording to that
@@ -24,10 +26,11 @@ export async function engine({ directory, repository, command }) {
   const state = join(repository, '.rigger');
   const sink = openSink({ directory: state, run: randomUUID(), now: Date.now });
   const board = readSide({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
+  const reads = repositoryReads({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
   const l2 = columnChanges({ config, sink });
   const kinds = Object.fromEntries(Object.entries(config.kinds).map(([name, kind]) => [name, { ...kind, provisioning: ['hold'] }]));
   const provisioning = { hold: { run: command, required: true } };
   const decide = (card, outcomes) => nextAction(card, kinds, config.epicLabel, { provisioning, outcomes, sink });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, l2, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
 }

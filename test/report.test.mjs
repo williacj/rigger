@@ -17,6 +17,7 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { waitFor } from './loop-world.mjs';
+import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,7 +51,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   const sink = openSink({ directory, run, now: () => START + minute * 60_000 });
   const fake = createFakeBoard({ columns: Object.values(config.board.columns), items: cards.map(readyCard) });
   const settings = { ...config, concurrency };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
   const board = {
     readColumns: async () => {
       await fake.operations.readColumns();
@@ -80,7 +81,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   const everyStartMade = () => releasesRecorded() === returned.size && held.size === (entry === 'run'
     ? Math.min(concurrency, cards.length - returned.size)
     : Math.min(concurrency, cards.length) - returned.size);
-  const running = loop({ config: settings, board, decide, l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory })[entry]();
+  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory })[entry]();
   await waitFor(everyStartMade);
   for (const [at, numbers] of releases) {
     minute = at;

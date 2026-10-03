@@ -16,6 +16,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import {
   COLUMNS, KINDS, columnsOf, handleOn, makingWorkspaces, waitFor, readyCard, world,
 } from './loop-world.mjs';
+import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -65,7 +66,7 @@ function attemptWorld({
   };
   const events = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
   const settledCards = [];
-  const changes = columnChanges({ config: settings, sink, items: fake.operations });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
   const l2 = {
     claimed: changes.claimed,
     settled: (card, outcome) => {
@@ -93,7 +94,7 @@ function attemptWorld({
     readColumns: () => { requests += 1; return handle.readColumns(); },
     readPriority: () => { requests += 1; return handle.readPriority(); },
   };
-  const built = loop({ config: settings, board, decide, l2, dispatch: injected, sink, kill: async () => {}, workspace: making, state: directory });
+  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch: injected, sink, kill: async () => {}, workspace: making, state: directory });
   return { directory, fake, loop: built, events, asks, made: making.made, makerCalls, settled: settledCards, requests: () => requests };
 }
 
@@ -112,6 +113,7 @@ const handed = () => ({
   config: { ...config, concurrency: 1 },
   board: handleOn(createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)] })),
   decide: (card) => nextAction(card, KINDS),
+  facts: factsOverNothing({ ...config, concurrency: 1 }, (card) => nextAction(card, KINDS)),
   l2: { claimed: async () => {}, settled: async () => {} },
   sink: { emitter: () => ({ emit: () => {} }) },
   kill: async () => {},
@@ -347,7 +349,7 @@ test('the steps loop dispatches, and whether it dispatches another after an outc
   const script = [
     { action: 'dispatch', kind: 'change', step: { name: 'first', run: 'true' } },
     { action: 'dispatch', kind: 'change', step: { name: 'second', run: 'exit 5' } },
-    { action: 'dispatch', kind: 'change', maker: 'engineer' },
+    { action: 'dispatch', kind: 'change', maker: { role: 'engineer', agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard', timeout: 14_400_000, instruction: 'Make the change.\n', evidence: 'Card #1: Add a verb\n' } },
   ];
   const handedOutcomes = [];
   const built = attemptWorld({
@@ -386,7 +388,7 @@ test('columnChanges reads neither kinds nor provisioning', async () => {
     },
   });
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)] });
-  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations });
+  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations, pullRequests: oneOpenFromEveryLine });
   const [card] = (await fake.operations.readPriority()).items;
 
   await changes.claimed(card);

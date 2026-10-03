@@ -40,6 +40,21 @@ function walk(given, kinds, provisioning) {
   }
 }
 
+/** The fields of L2's role answer (the M4 decomposition's "The role answer", on #467). */
+const ROLE_FIELDS = ['agent', 'evidence', 'instruction', 'provider', 'role', 'tier', 'timeout'];
+
+/**
+ * `next` with its maker, a role answer holding every field `ROLE_FIELDS` names, written as the
+ * role's name alone, so an expectation can name the role. A maker that is no role answer fails.
+ */
+function namingRole(next) {
+  assert.deepEqual(Object.keys(next.maker ?? {}).sort(), ROLE_FIELDS, `L2's maker is no role answer: ${JSON.stringify(next)}`);
+  return { ...next, maker: next.maker.role };
+}
+
+/** What `walk` answered, its last answer written as `namingRole` writes it. */
+const walkedToRole = ({ steps, last }) => ({ steps, last: namingRole(last) });
+
 test('given a kind listing steps a then b, where b selects label x, L2 selects for a card not carrying x step a and no other', () => {
   const provisioning = { a: { run: 'true' }, b: { run: 'true', select: { labels: ['x'] } } };
   assert.deepEqual(walk(card(1), kindsListing(['a', 'b']), provisioning).steps, ['a']);
@@ -62,7 +77,7 @@ test('given a step that selects label x and that no kind lists, L2 does not sele
 
 test('given a kind that lists no provisioning, L2\'s next action for a claimed card is the maker, with no step before it', () => {
   const kinds = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
-  assert.deepEqual(walk(card(5), kinds, { a: { run: 'true' } }), { steps: [], last: { action: 'dispatch', kind: 'change', maker: 'engineer' } });
+  assert.deepEqual(walkedToRole(walk(card(5), kinds, { a: { run: 'true' } })), { steps: [], last: { action: 'dispatch', kind: 'change', maker: 'engineer' } });
 });
 
 /** Two steps, `first` and `later`, which a card of kind `change` both runs, `first` required where `required` says. */
@@ -108,7 +123,7 @@ test('given an optional step\'s outcome of exit 3, the event stream holds an L2 
 test('given an optional step\'s outcome of exit 3 as the last selected step, L2\'s next action is the maker', (t) => {
   const provisioning = { only: { run: 'exit 3' } };
   const next = nextAction(card(23), kindsListing(['only']), undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor().sink });
-  assert.deepEqual(next, { action: 'dispatch', kind: 'change', maker: 'engineer' });
+  assert.deepEqual(namingRole(next), { action: 'dispatch', kind: 'change', maker: 'engineer' });
 });
 
 /** Why the commands in these outcomes never started, as L1 says it. */
@@ -155,7 +170,7 @@ test('given an optional step\'s outcome that its timeout ended it, L2\'s next ac
   const next = nextAction(card(28), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink });
   assert.deepEqual(next, { action: 'dispatch', kind: 'change', step: { name: 'later', run: 'true' } });
   const last = nextAction(card(28), kindsListing(['first']), undefined, { provisioning, outcomes: [timedOut()], sink });
-  assert.deepEqual(last, { action: 'dispatch', kind: 'change', maker: 'engineer' });
+  assert.deepEqual(namingRole(last), { action: 'dispatch', kind: 'change', maker: 'engineer' });
   const recorded = events().filter((each) => each.layer === 'L2' && each.card === 28);
   assert.deepEqual(recorded.map(({ event, step, timeout, optional }) => ({ event, step, timeout, optional })), [
     { event: 'step.failed', step: 'first', timeout: 50, optional: true },

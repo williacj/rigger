@@ -23,8 +23,9 @@ const DEFAULT_CONCURRENCY = 3;
  * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
  * "Failure model").
  */
-function claiming({ config, board, decide, l2, sink, kill }) {
+function claiming({ config, board, facts, l2, sink, kill }) {
   if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
+  if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
   const claims = new Set();
   let killing;
@@ -56,15 +57,18 @@ function claiming({ config, board, decide, l2, sink, kill }) {
     refused,
 
     /**
-     * Fires the pull trigger's read: records the trigger, reads the board, and claims as many
-     * cards as there are free slots and no more than `limit`, first pulled first. Every claim is
-     * taken in the same synchronous step as the pull order it follows, so no other trigger can
-     * claim a card between the two. Answers `claims`, each with its pull, its card, the pullable
+     * Fires the pull trigger's read: records the trigger, reads the board, awaits L2's facts call
+     * over the cards no claim holds, and claims as many cards as there are free slots and no more
+     * than `limit`, first pulled first, deciding each with the `decide` that call answered. L3
+     * reads nothing of that answer but calls it (the architect's ruling 2, P2, on #467). Every
+     * claim is taken in the same synchronous step as the pull order it follows, so no other trigger
+     * can claim a card between the two. Answers `claims`, each with its pull, its card, the pullable
      * cards it left waiting and the cards in flight with it, and `failures`, holding the trigger
      * event's refusal where the sink refused it. A trigger is no start, so its refusal stops
      * nothing: each start still tries its own event, which is what names the cards not started,
-     * and the refusal is reported beside theirs. A read that fails rejects with the read's own
-     * error, and no card is claimed. It first awaits the start's kill, as `killed` says.
+     * and the refusal is reported beside theirs. A read that fails, the facts call's included,
+     * rejects with the read's own error, and no card is claimed. It first awaits the start's kill,
+     * as `killed` says.
      */
     take: async (limit) => {
       await killed();
@@ -76,6 +80,9 @@ function claiming({ config, board, decide, l2, sink, kill }) {
       }
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
+      const decide = await facts(items.filter((item) => !claims.has(item.number)));
+      // Another trigger may have claimed a card while the facts were read, so the cards no claim
+      // holds are read again here, in the synchronous step that takes the claims.
       const unclaimed = items.filter((item) => !claims.has(item.number));
       // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
       const answers = new Map();
@@ -93,20 +100,21 @@ function claiming({ config, board, decide, l2, sink, kill }) {
     },
 
     /**
-     * Records a claim's pull event, then has L2 move a card pulled from Ready into Coding. The
-     * event follows the claim and comes before the move, as `ARCHITECTURE.md`, "Failure model",
-     * orders a start. A pull event the sink refuses is the halt: the start is not made, the
-     * claim is released, nothing is recorded for it, since no pull holds a slot in the record,
-     * and the failure names the card not started and the sink's error.
+     * Records a claim's pull event, then hands the claim to L2, which moves the card as its column
+     * asks (the architect's ruling 2, AQ3, on #467). The event follows the claim and comes before
+     * the move, as `ARCHITECTURE.md`, "Failure model", orders a start. A pull event the sink
+     * refuses is the halt: the start is not made, the claim is released, nothing is recorded for
+     * it, since no pull holds a slot in the record, and the failure names the card not started and
+     * the sink's error.
      */
-    start: async ({ card, kind, redo, queueDepth, inFlight }) => {
+    start: async ({ card, kind, queueDepth, inFlight }) => {
       try {
         record('pull', { kind, queueDepth, inFlight }, card.number);
       } catch (refusal) {
         claims.delete(card.number);
         throw refused(`card #${card.number} was not started, because the event sink refused to record its pull`, refusal);
       }
-      if (!redo) await l2.claimed(card);
+      await l2.claimed(card);
     },
 
     /**
@@ -155,20 +163,23 @@ function released(release, claim, failure) {
  *
  * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
  * declared columns by key, and `readPriority()` answers the cards with their priority and the
- * declared order, which is what L0 hands L3 for the pull order. `decide` is L2's next action for a
- * card, which L3 asks once at the pull, and within each attempt as `decide(card, outcomes,
- * { attempt, workspace })`: with the attempt's outcomes after each step, with none once a later
+ * declared order, which is what L0 hands L3 for the pull order. `facts` is L2's facts call, which
+ * L3 awaits over the cards it read, between its board read and its claims, and which answers the
+ * next action L3 asks once for each card at the pull, as `take` says. `decide` is L2's next action
+ * for a card, which L3 asks within each attempt as `decide(card, outcomes, { attempt, workspace })`: with the attempt's outcomes after each step, with none once a later
  * attempt's workspace is made, and with L1's failure as `workspace` where it could not be made,
  * `attempt` numbering the attempt from 1. It alone names the steps L3 dispatches, and whether the
  * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). `l2`
- * is L2's column changes, whose `settled` takes the maker's outcome alone. `dispatch({ card, kind })`
+ * is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the maker's
+ * outcome alone, and answers what it read of the forge, which L3 reads nothing of. `dispatch({ card, kind })`
  * is the maker, injected, and answers its result or throws; where none is injected, a card that
  * reaches it ends there (ruling 1, A1). `workspace(card)` is L1's workspace handle, injected, and
  * answers the attempt's workspace as `{ path }` (ruling 5, P4). `state` is the state directory
  * L1 records each step's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
- * is built where the workspace handle is not a function, or `state` not a non-empty string.
+ * is built where the facts call or the workspace handle is not a function, or `state` not a
+ * non-empty string.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -185,8 +196,8 @@ function released(release, claim, failure) {
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
  */
-export function loop({ config, board, decide, l2, dispatch, sink, kill, workspace, state }) {
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, decide, l2, sink, kill });
+export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, workspace, state }) {
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
   if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
   if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
 

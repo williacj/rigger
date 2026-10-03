@@ -3,7 +3,8 @@
 
 import { validate } from '../config/validate.mjs';
 import { pullOrder } from '../scheduling/pull-order.mjs';
-import { readSide } from '../substrate/forge/read.mjs';
+import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
+import { factsCall } from '../workflow/facts.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
@@ -31,14 +32,24 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
   if (refusals.length > 0) return { text: `rigger plan: \`${CONFIG}\`: ${refusals.join('; ')}`, code: 1 };
 
   const { project } = config.board;
-  const side = readSide({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
+  const forge = { ...config.board, repo: config.repo };
+  const side = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
   let read;
   try {
     read = { columns: await side.readColumns(), ...(await side.readPriority()) };
   } catch (threw) {
     return { text: `rigger plan: board ${project} could not be read: ${threw.message}`, code: 1 };
   }
-  const order = pullOrder(read, (card) => nextAction(card, config.kinds, config.epicLabel));
+  // The same facts call and next action the claiming verbs hand L3, so `plan` refuses each card
+  // they would: for what the forge holds of its line of work, and for its maker's tier.
+  const decide = (card) => nextAction(card, config.kinds, config.epicLabel, { roles: config.roles });
+  let decided;
+  try {
+    decided = await factsCall({ config, reads: repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) }), decide })(read.items);
+  } catch (threw) {
+    return { text: `rigger plan: ${threw.message}`, code: 1 };
+  }
+  const order = pullOrder(read, decided);
 
   const counted = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
   const heading = order.pulls.length === 0

@@ -258,21 +258,21 @@ test('run, given N 3, no ready card, and an unclaimed coding card and an unclaim
   assert.notEqual(ran.code, 0);
 });
 
-test('run, given N 3, no ready card, and an unclaimed coding card and an unclaimed review card L2 would dispatch, leaves no move of either in the fake board\'s write record', async () => {
+test('run, given N 3, no ready card, and an unclaimed coding card and an unclaimed review card L2 would dispatch, the forge holding nothing for either, moves the review card to coding and leaves the coding card unmoved in the fake board\'s write record', async () => {
   const ran = run(REDOS_ONLY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #50\b/, ran.err);
-  assert.deepEqual(await movesOf(ran), []);
-  assert.deepEqual(await columnsOf(ran), { 50: 'Coding', 60: 'Review' });
+  assert.deepEqual(await movesOf(ran), [['item-2', 'Coding']]);
+  assert.deepEqual(await columnsOf(ran), { 50: 'Coding', 60: 'Coding' });
 });
 
-test('run, given N 3, no ready card, and an unclaimed coding card and an unclaimed review card L2 would dispatch, leaves no L2 transition event in the state directory\'s stream', () => {
+test('run, given N 3, no ready card, and an unclaimed coding card and an unclaimed review card L2 would dispatch, the forge holding nothing for either, records one L2 transition event in the state directory\'s stream, for #60, from review to coding', () => {
   const ran = run(REDOS_ONLY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #50\b/, ran.err);
   const events = eventsOf(ran);
   for (const redo of [50, 60]) assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === redo), JSON.stringify(events));
-  assert.deepEqual(events.filter((event) => event.layer === 'L2'), []);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2').map(({ card, from, to }) => ({ card, from, to })), [{ card: 60, from: 'review', to: 'coding' }]);
 });
 
 test('after run exits, the state directory holds nothing but the event stream', () => {
