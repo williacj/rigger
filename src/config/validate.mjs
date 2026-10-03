@@ -127,7 +127,7 @@ export const SHAPES = {
  * The owner, who judges a kind of work last if at all and is never dispatched (`R-LOOP-11`). It
  * is the one judge that is not a role, which is why a kind may name it and `roles` may not.
  */
-const OWNER = 'owner';
+export const OWNER = 'owner';
 
 /**
  * The escalation categories, which are Rigger's and not the consumer's (`R-ESCALATE-3`). A

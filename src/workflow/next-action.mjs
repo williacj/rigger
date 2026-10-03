@@ -60,12 +60,8 @@ const selecting = (card, kinds) =>
 export function nextAction(card, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace } = {}) {
   if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
   if (fresh && [columns.coding, columns.review].includes(card.column) && fresh(card)) return { action: 'ignore' };
-  const names = carries(card, epicLabel) ? [] : selecting(card, kinds);
-  if (names.length === 0) return { action: 'ignore' };
-  if (names.length > 1) {
-    return { action: 'refuse', card: card.number, reason: `selected by more than one kind: ${names.join(', ')}` };
-  }
-  const [kind] = names;
+  const { kind, answer } = kindOf(card, kinds, epicLabel);
+  if (answer !== undefined) return answer;
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore') return held;
   const form = checkAcceptanceForm(card);
@@ -83,6 +79,18 @@ export function nextAction(card, kinds, epicLabel, { columns, fresh, roles, topi
   return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning, outcomes, sink, attempt, workspace });
 }
 
+/**
+ * The kind that selects `card` under `kinds` and `epicLabel`, as `{ kind }`, its name, or as
+ * `{ answer }`, what L2 answers for a card no kind selects or more than one does, as `nextAction`
+ * says.
+ */
+export function kindOf(card, kinds, epicLabel) {
+  const names = carries(card, epicLabel) ? [] : selecting(card, kinds);
+  if (names.length === 0) return { answer: { action: 'ignore' } };
+  if (names.length > 1) return { answer: { action: 'refuse', card: card.number, reason: `selected by more than one kind: ${names.join(', ')}` } };
+  return { kind: names[0] };
+}
+
 /** Pull requests by number, as a refusal names them. */
 const numbered = (pulls) => pulls.map((pull) => `#${pull.number}`).join(', ');
 
@@ -93,7 +101,7 @@ const numbered = (pulls) => pulls.map((pull) => `#${pull.number}`).join(', ');
  * A merged pull request from the line of work refuses the card, whatever its column, naming the
  * pull request, and so does the line of work itself on a Ready or Coding card, naming it: its work
  * would start again from the beginning over what was pushed (`R-WORK-19`; the owner's O6 on #467).
- * A Review card with one open pull request is ignored, until L3 dispatches judges (#485), and
+ * A Review card with one open pull request is ignored, until L3 dispatches its judges (#488), and
  * one with more is refused, naming each. A Review card whose line of work is on the forge with no
  * pull request from it is refused, naming the line of work. A Review card the forge holds nothing
  * for is done again from the beginning (`R-WORK-24`).
@@ -142,9 +150,13 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
     }
   }
   if (outcomes.length === steps.length) return { action: 'dispatch', kind, maker: makerAnswer(card, declared.maker, roles?.[declared.maker] ?? {}, tier, topicFor(topic, card.number)) };
-  const name = steps[outcomes.length];
+  return { action: 'dispatch', kind, step: stepAnswer(steps[outcomes.length], provisioning) };
+}
+
+/** L2's answer for the provisioning step named `name`: its name, and what L1 runs, as `provisioning` declares it. */
+export function stepAnswer(name, provisioning) {
   const { run, cwd, timeout } = provisioning[name];
-  return { action: 'dispatch', kind, step: { name, run, ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) } };
+  return { name, run, ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) };
 }
 
 /** How many times L2 has a card attempted before it stops it: the first attempt and one more (`R-FAIL-2`). */
@@ -194,7 +206,7 @@ function unmade(outcome, card) {
  * Any other outcome, such as an event the sink refused, is no step's failure. It is the halt,
  * which L3 passes on to its caller, so L2 answers no action for it and names the card and step.
  */
-function failed(outcome, step, card, name) {
+export function failed(outcome, step, card, name) {
   if (outcome?.status === 'rejected' && outcome.reason?.code === NOT_STARTED) return { reason: outcome.reason.message };
   if (outcome?.status !== 'fulfilled' || !Number.isInteger(outcome.value?.exit)) {
     const read = outcome?.status === 'rejected' ? outcome.reason?.message : JSON.stringify(outcome);
@@ -210,21 +222,22 @@ function failed(outcome, step, card, name) {
  * The names of the steps `kind` runs for `card`, in the order the kind lists them: each step the
  * kind lists that selects nothing, or one of whose `select.labels` the card carries.
  */
-const selectedSteps = (card, kind, provisioning) => (kind.provisioning ?? [])
+export const selectedSteps = (card, kind, provisioning) => (kind.provisioning ?? [])
   .filter((name) => provisioning[name].select?.labels.some((label) => carries(card, label)) ?? true);
 
 /**
  * The tier the role named `name`, declared as `role`, runs at for `card`, as `{ tier }`: the tier
  * the labels its `labels` names that the card carries select, or its own `tier` where the card
  * carries none of them (`R-LOOP-12`). Where those labels select more than one tier, it is
- * `{ conflict }`, the refusal's reason, naming the role and each such label (`R-LOOP-13`).
+ * `{ conflict }`, the refusal's reason, naming the role, as the card's `part`, `maker` or `judge`,
+ * and each such label (`R-LOOP-13`).
  */
-function tierOf(card, name, role) {
+export function tierOf(card, name, role, part = 'maker') {
   const selecting = Object.entries(role.labels ?? {}).filter(([label]) => carries(card, label));
   const tiers = [...new Set(selecting.map(([, tier]) => tier))];
   if (tiers.length > 1) {
     const named = selecting.map(([label, tier]) => `${label} (${tier})`).join(', ');
-    return { conflict: `carries labels selecting different tiers for its maker role \`${name}\`: ${named}` };
+    return { conflict: `carries labels selecting different tiers for its ${part} role \`${name}\`: ${named}` };
   }
   return { tier: tiers[0] ?? role.tier };
 }
