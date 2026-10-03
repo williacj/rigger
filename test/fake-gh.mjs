@@ -9,7 +9,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
 import { branchesIn, checkedOut, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
-import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -685,18 +685,21 @@ async function answering(statePath) {
  * `origin`, where given, is the path of the test's local bare repository, which the fake `gh`
  * reads the branches of, and opens a pull request from with `gh pr create`.
  *
- * The executable is run once before this returns (`warmed`), exiting before it loads this module
- * or records a command, so the system's hold on its first exec is paid here.
+ * The executable is run once before this returns (`warmed`), so the system's hold on its first
+ * exec is paid here. It is run as an empty program and then given its entry in place, because the
+ * fake `gh` reads no environment variable to tell that run apart, and run with its entry it would
+ * load this module and record a command. A file rewritten in place stays warm, as the #581
+ * journal records.
  */
 export function installFakeGh(dir, { repo, owner, project, board = {}, origin }) {
   const statePath = join(dir, 'board.json');
   writeFileSync(statePath, JSON.stringify({ repo, owner, project, model: board, origin, writes: [], sent: [] }));
   const gh = join(dir, 'gh');
   // CommonJS, because nothing beside it says otherwise, and so it loads this module dynamically.
-  const entry = `process.env.RIGGER_FIXTURE_WARMING || import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
+  const entry = `import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
+  warmed(placeholder(gh, `#!${process.execPath}\n`));
   writeFileSync(gh, `#!${process.execPath}\n${entry}`);
   chmodSync(gh, 0o755);
-  warmed(gh);
   const state = () => JSON.parse(readFileSync(statePath, 'utf8'));
   return { gh, model: () => boardOf(state()), sent: () => state().sent };
 }
@@ -713,6 +716,12 @@ export function seedRepository(fake, seed) {
   writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, 'utf8')), repository: seed }));
 }
 
+/** An executable at `path` holding only `text`, a `#!` line whose program does nothing: its path. */
+function placeholder(path, text) {
+  writeFileSync(path, text, { mode: 0o755 });
+  return path;
+}
+
 /** The mutation the item-write side sends for a column move (`src/substrate/forge/item-write.mjs`). */
 const MOVE = 'updateProjectV2ItemFieldValue';
 
@@ -721,16 +730,17 @@ const MOVE = 'updateProjectV2ItemFieldValue';
  * move, replaces the event stream at `stream` with a directory of that name, which no append
  * can open: the board has taken the claim move, and the record then refuses its event. Placed
  * on PATH ahead of the fake, whose own directory must follow it there.
- * Run once before this returns (`warmed`), it exits before it runs the fake.
+ * It is run once before this returns (`warmed`), as an empty shell script given its body in
+ * place afterwards, as `installFakeGh` runs the fake, so that run never runs the fake.
  */
 export function installGhRefusingStreamAfterMove(dir, fake, stream) {
   const gh = join(dir, 'gh');
   for (const path of [fake, stream]) {
     if (path.includes("'")) throw new Error(`${path} holds a quote the wrapper cannot carry`);
   }
+  warmed(placeholder(gh, '#!/bin/sh\n'));
   writeFileSync(gh, [
     '#!/bin/sh',
-    EXIT_IF_WARMING,
     `'${fake}' "$@"`,
     'status=$?',
     `case "$*" in *${MOVE}*) rm -f '${stream}'; mkdir -p '${stream}' ;; esac`,
@@ -738,6 +748,5 @@ export function installGhRefusingStreamAfterMove(dir, fake, stream) {
     '',
   ].join('\n'));
   chmodSync(gh, 0o755);
-  warmed(gh);
   return gh;
 }
