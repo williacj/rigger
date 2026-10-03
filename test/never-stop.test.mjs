@@ -12,7 +12,7 @@ import { constants } from 'node:os';
 import { join } from 'node:path';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
+import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -52,16 +52,16 @@ const holdingNone = (directory) => fixture(directory, 'command', ': > "$here/up"
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read of the census,
  * which begin `-ww -g`, and answers every other read as `ps` does.
  */
-const cuttingTwo = (directory) => warmed(fixture(directory, 'ps', [
+const cuttingTwo = (directory) => fixture(directory, 'ps', [
   'case "$*" in "-ww -g "*)',
   '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
   '  exit 0 ;;',
   'esac',
   'exec /bin/ps "$@"',
-].join('\n')));
+].join('\n'));
 
 /** A `ps` stand-in that fails every read as `ps` fails given what it cannot read, but a read of a start time. */
-const failing = (directory) => warmed(fixture(directory, 'ps', 'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\necho "ps: failing on purpose" >&2\nexit 2'));
+const failing = (directory) => fixture(directory, 'ps', 'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\necho "ps: failing on purpose" >&2\nexit 2');
 
 /**
  * A signal call for a test in `directory`: `signalStandIn`'s, with the pid `$here/<refused>.pid`
@@ -237,11 +237,11 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
  * marks that L0 has sent its group the kill, and answers every read as `ps` does from then on.
  */
-const hidingTwoUntilKilled = (directory) => warmed(fixture(directory, 'ps', [
+const hidingTwoUntilKilled = (directory) => fixture(directory, 'ps', [
   '[ -f "$here/hang" ] && exec /bin/ps "$@"',
   '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
   'exit 0',
-].join('\n')));
+].join('\n'));
 
 /**
  * The signal call `standIn` hands back, which also marks `$here/hang` as it first sends the group
@@ -563,7 +563,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
     if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'killed'), '');
     return signals.kill(target, name);
   };
-  const ps = warmed(fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+  const ps = fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
 
   const { events } = await called(directory, { command: '/usr/bin/true', directory: work, kill, ps });
 
@@ -576,7 +576,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on never answers. */
-const hanging = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"'));
+const hanging = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"');
 
 // proves R-STATE-19, R-STATE-9
 test('given a process table that stops answering once the exit cleanup has sent its first kill of a group, the caller ends within the cleanup\'s own bound of that kill, and the group\'s members are not alive', SETTLES_WITHIN, async (t) => {
@@ -725,7 +725,7 @@ test('on the exit cleanup, a member no read before the kill listed, which the ki
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on fails each as `ps` fails. */
-const failingAfterKill = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+const failingAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
 
 /** Asserts `events` record the kill of the group in place of what reads after the kill could not list. */
 function assertUnreadAfterKill(events) {

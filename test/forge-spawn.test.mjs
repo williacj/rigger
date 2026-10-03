@@ -13,7 +13,7 @@ import { FORGE_TIMEOUT, readRunner } from '../src/substrate/forge/runners.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { alive, fixture, holding, leave, OUTLIVED, read, TAIL, warmed } from './process-fixtures.mjs';
+import { alive, fixture, holding, leave, OUTLIVED, read, TAIL } from './process-fixtures.mjs';
 
 /** The board every read here names; the stand-in answers whatever it is asked. */
 const BOARD = { repo: 'acme/widgets', project: 3, columns: { ready: 'Ready' } };
@@ -151,7 +151,7 @@ function groupAlive(group) {
  * which is its group's id, to `gh.pid`, and waits on the child, which runs until killed. It is
  * `warmed`, because it must be ready within `OUTLIVED` of its spawn.
  */
-const neverExiting = (directory) => warmed(leavingChild(directory, ['echo $$ > "$here/gh.pid"', 'wait'].join('\n')));
+const neverExiting = (directory) => leavingChild(directory, ['echo $$ > "$here/gh.pid"', 'wait'].join('\n'));
 
 test('given a gh stand-in that never exits, a read through the read side settles, reports that the timeout ended it, and leaves no process of its group alive', async (t) => {
   const directory = holding(t);

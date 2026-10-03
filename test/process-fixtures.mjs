@@ -73,13 +73,22 @@ const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
 
 /**
+ * The shell line a stand-in runs first, after its `#!` line, so that run with
+ * `RIGGER_FIXTURE_WARMING` set it exits 0 before its body, and `warmed` leaves no trace of it.
+ */
+export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
+
+/**
  * A shell script named `name` in `directory`, executable, whose body reads that directory as
  * `$here`. Its path, and so the directory, is in the command line of the shell running it. Run
  * with `RIGGER_FIXTURE_WARMING` set, it exits 0 before its body (`warmed`).
+ * It is run so once before this returns, so the system's hold on its first exec is paid here,
+ * outside any bound of the test that runs it.
  */
 export function fixture(directory, name, body) {
   const path = join(directory, name);
-  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0\n${body}\n`, { mode: 0o755 });
+  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${EXIT_IF_WARMING}\n${body}\n`, { mode: 0o755 });
+  warmed(path);
   return path;
 }
 
@@ -288,7 +297,7 @@ export async function withFirstOnPath(directory, body) {
  * to `git.pid`, marks `ready`, and waits on the child, which runs until killed. It is `warmed`,
  * because it must be ready within `OUTLIVED` of its spawn.
  */
-export const gitHanging = (directory) => warmed(fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n')));
+export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
 /**
  * A `git` stand-in in `directory` that records each call it is sent in `git-calls` and hands it on

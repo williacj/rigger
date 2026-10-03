@@ -16,7 +16,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.mjs';
-import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, warmed, withFirstOnPath } from './process-fixtures.mjs';
+import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, withFirstOnPath } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
 
@@ -363,7 +363,7 @@ test('given a sink that refuses every append, and a stand-in for the agent CLI t
 });
 
 /** A `claude` stand-in in `directory` that never answers, as `gitHanging` never does, writing its pid to `claude.pid`, and `warmed` as it is. */
-const claudeHanging = (directory) => warmed(fixture(directory, 'claude', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/claude.pid"', ': > "$here/ready"', 'wait'].join('\n')));
+const claudeHanging = (directory) => fixture(directory, 'claude', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/claude.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
 // proves R-STATE-8
 test('given a stand-in for the agent CLI that never exits, doctor\'s probe settles, reports that the timeout ended it, and leaves no process of its group alive', async (t) => {
