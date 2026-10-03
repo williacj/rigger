@@ -34,7 +34,11 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  *
  * The workspace's real path is the dispatch's directory. L1 hands it to L0, whose census kills
  * every process of Rigger's own user working there once the group is empty, and records it in the
- * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). A workspace that is
+ * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). `scratch`, which
+ * `roleDispatch` hands for a role's dispatch and a step's lacks, is the dispatch's scratch
+ * directory, and L1 does the same with its real path, recording it in the entry with its device
+ * and inode as `scratch` (the architect's ruling 20 on #467). One that cannot be read starts
+ * nothing, as a command that never started. A workspace that is
  * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
  * started, naming the directory. `lsof` stands in for L0's census tool where the caller gives it.
  *
@@ -76,7 +80,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, env, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, scratch, env, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -108,6 +112,10 @@ export async function dispatch({ id, card, directory, sink, command, args, input
     // of it compares.
     const { escape, place, identity } = workspace === undefined ? {} : placed(cwd, workspace, directory);
     if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED });
+    // A role's scratch directory, by its real path, device and inode, as the record names it and
+    // L0's census of it compares (the architect's ruling 20 on #467).
+    const { unread, held } = scratch === undefined ? {} : scratchHeld(scratch);
+    if (unread !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED });
     result = await runCommand({
       command,
       args,
@@ -121,6 +129,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
       lsof,
       readTimeout,
       directory: place,
+      scratch: held?.path,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
       onGroup: (group, started) => {
         // The window this leaves open. L0 spawns, then hands the group over in the same step, and
@@ -136,7 +145,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
         // dispatch's processes, so a restart could find them without the record. #335 read the
         // marker only from binaries that are not Apple's, and every survivor the Claude CLI left
         // was one of Apple's (`docs/spikes/what-leaves-the-process-group.md`).
-        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }) });
+        addGroup(directory, { group, started, dispatch: id, card, ...(place === undefined ? {} : { workspace: place, ...identity }), ...(held === undefined ? {} : { scratch: held }) });
         recorded = group;
       },
       // On Rigger's own exit, L0 kills and records the group, and then hands it here with how the
@@ -255,6 +264,19 @@ function placed(cwd, workspace, directory) {
   return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}` };
 }
 
+/**
+ * The scratch directory `scratch` as `held`, its real path as `path` with its device and inode,
+ * which a later start checks before it sweeps it, or as `unread` why it cannot be read.
+ */
+function scratchHeld(scratch) {
+  try {
+    const path = realpathSync.native(scratch);
+    return { held: { path, ...identityOf(path) } };
+  } catch (cause) {
+    return { unread: `its scratch directory ${scratch} cannot be read: ${cause.message}` };
+  }
+}
+
 /** Whether the path `inner` is `outer` or lies under it, each a real path. */
 export const within = (inner, outer) => inner === outer || inner.startsWith(`${outer}${sep}`);
 
@@ -348,10 +370,10 @@ async function killEntries({ directory, sink, ps, lsof, readTimeout, entries }) 
   const unconfirmed = [];
   const unrecorded = [];
   for (const entry of entries) {
-    const { group, started, dispatch, card, workspace, device, inode } = entry;
+    const { group, started, dispatch, card, workspace, device, inode, scratch } = entry;
     const under = named(dispatch, card);
     try {
-      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, scratch, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);

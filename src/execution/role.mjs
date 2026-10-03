@@ -6,8 +6,9 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { within } from './run.mjs';
+import { makeScratch } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
-import { NOT_STARTED } from '../substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 
 /**
@@ -31,13 +32,30 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * judges handed the same evidence record the same one whatever their instructions, and the
  * evidence itself reaches no event.
  *
+ * `scratch` is the card's scratch base, which L3 hands unread from L1's make (the architect's
+ * ruling 19 on #467). Once the provider is found, and before the adapter is asked for the
+ * invocation, L1 makes the role's scratch directory, `<scratch>/<role>`, fresh (`makeScratch`),
+ * hands the adapter its absolute path as `scratch`, and answers it as `scratch` for `dispatch`,
+ * whose census sweeps it and whose record names it (ruling 20).
+ *
  * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
- * `dispatch.start` for it: a provider the map does not hold, naming it; an `invocation` that
- * rejects, naming its reason; and a variable the adapter may not set (`unsettable`), naming it.
+ * `dispatch.start` for it: a provider the map does not hold, naming it; a `scratch` that is no
+ * absolute path, naming it; a scratch directory L1 could not make, naming its path and why; an
+ * `invocation` that rejects, naming its reason; and a variable the adapter may not set
+ * (`unsettable`), naming it. A sink that refused one of L1's scratch events rejects as the refused
+ * event it is (`EVENT_REFUSED`).
  */
-export async function roleDispatch({ answer, cwd, directory, reach, env, sink, id, card, adapters = ADAPTERS }) {
+export async function roleDispatch({ answer, cwd, directory, scratch, reach, env, sink, id, card, adapters = ADAPTERS }) {
   const { provider } = answer;
   if (!Object.hasOwn(adapters, provider)) throw unstarted(`L0 holds no provider adapter named ${JSON.stringify(provider)}, which role ${answer.role} names`);
+  if (typeof scratch !== 'string' || !isAbsolute(scratch)) throw unstarted(`L3 handed it the scratch base ${JSON.stringify(scratch)} as scratch, which is no absolute path`);
+  let made;
+  try {
+    made = await makeScratch({ base: scratch, role: answer.role, card, sink });
+  } catch (cause) {
+    if (cause.code === EVENT_REFUSED) throw cause;
+    throw unstarted(cause.message, cause);
+  }
   let invoked;
   try {
     invoked = await adapters[provider].invocation({
@@ -45,6 +63,7 @@ export async function roleDispatch({ answer, cwd, directory, reach, env, sink, i
       tier: answer.tier,
       prompt: `${answer.instruction}${answer.evidence}`,
       directory: cwd,
+      scratch: made,
       reach,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
     });
@@ -53,14 +72,14 @@ export async function roleDispatch({ answer, cwd, directory, reach, env, sink, i
   }
   const { command, args, input, unset, env: set } = invoked;
   for (const [key, value] of Object.entries(set)) {
-    const why = unsettable(key, value, unset, directory);
+    const why = unsettable(key, value, unset, [directory, made]);
     if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key}, which ${why}`);
   }
   const environment = gitEnvironment(env);
   for (const name of unset) delete environment[name];
   Object.assign(environment, set);
   const digest = createHash('sha256').update(answer.evidence, 'utf8').digest('hex');
-  return { command, args, input, cwd, workspace: directory, env: environment, timeout: answer.timeout, facts: answer.facts, digest };
+  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, timeout: answer.timeout, facts: answer.facts, digest };
 }
 
 /**
@@ -70,29 +89,30 @@ export async function roleDispatch({ answer, cwd, directory, reach, env, sink, i
 const unstarted = (reason, cause) => Object.assign(new Error(`the role's dispatch did not start: ${reason}`, { cause }), { code: NOT_STARTED });
 
 /**
- * Why an adapter may not set `key` to `value` for a dispatch whose directory is `directory`, or
- * nothing where it may (the architect's ruling 9 on #467). A key L1 removes would undo the removal:
+ * Why an adapter may not set `key` to `value` for a dispatch whose directories are `directories`,
+ * its own and its scratch directory, or nothing where it may (the architect's ruling 9 on #467, as
+ * ruling 18 widens its limit 3). A key L1 removes would undo the removal:
  * one `gitEnvironment` removes, for #151, or one the adapter's own `unset` names, for the
- * measurement behind it. A value must be an absolute path whose real path is `directory` or lies
- * under it, compared as `escapes` in L1's dispatching function compares a step's working directory,
- * so whatever the agent writes there stays within the census's reach and workspace removal. A path
+ * measurement behind it. A value must be an absolute path whose real path is one of `directories`
+ * or lies under one, compared as `escapes` in L1's dispatching function compares a step's working
+ * directory, so whatever the agent writes there stays within the census's reach. A path
  * that does not exist yet resolves through its nearest existing parent (`realOnDisk`). A path that
  * cannot be resolved is refused. The reason never holds the value, which an adapter that set a
  * credential by mistake would carry to whoever records the failure.
  */
-function unsettable(key, value, unset, directory) {
+function unsettable(key, value, unset, directories) {
   if (Object.keys(gitEnvironment({ [key]: '' })).length === 0) return 'is a variable that redirects git, which L1 removes';
   if (unset.includes(key)) return 'is a variable the same adapter says its CLI must not inherit';
   if (typeof value !== 'string' || !isAbsolute(value)) return 'is set to no absolute path';
   let real;
-  let root;
+  let roots;
   try {
     real = realOnDisk(value);
-    root = realpathSync.native(directory);
+    roots = directories.map((directory) => realpathSync.native(directory));
   } catch (cause) {
     return `is set to a path that cannot be resolved (${cause.code ?? 'unreadable'})`;
   }
-  return within(real, root) ? undefined : `is set to a path whose real path lies outside the dispatch's directory ${root}`;
+  return roots.some((root) => within(real, root)) ? undefined : `is set to a path whose real path lies outside both the dispatch's directory ${roots[0]} and its scratch directory ${roots[1]}`;
 }
 
 /**

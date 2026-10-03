@@ -41,7 +41,8 @@ export function readGroups(directory) {
 /**
  * Whether `entry` names a group a dispatch can hold, the start of its leader, the dispatch's
  * directory by an absolute path where it has one, with its device and inode as decimal strings
- * where it has them, and a dispatch the record can hold. No group
+ * where it has them, its scratch directory as `scratch`, an absolute `path` with its device and
+ * inode likewise, where it has one, and a dispatch the record can hold. No group
  * Rigger creates has an id of 1 or less, and L0 signals a group by its id negated, so 1, 0 or a
  * negative id would reach launchd, the caller's own group, or every process.
  */
@@ -49,8 +50,12 @@ const isEntry = (entry) => typeof entry === 'object' && entry !== null
   && Number.isSafeInteger(entry.group) && entry.group > 1
   && Number.isSafeInteger(entry.started)
   && (entry.workspace === undefined || (typeof entry.workspace === 'string' && isAbsolute(entry.workspace)))
-  && [entry.device, entry.inode].every((field) => field === undefined || (typeof field === 'string' && /^\d+$/.test(field)))
+  && [entry.device, entry.inode].every(isDecimal)
+  && (entry.scratch === undefined || (typeof entry.scratch === 'object' && entry.scratch !== null && typeof entry.scratch.path === 'string' && isAbsolute(entry.scratch.path) && [entry.scratch.device, entry.scratch.inode].every(isDecimal)))
   && holdsDispatch(entry.dispatch, entry.card);
+
+/** Whether `field` is absent or a decimal string, as a device or an inode is recorded. */
+const isDecimal = (field) => field === undefined || (typeof field === 'string' && /^\d+$/.test(field));
 
 /**
  * Whether the record can hold dispatch `id` of `card`: an id is a string that is not empty, and a

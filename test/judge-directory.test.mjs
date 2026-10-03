@@ -12,6 +12,9 @@ import { clonedFromOrigin, detachedWorktreeAt, gitIn, worktreeAt, worktreeList }
 import { scratch } from './process-fixtures.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
+import { spawnSync } from 'node:child_process';
+import { roleDispatch } from '../src/execution/role.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, with card 42's pull request head pushed
@@ -434,5 +437,61 @@ test('a refused workspace.made, workspace.removed or workspace.failed while L1 m
     assert.notEqual(failure.code, WORKSPACE_NOT_MADE);
     assert.ok(failure.message.includes(event), `${event}: ${failure.message}`);
     assert.deepEqual(failure.unrecorded.map((each) => each.event), [event]);
+  }
+});
+
+test('L1\'s judge-directory make for card 42 answers scratch, the absolute path <root>/scratch/rigger-42, beside main and head, and makes nothing there', async (t) => {
+  const here = world(t);
+  const made = await here.make();
+  assert.equal(made.scratch, join(here.root, 'scratch', 'rigger-42'));
+  assert.equal(made.main, join(here.path, 'main'));
+  assert.equal(existsSync(join(here.root, 'scratch')), false, 'the make created the scratch base');
+});
+
+/**
+ * Card 42's workspace and reviewer's judge directory in `here`, made by L1's makes, and the
+ * scratch directory `roleDispatch` hands a stand-in adapter for the maker, `engineer`, dispatched
+ * in that workspace with its make's scratch base, and for the judge, `reviewer`, dispatched in
+ * `main` with its make's. Every path is a real path.
+ */
+async function rolesOfCard42(here) {
+  const workspace = await makeWorkspace({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  const judge = await here.make();
+  const handed = [];
+  const adapter = { name: 'stand-in', invocation: async ({ scratch: given }) => { handed.push(given); return { command: '/usr/bin/true', args: [], input: Buffer.alloc(0), unset: [], env: {} }; } };
+  const answer = (role) => ({ role, agent: '.claude/agents/engineer.md', provider: 'stand-in', tier: 'standard', timeout: 60_000, instruction: '', evidence: '' });
+  await roleDispatch({ answer: answer('engineer'), cwd: workspace.path, directory: workspace.path, scratch: workspace.scratch, reach: [], env: {}, sink: here.sink, id: 'd-maker', card: 42, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answer('reviewer'), cwd: judge.main, directory: judge.path, scratch: judge.scratch, reach: [judge.head], env: {}, sink: here.sink, id: 'd-judge', card: 42, adapters: { 'stand-in': adapter } });
+  const real = (path) => realpathSync.native(path);
+  return { workspace: real(workspace.path), judge: real(judge.path), main: real(judge.main), head: real(judge.head), judges: real(join(here.root, 'judges')), maker: real(handed[0]), reviewer: real(handed[1]) };
+}
+
+/** Whether the real path `inner` is `outer` or lies inside it. */
+const inside = (inner, outer) => {
+  const from = relative(outer, inner);
+  return from === '' || (!from.startsWith('..') && !isAbsolute(from));
+};
+
+// proves R-WORK-12
+test('given two roles of card 42, engineer and reviewer, their scratch directories are siblings, and neither lies inside the other, inside card 42\'s workspace, or inside any judge\'s directory', async (t) => {
+  const here = world(t);
+  const { workspace, judges, maker, reviewer } = await rolesOfCard42(here);
+  assert.equal(dirname(maker), dirname(reviewer));
+  assert.notEqual(maker, reviewer);
+  for (const [inner, outer] of [[maker, reviewer], [reviewer, maker], [maker, workspace], [reviewer, workspace], [maker, judges], [reviewer, judges]]) {
+    assert.equal(inside(inner, outer), false, `${inner} lies inside ${outer}`);
+  }
+});
+
+test('given a maker\'s dispatch and a judge\'s dispatch of one card, neither scratch directory lies inside the card\'s workspace or inside the judge\'s main or head', async (t) => {
+  const here = world(t);
+  const { workspace, main, head, maker, reviewer } = await rolesOfCard42(here);
+  for (const scratchDirectory of [maker, reviewer]) {
+    for (const tree of [workspace, main, head]) assert.equal(inside(scratchDirectory, tree), false, `${scratchDirectory} lies inside ${tree}`);
+  }
+  // Each is a worktree, so git there names its top level, and in neither scratch directory does git find one.
+  for (const scratchDirectory of [maker, reviewer]) {
+    const found = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: scratchDirectory, encoding: 'utf8', env: { ...gitEnvironment(process.env), GIT_CEILING_DIRECTORIES: dirname(here.root) } });
+    assert.notEqual(found.status, 0, `${scratchDirectory} lies in the worktree ${found.stdout}`);
   }
 });

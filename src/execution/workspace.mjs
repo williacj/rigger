@@ -2,7 +2,7 @@
 // the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
 // at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
-import { chmodSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { EVENT_REFUSED } from '../substrate/process.mjs';
@@ -21,8 +21,16 @@ export const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';
 export const topicFor = (topic, card) => topic.replaceAll('{number}', String(card));
 
 /**
+ * The scratch base of card `card`, `<root>/scratch/<topic>`, under which `roleDispatch` makes each
+ * role's scratch directory (the architect's ruling 19 on #467). Both makes answer it beside their
+ * own paths, and neither creates it. No topic derives `scratch`, since every topic holds a digit.
+ */
+const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic, card));
+
+/**
  * Makes card `card`'s workspace fresh for an attempt that starts its work from the beginning, and
- * settles on its `path` and `branch` (`R-WORK-3`, `R-WORK-10`).
+ * settles on its `path` and `branch` (`R-WORK-3`, `R-WORK-10`), and the card's scratch base as
+ * `scratch` (`scratchBase`).
  *
  * `root` is the absolute root the verb resolved (the architect's ruling 3, P3, on #423), `topic`
  * the rule naming the workspace and its branch, `repository` the working tree of the repository
@@ -71,12 +79,13 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
   if (removed !== undefined) recorded(events, card, 'workspace.removed', { path: removed });
   await step(() => adapter.make(path, branch));
   recorded(events, card, 'workspace.made', { path, branch });
-  return { path, branch };
+  return { path, branch, scratch: scratchBase(root, topic, card) };
 }
 
 /**
  * Makes the directory judge `role` of card `card` runs in, `<root>/judges/<topic>/<role>`, and
- * settles on its `path` and the paths of the two worktrees it holds, each at a detached commit:
+ * settles on its `path`, the card's scratch base as `scratch` (`scratchBase`), and the paths of the
+ * two worktrees it holds, each at a detached commit:
  * `main` at the commit the main line held on `origin` as L1 made it, and `head` at `head`, the
  * pull request's head commit L1 was handed, fetched from `origin` (the owner's O3; ruling 1 Q3).
  *
@@ -112,7 +121,107 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
     await adapter.makeDetached(trees.head, head);
   });
   recorded(events, card, 'workspace.made', { role, path, main, head });
-  return { path, ...trees };
+  return { path, ...trees, scratch: scratchBase(root, topic, card) };
+}
+
+/**
+ * Makes role `role`'s scratch directory of card `card`, `<base>/<role>`, fresh, and settles on its
+ * path (the architect's ruling 19 on #467). `base` is the card's scratch base, which L1's makes
+ * answer (`scratchBase`), and which this makes where it does not exist yet.
+ *
+ * A directory already there is removed first, without following any symbolic link inside it, once
+ * `scratchChecked` has passed what is there. L1
+ * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
+ * the path, and a `workspace.failed` carrying them and why. Every failure rejects with
+ * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
+ * event on the way, as `makeWorkspace` does.
+ */
+export async function makeScratch({ base, role, card, sink }) {
+  const events = sink.emitter({ layer: 'L1', card });
+  const path = join(base, role);
+  const step = (work) => {
+    try {
+      return work();
+    } catch (cause) {
+      throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause);
+    }
+  };
+  const there = step(() => scratchChecked(base, path));
+  if (there) {
+    step(() => {
+      writable(path);
+      rmSync(path, { recursive: true });
+    });
+    recorded(events, card, 'workspace.removed', { role, path });
+  }
+  step(() => mkdirSync(path, { recursive: true }));
+  recorded(events, card, 'workspace.made', { role, path });
+  return path;
+}
+
+/**
+ * Checks what is at a role's scratch directory, `path`, under the scratch base `base`, changing
+ * nothing, and hands back whether a directory is there to replace. The worktree root's `scratch`
+ * and the base must each be a directory, not a symbolic link, where they exist, so nothing L1
+ * removes or makes lies elsewhere. At `path` must be nothing, or a directory, not a symbolic link,
+ * whose real path resolves and which holds no `.git` at any depth, read without following a link:
+ * a worktree registered there or inside it, or any other checkout, is not L1's to remove. Anything
+ * else fails naming the path, as does a path L1 cannot read, since L1 cannot tell what is there.
+ */
+function scratchChecked(base, path) {
+  for (const each of [dirname(base), base]) {
+    const there = lstatOrAbsent(each);
+    if (there === undefined) return false;
+    if (there.isSymbolicLink()) throw new Error(`${each} is a symbolic link, so L1 leaves it as it is`);
+    if (!there.isDirectory()) throw new Error(`${each} is not a directory, so L1 leaves it as it is`);
+  }
+  const there = lstatOrAbsent(path);
+  if (there === undefined) return false;
+  if (there.isSymbolicLink()) throw new Error(`${path} is a symbolic link, so L1 leaves it as it is`);
+  if (!there.isDirectory()) throw new Error(`${path} is not a directory, so L1 leaves it as it is`);
+  try {
+    realpathSync.native(path);
+  } catch (error) {
+    throw new Error(`${path} cannot be resolved: ${error.message}`, { cause: error });
+  }
+  const checkout = checkoutIn(path);
+  if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, which may be a worktree of the repository, so L1 leaves it as it is`);
+  return true;
+}
+
+/** What `lstat` reads at `path`, or nothing where nothing is there; anything else unreadable throws naming it. */
+function lstatOrAbsent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw new Error(`${path} cannot be read: ${error.message}`, { cause: error });
+  }
+}
+
+/**
+ * The first `.git` under the directory `path`, at any depth, or nothing where it holds none. No
+ * symbolic link is followed. A directory that cannot be read is made owner-readable and
+ * -searchable first, as `writable` makes one before it is removed.
+ */
+function checkoutIn(path) {
+  let names;
+  try {
+    names = readdirSync(path, { withFileTypes: true });
+  } catch (error) {
+    if (error.code !== 'EACCES') throw error;
+    chmodSync(path, lstatSync(path).mode | 0o700);
+    names = readdirSync(path, { withFileTypes: true });
+  }
+  for (const entry of names) {
+    const at = join(path, entry.name);
+    if (entry.name === '.git') return at;
+    if (entry.isDirectory()) {
+      const found = checkoutIn(at);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 /**

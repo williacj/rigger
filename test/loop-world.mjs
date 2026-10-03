@@ -307,7 +307,9 @@ export const oneOpenFromEveryLine = async () => ({ open: [{ number: 1, head: OPE
 
 /**
  * A workspace stand-in that makes the directory it answers, `rigger-<card>` under `under`, and
- * answers it as L1's workspace handle does, recording in its `made` each card and path it made.
+ * answers it as L1's workspace handle does, with the card's scratch base `scratch/rigger-<card>`
+ * under `under` as `scratch`, which it does not make, recording in its `made` each card and path
+ * it made.
  */
 export function makingWorkspaces(under) {
   const made = [];
@@ -315,7 +317,7 @@ export function makingWorkspaces(under) {
     const path = join(under, `rigger-${card}`);
     await mkdir(path, { recursive: true });
     made.push({ card, path });
-    return { path };
+    return { path, scratch: join(under, 'scratch', `rigger-${card}`) };
   };
   return Object.assign(handle, { made });
 }

@@ -1313,19 +1313,26 @@ const sweptEvents = (directory, { kills, unread, unnamed }, killed) => [
   ...(unread === undefined ? [] : [['directory.unread', { directory, census: unread, ...(unnamed.length > 0 ? { killed: unnamed } : {}) }]]),
 ];
 
-/**
- * The `L0` events for the census of the dispatch's directory `call` holds, once its group is empty,
- * each kill named as a survivor's; none where the call is not a dispatch's.
- */
-const censused = async (call) => (call.directory === undefined ? [] : swept(call.directory, call, 'survivor.killed'));
+/** The directories `call` sweeps: the dispatch's directory and its scratch directory, each where it holds one. */
+const sweptBy = (call) => [call.directory, call.scratch].filter((directory) => directory !== undefined);
 
 /**
- * `containNow` for the exit cleanup, followed by the census of the dispatch's directory `call`
- * holds, where it holds one, whose kills are recorded after the group's.
+ * The `L0` events for the census of each directory `call` sweeps, once its group is empty, each
+ * kill named as a survivor's; none where the call is not a dispatch's.
+ */
+async function censused(call) {
+  const events = [];
+  for (const directory of sweptBy(call)) events.push(...(await swept(directory, call, 'survivor.killed')));
+  return events;
+}
+
+/**
+ * `containNow` for the exit cleanup, followed by the census of each directory `call` sweeps, whose
+ * kills are recorded after the group's.
  */
 function endedNow(group, call) {
   const look = containNow(group, call);
-  if (call.directory !== undefined) look.kills = [...look.kills, ...sweptNow(call.directory, call, 'survivor.killed')];
+  for (const directory of sweptBy(call)) look.kills = [...look.kills, ...sweptNow(directory, call, 'survivor.killed')];
   return look;
 }
 
@@ -1382,7 +1389,9 @@ function refused(unrecorded, result, ending = '') {
  * call is then a dispatch's (`ARCHITECTURE.md`, "Failure model"). Once L0 has emptied the group,
  * it kills every process of Rigger's own user working in that directory, by its real path, and
  * records each as a survivor (`swept`). A directory that cannot be resolved, or whose real path the
- * census cannot read back (`illegible`), starts nothing, as a command that never started. `lsof`
+ * census cannot read back (`illegible`), starts nothing, as a command that never started. `scratch`,
+ * where the caller gives one, is the dispatch's scratch directory, which the census sweeps after
+ * the dispatch's directory, on the same terms (the architect's ruling 20 on #467). `lsof`
  * stands in for `LSOF` where the caller gives one. A call given no directory has its group as its
  * whole containment.
  *
@@ -1401,7 +1410,7 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -1417,6 +1426,8 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   // alive, so a command given one runs only where the census can read it.
   const { real, why } = directory === undefined ? {} : placed(directory);
   if (why !== undefined) throw notStarted(command, why);
+  const { real: scratchReal, why: scratchWhy } = scratch === undefined ? {} : placed(scratch);
+  if (scratchWhy !== undefined) throw notStarted(command, scratchWhy);
   install();
   const stdin = input === undefined ? 'ignore' : 'pipe';
   const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }));
@@ -1430,7 +1441,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     child.stdin.end(input);
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, ps, lsof, readTimeout, onExit, directory: real, child, events: [], contained: false };
+  const call = { emitter, ps, lsof, readTimeout, onExit, directory: real, scratch: scratchReal, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
   // more of it.
@@ -1500,14 +1511,19 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * group. It follows only where the directory at that path is still the one L1 recorded, by the
  * `identity` it recorded (`unconfirmed`). Where it is not, or that cannot be told, it sweeps nothing
  * there and records a `directory.skipped` event naming the path and why, and the group's kill
- * stands as it is (the architect's ruling 7 on #467).
+ * stands as it is (the architect's ruling 7 on #467). Where L1 recorded the dispatch's `scratch`
+ * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
  */
-export async function killRecordedGroup({ group, started, emitter, directory, identity, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT }) {
+export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT }) {
   const starts = await startsIn(ps, group, readTimeout);
   const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout }, 'recorded.killed') : [];
-  const replaced = directory === undefined ? undefined : unconfirmed(directory, identity);
-  if (replaced !== undefined) kills.push(['directory.skipped', { directory, reason: replaced }]);
-  else if (directory !== undefined) kills.push(...(await swept(directory, { ps, lsof, readTimeout }, 'recorded.killed')));
+  const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
+  for (const [each, held] of recordedDirectories) {
+    if (each === undefined) continue;
+    const replaced = unconfirmed(each, held);
+    if (replaced !== undefined) kills.push(['directory.skipped', { directory: each, reason: replaced }]);
+    else kills.push(...(await swept(each, { ps, lsof, readTimeout }, 'recorded.killed')));
+  }
   const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
 }
