@@ -22,6 +22,10 @@ import { assertUntouched, tailIn } from './process-fixtures.mjs';
 import { chmodSync, rmSync, statSync } from 'node:fs';
 import { warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { standInAgent } from './stub-claude.mjs';
+
+/** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
+const agent = standInAgent();
 import { writeSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -160,7 +164,7 @@ async function killedMidDispatch(t, world, command, { ps, workspace } = {}) {
  * `ran`, which settles once it has exited on its status and what it printed.
  */
 function startRestart(world, verb) {
-  const path = [join(world.directory, 'first'), join(world.directory, 'fake'), process.env.PATH].join(delimiter);
+  const path = [join(world.directory, 'first'), join(world.directory, 'fake'), agent.dir, process.env.PATH].join(delimiter);
   const child = spawn(process.execPath, [bin, verb], { cwd: world.repository, env: { ...process.env, PATH: path }, stdio: ['ignore', 'pipe', 'pipe'] });
   world.started.push(child);
   let stdout = '';
@@ -200,16 +204,18 @@ function assertKillsFirst(world, pids) {
 }
 
 /**
- * Asserts that the restart through `verb` dispatched no maker of its own, and printed for the card
- * it claimed exactly what `once` and `run` print in M3: its workspace, and that no maker runs
- * before M4. The world's kinds list no step, so no dispatch of the restart's arises at all.
+ * Asserts that the restart through `verb` dispatched exactly one maker of its own, and printed for
+ * the card it claimed exactly its maker's outcome and its workspace. The world's kinds list no step,
+ * so the maker's is the restart's one dispatch.
  */
 function assertNoMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
-  assert.deepEqual(restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed'), []);
+  const own = restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed');
+  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L1 dispatch.start', 'L1 dispatch.end'], JSON.stringify(own));
+  assert.equal(new Set(own.map(({ dispatch }) => dispatch)).size, 1, JSON.stringify(own));
   assert.equal(ran.stdout, '');
   const workspace = join(realpathSync(world.directory), 'widgets-worktrees', 'rigger-10');
-  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}; no maker runs before M4, so it stopped at its workspace, ${workspace}\n`);
+  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}; its maker exited 0 and opened no pull request from rigger-10, in its workspace, ${workspace}\n`);
 }
 
 /**
@@ -233,7 +239,7 @@ async function neitherAliveAtFirstRead(t, verb) {
 /**
  * The same restart through `verb`: asserts that the stream holds each kill under the killed
  * dispatch's id and card, every one before the restart's first L3 event, and that `verb`
- * dispatched no maker of its own and printed what M3's verb prints.
+ * dispatched exactly one maker of its own and printed its outcome.
  */
 async function killsRecordedFirst(t, verb) {
   const world = consumerIn(t, [card(10)]);
@@ -252,10 +258,10 @@ test('given the engine SIGKILLed after a dispatched command and its child have s
 test('given the engine SIGKILLed after a dispatched command and its child have signalled they are running, and while both run, rigger run started afterwards leaves neither alive when its first board read reaches the forge stand-in', SETTLES_WITHIN, (t) => neitherAliveAtFirstRead(t, 'run'));
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger once, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and once dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'once'));
+test('after that restart through rigger once, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and once dispatched one maker of its own, and printed its outcome', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'once'));
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
+test('after that restart through rigger run, the stream holds each kill under the killed dispatch\'s id and card, every one before the restart\'s first L3 event, and run dispatched one maker of its own, and printed its outcome', SETTLES_WITHIN, (t) => killsRecordedFirst(t, 'run'));
 
 // proves R-STATE-17, R-STATE-10
 test('given the engine SIGKILLed while a dispatch runs with a process that left its group, working under the dispatch\'s directory, rigger once started afterwards leaves that process not alive when its first board read reaches the forge stand-in, and records its kill first', SETTLES_WITHIN, async (t) => {
@@ -288,8 +294,9 @@ async function sweepSkipped(world, path, reason, pid) {
   assert.match(atFirstCall(world).call, /^call api graphql /, `the start did not reach its first board read: ${ran.stderr}`);
   // A dispatch the dead engine started has its start in the stream; an entry the test wrote is
   // dispatch `d-dead` of card 10 (`entryFor`), and the stream holds nothing before the restart.
+  // The restart wrote the stream's last event, and its own maker's start is not the dead engine's.
   const events = readEvents(world.state);
-  const start = events.find((event) => event.event === 'dispatch.start');
+  const start = events.find((event) => event.event === 'dispatch.start' && event.run !== events.at(-1).run);
   const { dispatch, card } = start ?? { dispatch: 'd-dead', card: 10 };
   const restarted = events.filter((event) => event.run !== start?.run);
   const skipped = restarted.filter((event) => event.event === 'directory.skipped');
@@ -504,7 +511,7 @@ test('given the engine\'s record of its dispatch\'s group held back until after 
 });
 
 // proves R-STATE-10, R-STATE-12
-test('after that restart through rigger once, the stream holds the child\'s kill under the killed dispatch\'s id and card, before the restart\'s first L3 event, and once dispatched no maker of its own, and printed what M3\'s verb prints', SETTLES_WITHIN, async (t) => {
+test('after that restart through rigger once, the stream holds the child\'s kill under the killed dispatch\'s id and card, before the restart\'s first L3 event, and once dispatched one maker of its own, and printed its outcome', SETTLES_WITHIN, async (t) => {
   const world = consumerIn(t, [card(10)]);
   const pids = await leaderGoneAfterDeath(t, world);
 

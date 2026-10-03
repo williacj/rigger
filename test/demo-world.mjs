@@ -1,6 +1,7 @@
 // ABOUTME: Builds the world `docs/demo.tape` records in: this checkout installed from its tarball
 // outside it, a consumer repository outside it whose config names a fake board, and a bin
-// directory on which the fake `gh` is the only `gh`. Test-only, and never named from src/.
+// directory on which the fake `gh` is the only `gh` and the stand-in agent the only `claude`.
+// Test-only, and never named from src/.
 
 import { symlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import template from '../templates/rigger.config.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { installFromTarball } from './installed-rigger.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
 
 /** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
 const REPO = 'acme/widgets';
@@ -36,7 +38,8 @@ const BOARD = {
 
 /**
  * The world, built under `into`, a directory outside the checkout at `root`: `bin`, the whole
- * PATH the tape runs under, holding node, git, the installed `rigger` and the fake `gh`; and
+ * PATH the tape runs under, holding node, git, the installed `rigger`, the fake `gh` and the
+ * stand-in agent as `claude`, which runs under node by its absolute path and exits 0; and
  * `target`, the consumer's repository, with a local bare `origin` beside it, holding the
  * template's config with its repository and board filled in, and one provisioning step, whose
  * `run` is `true`, which the demo card's kind lists and which reaches no network.
@@ -45,6 +48,7 @@ export function demoWorld(root, into) {
   const { rigger, path: bin } = installFromTarball(root, into);
   symlinkSync(rigger, join(bin, 'rigger'));
   installFakeGh(bin, { repo: REPO, project: PROJECT, board: BOARD });
+  installStandInAgent(bin);
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? ['ready'] : [] }]));
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds, provisioning: { ready: { run: 'true', required: true } } };
   const target = withOrigin(repositoryAt(join(into, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(into, 'origin.git'));

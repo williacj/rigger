@@ -17,6 +17,11 @@ import {
 import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { standInAgent } from './stub-claude.mjs';
+import { NOT_STARTED } from '../src/substrate/process.mjs';
+
+/** The stand-in agent every maker in this file runs as, first on the PATH a loop is handed. */
+const agent = standInAgent();
 
 // A bound on the test that waits on a real step, so one whose condition never holds fails here
 // rather than holding the suite.
@@ -66,7 +71,7 @@ test('L3 awaits L2\'s facts call between its board read and its claims: while th
     await held;
     return (card) => nextAction(card, KINDS);
   };
-  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS), facts, l2: built.l2, dispatch: built.dispatches.dispatch, sink: { emitter: () => ({ emit: () => {} }) }, kill: async () => {}, workspace: async () => ({ path: '/nowhere' }), state: built.directory });
+  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS), facts, l2: built.l2, dispatch: built.dispatches.dispatch, sink: { emitter: () => ({ emit: () => {} }) }, kill: async () => {}, workspace: async () => ({ path: '/nowhere' }), state: built.directory, environment: process.env });
 
   const pulled = l3.pull();
   await waitFor(() => read.length === 1);
@@ -190,7 +195,9 @@ test('given a Review card the forge holds nothing for, L2 moves it from review t
 
 /**
  * A pull over a fake board holding `cards`, through L3's real loop and L2's real next action, with
- * `roles` declared, through a facts call over a forge holding nothing. Answers the board, the
+ * `roles` declared, through a facts call over a forge holding nothing. A pulled card's maker is
+ * dispatched through L1 to this file's stand-in agent, first on the PATH L3 hands it, and since
+ * the workspace stand-in makes no directory, the maker does not start. Answers the board, the
  * recorded events, and the cards a workspace was asked for.
  */
 async function pullWithRoles(cards, roles) {
@@ -200,7 +207,7 @@ async function pullWithRoles(cards, roles) {
   const settings = { ...config, concurrency: 3 };
   const decide = (card, outcomes, attempt) => nextAction(card, KINDS, undefined, { columns: COLUMNS, roles, provisioning: {}, outcomes, sink, ...attempt });
   const workspace = recordingWorkspaces();
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, state: directory });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } });
   const reached = await built.pull();
   return { fake, reached, events: () => readEvents(directory), asked: workspace.asked };
 }
@@ -212,7 +219,7 @@ test('given a card carrying two labels the maker role\'s labels maps to two diff
 
   const { fake, reached, events, asked } = await pullWithRoles([conflicted, readyCard(22)], roles);
 
-  assert.deepEqual(reached.map(({ card }) => card), [22]);
+  assert.deepEqual(reached.map(({ card, outcome }) => ({ card, status: outcome.status, code: outcome.reason?.code })), [{ card: 22, status: 'rejected', code: NOT_STARTED }]);
   const moved = fake.writes().map(({ args: [id] }) => id);
   assert.ok(!moved.includes((await fake.operations.readItems()).find((item) => item.number === 21).id), JSON.stringify(fake.writes()));
   assert.deepEqual(events().filter((event) => event.layer === 'L3' && event.event === 'pull').map((event) => event.card), [22]);

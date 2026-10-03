@@ -46,7 +46,8 @@ jobs:
     # Regenerates the demo GIF from docs/demo.tape, which records the installed rigger claiming a
     # card in a world test/demo-world.sh builds. The tape leaves its final screen as text beside
     # the GIF, and the checks below read the claim, the message and the non-zero exit from it:
-    # `once` exits non-zero naming the workspace it made and provisioned: no maker runs before M4.
+    # `once` dispatches the card's maker, a stand-in that opens no pull request, and exits non-zero
+    # naming that outcome and the workspace it made and provisioned.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -60,7 +61,7 @@ jobs:
       - run: vhs docs/demo.tape
       - run: test -s docs/demo.gif
       # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
-      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; no maker runs before M4, so it stopped at its workspace, ' docs/demo.txt"
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; its maker exited 0 and opened no pull request from rigger-[0-9]+, in its workspace, ' docs/demo.txt"
       # The status is the line after the last `echo exit $?` the tape typed, which comes after
       # anything the verb printed, so no line of its output can stand in for it.
       - run: awk '$0 == "> echo exit $?" { getline status } END { exit status !~ /^exit [1-9][0-9]*$/ }' docs/demo.txt

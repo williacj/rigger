@@ -23,6 +23,7 @@ import { installFromTarball as installRigger } from './installed-rigger.mjs';
 import { gitCalls, gitRecording, holding } from './process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -270,6 +271,8 @@ test('the installed rigger once, run against a fixture repository and a fake boa
   };
   const fixture = withOrigin(repositoryAt(join(directory, 'fixture'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   mkdirSync(join(directory, 'fake'));
+  // The stand-in agent the maker runs as, beside the fake `gh`, so the narrow PATH finds it.
+  installStandInAgent(join(directory, 'fake'));
   installFakeGh(join(directory, 'fake'), {
     repo: 'acme/widgets',
     project: 3,
@@ -283,7 +286,7 @@ test('the installed rigger once, run against a fixture repository and a fake boa
   const ran = spawnSync(rigger, ['once'], { cwd: fixture, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${join(directory, 'fake')}:${path}` } });
 
   const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
-  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; .*, so it stopped at its workspace, (\/.*)$/m)?.[1];
+  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; its maker .*, in its workspace, (\/.*)$/m)?.[1];
   assert.ok(workspace && existsSync(workspace), said);
   const outside = (tree) => !`${realpathSync(workspace)}/`.startsWith(`${realpathSync(tree)}/`);
   assert.ok(outside(fixture), `${workspace} lies inside the fixture's checkout, ${fixture}`);

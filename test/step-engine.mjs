@@ -18,7 +18,8 @@ import { factsCall } from '../src/workflow/facts.mjs';
  * Fires one pull of L3's loop over the board the config in `repository` names, recording to that
  * repository's state directory `.rigger/`, as `rigger once` records there. Every kind of that
  * config lists one step, `hold`, which runs `command`. L3 dispatches it through L1 under an id L3
- * allocates, in the workspace the stand-in answers, `directory`, and injects no maker. The start's
+ * allocates, in the workspace the stand-in answers, `directory`, and injects no maker: the maker
+ * would go through L1, and the engine is killed mid-step, so it is never reached. The start's
  * kill L3 is handed is L1's, as a verb's is.
  */
 export async function engine({ directory, repository, command }) {
@@ -32,5 +33,5 @@ export async function engine({ directory, repository, command }) {
   const provisioning = { hold: { run: command, required: true } };
   const decide = (card, outcomes) => nextAction(card, kinds, config.epicLabel, { provisioning, outcomes, sink });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), state, environment: process.env }).pull();
 }

@@ -1,6 +1,6 @@
 // ABOUTME: Tests `rigger run`: the real bin run in a consumer's repository with the fake `gh` first
 // on PATH, claiming through L3's single pull until the slots are full, making and provisioning each
-// claimed card's workspace, dispatching no maker, saying so, and refusing its own source tree.
+// claimed card's workspace, dispatching its maker, printing its outcome, and refusing its own source tree.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -187,14 +187,14 @@ test('run over a board with no pullable card exits 0', () => {
   assert.equal(ran.code, 0, ran.err);
 });
 
-test('run names each claimed card and its workspace, and says no maker runs before M4', () => {
+test('run names each claimed card, its workspace and its maker\'s outcome', () => {
   const ran = run(TWO_READY, { concurrency: 3 });
 
   for (const claimed of [10, 20]) {
     const line = ran.err.split('\n').find((held) => new RegExp(`#${claimed}\\b`).test(held));
     assert.ok(line, ran.err);
     assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', `rigger-${claimed}`)), line);
-    assert.match(line, /no maker runs before M4/, ran.err);
+    assert.match(line, new RegExp(`; its maker exited 0 and opened no pull request from rigger-${claimed}, in its workspace, `), ran.err);
   }
 });
 
@@ -216,14 +216,14 @@ test('run, given a ready card L2 refuses, names the card and the reason', () => 
   assert.match(line, /missing acceptance/, ran.err);
 });
 
-test('run dispatches each card\'s selected steps and no maker: the agent CLI is never run, and every L1 dispatch event names a step', async () => {
+test('run dispatches each card\'s selected steps and its maker: the agent CLI runs once per claimed card, and every L1 dispatch event is a step\'s or the maker\'s', async () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.err);
-  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual(ran.agentRuns().map((args) => /\/rigger-(\d+)\/\.claude\/agents\/engineer\.md$/.exec(args)?.[1]).sort(), ['10', '20', '30']);
   const events = eventsOf(ran);
   assert.ok(events.length > 0, 'the run recorded events');
-  assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && typeof named.step === 'string')), []);
+  assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && (typeof named.step === 'string' || (named.role === 'engineer' && named.tier === 'standard')))), []);
 });
 
 test('run never holds more claims than N, as derived from the events it wrote', () => {
@@ -272,14 +272,15 @@ test('run, given N 3, no ready card, and an unclaimed coding card and an unclaim
   assert.match(ran.err, /claimed #50\b/, ran.err);
   const events = eventsOf(ran);
   for (const redo of [50, 60]) assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === redo), JSON.stringify(events));
-  assert.deepEqual(events.filter((event) => event.layer === 'L2').map(({ card, from, to }) => ({ card, from, to })), [{ card: 60, from: 'review', to: 'coding' }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ card, from, to }) => ({ card, from, to })), [{ card: 60, from: 'review', to: 'coding' }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })).sort((one, other) => one.card - other.card), [{ event: 'review.withheld', card: 50 }, { event: 'review.withheld', card: 60 }]);
 });
 
-test('after run exits, the state directory holds nothing but the event stream', () => {
+test('after run exits, the state directory holds the event stream and L1\'s record of process groups', () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')), ['events.jsonl']);
+  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json']);
 });
 
 test('given a board with no ready card, a second run claims the cards the first left in the coding column', async () => {
@@ -389,11 +390,12 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
-test('--help\'s line for run says it dispatches no maker before M4', () => {
+test('--help\'s line for run says it claims cards, provisions their workspaces and dispatches their makers', () => {
   const shown = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });
 
   assert.equal(shown.status, 0, shown.stderr);
   const line = shown.stdout.split('\n').find((held) => /^\s*run\b/.test(held));
   assert.ok(line, shown.stdout);
-  assert.match(line, /dispatches no maker before M4/, line);
+  assert.match(line, /claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit/, line);
+  assert.doesNotMatch(line, /before M4/, line);
 });

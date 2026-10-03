@@ -81,7 +81,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   const everyStartMade = () => releasesRecorded() === returned.size && held.size === (entry === 'run'
     ? Math.min(concurrency, cards.length - returned.size)
     : Math.min(concurrency, cards.length) - returned.size);
-  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory })[entry]();
+  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, dispatch, sink, kill: async () => {}, workspace: async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }), state: directory, environment: process.env })[entry]();
   await waitFor(everyStartMade);
   for (const [at, numbers] of releases) {
     minute = at;

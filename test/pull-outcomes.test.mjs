@@ -1,5 +1,5 @@
 // ABOUTME: Tests that L3's single pull reports every claimed card's outcome: where one card fails
-// before the maker, the cards whose workspaces were made are still named, each with its path.
+// before the maker, the cards whose workspaces were made are still named, each with its maker's outcome.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +15,10 @@ import { COLUMNS, KINDS, boardOf, cardIn, handleOn, makingWorkspaces } from './l
 import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { standInAgent } from './stub-claude.mjs';
+
+/** The stand-in agent every maker in this file runs as, first on the PATH the loop is handed. */
+const agent = standInAgent();
 
 // A bound on a test that waits on real commands, so one whose pull never settles fails here
 // rather than holding the suite.
@@ -28,7 +32,8 @@ const PROVISIONING = {
 
 /**
  * A pull over ready cards #10, #20 and #30 at N 3, through L3's real loop, L2's real next action
- * and column changes, and L1's real dispatch, with no maker injected. #20 alone carries
+ * and column changes, and L1's real dispatch, with no maker injected: each maker runs through L1 as
+ * this file's stand-in agent, exiting 0, and the forge holds no pull request. #20 alone carries
  * `area:fails`, so its required step exits non-zero on both attempts, while #10's and #30's
  * workspaces, made under `workspaces` in a scratch directory, pass their one step. Answers the
  * pull's failure, the board, the workspace directory and the recorded events.
@@ -41,26 +46,27 @@ async function threeCards(t) {
   const failing = { ...cardIn(20, COLUMNS.ready), labels: ['type:change', 'area:fails'] };
   const fake = boardOf([30, 10, failing]);
   const kinds = { change: { ...KINDS.change, provisioning: ['ready', 'fails'] } };
-  const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, provisioning: PROVISIONING, outcomes, sink, ...attempt });
-  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
+  const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: config.roles, provisioning: PROVISIONING, outcomes, sink, ...attempt });
+  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, pullRequests: async () => ({ open: [], merged: [] }) });
   const workspaces = join(directory, 'workspaces');
   const built = loop({
     config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), state,
+    environment: { ...process.env, PATH: agent.first() },
   });
   const failure = await built.pull().then(() => assert.fail('the pull settled, though #20 failed'), (thrown) => thrown);
   return { failure, fake, workspaces, events: () => readEvents(state) };
 }
 
-test('given a pull claiming #10, #20 and #30, where #20\'s required step exits non-zero on both attempts, what the pull reports names #10 with its workspace\'s path', SETTLES_WITHIN, async (t) => {
+test('given a pull claiming #10, #20 and #30, where #20\'s required step exits non-zero on both attempts, what the pull reports names #10 with its workspace\'s path and its maker\'s outcome', SETTLES_WITHIN, async (t) => {
   const { failure, workspaces } = await threeCards(t);
 
-  assert.ok(failure.reached?.some((each) => each.card === 10 && each.workspace === join(workspaces, 'rigger-10')), JSON.stringify(failure.reached));
+  assert.ok(failure.reached?.some((each) => each.card === 10 && each.workspace === join(workspaces, 'rigger-10') && each.outcome.value?.exit === 0), JSON.stringify(failure.reached));
 });
 
-test('in that pull, what the pull reports names #30 with its workspace\'s path', SETTLES_WITHIN, async (t) => {
+test('in that pull, what the pull reports names #30 with its workspace\'s path and its maker\'s outcome', SETTLES_WITHIN, async (t) => {
   const { failure, workspaces } = await threeCards(t);
 
-  assert.ok(failure.reached?.some((each) => each.card === 30 && each.workspace === join(workspaces, 'rigger-30')), JSON.stringify(failure.reached));
+  assert.ok(failure.reached?.some((each) => each.card === 30 && each.workspace === join(workspaces, 'rigger-30') && each.outcome.value?.exit === 0), JSON.stringify(failure.reached));
 });
 
 /** Every failure `failure` holds, an AggregateError opened to the failures inside it, however deep. */
