@@ -111,3 +111,20 @@ test('given a card carrying two labels that select different tiers for its maker
   assert.equal(refusalOf(planned.text, 50), refusalOf(claimed.text, 50), 'plan and once refuse the card in the same words');
   assert.deepEqual(movesIn(claimed.model), []);
 });
+
+// proves R-LOOP-13, R-WORK-19
+test('given a second card whose labels select two tiers for its maker role and whose line of work the fake gh holds, plan and once each name its role, both labels and its line of work', async () => {
+  const items = [card(50, 'Ready', { labels: ['tier:high', 'tier:low'] }), card(60, 'Ready', { labels: ['tier:high', 'tier:low'] })];
+  const seed = { branches: ['rigger-60'] };
+
+  const planned = await ran(plan, items, seed);
+  const claimed = await ran(once, items, seed);
+
+  for (const result of [planned, claimed]) {
+    const refused = refusalOf(result.text, 60);
+    assert.ok(refused, result.text);
+    for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-60\b/]) assert.match(refused, named);
+  }
+  assert.equal(refusalOf(planned.text, 60), refusalOf(claimed.text, 60), 'plan and once refuse the card in the same words');
+  assert.deepEqual(movesIn(claimed.model), []);
+});

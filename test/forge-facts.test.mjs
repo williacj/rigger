@@ -165,3 +165,16 @@ test('given a card no kind selects, L2 ignores it whatever the forge holds, and 
 
   assert.deepEqual(next, { action: 'ignore' });
 });
+
+// proves R-LOOP-13, R-WORK-19
+test('given a Ready card whose line of work the forge holds and whose labels select two tiers for its maker role, L2\'s one refusal names the role, both labels and its line of work', async () => {
+  const roles = { ...config.roles, engineer: { ...config.roles.engineer, labels: { 'tier:high': 'high', 'tier:low': 'standard' } } };
+  const conflicted = { ...cardIn(14, columns.ready), labels: ['type:change', 'tier:high', 'tier:low'] };
+  const decide = (card) => nextAction(card, KINDS, undefined, { columns, roles });
+
+  const next = (await factsCall({ config, reads: readsOver({ branches: ['rigger-14'] }).reads, decide })([conflicted]))(conflicted);
+
+  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.equal(next.card, 14);
+  for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-14\b/]) assert.match(next.reason, named);
+});

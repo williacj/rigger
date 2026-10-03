@@ -112,8 +112,8 @@ export function columnChanges({
      * owner's ruling on #220, refined by O5 on #467). Anything but zero leaves the card in coding,
      * and the forge is not read. Zero has L2 read once the pull requests from the card's line of
      * work: with exactly one open, the card moves to review (`R-WORK-18`), and L2 answers the
-     * facts it read, `{ line, open, merged }`, for L3 to hand on unread (the architect's ruling 3,
-     * AQ4). With none open, or more than one, the card stays in coding, and L2 records why and
+     * facts it read, `{ line, open, merged }`, to its caller; L3's handing them on unread is
+     * #488's (the architect's ruling 3, AQ4). With none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */

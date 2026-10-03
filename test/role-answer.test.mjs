@@ -120,3 +120,14 @@ test('L2\'s maker prompt tells the maker never to switch its workspace off its l
 test('L2\'s maker prompt tells the maker to exit non-zero, naming why, where it cannot finish the work', () => {
   assert.match(promptOf(card(48)), /where you cannot finish the work, exit non-zero, naming why/i);
 });
+
+// proves R-LOOP-13
+test('given a card carrying two labels selecting different tiers for its maker role, whose acceptance the form check refuses, L2\'s one refusal names the role, both labels and the form check\'s reason', () => {
+  const unformed = { ...card(13, ['tier:low', 'tier:high']), body: '## Notes\n\nNo acceptance here.\n' };
+
+  const next = nextAction(unformed, KINDS, undefined, { roles: ROLES });
+
+  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.equal(next.card, 13);
+  for (const named of [/\bengineer\b/, /tier:low/, /tier:high/, /missing acceptance/]) assert.match(next.reason, named);
+});

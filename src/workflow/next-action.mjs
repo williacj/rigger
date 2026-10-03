@@ -36,7 +36,9 @@ const selecting = (card, kinds) =>
  * says, once a kind selects it and before the form check: refused for what the forge holds of its
  * line of work, ignored, or left to be dispatched. A card handed on with none is answered as if the
  * forge held nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
- * labels select two tiers for its kind's maker (`R-LOOP-13`), naming the role and each label.
+ * labels select two tiers for its kind's maker (`R-LOOP-13`), naming the role and each label, and
+ * where it would also refuse the card for what the forge holds or for its acceptance's form, the
+ * one refusal names that reason too.
  *
  * A card in the `coding` or `review` column of `columns`, the declared columns by key, is a redo,
  * and one `fresh(card)` answers true for is `{ action: 'ignore' }`: a fresh verdict covers it, so
@@ -65,12 +67,16 @@ export function nextAction(card, kinds, epicLabel, { columns, fresh, roles, topi
   }
   const [kind] = names;
   const held = card.forge === undefined ? undefined : fromTheForge(card);
-  if (held !== undefined) return held;
-  const form = checkAcceptanceForm(card);
-  if (!form.admitted) return { action: 'refuse', card: form.card, reason: form.reason };
+  if (held?.action === 'ignore') return held;
+  // The one refusal L2 would give without the tier, what the forge holds before the acceptance's form.
+  const form = held === undefined ? checkAcceptanceForm(card) : undefined;
+  const other = held?.reason ?? (form.admitted ? undefined : form.reason);
   const maker = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, maker, roles[maker]);
-  if (tier?.conflict) return { action: 'refuse', card: card.number, reason: tier.conflict };
+  // Neither reason replaces the other, so a tier conflict beside another refusal names both
+  // (`R-LOOP-13`, `R-WORK-19`; the amended acceptance of #484).
+  const reasons = [tier?.conflict, other].filter((reason) => reason !== undefined);
+  if (reasons.length > 0) return { action: 'refuse', card: card.number, reason: reasons.join('; and ') };
   if (provisioning === undefined) return { action: 'dispatch', kind };
   return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning, outcomes, sink, attempt, workspace });
 }
