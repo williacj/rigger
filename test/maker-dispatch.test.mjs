@@ -147,13 +147,15 @@ test('L3 hands L1 what roleDispatch answered for L2\'s role answer, in the card\
   const runs = built.agent.runs();
   assert.equal(runs.length, 1, JSON.stringify(runs));
   const [run] = runs;
-  assert.equal(run.cwd, realpathSync(built.workspace(1)));
+  assert.equal(realpathSync.native(run.cwd), realpathSync.native(built.workspace(1)));
   assert.match(run.input, /^Rigger dispatched this session, unattended, as the maker for card #1\./);
   assert.match(run.input, /Card #1: Add a verb/);
   assert.equal(run.role, 'engineer');
   assert.deepEqual(run.env, { RIGGER_STAND_IN_MARK: MARK });
+  // L1 records the workspace as it was handed it, so the two are compared as real paths.
   const start = named(built.events(), 'L1', 'dispatch.start').find((each) => each.command === 'claude');
-  assert.equal(start?.workspace, realpathSync(built.workspace(1)), JSON.stringify(built.events()));
+  assert.ok(start, JSON.stringify(built.events()));
+  assert.equal(realpathSync.native(start.workspace), realpathSync.native(built.workspace(1)), JSON.stringify(start));
 });
 
 /** Whether `context` and `event` are L3's start of a role's dispatch for card `number`. */

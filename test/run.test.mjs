@@ -16,6 +16,12 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { gitIn } from './git-repository.mjs';
+import { standInAgent } from './stub-claude.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+
+// A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -398,4 +404,64 @@ test('--help\'s line for run says it claims cards, provisions their workspaces a
   assert.ok(line, shown.stdout);
   assert.match(line, /claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit/, line);
   assert.doesNotMatch(line, /before M4/, line);
+});
+
+// The maker, dispatched through L1 to the stand-in agent, for each outcome form `run` prints (#486).
+
+/**
+ * Runs the real bin's `run` in a consumer's repository holding `settings` and `files`, its main
+ * line on `main`, with a local bare `origin` beside it, the stand-in agent `agent` first on PATH,
+ * then a fake `gh` holding `board` over that `origin`. Answers what `run` printed and exited, the
+ * consumer, and the fake.
+ */
+function runWithAgent(agent, board, { settings = config(3), files = {} } = {}) {
+  const directory = temporaryDirectory('rigger-run-maker-');
+  const consumer = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`, ...files });
+  gitIn(consumer, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  withOrigin(consumer, origin);
+  const dir = temporaryDirectory('rigger-run-maker-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
+  const ran = spawnRun(consumer, { ...process.env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
+  return { ...ran, consumer, fake };
+}
+
+/** The line `run` prints for card `number` claimed from the consumer's board, with `outcome` and the workspace at its end. */
+const makerLine = (consumer, number, outcome) => `rigger run: claimed #${number} from board ${PROJECT}; ${outcome}, in its workspace, ${join(dirname(realpathSync(consumer)), 'widgets-worktrees', `rigger-${number}`)}`;
+
+test('given run over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, run prints one line for the card in the verbs\' form, and exits non-zero', SETTLES_WITHIN, () => {
+  const ran = runWithAgent(standInAgent(), { items: [card(10, 'Ready')] });
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.deepEqual(ran.err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
+});
+
+test('given run where the stand-in maker exits 0 and opens a pull request on the fake forge, the card ends in Review, run prints that it is in review naming the pull request, and exits 0', SETTLES_WITHIN, async () => {
+  // The kind's only judge is the owner, so no later card's judges reach this card.
+  const settings = { ...config(3), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } } }), { items: [card(10, 'Ready')] }, { settings });
+
+  assert.equal(ran.code, 0, ran.err);
+  const columns = Object.fromEntries((await (await ran.fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
+  assert.deepEqual(columns, { 10: 'Review' });
+  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')]);
+});
+
+test('given run where the maker exits non-zero, run exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, () => {
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { exit: 4 } } }), { items: [card(10, 'Ready')] });
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.deepEqual(ran.err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 4')]);
+});
+
+test('given run where the maker does not start, run exits non-zero, and prints the card and why', SETTLES_WITHIN, () => {
+  // A settings file the Claude Code adapter cannot read, committed so the workspace holds it.
+  const agent = standInAgent();
+  const ran = runWithAgent(agent, { items: [card(10, 'Ready')] }, { files: { '.claude/settings.json': 'not json' } });
+
+  assert.notEqual(ran.code, 0, ran.out);
+  const lines = ran.err.split('\n').filter((line) => /#10\b/.test(line));
+  assert.equal(lines.length, 1, ran.err);
+  assert.match(lines[0], /^rigger run: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
+  assert.deepEqual(agent.runs(), []);
 });
