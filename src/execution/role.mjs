@@ -32,26 +32,27 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * judges handed the same evidence record the same one whatever their instructions, and the
  * evidence itself reaches no event.
  *
- * `scratch` is the card's scratch base, which L3 hands unread from L1's make (the architect's
- * ruling 19 on #467). Once the provider is found, and before the adapter is asked for the
+ * `scratch` is the card's scratch base, and `repository` the repository L1 made from, each of which
+ * L3 hands unread from L1's make (the architect's rulings 19 and 21 on #467). Once the provider is found, and before the adapter is asked for the
  * invocation, L1 makes the role's scratch directory, `<scratch>/<role>`, fresh (`makeScratch`),
  * hands the adapter its absolute path as `scratch`, and answers it as `scratch` for `dispatch`,
  * whose census sweeps it and whose record names it (ruling 20).
  *
  * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
- * `dispatch.start` for it: a provider the map does not hold, naming it; a `scratch` that is no
- * absolute path, naming it; a scratch directory L1 could not make, naming its path and why; an
+ * `dispatch.start` for it: a provider the map does not hold, naming it; a `scratch` or `repository`
+ * that is no absolute path, naming it; a scratch directory L1 could not make, naming its path and why; an
  * `invocation` that rejects, naming its reason; and a variable the adapter may not set
  * (`unsettable`), naming it. A sink that refused one of L1's scratch events rejects as the refused
  * event it is (`EVENT_REFUSED`).
  */
-export async function roleDispatch({ answer, cwd, directory, scratch, reach, env, sink, id, card, adapters = ADAPTERS }) {
+export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, env, sink, id, card, adapters = ADAPTERS }) {
   const { provider } = answer;
   if (!Object.hasOwn(adapters, provider)) throw unstarted(`L0 holds no provider adapter named ${JSON.stringify(provider)}, which role ${answer.role} names`);
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) throw unstarted(`L3 handed it the scratch base ${JSON.stringify(scratch)} as scratch, which is no absolute path`);
+  if (typeof repository !== 'string' || !isAbsolute(repository)) throw unstarted(`L3 handed it ${JSON.stringify(repository)} as repository, which is no absolute path`);
   let made;
   try {
-    made = await makeScratch({ base: scratch, role: answer.role, card, sink });
+    made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
     throw unstarted(cause.message, cause);

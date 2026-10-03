@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlink
 import { join } from 'node:path';
 import { chmodSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { renameSync, rmSync } from 'node:fs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { dirname } from 'node:path';
@@ -59,10 +60,14 @@ function standIn(command, { args = [], unset = [], env = {} } = {}) {
 /** The scratch base of a dispatch whose directory is `directory`: `scratch/rigger-1412/` beside it. */
 const scratchOf = (directory) => join(dirname(directory), 'scratch', 'rigger-1412');
 
+/** The repository of a dispatch whose directory is `directory`: an empty git repository, `repository/`, beside it. */
+const repositoryOf = (directory) => join(dirname(directory), 'repository');
+
 /**
  * A judge's layout in the test's own temporary directory: the dispatch's directory `judge/`, its
  * working directory `judge/main/` and its reached directory `judge/head/`, the dispatch's scratch
- * base `scratch/rigger-1412/` beside `judge/` and outside it, and the state directory `.rigger/`
+ * base `scratch/rigger-1412/` beside `judge/` and outside it, an empty git repository
+ * `repository/` beside them as the repository L1 made from, and the state directory `.rigger/`
  * beside them, with a sink open on it.
  */
 function layout(t) {
@@ -72,9 +77,10 @@ function layout(t) {
   const head = join(directory, 'head');
   const base = scratchOf(directory);
   for (const each of [cwd, head, base]) mkdirSync(each, { recursive: true });
+  const repository = repositoryAt(repositoryOf(directory));
   const state = join(root, '.rigger');
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  return { root, directory, cwd, head, scratch: base, state, sink };
+  return { root, directory, cwd, head, scratch: base, repository, state, sink };
 }
 
 /**
@@ -107,7 +113,7 @@ function seenIn(root) {
  * dispatch's result, or rejects as either does.
  */
 async function throughL1({ sink, state, ...request }) {
-  const handed = await roleDispatch({ sink, id: 'd-role', card: 1412, ...request, scratch: request.scratch ?? scratchOf(request.directory) });
+  const handed = await roleDispatch({ sink, id: 'd-role', card: 1412, ...request, scratch: request.scratch ?? scratchOf(request.directory), repository: request.repository ?? repositoryOf(request.directory) });
   return dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed });
 }
 
@@ -118,7 +124,7 @@ test('roleDispatch answers what L1\'s dispatch is handed: the command, arguments
   const { directory, cwd, head, sink } = layout(t);
   const { adapter } = standIn('/usr/bin/true', { args: ['--stand-in'] });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), reach: [head], env: { KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [head], env: { KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(
     { command: handed.command, args: handed.args, input: handed.input.toString('utf8'), cwd: handed.cwd, workspace: handed.workspace, env: handed.env, timeout: handed.timeout },
@@ -131,7 +137,7 @@ test('roleDispatch asks the module the role answer\'s provider names in the adap
   const named = standIn('/usr/bin/true');
   const other = standIn('/usr/bin/false');
 
-  const handed = await roleDispatch({ answer: answerOf({ provider: 'named' }), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { other: other.adapter, named: named.adapter } });
+  const handed = await roleDispatch({ answer: answerOf({ provider: 'named' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { other: other.adapter, named: named.adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
   assert.equal(named.requests.length, 1);
@@ -141,7 +147,7 @@ test('roleDispatch asks the module the role answer\'s provider names in the adap
 test('roleDispatch reads the adapter map L0 holds where its caller gives none, so a role answer naming `claude` is answered by the Claude Code adapter', async (t) => {
   const { directory, cwd, sink } = layout(t);
 
-  const handed = await roleDispatch({ answer: answerOf({ provider: 'claude' }), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412 });
+  const handed = await roleDispatch({ answer: answerOf({ provider: 'claude' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412 });
 
   assert.equal(handed.command, 'claude');
 });
@@ -176,7 +182,7 @@ test('roleDispatch hands the adapter\'s invocation the reach it was handed uncha
   const { adapter, requests } = standIn('/usr/bin/true');
   const reach = [head];
 
-  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), reach, env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach, env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(requests[0].reach, reach);
   assert.deepEqual(requests[0].reach, [head]);
@@ -186,7 +192,7 @@ test('the agent path roleDispatch hands the adapter is the role\'s agent file jo
   const { directory, cwd, sink } = layout(t);
   const { adapter, requests } = standIn('/usr/bin/true');
 
-  await roleDispatch({ answer: answerOf({ agent: '.claude/agents/reviewer.md' }), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf({ agent: '.claude/agents/reviewer.md' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(requests[0].agent, `${cwd}/.claude/agents/reviewer.md`);
 });
@@ -195,7 +201,7 @@ test('the timeout roleDispatch answers is the role answer\'s timeout', async (t)
   const { directory, cwd, sink } = layout(t);
   const { adapter } = standIn('/usr/bin/true');
 
-  const handed = await roleDispatch({ answer: answerOf({ timeout: 14_400_000 }), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf({ timeout: 14_400_000 }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.timeout, 14_400_000);
 });
@@ -212,7 +218,7 @@ test('roleDispatch hands the adapter\'s invocation an L0 emitter under the dispa
     },
   };
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
   assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L1', event: 'workspace.made', id: undefined, card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
@@ -275,7 +281,7 @@ test('roleDispatch builds a role\'s environment as the environment handed, less 
   const set = join(directory, '.stand-in-tmp');
   const { adapter } = standIn('/usr/bin/true', { unset: ['UNINHERITED'], env: { STAND_IN_TMPDIR: set } });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), reach: [], env: { STAND_IN_TMPDIR: '/handed/value', UNINHERITED: 'dropped', GIT_DIR: '/elsewhere/.git', KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { STAND_IN_TMPDIR: '/handed/value', UNINHERITED: 'dropped', GIT_DIR: '/elsewhere/.git', KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(handed.env, { STAND_IN_TMPDIR: set, KEEP: 'kept' });
 });
@@ -414,7 +420,7 @@ test('given an adapter whose env value is a path under the dispatch\'s directory
   const set = join(directory, 'not', 'yet', 'made');
   const { adapter } = standIn('/usr/bin/true', { env: { STAND_IN_TMPDIR: set } });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.env.STAND_IN_TMPDIR, set);
   assert.equal(existsSync(join(directory, 'not')), false, 'roleDispatch made the path');
@@ -578,7 +584,7 @@ test('roleDispatch makes <scratch>/<role> before it asks the adapter for the inv
   const { directory, cwd, scratch: base, sink } = layout(t);
   const { adapter, asked } = scratchReading('/usr/bin/true');
 
-  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(asked, [{ scratch: join(base, 'engineer'), there: true, holds: [] }]);
 });
@@ -588,7 +594,7 @@ test('roleDispatch makes the scratch base and <scratch>/<role> where neither exi
   const base = join(root, 'worktrees', 'scratch', 'rigger-42');
   const { adapter, asked } = scratchReading('/usr/bin/true');
 
-  await roleDispatch({ answer: answerOf({ role: 'reviewer' }), cwd, directory, scratch: base, reach: [], env: {}, sink, id: 'd-role', card: 42, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf({ role: 'reviewer' }), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 42, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(asked, [{ scratch: join(base, 'reviewer'), there: true, holds: [] }]);
 });
@@ -614,7 +620,7 @@ test('given no scratch at all, roleDispatch rejects with NOT_STARTED naming scra
   const { adapter, asked } = scratchReading('/usr/bin/true');
 
   await assert.rejects(
-    roleDispatch({ answer: answerOf(), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } }),
+    roleDispatch({ answer: answerOf(), cwd, directory, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } }),
     (failure) => failure.code === NOT_STARTED && /\bscratch\b/.test(failure.message),
   );
   assert.deepEqual(asked, []);
@@ -631,7 +637,7 @@ test('given a directory already at <scratch>/<role> holding a file and a symboli
   symlinkSync(root, join(role, 'deep', 'up'));
   const { adapter, asked } = scratchReading('/usr/bin/true');
 
-  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(asked, [{ scratch: role, there: true, holds: [] }]);
   assert.equal(readFileSync(outside, 'utf8'), 'not Rigger\'s\n');
@@ -643,8 +649,8 @@ test('L1 records under the card the scratch directory it made, and the one it re
   const { adapter } = scratchReading('/usr/bin/true');
   const role = join(base, 'engineer');
 
-  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
-  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, id: 'd-role-2', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role-2', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(scratchEventsIn(state), [
     { event: 'workspace.made', card: 1412, role: 'engineer', path: role },
@@ -743,8 +749,48 @@ test('given a <scratch>/<role> whose real path cannot be resolved, roleDispatch 
 
   await assertScratchRefused(placed, placed.scratch, path);
 
+  assert.equal(lstatSync(placed.scratch).mode & 0o7777, 0o000, 'the scratch base\'s mode changed');
   chmodSync(placed.scratch, 0o700);
+  assert.deepEqual(readdirSync(path), ['left.txt']);
   assert.equal(readFileSync(join(path, 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});
+
+/**
+ * Every entry under `path` with its mode, not following links, as `lstat` reads it; a directory
+ * that cannot be read is recorded as such, with nothing under it read.
+ */
+function modes(path) {
+  const held = lstatSync(path);
+  if (!held.isDirectory()) return { mode: held.mode };
+  let names;
+  try {
+    names = readdirSync(path).sort();
+  } catch (error) {
+    return { mode: held.mode, unreadable: error.code };
+  }
+  return { mode: held.mode, entries: Object.fromEntries(names.map((name) => [name, modes(join(path, name))])) };
+}
+
+test('given a worktree of another repository at <scratch>/<role> holding a directory of mode 000 that sorts before .git, or one holding such a worktree, roleDispatch rejects with NOT_STARTED naming the unreadable directory, and every mode and entry is unchanged', SETTLES_WITHIN, async (t) => {
+  for (const at of ['worktree holding it', 'it holding the worktree']) {
+    const placed = layout(t);
+    const repository = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+    const path = join(placed.scratch, 'engineer');
+    const locked = at === 'worktree holding it' ? join(path, '.a-locked') : join(path, 'locked');
+    const tree = worktreeAt(repository, at === 'worktree holding it' ? path : join(locked, 'tree'), 'held');
+    mkdirSync(locked, { recursive: true });
+    writeFileSync(join(locked, 'inside.txt'), 'unread\n');
+    chmodSync(locked, 0o000);
+    t.after(() => chmodSync(locked, 0o700));
+    const before = { modes: modes(path), list: worktreeList(repository) };
+
+    await assertScratchRefused(placed, placed.scratch, locked);
+
+    assert.deepEqual({ modes: modes(path), list: worktreeList(repository) }, before, `${at}: something changed`);
+    chmodSync(locked, 0o700);
+    assert.equal(readFileSync(join(locked, 'inside.txt'), 'utf8'), 'unread\n');
+    assert.ok(existsSync(join(tree, 'kept.txt')), `${at}: the worktree lost its file`);
+  }
 });
 
 test('L1 records under the card a scratch directory it could not make, carrying the role, the path and why', SETTLES_WITHIN, async (t) => {
@@ -779,7 +825,7 @@ test('a refused workspace.made, workspace.removed or workspace.failed while role
     if (event === 'workspace.failed') writeFileSync(join(base, 'engineer'), 'not a directory\n');
     const { adapter, asked } = scratchReading('/usr/bin/true');
     let failure;
-    await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink: refusing(sink, event), id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } })
+    await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink: refusing(sink, event), id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } })
       .then(() => assert.fail(`${event}: roleDispatch settled`), (thrown) => { failure = thrown; });
     assert.equal(failure.code, EVENT_REFUSED, `${event}: ${failure.stack}`);
     assert.ok(failure.message.includes(event), `${event}: ${failure.message}`);
@@ -913,4 +959,72 @@ test('the Claude Code adapter answers the same invocation with a scratch directo
   const given = await ADAPTERS.claude.invocation({ ...request, scratch: join(base, 'engineer') });
 
   assert.deepEqual(given, without);
+});
+
+test('given a worktree of the repository whose .git entry has been moved out of it, registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path and the worktree, starts no process, and the worktree\'s files, its registration and its branch are unchanged', SETTLES_WITHIN, async (t) => {
+  for (const under of [[], ['deep', 'tree']]) {
+    const placed = layout(t);
+    repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+    const path = join(placed.scratch, 'engineer');
+    const tree = worktreeAt(placed.repository, join(path, ...under), 'held');
+    writeFileSync(join(tree, 'uncommitted.txt'), 'the agent\'s\n');
+    renameSync(join(tree, '.git'), join(placed.root, 'moved-git'));
+    const branch = gitIn(placed.repository, 'rev-parse', 'refs/heads/held');
+    const before = { files: contents(tree), list: worktreeList(placed.repository) };
+
+    const failure = await assertScratchRefused(placed, placed.scratch, path);
+
+    assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+    assert.deepEqual({ files: contents(tree), list: worktreeList(placed.repository) }, before, `${tree}: something changed`);
+    assert.equal(gitIn(placed.repository, 'rev-parse', 'refs/heads/held'), branch);
+  }
+});
+
+test('given a worktree of the repository registered at a path whose real path cannot be resolved for a reason other than its absence, roleDispatch rejects with NOT_STARTED naming that worktree, and the directory at <scratch>/<role> is unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const locked = join(placed.root, 'locked');
+  const tree = worktreeAt(placed.repository, join(locked, 'tree'), 'held');
+  chmodSync(locked, 0o000);
+  t.after(() => chmodSync(locked, 0o700));
+  const path = join(placed.scratch, 'engineer');
+  mkdirSync(path);
+  writeFileSync(join(path, 'left.txt'), 'the first attempt\'s\n');
+  const before = contents(path);
+
+  const failure = await assertScratchRefused(placed, placed.scratch, path);
+
+  assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+  assert.deepEqual(contents(path), before);
+});
+
+test('given a worktree of the repository registered inside <scratch>/<role> whose directory is gone, roleDispatch takes it to lie nowhere, and replaces the scratch directory', async (t) => {
+  const { directory, cwd, scratch: base, repository, sink } = layout(t);
+  repositoryAt(repository, { 'kept.txt': 'committed\n' });
+  const path = join(base, 'engineer');
+  const tree = worktreeAt(repository, join(path, 'gone'), 'held');
+  rmSync(path, { recursive: true, force: true });
+  mkdirSync(path);
+  assert.ok(worktreeList(repository).includes(tree), 'git no longer lists the worktree, so the test proves nothing');
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(asked, [{ scratch: path, there: true, holds: [] }]);
+});
+
+test('given a worktree of another repository, which the repository\'s git does not list, at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+  const path = join(placed.scratch, 'engineer');
+  const tree = worktreeAt(another, path, 'held');
+  writeFileSync(join(tree, 'uncommitted.txt'), 'the agent\'s\n');
+  const branch = gitIn(another, 'rev-parse', 'refs/heads/held');
+  const before = { files: contents(tree), list: worktreeList(another) };
+  assert.equal(worktreeList(placed.repository).includes(tree), false, 'the repository\'s git lists the worktree, so the test proves nothing');
+
+  await assertScratchRefused(placed, placed.scratch, path);
+
+  assert.deepEqual({ files: contents(tree), list: worktreeList(another) }, before);
+  assert.equal(gitIn(another, 'rev-parse', 'refs/heads/held'), branch);
 });

@@ -1260,3 +1260,9 @@ test('L1\'s workspace make for card 42 answers scratch, the absolute path <root>
   assert.equal(made.path, join(here.root, 'rigger-42'));
   assert.equal(existsSync(join(here.root, 'scratch')), false, 'the make created the scratch base');
 });
+
+test('L1\'s workspace make answers repository, the path of the repository it made from, beside scratch', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  assert.equal(made.repository, here.repository);
+});

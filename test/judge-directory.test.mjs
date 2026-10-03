@@ -460,8 +460,8 @@ async function rolesOfCard42(here) {
   const handed = [];
   const adapter = { name: 'stand-in', invocation: async ({ scratch: given }) => { handed.push(given); return { command: '/usr/bin/true', args: [], input: Buffer.alloc(0), unset: [], env: {} }; } };
   const answer = (role) => ({ role, agent: '.claude/agents/engineer.md', provider: 'stand-in', tier: 'standard', timeout: 60_000, instruction: '', evidence: '' });
-  await roleDispatch({ answer: answer('engineer'), cwd: workspace.path, directory: workspace.path, scratch: workspace.scratch, reach: [], env: {}, sink: here.sink, id: 'd-maker', card: 42, adapters: { 'stand-in': adapter } });
-  await roleDispatch({ answer: answer('reviewer'), cwd: judge.main, directory: judge.path, scratch: judge.scratch, reach: [judge.head], env: {}, sink: here.sink, id: 'd-judge', card: 42, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answer('engineer'), cwd: workspace.path, directory: workspace.path, scratch: workspace.scratch, repository: workspace.repository, reach: [], env: {}, sink: here.sink, id: 'd-maker', card: 42, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answer('reviewer'), cwd: judge.main, directory: judge.path, scratch: judge.scratch, repository: judge.repository, reach: [judge.head], env: {}, sink: here.sink, id: 'd-judge', card: 42, adapters: { 'stand-in': adapter } });
   const real = (path) => realpathSync.native(path);
   return { workspace: real(workspace.path), judge: real(judge.path), main: real(judge.main), head: real(judge.head), judges: real(join(here.root, 'judges')), maker: real(handed[0]), reviewer: real(handed[1]) };
 }
@@ -494,4 +494,10 @@ test('given a maker\'s dispatch and a judge\'s dispatch of one card, neither scr
     const found = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: scratchDirectory, encoding: 'utf8', env: { ...gitEnvironment(process.env), GIT_CEILING_DIRECTORIES: dirname(here.root) } });
     assert.notEqual(found.status, 0, `${scratchDirectory} lies in the worktree ${found.stdout}`);
   }
+});
+
+test('L1\'s judge-directory make answers repository, the path of the repository it made from, beside scratch', async (t) => {
+  const here = world(t);
+  const made = await here.make();
+  assert.equal(made.repository, here.repository);
 });

@@ -17,6 +17,7 @@ import { worktreeTopic } from '../src/config/validate.mjs';
 import { topicFor } from '../src/execution/workspace.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { repositoryAt } from './git-repository.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -308,16 +309,19 @@ export const oneOpenFromEveryLine = async () => ({ open: [{ number: 1, head: OPE
 /**
  * A workspace stand-in that makes the directory it answers, `rigger-<card>` under `under`, and
  * answers it as L1's workspace handle does, with the card's scratch base `scratch/rigger-<card>`
- * under `under` as `scratch`, which it does not make, recording in its `made` each card and path
- * it made.
+ * under `under` as `scratch`, which it does not make, and as `repository` an empty git repository,
+ * `repository/` under `under`, which it makes once, recording in its `made` each card and path it
+ * made.
  */
 export function makingWorkspaces(under) {
   const made = [];
+  const repository = join(under, 'repository');
   const handle = async (card) => {
     const path = join(under, `rigger-${card}`);
     await mkdir(path, { recursive: true });
+    if (!existsSync(repository)) repositoryAt(repository);
     made.push({ card, path });
-    return { path, scratch: join(under, 'scratch', `rigger-${card}`) };
+    return { path, scratch: join(under, 'scratch', `rigger-${card}`), repository };
   };
   return Object.assign(handle, { made });
 }

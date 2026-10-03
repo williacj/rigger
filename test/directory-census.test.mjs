@@ -512,3 +512,45 @@ test('given a recorded dispatch whose scratch directory was replaced at its path
   assert.deepEqual(skipped.map(({ dispatch: id, card, directory: at }) => ({ id, card, at })), [{ id: 'd-dead', card: 1412, at: role }]);
   assert.match(skipped[0].reason, /not the directory recorded/);
 });
+
+/**
+ * A caller of its own, as `CALLER`, that hands L1's function a scratch directory as well: it
+ * dispatches `command` in the workspace `work/` under the directory given as its first argument,
+ * with `scratch/` there as the dispatch's scratch directory, and waits until it is signalled.
+ */
+const SCRATCH_CALLER = [
+  `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
+  `import { dispatch } from ${moduleAt('../src/execution/run.mjs')};`,
+  `import { atExit } from ${moduleAt('../src/substrate/process.mjs')};`,
+  "import { join } from 'node:path';",
+  'const [directory, command] = process.argv.slice(2);',
+  "const state = join(directory, '.rigger');",
+  "const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });",
+  'atExit(sink.end);',
+  "dispatch({ id: 'd-term', card: 7, directory: state, sink, command, args: [], cwd: join(directory, 'work'), workspace: join(directory, 'work'), scratch: join(directory, 'scratch'), env: {}, timeout: 600_000 }).catch(() => {});",
+  'setInterval(() => {}, 1_000);',
+].join('\n');
+
+// proves R-STATE-17, R-STATE-9
+test('given a dispatch running with a process that left its group, working in the dispatch\'s scratch directory, when the calling process receives SIGTERM, that process is not alive afterwards, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  for (const each of ['work', 'scratch']) mkdirSync(join(directory, each));
+  const command = fixture(directory, 'command', [leaveWorking('scratch/sub', 'left'), ': > "$here/ready"', 'while :; do :; done'].join('\n'));
+  writeFileSync(join(directory, 'caller.mjs'), SCRATCH_CALLER);
+  const caller = spawn(process.execPath, [join(directory, 'caller.mjs'), directory, command], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(() => caller.kill('SIGKILL'));
+  let said = '';
+  caller.stderr.on('data', (chunk) => { said += chunk; });
+  const exited = once(caller, 'exit');
+  await until(() => existsSync(join(directory, 'ready')) || caller.exitCode !== null, t);
+  assert.ok(existsSync(join(directory, 'ready')), `the caller ended before its dispatch was up: ${said}`);
+
+  caller.kill('SIGTERM');
+  const [, signal] = await exited;
+
+  assert.equal(signal, 'SIGTERM', said);
+  const left = Number(read(directory, 'left.pid'));
+  assert.equal(await gone(left), true, 'the process working in the scratch directory is alive');
+  const kills = readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === left);
+  assert.deepEqual(kills.map(({ dispatch: id, card, directory: swept }) => ({ id, card, swept })), [{ id: 'd-term', card: 7, swept: join(directory, 'scratch') }], said);
+});
