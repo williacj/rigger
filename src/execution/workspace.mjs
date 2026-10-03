@@ -165,19 +165,14 @@ export async function makeScratch({ base, role, card, repository, sink }) {
 }
 
 /**
- * Fails naming `path` and a `.git` where one is, of any kind and unfollowed, at an ancestor of
- * `path` from its parent, the scratch base `base`, up to and including the worktree root, the
- * parent of `scratch/`: then `path` lies in a checkout, of this repository or another, and L1
- * makes and removes nothing there. An ancestor where L1 cannot read whether a `.git` is there
- * fails too, since L1 cannot tell.
- *
- * Where it can be wrong (`D16` rule 3): it stops at the worktree root. Above it lies the operator's
- * layout, and a home directory kept in git would otherwise refuse every dispatch. So a worktree root
- * that itself lies inside a checkout is not found here; that is a guard on the configured root, as
- * the verbs keep one for a root inside the repository's tree.
+ * Fails naming `path` and a `.git` where one is, of any kind and unfollowed, at any ancestor of
+ * `path` from its parent, the scratch base `base`, up to the file system's root: then `path` lies
+ * in a checkout, of this repository or another, and L1 makes and removes nothing there, since the
+ * scratch directory lies outside every worktree. An ancestor where L1 cannot read whether a `.git`
+ * is there fails too, since L1 cannot tell. So an operator whose home directory is a checkout is
+ * refused, naming that `.git`.
  */
 function noCheckoutAbove(base, path) {
-  const root = dirname(dirname(base));
   for (let ancestor = base; ; ancestor = dirname(ancestor)) {
     const git = join(ancestor, '.git');
     let found = true;
@@ -188,7 +183,7 @@ function noCheckoutAbove(base, path) {
       found = false;
     }
     if (found) throw new Error(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
-    if (ancestor === root || dirname(ancestor) === ancestor) return;
+    if (dirname(ancestor) === ancestor) return;
   }
 }
 

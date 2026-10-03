@@ -1174,3 +1174,27 @@ test('given a scratch base deeper inside the repository\'s main working tree tha
   assert.deepEqual(modes(placed.repository), before, 'something changed in the main working tree');
   assert.equal(existsSync(join(placed.repository, 'x')), false, 'L1 made a directory inside the main working tree');
 });
+
+test('given a worktree root nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const other = repositoryAt(join(placed.root, 'other-checkout'), { 'kept.txt': 'committed\n' });
+  const base = join(other, 'nested-root', 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(other, '.git'), other);
+
+  assert.equal(existsSync(join(other, 'nested-root')), false, 'L1 made a directory inside the unrelated checkout');
+});
+
+test('given a .git file at an ancestor above the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const above = join(placed.root, 'above');
+  const root = join(above, 'deep', 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  writeFileSync(join(base, 'engineer', 'left.txt'), 'the first attempt\'s\n');
+  writeFileSync(join(above, '.git'), 'gitdir: /nowhere\n');
+
+  await assertAncestorRefused(placed, base, join(above, '.git'), above);
+
+  assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});

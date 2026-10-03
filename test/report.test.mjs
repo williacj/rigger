@@ -82,11 +82,14 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   const everyStartMade = () => releasesRecorded() === returned.size && held().length === (entry === 'run'
     ? Math.min(concurrency, cards.length - returned.size)
     : Math.min(concurrency, cards.length) - returned.size);
-  const repository = repositoryAt(join(directory, 'workspaces', 'repository'));
+  // The scratch directories and their repository lie outside the consumer's checkout, which holds
+  // the state directory, since L1 refuses a scratch directory inside any checkout.
+  const outside = temporaryDirectory('rigger-report-scratch-');
+  const repository = repositoryAt(join(outside, 'repository'));
   const workspace = async (card) => {
     const path = join(directory, 'workspaces', `rigger-${card}`);
     mkdirSync(path, { recursive: true });
-    return { path, scratch: join(directory, 'workspaces', 'scratch', `rigger-${card}`), repository };
+    return { path, scratch: join(outside, 'scratch', `rigger-${card}`), repository };
   };
   const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
   // Positive: until every start the loop can make is held.
