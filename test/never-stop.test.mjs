@@ -10,6 +10,8 @@ import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
@@ -615,17 +617,42 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
 });
 
-/** An `lsof` stand-in that answers every listing as `lsof` does until `$here/hang` exists, and from then on never answers. */
-const hangingListing = (directory) => warmed(fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /usr/sbin/lsof "$@"'));
+/**
+ * Stand-ins for `lsof` and `ps` that answer the census's reads of the outside process in `directory`
+ * at once, so that no read it makes waits on the host. Each answer is what the real tool printed for
+ * that process before the cleanup began: its listing as working in the dispatch's directory, its
+ * name and its command line. Its state is read as stopped, `T`: the census reads states only of
+ * processes it has stopped, and this one stays stopped until the census resumes it after its wait,
+ * since its kill is not sent. `lsof` answers so until `$here/hang` exists, and from then on never
+ * answers. `ps` passes every other read, those of the command's group, to `/bin/ps`.
+ */
+function answeringAtOnce(directory) {
+  const pid = read(directory, 'outside.pid');
+  const tool = (path, args) => spawnSync(path, args, { env: {}, encoding: 'utf8' }).stdout;
+  writeFileSync(join(directory, 'listed'), tool('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-p', pid, '-F', 'pun']));
+  writeFileSync(join(directory, 'ucomm'), tool('/bin/ps', ['-p', pid, '-o', 'ucomm=']));
+  writeFileSync(join(directory, 'cmdline'), tool('/bin/ps', ['-ww', '-p', pid, '-o', 'pid=,command=']));
+  warmed(fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/cat "$here/listed"'));
+  warmed(fixture(directory, 'ps', [
+    'pid=$(/bin/cat "$here/outside.pid")',
+    'case "$*" in',
+    '  "-p $pid -o pid=,stat=") echo "$pid T" ;;',
+    '  "-p $pid -o ucomm=") exec /bin/cat "$here/ucomm" ;;',
+    '  "-ww -p $pid -o pid=,command=") exec /bin/cat "$here/cmdline" ;;',
+    '  *) exec /bin/ps "$@" ;;',
+    'esac',
+  ].join('\n')));
+}
 
 // proves R-STATE-19, R-STATE-9
 test('given a census of a dispatch\'s directory whose listing after its kill takes the rest of its read bound, the exit cleanup still reads the process the kill does not end, and records it by name and command line as alive at the cleanup\'s own bound of that kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const work = await workedIn(t, directory);
   holdingNone(directory);
-  hangingListing(directory);
+  answeringAtOnce(directory);
+  assert.match(read(directory, 'listed'), new RegExp(`^n${realpathSync.native(work)}/sub$`, 'm'), 'lsof did not list the outside process as working in the dispatch\'s directory, so the test proves nothing');
 
-  const { status, events, pairs, ended } = await cleanedUp(directory, { lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
 
   assert.equal(status, 0);
   assert.ok(existsSync(join(directory, 'hang')), 'the census never sent the outside process its kill, so the test proves nothing');
