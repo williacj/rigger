@@ -24,8 +24,11 @@ import { installStandInAgent } from './stub-claude.mjs';
  * own timeout, to a stand-in `claude` first on the `PATH` of the engine's `environment`. The
  * stand-in replaces itself with `/bin/sh` on `command`, so the shell keeps its pid and leads the
  * dispatch's process group. L3's workspace handle answers `workspace` where it is given, and
- * `directory` otherwise. `ps` is handed to `loop`, which hands it to L1 for the process table's
- * reads where it is given. The start's kill L3 is handed is L1's, as a verb's is.
+ * otherwise makes and answers `workspaces/rigger-<card>` under `directory`. That keeps each
+ * dispatch's directory, whose processes L0's census kills, apart from the consumer's repository
+ * and the fake `gh`, where the engine's own reads run. `ps` is handed to `loop`, which hands it
+ * to L1 for the process table's reads where it is given. The start's kill L3 is handed is L1's,
+ * as a verb's is.
  */
 export async function engine({ directory, repository, command, ps, workspace }) {
   const { default: config } = await import(pathToFileURL(join(repository, 'rigger.config.mjs')).href);
@@ -38,7 +41,12 @@ export async function engine({ directory, repository, command, ps, workspace }) 
   const stand = join(directory, 'stand-in');
   mkdirSync(stand, { recursive: true });
   const agent = installStandInAgent(stand, { '*': { engineer: { exec: ['/bin/sh', command] } } });
-  const handle = async () => ({ path: workspace ?? directory });
+  const handle = async (number) => {
+    if (workspace !== undefined) return { path: workspace };
+    const path = join(directory, 'workspaces', `rigger-${number}`);
+    mkdirSync(path, { recursive: true });
+    return { path };
+  };
   const kill = () => killRecordedGroups({ directory: state, sink });
   await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, state, environment: { ...process.env, PATH: agent.first() }, ps }).pull();
 }

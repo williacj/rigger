@@ -521,6 +521,22 @@ test('after that restart through rigger once, the stream holds the child\'s kill
   assertOneMakerOfItsOwn(world, 'once', ran);
 });
 
+test('the engine\'s maker dispatches, given no workspace, each work in a directory of their own that holds neither the consumer\'s repository nor the fake gh, so no census of one kills the engine\'s own reads', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10), card(20)]);
+  const command = fixture(world.directory, 'command', 'exit 0');
+
+  const engine = startEngine(world, command);
+  const [code] = await once(engine, 'exit');
+
+  assert.equal(code, 0, engine.said);
+  const workspaces = readEvents(world.state).filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').map((event) => realpathSync(event.workspace));
+  assert.equal(workspaces.length, 2, JSON.stringify(workspaces));
+  assert.equal(new Set(workspaces).size, 2, JSON.stringify(workspaces));
+  for (const held of [world.repository, join(world.directory, 'fake'), join(world.directory, 'first')].map((path) => realpathSync(path))) {
+    assert.deepEqual(workspaces.filter((workspace) => held === workspace || held.startsWith(`${workspace}/`)), [], held);
+  }
+});
+
 test('L3 allocates each maker dispatch an id that no other dispatch in the same state directory holds, across runs', SETTLES_WITHIN, async (t) => {
   const world = consumerIn(t, [card(10), card(20)]);
   const command = fixture(world.directory, 'command', 'exit 0');
