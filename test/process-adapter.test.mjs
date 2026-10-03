@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
+import { LONGEST_PAUSE } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -1004,6 +1005,38 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   const cpu = (user + system) / 1000;
   t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
   assert.ok(cpu < rereading / 10, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
+});
+
+test('a census whose reads never agree waits, from its third round on, at least the longest pause for each read of a round before it reads again', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  // The stand-in shows every process caught mid-exec, state `?`, in each of the census's reads of
+  // states, which begin `-ww`, so no round agrees and the census reads again until its bound. Each
+  // call first writes when it began, in milliseconds, and its arguments, to `calls`. What it costs
+  // to run is beside the point here: only when each read began is compared.
+  const ps = warmed(fixture(directory, 'ps', [
+    '/usr/bin/perl -MTime::HiRes=time -e \'printf "%.3f %s\\n", time() * 1000, join(" ", @ARGV)\' -- "$@" >> "$here/calls"',
+    'case "$1 $*" in',
+    '  "-ww "*stat=*) /bin/ps "$@" | /usr/bin/sed \'s/^\\( *[0-9][0-9]*\\) .*$/\\1 ?/\' ;;',
+    '  *) exec /bin/ps "$@" ;;',
+    'esac',
+  ].join('\n')));
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 1_500 });
+
+  assert.deepEqual(events.map(({ event }) => event), ['survivor.killed'], 'the census did not keep its last round once its reads never agreed');
+  const calls = read(directory, 'calls').split('\n').map((line) => ({ at: Number(line.slice(0, line.indexOf(' '))), args: line.slice(line.indexOf(' ') + 1) }));
+  // The census's reads are the calls up to its last read that begins `-ww`, and each of its rounds
+  // begins and ends with a read of states, so every other such read begins a round.
+  const census = calls.slice(0, calls.findLastIndex(({ args }) => args.startsWith('-ww ')) + 1);
+  const starts = census.flatMap(({ args }, index) => (args.startsWith('-ww ') && args.endsWith('stat=') ? [index] : [])).filter((_, nth) => nth % 2 === 0);
+  // Each read's pause doubles from 1 ms to `LONGEST_PAUSE`, and the census waits a round's pauses
+  // out together after it, so every read from the eleventh on has reached `LONGEST_PAUSE`: those
+  // are the third round's on, a round here being five reads.
+  const waits = starts.slice(2, -1).map((start, nth) => ({ reads: starts[nth + 3] - start, waited: census[starts[nth + 3]].at - census[start].at }));
+  t.diagnostic(`rounds beginning ${starts.map((start) => Math.round(census[start].at - census[0].at)).join(', ')} ms after the first, in ${census.length} reads`);
+  assert.ok(waits.length > 0, `the census read in ${starts.length} rounds, too few to compare a third round with the next`);
+  for (const { reads, waited } of waits) assert.ok(waited >= reads * LONGEST_PAUSE, `the census began a round ${waited} ms after the one before, of ${reads} reads, less than ${LONGEST_PAUSE} ms for each`);
 });
 
 test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {

@@ -70,9 +70,10 @@ export const UNREAPED_BOUND = 1_000;
 /**
  * The longest L0 pauses between two looks at a group it is waiting on. The pause starts at one
  * millisecond and doubles up to this, so a wait costs next to no processor time however long it
- * lasts. A judgment, not a measurement.
+ * lasts. A look of several reads, such as a round of the census, earns each read's pause
+ * (`census`). A judgment, not a measurement.
  */
-const LONGEST_PAUSE = 50;
+export const LONGEST_PAUSE = 50;
 
 /**
  * How long after its first kill of a group L0 goes on killing a member that is still alive, and how
@@ -574,9 +575,13 @@ function signal(group, name, kill = SIGNAL) {
  * lines, then each name in a `ps` run of its own, then the command lines and the states again. It
  * keeps a round only where both state reads find the same processes, none caught mid-exec (state
  * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
- * pauses and reads again. A zombie is left out, because it is already dead. Where `deadline` passes
- * first, it keeps what the last round held, each live process the last state read found, by the
- * name and the command line read in that round, and leaves out one a read in that round missed.
+ * pauses and reads again. Each read of a round earns the pause one look earns (`LONGEST_PAUSE`),
+ * and the census waits the round's pauses out together after it, so its reads stay close together
+ * and re-reading costs one read's processor time per look's pause however many reads a round
+ * holds (#574). No pause runs past `deadline`. A zombie is left out, because it is already dead.
+ * Where `deadline` passes first, it keeps what the last round held, each live process the last
+ * state read found, by the name and the command line read in that round, and leaves out one a read
+ * in that round missed.
  *
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
@@ -655,7 +660,10 @@ function* census(group, kill, deadline) {
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
   let last;
+  // The reads the round in hand has made so far, each of which earns a pause (`earned`).
+  let reads = 0;
   const read = function* (args) {
+    reads += 1;
     try {
       return yield args;
     } catch (error) {
@@ -665,8 +673,19 @@ function* census(group, kill, deadline) {
   const column = function* (name) {
     return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   };
-  for (let wait = 0; ; wait = longer(wait)) {
-    if (wait > 0) yield wait;
+  // The pause the last read earned, which doubles from one read to the next up to `LONGEST_PAUSE`.
+  let wait = 0;
+  // What a round's reads earned together: each read's own pause, as though it were a look of its own.
+  const earned = () => {
+    let pause = 0;
+    for (; reads > 0; reads -= 1) pause += (wait = longer(wait));
+    return pause;
+  };
+  for (let pause = 0; ; pause = earned()) {
+    // A round's pauses are waited out together after it, so its reads stay close together, and
+    // never past `deadline`.
+    const until = Math.min(pause, deadline - Date.now());
+    if (until > 0) yield until;
     if (last !== undefined && Date.now() >= deadline) return last;
     let round;
     try {
