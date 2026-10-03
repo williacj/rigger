@@ -53,7 +53,7 @@ const ROLE = [
  * as the deny rules of `main`'s own settings and `head` named `name`.
  */
 function pair(t, deny = [], name = 'head') {
-  const base = scratch(t);
+  const base = scratch();
   const main = join(base, 'main');
   const head = join(base, name);
   forgetting(t, main);

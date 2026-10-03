@@ -6,8 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +17,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.mjs';
 import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, warmed, withFirstOnPath } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
@@ -41,7 +41,7 @@ const BOARD = {
  * its state directory.
  */
 function consumer(config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds: Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])) }) {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-guard-kill-'));
+  const directory = temporaryDirectory('rigger-guard-kill-');
   const where = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   return { where, state: join(where, '.rigger') };
 }

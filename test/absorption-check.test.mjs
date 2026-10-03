@@ -4,12 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'absorption-check.mjs');
 const { bullets, MIN_CLAUSES } = await import(pathToFileURL(script).href);
@@ -89,7 +89,7 @@ test('every refused vector names both accepted forms on stderr, and says nothing
 
 /** A pair of documents on disk: a source to read clauses out of, and a destination table. */
 function documents(source, destination) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-absorption-'));
+  const dir = temporaryDirectory('rigger-absorption-');
   writeFileSync(join(dir, 'source.md'), source);
   writeFileSync(join(dir, 'destination.md'), destination);
   return dir;

@@ -4,14 +4,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmodSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * A fake board holding the columns `columns` names, in its key order, or the display names in
@@ -23,7 +22,7 @@ function world({ columns = config.board.columns, cards = [12], held = Object.val
     columns: held,
     items: cards.map((number) => ({ type: 'issue', repository: config.repo, number, title: `Card ${number}`, column: columns.ready })),
   });
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-transitions-'));
+  const directory = temporaryDirectory('rigger-transitions-');
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
   const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations });
   return { fake, l2, sink, directory, events: () => readEvents(directory) };
@@ -320,7 +319,7 @@ test("with no item-write side passed in, L2's move goes to the forge through the
     }
     return answer({ project: { field: { id: FIELD } }, target: { name: 'Status' } });
   };
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-transitions-'));
+  const directory = temporaryDirectory('rigger-transitions-');
   const l2 = columnChanges({ config, sink: openSink({ directory, run: 'r-test', now: () => 0 }), send });
 
   await l2.claimed({ id: 'PVTI_lADOBzomGc4Bkn7fzgd', number: 12 });

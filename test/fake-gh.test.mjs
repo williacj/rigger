@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, readdirSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +20,7 @@ import { createFakeRepository } from './fake-repository.mjs';
 import { clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { writeFileSync } from 'node:fs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WHERE = { repo: 'williacj/rigger', project: 6 };
 
 /** A fake `gh` holding `board`, installed in a directory of its own. */
-const installed = (board = {}) => installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, board });
+const installed = (board = {}) => installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, board });
 
 /**
  * Runs `use` with the fake `gh`'s directory first on `PATH`, as ruling 1 (U9) places it, so the
@@ -268,7 +268,7 @@ const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-r
  * running it under `gh-recording.mjs`, which writes what it recorded to the path it is given.
  */
 function commandsIssuedBy(file) {
-  const into = join(mkdtempSync(join(tmpdir(), 'rigger-gh-recording-')), 'requests.json');
+  const into = join(temporaryDirectory('rigger-gh-recording-'), 'requests.json');
   // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` reports to this run's
   // runner instead, in a form only that runner reads.
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
@@ -349,7 +349,7 @@ test('given a gh command it does not model, the fake gh exits non-zero and print
 });
 
 test('given a board owner, the fake gh holds its board under that owner and answers no board under the repository\'s owner', async () => {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, owner: 'octo-org', board: { columns: Object.values(COLUMNS) } });
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, owner: 'octo-org', board: { columns: Object.values(COLUMNS) } });
 
   const declared = await onPath(fake, () => readSide({ ...BOARD, owner: 'octo-org' }, { emitter: UNKILLED }).readColumns());
   assert.deepEqual(declared, COLUMNS);
@@ -467,12 +467,12 @@ test('the agent commands the fake gh answers are gh pr create, comment, view and
  * with a clone checked out on that branch, where an agent would run `gh`.
  */
 function withPushedBranch() {
-  const { origin, repository } = clonedFromOrigin(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-origin-')));
+  const { origin, repository } = clonedFromOrigin(temporaryDirectory('rigger-fake-gh-origin-'));
   gitIn(repository, 'switch', '--quiet', '-c', 'rigger-214');
   writeFileSync(join(repository, 'README'), 'two\n');
   gitIn(repository, 'commit', '--quiet', '-am', 'Two');
   gitIn(repository, 'push', '--quiet', 'origin', 'rigger-214');
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
   const ran = (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', cwd: repository, env: gitEnvironment() });
   return { origin, repository, fake, ran, head: gitIn(repository, 'rev-parse', 'HEAD').trim(), main: gitIn(repository, 'rev-parse', 'main').trim() };
 }

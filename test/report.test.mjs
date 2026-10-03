@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +17,7 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { waitFor } from './loop-world.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -249,7 +249,7 @@ test('report over a stream holding two runs prints each run\'s signals over that
  * A command started by its absolute path is out of the record's reach.
  */
 function recordingPath() {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-report-path-'));
+  const dir = temporaryDirectory('rigger-report-path-');
   const git = process.env.PATH.split(delimiter).map((entry) => join(entry, 'git')).find((path) => existsSync(path));
   assert.ok(git && !git.includes("'"), `the suite's path holds no git this stand-in can name: ${git}`);
   const record = 'printf \'%s\\n\' "${0##*/} $*" >> "${0%/*}/calls"';

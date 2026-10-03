@@ -3,8 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +12,7 @@ import {
   documentChecking,
   pathLineLiterals,
 } from '../scripts/doc-reference-check.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -49,7 +49,7 @@ test('the register is strict and the root instruction file is soft', () => {
 
 /** A repository holding just the documents the checking config names, with the content given. */
 function repositoryOf(content) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-refs-'));
+  const root = temporaryDirectory('rigger-refs-');
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   writeFileSync(join(root, 'doc-references.json'), JSON.stringify({
     documents: { 'AGENTS.md': 'soft', 'docs/spec/decisions.md': 'strict' },

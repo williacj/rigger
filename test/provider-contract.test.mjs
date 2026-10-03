@@ -3,11 +3,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** The tiers Rigger fixes (`O4` on #467), which every adapter maps to a model of its own. */
 const TIERS = ['standard', 'high'];
@@ -40,9 +40,8 @@ async function departures(key, adapter, directory) {
 }
 
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
-function scratch(t) {
-  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigger-provider-contract-')));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+function scratch() {
+  const directory = realpathSync.native(temporaryDirectory('rigger-provider-contract-'));
   return directory;
 }
 
@@ -50,7 +49,7 @@ test('every module in the adapter map answers the provider adapter interface', a
   // Ruling 5 on #467: one declared contract, so that one test holds the Claude Code module now and
   // the Codex module once #489 adds it. The defect this catches is an adapter L1 cannot await, or
   // one that answers no `unset` for L1 to drop or no `env` for it to set (ruling 9 on #467).
-  const directory = scratch(t);
+  const directory = scratch();
   for (const [key, adapter] of Object.entries(ADAPTERS)) {
     const repo = join(directory, key);
     mkdirSync(repo);
@@ -59,7 +58,7 @@ test('every module in the adapter map answers the provider adapter interface', a
 });
 
 test('the contract names the module that answers otherwise, and how', async (t) => {
-  const directory = scratch(t);
+  const directory = scratch();
   const plain = {
     name: 'other', auth: ['other', 'whoami'], assets: '.other', tiers: { standard: 'small' },
     invocation: () => ({ command: '/usr/bin/other', args: [], input: 'the prompt', unset: [] }),

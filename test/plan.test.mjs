@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +13,7 @@ import { plan as planVerb } from '../src/cli/plan.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -43,7 +43,7 @@ const card = (number, column, extra = {}) => ({
 function plan(board, { project = PROJECT } = {}) {
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } };
   const consumer = repositoryIn('rigger-plan-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-plan-gh-')), { repo: REPO, project, board: { columns: COLUMNS, fields: FIELDS, ...board } });
+  const fake = installFakeGh(temporaryDirectory('rigger-plan-gh-'), { repo: REPO, project, board: { columns: COLUMNS, fields: FIELDS, ...board } });
   const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` };
   const ran = spawnSync(process.execPath, [bin, 'plan'], { cwd: consumer, encoding: 'utf8', env });
   assert.equal(ran.error, undefined);

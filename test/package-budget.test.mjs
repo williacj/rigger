@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +14,7 @@ import {
   packageBudget,
   productionFiles,
 } from '../scripts/package-budget.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 test('a line of code counts', () => {
   assert.equal(countProductionLines('const a = 1;\nconst b = 2;\n'), 2);
@@ -105,7 +105,7 @@ test('an architecture with no package row fails rather than guessing', () => {
 });
 
 test('the walk takes production sources and leaves tests out', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  const root = temporaryDirectory('rigger-budget-');
   mkdirSync(join(root, 'src', 'substrate'), { recursive: true });
   writeFileSync(join(root, 'src', 'substrate', 'git.mjs'), 'const a = 1;\n');
   writeFileSync(join(root, 'src', 'substrate', 'git.test.mjs'), 'const b = 2;\n');
@@ -151,7 +151,7 @@ test('a test-shaped name with an extension Node cannot load is charged', () => {
 
 /** A repository holding each file at its given path. */
 function everyShape(paths) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-shapes-'));
+  const root = temporaryDirectory('rigger-shapes-');
   for (const path of paths) {
     mkdirSync(join(root, dirname(path)), { recursive: true });
     writeFileSync(join(root, path), `import { test } from 'node:test';\ntest('${path}', () => {});\n`);
@@ -239,7 +239,7 @@ test('a template, and a check Rigger ships for a consumer, are not counted', () 
   // consumer's own CI is one of the things that ships from there: ARCHITECTURE.md's Document
   // checking row says the resolver ships as a template and that no layer reads it. Neither runs
   // a card, so neither is counted, wherever the directory sits.
-  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  const root = temporaryDirectory('rigger-budget-');
   mkdirSync(join(root, 'templates'), { recursive: true });
   mkdirSync(join(root, 'src', 'templates'), { recursive: true });
   mkdirSync(join(root, 'src', 'workflow'), { recursive: true });
@@ -269,12 +269,12 @@ test('the templates this repository really ships are charged nothing', () => {
 });
 
 test('a repository with no production sources yet walks to nothing', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  const root = temporaryDirectory('rigger-budget-');
   assert.deepEqual(productionFiles(root), []);
 });
 
 test('the file the parser could not read through is named in the failure', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-budget-'));
+  const root = temporaryDirectory('rigger-budget-');
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'ARCHITECTURE.md'), '| **Package** | **12,000** |\n');
   writeFileSync(join(root, 'src', 'open.mjs'), '/* open\nconst a = 1;\n');

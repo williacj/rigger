@@ -3,8 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +14,7 @@ import {
   instructionFiles,
   liveBudget,
 } from '../scripts/instruction-budget.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 test('words are what whitespace separates', () => {
   assert.equal(countWords('Rules for every session in this repository.'), 7);
@@ -57,7 +57,7 @@ test('the live pool budget this repository records is the ratified figure', () =
 });
 
 test('the root instruction file and every nested one are weighed together', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-words-'));
+  const root = temporaryDirectory('rigger-words-');
   mkdirSync(join(root, 'src', 'execution'), { recursive: true });
   writeFileSync(join(root, 'AGENTS.md'), 'root\n');
   writeFileSync(join(root, 'src', 'execution', 'AGENTS.md'), 'nested\n');
@@ -74,7 +74,7 @@ test('moving text from the root file into a nested one spends nothing', () => {
   // the production code for the answer agree whatever it says, and a check that dropped every
   // nested file would still pass. Three words are three words, wherever they are written.
   const total = (rootFile, nestedFile) => {
-    const root = mkdtempSync(join(tmpdir(), 'rigger-words-'));
+    const root = temporaryDirectory('rigger-words-');
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'ARCHITECTURE.md'), 'The budget is 2,000 words. Live instruction pool budget is 13,000 words.\n');
     writeFileSync(join(root, 'AGENTS.md'), rootFile);

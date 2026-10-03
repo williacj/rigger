@@ -5,14 +5,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { backtickedPaths, check, spentExemptions } from '../scripts/path-check.mjs';
 import { documentChecking } from '../scripts/doc-reference-check.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -48,7 +48,7 @@ test('a missing root file keeps its path status across short extensions', () => 
 
 /** A repository whose checked document holds the given line, plus whatever files are named. */
 function repositoryOf(line, { exempt = {}, files = [], directories = [] } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-paths-'));
+  const root = temporaryDirectory('rigger-paths-');
   writeFileSync(join(root, 'doc-references.json'), JSON.stringify({
     documents: { 'AGENTS.md': 'soft' },
     exempt: { paths: exempt },

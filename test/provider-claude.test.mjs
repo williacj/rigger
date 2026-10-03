@@ -3,26 +3,25 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as claude from '../src/substrate/providers/claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** A fresh directory under `TMPDIR`, by its real path, removed when the test ends. */
-function scratch(t) {
-  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigger-claude-adapter-')));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+function scratch() {
+  const directory = realpathSync.native(temporaryDirectory('rigger-claude-adapter-'));
   return directory;
 }
 
 /** A consumer's repository under `t`'s scratch, holding the role's agent file. */
 function consumer(t) {
-  const directory = join(scratch(t), 'repo');
+  const directory = join(scratch(), 'repo');
   mkdirSync(join(directory, '.claude', 'agents'), { recursive: true });
   const agent = join(directory, '.claude', 'agents', 'engineer.md');
   writeFileSync(agent, '---\nname: engineer\n---\n\n# Engineer\n');
@@ -147,7 +146,7 @@ test('the invocation excludes the CLAUDE.md above the directory as given, where 
   // macOS names `/tmp` and `/var` through links. Claude Code walks up from the directory it was
   // started in, so each spelling's ancestors are excluded.
   const repo = consumer(t);
-  const link = join(scratch(t), 'linked');
+  const link = join(scratch(), 'linked');
   symlinkSync(repo.directory, link);
   const given = settings((await invoked({ directory: link, agent: join(link, '.claude', 'agents', 'engineer.md') })).args);
   assert.ok(given.claudeMdExcludes.includes(join(dirname(link), 'CLAUDE.md')));
@@ -157,7 +156,7 @@ test('the invocation excludes the CLAUDE.md above the directory as given, where 
 test('a directory under a path holding a glob character is refused, naming the path, since its CLAUDE.md exclusions would match other files', async (t) => {
   // `claudeMdExcludes` holds globs. An ancestor named `set[1]` would exclude `set1/CLAUDE.md` and
   // leave its own in the session.
-  const base = scratch(t);
+  const base = scratch();
   for (const name of ['star*', 'brace{x}', 'set[1]', 'at@(x)']) {
     const directory = join(base, name, 'repo');
     mkdirSync(directory, { recursive: true });
@@ -173,7 +172,7 @@ test('given reach naming a directory, the invocation grants it by route B: no --
   // #519's report, "Recommendation", items 1 and 2: `--add-dir` lists the reached directory's
   // agents (c2, c12), and path-scoped rules in `--settings` reach it loading nothing (c6 to c8).
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   const { args } = await invoked(repo, { reach: [reached] });
   assert.equal(args.includes('--add-dir'), false);
   const given = settings(args);
@@ -188,8 +187,8 @@ test('given reach naming a directory through a link, the rules name its real pat
   // #519's report, "What #520 must not assume": every run used the resolved path, and a rule on
   // `/tmp/…` was not measured to match `/private/tmp/…`, or the reverse. macOS names `/tmp` by a link.
   const repo = consumer(t);
-  const reached = scratch(t);
-  const link = join(scratch(t), 'linked');
+  const reached = scratch();
+  const link = join(scratch(), 'linked');
   symlinkSync(reached, link);
   const { allow } = settings((await invoked(repo, { reach: [link] })).args).permissions;
   assert.ok(allow.includes(`Read(/${reached}/**)`), JSON.stringify(allow));
@@ -204,7 +203,7 @@ test('given reach, the invocation writes no cd rule, keeps a rule of its own for
   // a compound command, so `cd <head> && npm test` runs under `Bash(npm test)`, and a rule naming
   // the whole line admits nothing.
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   const declared = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(git diff:*)'];
   put(repo.directory, '.claude/settings.json', { permissions: { allow: declared } });
   const { permissions } = settings((await invoked(repo, { reach: [reached] })).args);
@@ -217,7 +216,7 @@ test('given reach, the invocation writes no cd rule, keeps a rule of its own for
 test('given reach, a Bash rule the directory\'s settings declare for a compound line is refused, naming the rule, since it would admit nothing', async (t) => {
   // #519's report, c17: `Bash(cd <head> && npm run fail)` did not admit that very command.
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   for (const rule of ['Bash(cd /x && npm test)', 'Bash(npm test; echo done)', 'Bash(npm test | tee log)', 'Bash(make || true)']) {
     put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
     await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule));
@@ -228,7 +227,7 @@ test('given reach, a Bash rule the directory\'s settings declare with a lone & i
   // The engineer judge's B1 on #531: `Bash(echo alpha & echo beta)` was carried across, and a live
   // session asked for that very command was denied it as using "the `&` background operator".
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   const rule = 'Bash(npm test & echo x)';
   put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
   await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule));
@@ -237,7 +236,7 @@ test('given reach, a Bash rule the directory\'s settings declare with a lone & i
 test('given reach, a Bash rule the directory\'s settings declare with a line break is refused, naming the rule', async (t) => {
   // The engineer judge's B1 on #531: a line break ends one command and starts the next.
   const repo = consumer(t);
-  const reached = scratch(t);
+  const reached = scratch();
   for (const rule of ['Bash(npm test\necho x)', 'Bash(npm test\r\necho x)']) {
     put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Bash(npm test:*)', rule] } });
     await assert.rejects(invoked(repo, { reach: [reached] }), (failure) => failure.message.includes(rule), JSON.stringify(rule));
@@ -252,8 +251,8 @@ test('given reach, each Read or Edit deny rule relative to the working directory
   // `./a/b.txt` or `a/b.txt` blocks at its own place only (#531's engineer judge, B3; Codex round 3,
   // item 7; the maker's probes, rounds 5 and 6).
   const repo = consumer(t);
-  const one = scratch(t);
-  const two = scratch(t);
+  const one = scratch();
+  const two = scratch();
   const declared = [
     'Read(./.env)', 'Read(.env)', 'Read(**/.secret)', 'Edit(secrets/**)', 'Read(src/config/**)', 'Read(./config/local.json)',
     'Read(keys/)', 'Read(./vault/**)',
@@ -275,8 +274,8 @@ test('given reach, a /path deny rule is copied to each reached directory\'s real
   // directory's `secret.txt`, so the rule is anchored there too. A `!` pattern cannot carry over to
   // an anchored copy, so the reached directory stands stricter.
   const repo = consumer(t);
-  const one = scratch(t);
-  const two = scratch(t);
+  const one = scratch();
+  const two = scratch();
   const declared = ['Read(/secret.txt)', 'Edit(/config/**)', 'Read(!keep.txt)'];
   put(repo.directory, '.claude/settings.json', { permissions: { deny: declared } });
   const { deny } = settings((await invoked(repo, { reach: [one, two] })).args).permissions;
@@ -288,7 +287,7 @@ test('given reach whose real path holds a space, the invocation grants it, namin
   // Ruling 12 on #520: the default worktree root sits beside the consumer's checkout, so a home
   // directory holding a space must not be refused.
   const repo = consumer(t);
-  const reached = join(scratch(t), 'with space');
+  const reached = join(scratch(), 'with space');
   mkdirSync(reached);
   const { allow } = settings((await invoked(repo, { reach: [reached] })).args).permissions;
   assert.ok(allow.includes(`Read(/${reached}/**)`), JSON.stringify(allow));
@@ -298,7 +297,7 @@ test('given reach whose real path holds a space, the invocation grants it, namin
 /** Asserts each directory named in `names`, made under a scratch directory, is refused as `reach`, naming its path. */
 async function refusedAsReach(t, names) {
   const repo = consumer(t);
-  const base = scratch(t);
+  const base = scratch();
   for (const name of names) {
     const reached = join(base, name);
     mkdirSync(reached);
@@ -329,7 +328,7 @@ test('given reach naming a directory that does not exist, the invocation is refu
   // A path that cannot be resolved fails safe: a rule on a spelling it does not resolve to was not
   // measured to match (#519's report, "What #520 must not assume").
   const repo = consumer(t);
-  const absent = join(scratch(t), 'absent');
+  const absent = join(scratch(), 'absent');
   await assert.rejects(invoked(repo, { reach: [absent] }), (failure) => failure.message.includes(absent));
 });
 

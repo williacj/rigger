@@ -4,8 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +16,7 @@ import {
   sentenceCeiling,
   sentences,
 } from '../scripts/spec-style-lint.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -202,7 +202,7 @@ test('the lint reports no finding about whether prose should have been a list', 
 });
 
 test('the lint reads README.md, ARCHITECTURE.md, docs/spec/decisions.md and docs/spec/requirements.md', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-lint-'));
+  const root = temporaryDirectory('rigger-lint-');
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   mkdirSync(join(root, 'docs', 'derived'), { recursive: true });
   mkdirSync(join(root, 'docs', 'journal'), { recursive: true });
@@ -230,7 +230,7 @@ test('the lint reads README.md, ARCHITECTURE.md, docs/spec/decisions.md and docs
 });
 
 test('the lint reads only scope roots named by the skill', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-scope-'));
+  const root = temporaryDirectory('rigger-scope-');
   writeFileSync(join(root, 'README.md'), 'A document.\n');
   writeFileSync(join(root, 'ARCHITECTURE.md'), 'A document.\n');
 
@@ -249,7 +249,7 @@ test('the four linted documents pass the lint', () => {
 });
 
 test('a finding names the file it sits in, alongside the line and the word count', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-names-'));
+  const root = temporaryDirectory('rigger-names-');
   mkdirSync(join(root, '.claude', 'skills', 'spec-style'), { recursive: true });
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   writeFileSync(join(root, '.claude', 'skills', 'spec-style', 'SKILL.md'), SKILL);
@@ -265,7 +265,7 @@ test('a finding names the file it sits in, alongside the line and the word count
 
 /** A repository holding the fixture skill and a decisions register whose one row holds `cell`. */
 function repositoryWithRow(cell) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-row-'));
+  const root = temporaryDirectory('rigger-row-');
   mkdirSync(join(root, '.claude', 'skills', 'spec-style'), { recursive: true });
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   writeFileSync(join(root, '.claude', 'skills', 'spec-style', 'SKILL.md'), SKILL);
