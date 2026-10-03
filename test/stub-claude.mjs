@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
@@ -55,7 +56,16 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
  * - `forever`: never exits, until it is killed;
+ * - `leave`: starts `/usr/bin/tail -f` on `left-<card>` beside itself, in a process group of its
+ *   own and holding the run's output open, and leaves it running when it exits. L0 then reads the
+ *   run's output for its bound once the group is empty, and its census kills the process, which
+ *   works in the run's directory, once that bound has passed;
  * - `exit`: the code it exits with, 0 where none is given.
+ *
+ * A plan given at install may also hold, under the card `*`, `{ [role]: { exec } }`, a command
+ * and its arguments. Every run then does none of the above: the stand-in is installed as a shell
+ * that replaces itself with that command, which keeps the run's pid and so leads the run's process
+ * group, and is handed the input unread.
  *
  * It runs under the executable running this suite, by its absolute path, so a test can put it on
  * a path too narrow to hold `node`, and it asks the path for `git` and `gh` only to open a pull
@@ -72,9 +82,13 @@ export function standInAgent(plan = {}) {
  * ends, beside whatever else it holds: for a world whose one directory is the whole `PATH`.
  */
 export function installStandInAgent(dir, plan = {}) {
-  writeFileSync(join(dir, PLAN), JSON.stringify(plan));
+  writePlan(dir, plan);
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
   writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
+  // A plan to exec a command under every card installs a shell in its place, which `exec`s the
+  // command: Node 20, the floor the README sets, has no `process.execve` for the stand-in to call.
+  const exec = Object.values(plan['*'] ?? {}).find((act) => act.exec !== undefined)?.exec;
+  if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\nexec ${exec.map(quoted).join(' ')}\n`);
   chmodSync(join(dir, 'claude'), 0o755);
   const read = () => JSON.parse(readFileSync(join(dir, PLAN), 'utf8'));
   return {
@@ -84,7 +98,7 @@ export function installStandInAgent(dir, plan = {}) {
     /** Sets what the stand-in does for `card` in `role`, for every run from now on. */
     plan: (card, role, act) => {
       const held = read();
-      writeFileSync(join(dir, PLAN), JSON.stringify({ ...held, [card]: { ...held[card], [role]: act } }));
+      writePlan(dir, { ...held, [card]: { ...held[card], [role]: act } });
     },
     /** What the test set the stand-in to do for `card` in `role`, or undefined where it set nothing. */
     act: (card, role) => read()[card]?.[role],
@@ -106,8 +120,29 @@ export function installStandInAgent(dir, plan = {}) {
     release: (card, role = 'engineer') => process.kill(heldPid(dir, card, role), 'SIGUSR1'),
     /** Whether a run for `card` in `role` wrote its file. */
     wrote: (card, role = 'engineer') => existsSync(marker(dir, 'wrote', card, role)),
+    /** The pid of the run for `card` in `role` that holds now, or undefined where none holds. */
+    holder: (card, role = 'engineer') => {
+      try {
+        return heldPid(dir, card, role);
+      } catch (failure) {
+        if (failure.code === 'ENOENT') return undefined;
+        throw failure;
+      }
+    },
   };
 }
+
+/**
+ * Writes `plan` to the stand-in's plan file in `dir` whole, then renames it into place, so a run
+ * starting meanwhile reads the plan before or after, never half of it.
+ */
+function writePlan(dir, plan) {
+  writeFileSync(join(dir, `${PLAN}.partial`), JSON.stringify(plan));
+  renameSync(join(dir, `${PLAN}.partial`), join(dir, PLAN));
+}
+
+/** `word` quoted for a shell, so it reaches the command as one argument whatever it holds. */
+const quoted = (word) => `'${String(word).replaceAll("'", "'\\''")}'`;
 
 /**
  * The pid of the run for `card` in `role` that holds, as its `held` file in `dir` names it. A file
@@ -178,6 +213,10 @@ export async function standInMain() {
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
     ran('git', ['push', '-q', 'origin', branch]);
     ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
+  }
+  if (act.leave) {
+    writeFileSync(join(dir, `left-${card}`), '');
+    spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
   }
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;

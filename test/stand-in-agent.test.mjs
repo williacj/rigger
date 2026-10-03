@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
+import { mkdirSync, readFileSync } from 'node:fs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
@@ -52,4 +54,25 @@ test('every run of the stand-in that holds is woken by a release sent in the tur
   await until(() => exited.size === RUNS, { signal: bound }).catch(() => {});
 
   assert.deepEqual(cards.filter((card) => !exited.has(card) || !agent.wrote(card)), [], 'these runs missed their release');
+});
+
+/**
+ * `NODE_OPTIONS` that remove `process.execve` before any module runs, as Node 20, the floor the
+ * README sets, lacks it: Node added it in 23.11.0 and 22.15.0.
+ */
+const WITHOUT_EXECVE = '--import=data:text/javascript,delete%20process.execve';
+
+test('a stand-in planned to exec a command under every card replaces itself with that command, which keeps its pid, under a Node without process.execve', SETTLES_WITHIN, async () => {
+  const agent = standInAgent();
+  const pidFile = join(agent.dir, 'exec.pid');
+  mkdirSync(join(agent.dir, 'exec'));
+  const installed = installStandInAgent(join(agent.dir, 'exec'), { '*': { engineer: { exec: ['/bin/sh', '-c', `echo $$ > '${pidFile}'`] } } });
+  const child = spawn(join(installed.dir, 'claude'), ['--append-system-prompt-file', '/nowhere/.claude/agents/engineer.md'], { env: { ...process.env, NODE_OPTIONS: WITHOUT_EXECVE }, stdio: ['pipe', 'ignore', 'pipe'] });
+  let said = '';
+  child.stderr.on('data', (chunk) => { said += chunk; });
+  child.stdin.end('Rigger dispatched this session, unattended, as the maker for card #3.\n');
+  const [code] = await once(child, 'exit');
+
+  assert.equal(code, 0, said);
+  assert.equal(readFileSync(pidFile, 'utf8').trim(), String(child.pid));
 });

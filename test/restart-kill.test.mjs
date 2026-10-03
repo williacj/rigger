@@ -105,10 +105,10 @@ function dispatchedCommand(directory, { exits = false } = {}) {
 
 /**
  * Starts the engine that stands in for Rigger mid-dispatch, a Node process of its own running one
- * pull of L3's loop over `world`'s board, with the fake `gh` first on its PATH, whose dispatch
- * runs `command`, in `workspace` as the dispatch's directory where it is given, and reads the
- * process table through `ps` where it is given. Its command line names the scratch directory, so
- * the teardown ends it.
+ * pull of L3's loop over `world`'s board, with the fake `gh` first on its PATH, whose maker
+ * dispatch runs `command`, in `workspace` as the dispatch's directory where it is given. `ps`,
+ * where it is given, is handed to the engine, which hands it to `loop`, which hands it to L1 for
+ * the process table's reads. Its command line names the scratch directory, so the teardown ends it.
  */
 function startEngine(world, command, { ps, workspace } = {}) {
   const harness = new URL('./mid-dispatch-engine.mjs', import.meta.url).href;
@@ -137,7 +137,7 @@ function groupRecorded(world) {
 
 /**
  * The engine killed outright mid-dispatch: started over `world` on `command`, in `workspace` where
- * it is given, reading the process table through `ps` where it is given, and sent SIGKILL once the command and its child have both
+ * it is given, with `ps` handed to the engine where it is given, and sent SIGKILL once the command and its child have both
  * signalled they are running and the record names the command's group. Settles once the engine
  * has exited, on the pids of the command and its child.
  *
@@ -453,7 +453,7 @@ test('given a reader of a FIFO left blocked in its read while a writer it still 
 /**
  * The engine killed outright while its command and child run, then the command exiting on its own
  * while its child stays alive. Settles once the command is gone, on both pids. `ps` is handed to
- * the engine (`killedMidDispatch`).
+ * the engine, which hands it to `loop` (`killedMidDispatch`).
  */
 async function leaderGoneAfterDeath(t, world, { ps } = {}) {
   const pids = await killedMidDispatch(t, world, dispatchedCommand(world.directory, { exits: true }), { ps });
@@ -521,7 +521,23 @@ test('after that restart through rigger once, the stream holds the child\'s kill
   assertOneMakerOfItsOwn(world, 'once', ran);
 });
 
-test('the engine standing in for Rigger mid-dispatch allocates each dispatch an id that no other dispatch in the same state directory holds, across runs', SETTLES_WITHIN, async (t) => {
+test('the engine\'s maker dispatches, given no workspace, each work in a directory of their own that holds neither the consumer\'s repository nor the fake gh, so no census of one kills the engine\'s own reads', SETTLES_WITHIN, async (t) => {
+  const world = consumerIn(t, [card(10), card(20)]);
+  const command = fixture(world.directory, 'command', 'exit 0');
+
+  const engine = startEngine(world, command);
+  const [code] = await once(engine, 'exit');
+
+  assert.equal(code, 0, engine.said);
+  const workspaces = readEvents(world.state).filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').map((event) => realpathSync(event.workspace));
+  assert.equal(workspaces.length, 2, JSON.stringify(workspaces));
+  assert.equal(new Set(workspaces).size, 2, JSON.stringify(workspaces));
+  for (const held of [world.repository, join(world.directory, 'fake'), join(world.directory, 'first')].map((path) => realpathSync(path))) {
+    assert.deepEqual(workspaces.filter((workspace) => held === workspace || held.startsWith(`${workspace}/`)), [], held);
+  }
+});
+
+test('L3 allocates each maker dispatch an id that no other dispatch in the same state directory holds, across runs', SETTLES_WITHIN, async (t) => {
   const world = consumerIn(t, [card(10), card(20)]);
   const command = fixture(world.directory, 'command', 'exit 0');
 

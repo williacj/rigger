@@ -17,6 +17,8 @@ import {
 import { settledOf } from './loop-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { positive, settling } from './loop-world.mjs';
+import { running, sweep } from './process-fixtures.mjs';
 
 /** A new empty temporary directory, named for what it stands in for. */
 const scratch = (name) => temporaryDirectory(`rigger-restart-${name}-`);
@@ -25,7 +27,7 @@ const scratch = (name) => temporaryDirectory(`rigger-restart-${name}-`);
 async function pullOnce(built) {
   const tick = built.loop.pull();
   const pulled = settledOf(tick);
-  await waitFor(() => pulled() || built.dispatches.held() > 0);
+  await settling(built, pulled);
   built.dispatches.releaseAll();
   await tick;
 }
@@ -63,15 +65,16 @@ test("given a run stopped while card X's dispatch is unfinished, a second engine
 
   const run = restarted.loop.run();
   const ran = settledOf(run);
-  await waitFor(() => restarted.dispatches.held() === 2);
+  // Positive: until cards 1 and 2 are held.
+  await positive(() => restarted.dispatches.held() === 2);
   const [held] = (await fake.operations.readPriority()).items.filter((item) => item.number === 1);
   assert.equal(held.column, COLUMNS.coding, 'X was left in the coding column by the stopped run');
   const handedX = restarted.handed.filter((start) => start.card.number === 1);
   assert.equal(handedX.length, 1, JSON.stringify(restarted.handed));
-  assert.deepEqual(Object.keys(handedX[0]).sort(), ['card', 'kind']);
+  assert.deepEqual(Object.keys(handedX[0]).sort(), ['card']);
   assert.deepEqual(handedX[0].card, held);
   restarted.dispatches.releaseAll();
-  await waitFor(() => ran() || restarted.dispatches.held() > 0);
+  await settling(restarted, ran);
   restarted.dispatches.releaseAll();
   await run;
 });
@@ -84,11 +87,12 @@ test("given the same stopped run, the write record shows no move of X out of the
 
   const run = restarted.loop.run();
   const ran = settledOf(run);
-  await waitFor(() => restarted.dispatches.held() === 2);
+  // Positive: until cards 1 and 2 are held.
+  await positive(() => restarted.dispatches.held() === 2);
   assert.ok(restarted.dispatches.holding().includes(1), "X's new dispatch is held open");
   const beforeReturn = fake.writes().slice(atRestart);
   restarted.dispatches.releaseAll();
-  await waitFor(() => ran() || restarted.dispatches.held() > 0);
+  await settling(restarted, ran);
   restarted.dispatches.releaseAll();
   await run;
 
@@ -198,23 +202,41 @@ test('a restart dispatches redos before any Ready card, even one ranked above th
 });
 
 /**
+ * How long the child running a full run may take before it is ended and the test fails rather
+ * than holding the suite. A judgment: the run makes five maker processes, each of which a loaded
+ * host starts within a second or two.
+ */
+const FULL_RUN_WITHIN = 30_000;
+
+/**
  * One full fake-board run, a stopped first run and its restart driven until it drains, in a child
  * node process whose working directory is `repository`, with `HOME` and `TMPDIR` set to `home` and
- * `temporary` and the state directory at `.rigger/` in the repository. Answers the child's result.
+ * `temporary` and the state directory at `.rigger/` in the repository. Both worlds make their
+ * workspaces and stand-ins in `scratch`, outside all three, and the child ends every stand-in they
+ * started once the restart's run has settled, through `endStandIns`, and prints, as its last line,
+ * the processes still naming `scratch` then, before its own exit's cleanup ends anything. Answers
+ * the child's result.
  */
-function fullRunIn(repository, { home, temporary }) {
+function fullRunIn(repository, { home, temporary, scratch }) {
   const harness = new URL('./loop-world.mjs', import.meta.url).href;
+  const fixtures = new URL('./process-fixtures.mjs', import.meta.url).href;
   const state = join(repository, '.rigger');
   const code = [
-    `const { drive, stoppedRun, world } = await import(${JSON.stringify(harness)});`,
+    `const { drive, endStandIns, stoppedRun, world } = await import(${JSON.stringify(harness)});`,
     `const directory = ${JSON.stringify(state)};`,
-    'const fake = await stoppedRun({ directory });',
-    "await drive(world({ fake, concurrency: 2, directory, run: 'r-restart' }));",
+    `const scratch = ${JSON.stringify(scratch)};`,
+    'const fake = await stoppedRun({ directory, scratch });',
+    "await drive(world({ fake, concurrency: 2, directory, run: 'r-restart', scratch }));",
+    `const { running } = await import(${JSON.stringify(fixtures)});`,
+    'endStandIns();',
+    'console.log(JSON.stringify({ alive: running(scratch) }));',
+    'process.exit(0);',
   ].join('\n');
   return spawnSync(process.execPath, ['--input-type=module', '-e', code], {
     cwd: repository,
     encoding: 'utf8',
     env: { PATH: process.env.PATH, HOME: home, TMPDIR: temporary },
+    timeout: FULL_RUN_WITHIN,
   });
 }
 
@@ -223,9 +245,13 @@ function afterFullRun() {
   const repository = repositoryAt(scratch('target'), { 'README.md': 'A target repository.\n' });
   const home = scratch('home');
   const temporary = scratch('tmp');
+  // The child's stand-ins, which its teardown ends here should the child leave any.
+  const standIns = temporaryDirectory('rigger-restart-stand-ins-', { beforeRemoval: () => sweep(standIns) });
   const before = gitIn(repository, 'status', '--porcelain', '--ignored');
-  const ran = fullRunIn(repository, { home, temporary });
+  const ran = fullRunIn(repository, { home, temporary, scratch: standIns });
   assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(JSON.parse(ran.stdout.trim().split('\n').at(-1)).alive, [], 'endStandIns left a stand-in alive in the child');
+  assert.deepEqual(running(standIns), [], 'no stand-in the run started is alive after it');
   assert.ok(readEvents(join(repository, '.rigger')).some((event) => event.trigger === 'drain'), 'the run drained');
   return { repository, home, temporary, before };
 }
