@@ -115,6 +115,7 @@ test('given a Ready card with a merged pull request from its line of work and th
   assert.match(next.reason, /#41\b/);
 });
 
+// proves R-WORK-19
 test('given a Review card with two open pull requests from its line of work, L2 refuses the card, naming it and each pull request', async () => {
   const [next] = await decided([cardIn(5, columns.review)], readsOver({ pullRequests: [pullFrom(5, 51), pullFrom(5, 52)] }).reads);
 
@@ -177,4 +178,17 @@ test('given a Ready card whose line of work the forge holds and whose labels sel
   assert.equal(next.action, 'refuse', JSON.stringify(next));
   assert.equal(next.card, 14);
   for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-14\b/]) assert.match(next.reason, named);
+});
+
+// proves R-LOOP-13, R-WORK-19
+test('given a Ready card whose line of work the forge holds, whose acceptance the form check refuses, and whose labels select two tiers for its maker role, L2\'s one refusal names the role, both labels, its line of work and the form check\'s reason', async () => {
+  const roles = { ...config.roles, engineer: { ...config.roles.engineer, labels: { 'tier:high': 'high', 'tier:low': 'standard' } } };
+  const everything = { ...cardIn(15, columns.ready), body: '## Notes\n\nNo acceptance here.\n', labels: ['type:change', 'tier:high', 'tier:low'] };
+  const decide = (card) => nextAction(card, KINDS, undefined, { columns, roles });
+
+  const next = (await factsCall({ config, reads: readsOver({ branches: ['rigger-15'] }).reads, decide })([everything]))(everything);
+
+  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.equal(next.card, 15);
+  for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-15\b/, /missing acceptance/]) assert.match(next.reason, named);
 });

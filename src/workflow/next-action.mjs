@@ -37,8 +37,8 @@ const selecting = (card, kinds) =>
  * line of work, ignored, or left to be dispatched. A card handed on with none is answered as if the
  * forge held nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
  * labels select two tiers for its kind's maker (`R-LOOP-13`), naming the role and each label, and
- * where it would also refuse the card for what the forge holds or for its acceptance's form, the
- * one refusal names that reason too.
+ * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
+ * both, the one refusal names each of those reasons too.
  *
  * A card in the `coding` or `review` column of `columns`, the declared columns by key, is a redo,
  * and one `fresh(card)` answers true for is `{ action: 'ignore' }`: a fresh verdict covers it, so
@@ -68,15 +68,17 @@ export function nextAction(card, kinds, epicLabel, { columns, fresh, roles, topi
   const [kind] = names;
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore') return held;
-  // The one refusal L2 would give without the tier, what the forge holds before the acceptance's form.
-  const form = held === undefined ? checkAcceptanceForm(card) : undefined;
-  const other = held?.reason ?? (form.admitted ? undefined : form.reason);
+  const form = checkAcceptanceForm(card);
   const maker = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, maker, roles[maker]);
-  // Neither reason replaces the other, so a tier conflict beside another refusal names both
-  // (`R-LOOP-13`, `R-WORK-19`; the amended acceptance of #484).
-  const reasons = [tier?.conflict, other].filter((reason) => reason !== undefined);
-  if (reasons.length > 0) return { action: 'refuse', card: card.number, reason: reasons.join('; and ') };
+  // Without a tier conflict, what the forge holds is refused before the acceptance's form, as at
+  // the base. With one, no reason replaces another, so the one refusal names every reason that
+  // applies (`R-LOOP-13`, `R-WORK-19`; the amended acceptance of #484).
+  const reasons = tier?.conflict === undefined
+    ? [held?.reason ?? (form.admitted ? undefined : form.reason)]
+    : [tier.conflict, held?.reason, form.admitted ? undefined : form.reason];
+  const named = reasons.filter((reason) => reason !== undefined);
+  if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and ') };
   if (provisioning === undefined) return { action: 'dispatch', kind };
   return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning, outcomes, sink, attempt, workspace });
 }
