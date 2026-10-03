@@ -109,7 +109,8 @@ async function startKilled(started, options) {
 /**
  * A Node process of its own, whose arguments are a scratch directory and a JSON object of options:
  * it starts `$here/command` through L0's adapter with the `ps` stand-in `ps` names where it names
- * one, read timeout `readTimeout`, dispatch directory `directory` where given, and `signalStandIn`'s
+ * one, the `lsof` stand-in `lsof` names where it names one, read timeout `readTimeout`, dispatch
+ * directory `directory` where given, and `signalStandIn`'s
  * signal call refusing `refused` and leaving `unkept`, as `standIn` does. It appends each `L0`
  * event, and each signal sent, to `events` and `pairs` as lines of JSON. Where `hangAfter` names a
  * pid file, or `group` for `group.pid`'s group, it marks `hang` as it first sends that target the
@@ -131,7 +132,7 @@ const CALLER = [
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) appendFileSync(join(here, 'hang'), ''); return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`) };",
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
-  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps) });",
+  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "appendFileSync(join(here, 'exiting'), String(Date.now()));",
   'process.exit(0);',
@@ -545,8 +546,8 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
   assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
   const killed = killedIn(pairs, pidIn(directory, 'outside'));
   assert.ok(killed !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
-  // The census lists, kills and waits within the cleanup's own bound from its first read, which is
-  // after the caller began to exit, and records the process only once that bound has passed.
+  // The census waits on what it killed within the cleanup's own bound from its kill, which is after
+  // the caller began to exit, and records the process only once that bound has passed.
   assert.ok(ended - exiting >= CLEANUP_BOUND, `the caller ended ${ended - exiting} ms after it began to exit, before the cleanup's own bound of ${CLEANUP_BOUND} ms`);
   assert.ok(ended - killed < KILL_BOUND, `the caller ended ${ended - killed} ms after the census's kill of the outside process`);
 });
@@ -611,6 +612,29 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.equal(alive(outside), true, 'the census ended the outside process, so the test proves nothing');
   assert.ok(!processState(outside).startsWith('T'), `the census left the outside process stopped: ${processState(outside)}`);
   const killed = killedIn(pairs, outside);
+  assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
+});
+
+/** An `lsof` stand-in that answers every listing as `lsof` does until `$here/hang` exists, and from then on never answers. */
+const hangingListing = (directory) => warmed(fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /usr/sbin/lsof "$@"'));
+
+// proves R-STATE-19, R-STATE-9
+test('given a census of a dispatch\'s directory whose listing after its kill takes the rest of its read bound, the exit cleanup still reads the process the kill does not end, and records it by name and command line as alive at the cleanup\'s own bound of that kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  hangingListing(directory);
+
+  const { status, events, pairs, ended } = await cleanedUp(directory, { lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+
+  assert.equal(status, 0);
+  assert.ok(existsSync(join(directory, 'hang')), 'the census never sent the outside process its kill, so the test proves nothing');
+  assert.ok(events.some(({ event }) => event === 'directory.unread'), 'the census\'s listing after its kill answered within its read bound, so the test proves nothing');
+  assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  // The census waits on what it killed until the cleanup's own bound has passed since that kill,
+  // whatever its reads before took, and no longer.
+  const killed = killedIn(pairs, pidIn(directory, 'outside'));
+  assert.ok(ended - killed >= CLEANUP_BOUND, `the caller ended ${ended - killed} ms after the census's kill, before the cleanup's own bound of ${CLEANUP_BOUND} ms`);
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
 });
 
