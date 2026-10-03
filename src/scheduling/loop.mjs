@@ -178,7 +178,8 @@ function released(release, claim, failure) {
  * injection (the architect's ruling 3, AQ6, on #467). `environment` is the environment L3 hands
  * every dispatch it makes, each step's and the maker's (ruling 2, AQ1). `workspace(card)` is L1's
  * workspace handle, injected, and
- * answers the attempt's workspace as `{ path }` (ruling 5, P4). `state` is the state directory
+ * answers the attempt's workspace as `{ path }`, with the card's scratch base as `scratch` and the
+ * repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and 21 on #467). `state` is the state directory
  * L1 records each step's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
@@ -235,15 +236,17 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
 
   /**
    * Dispatches the role L2's role answer `answer` names, for `card`'s attempt numbered `attempt`, in
-   * the workspace at `path`, and settles on its outcome as `Promise.allSettled` records it. L3
+   * the workspace at `path`, with the card's scratch base `scratch` and the `repository` L1 made
+   * from, each as L1's workspace make answered it, and settles on its outcome as `Promise.allSettled` records it. L3
    * allocates the dispatch's id and appends its start, under the id and the card, naming the role,
    * its tier and the attempt, then awaits `roleDispatch` and L1's `dispatch` as one settled unit, so
    * anything the provider adapter runs runs after that start (the architect's ruling 5 on #467).
    * `roleDispatch` is handed the answer unread, the workspace as working directory and dispatch
-   * directory, and `environment`. A start the sink refuses starts nothing, and rejects naming the
+   * directory, the scratch base and the repository unread (the architect's rulings 19 and 21), and
+   * `environment`. A start the sink refuses starts nothing, and rejects naming the
    * card and the role.
    */
-  const dispatchRole = async (card, answer, path, attempt) => {
+  const dispatchRole = async (card, answer, { path, scratch, repository }, attempt) => {
     const id = `d-${randomUUID()}`;
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { role: answer.role, tier: answer.tier, attempt });
@@ -251,7 +254,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
       throw refused(`card #${card.number}'s role \`${answer.role}\` was not started, because the event sink refused to record its start`, refusal);
     }
     const run = async () => {
-      const handed = await roleDispatch({ answer, cwd: path, directory: path, reach: [], env: environment, sink, id, card: card.number });
+      const handed = await roleDispatch({ answer, cwd: path, directory: path, scratch, repository, reach: [], env: environment, sink, id, card: card.number });
       return dispatchOnL1({ id, card: card.number, directory: state, sink, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
@@ -259,12 +262,13 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
   };
 
   /**
-   * Has L1 make `card`'s workspace for the attempt numbered `number`, and answers it as `{ path }`,
-   * or, where L1 could not make it, L2's answer for that attempt, handed the failure unread.
+   * Has L1 make `card`'s workspace for the attempt numbered `number`, and answers it as `{ path,
+   * scratch, repository }`, the card's scratch base and repository beside it as L1 answered them, or, where L1 could not make
+   * it, L2's answer for that attempt, handed the failure unread.
    */
   const made = async (card, number) => {
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number)))]);
-    if (outcome.status === 'fulfilled') return { path: outcome.value.path };
+    if (outcome.status === 'fulfilled') return { path: outcome.value.path, scratch: outcome.value.scratch, repository: outcome.value.repository };
     return { answer: decide(card, [], { attempt: number, workspace: outcome }) };
   };
 
@@ -287,7 +291,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
     const failures = [];
     let answer = next;
     for (let number = 1; ; number += 1) {
-      const { path, answer: unmade } = await made(card, number);
+      const { path, scratch, repository, answer: unmade } = await made(card, number);
       if (unmade !== undefined) {
         answer = unmade;
       } else {
@@ -310,7 +314,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
       if (dispatch === undefined) {
-        const outcome = await dispatchRole(card, answer.maker, path, number);
+        const outcome = await dispatchRole(card, answer.maker, { path, scratch, repository }, number);
         const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
         return { card: card.number, workspace: path, outcome, settled };
       }

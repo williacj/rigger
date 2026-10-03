@@ -19,6 +19,7 @@ import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readGroups } from '../src/execution/groups.mjs';
 
 // A bound on a test that waits on real processes, so one whose pull never settles fails here
 // rather than holding the suite.
@@ -321,4 +322,51 @@ test('in that pull, card 2\'s maker process is not killed by card 1\'s refusal: 
 
   assert.equal(built.agent.wrote(2), true, JSON.stringify(failure.reached));
   assert.equal(failure.reached[0]?.outcome.value?.exit, 0, JSON.stringify(failure.reached));
+});
+
+/** The maker's scratch directory in a maker world for card `number`: `scratch/rigger-<number>/engineer` beside the workspaces. */
+const makerScratch = (built, number) => join(built.directory, 'workspaces', 'scratch', `rigger-${number}`, 'engineer');
+
+/** Whether `each` is L1's start of the maker's dispatch, which runs the agent CLI `claude`. */
+const isMakerStart = (each) => each.layer === 'L1' && each.event === 'dispatch.start' && each.command === 'claude';
+
+test('given a card whose maker L3 dispatches through roleDispatch, L1 makes the maker\'s scratch directory after L3\'s dispatch event and before the maker\'s dispatch.start, as the event stream shows, and the dispatch L1 runs records that directory as its scratch directory', SETTLES_WITHIN, async (t) => {
+  const built = makerWorld();
+  built.agent.plan(1, 'engineer', { hold: true });
+
+  const pulled = built.loop.pull();
+  await until(() => built.agent.held(1), t);
+  const entries = readGroups(built.directory);
+  built.agent.release(1);
+  await pulled;
+
+  const events = built.events();
+  const l3 = events.findIndex((each) => each.layer === 'L3' && each.event === 'dispatch' && each.role === 'engineer');
+  const made = events.findIndex((each) => each.layer === 'L1' && each.event === 'workspace.made' && each.role === 'engineer');
+  const start = events.findIndex(isMakerStart);
+  assert.ok(l3 >= 0 && l3 < made && made < start, JSON.stringify(events));
+  assert.deepEqual({ card: events[made].card, path: events[made].path }, { card: 1, path: makerScratch(built, 1) });
+  const maker = entries.filter((entry) => entry.dispatch === events[start].dispatch);
+  assert.deepEqual(maker.map((entry) => entry.scratch?.path), [realpathSync.native(makerScratch(built, 1))]);
+});
+
+test('given a maker\'s second attempt at one card, L1 makes the scratch directory fresh again, and a file left there during the first attempt is gone before the second attempt\'s dispatch.start', SETTLES_WITHIN, async () => {
+  const seen = [];
+  let built;
+  built = makerWorld({
+    onAppend: (context, event, fields) => {
+      if (!isMakerStart({ layer: context.layer, event, command: fields.command })) return;
+      const left = join(makerScratch(built, 1), 'left.txt');
+      seen.push(existsSync(left));
+      writeFileSync(left, 'the first attempt\'s\n');
+    },
+  });
+
+  await built.loop.pull();
+  const [item] = (await built.fake.operations.readItems()).filter((each) => each.number === 1);
+  await built.fake.operations.moveItem(item.id, COLUMNS.ready);
+  await built.loop.pull();
+
+  assert.deepEqual(seen, [false, false], 'the second attempt\'s maker started with the first attempt\'s file in its scratch directory');
+  assert.equal(named(built.events(), 'L1', 'workspace.removed').filter((each) => each.path === makerScratch(built, 1)).length, 1);
 });
