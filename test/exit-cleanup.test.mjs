@@ -788,14 +788,30 @@ for (const untouched of [false, true]) {
 
 // Item 37: a group the census has stopped when the caller ends.
 
-test('given a census that has one group stopped when the caller receives SIGTERM, no process of that group is alive, and the caller ends reporting SIGTERM', ENDS_WITHIN, async (t) => {
-  const { directory, seen, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, stopped: true, ps: 'ps-once' }, {
+/**
+ * Code a caller runs once its groups are up (`after`), so that it says `ready` only once its first
+ * group's census has made its first read of the process table, which `ps-once` never answers. Code
+ * the caller runs cannot await, so it holds back the `ready` the caller writes after it until then.
+ */
+const MID_READ = [
+  'const said = process.stdout.write.bind(process.stdout);',
+  'process.stdout.write = (chunk, ...rest) => {',
+  "  if (chunk !== 'ready\\n') return said(chunk, ...rest);",
+  "  (async () => { while (!existsSync(join(directory, 'ps-asked'))) await turn(); said(chunk, ...rest); })();",
+  '  return true;',
+  '};',
+].join('\n');
+
+test('given a census mid-read of one group when the caller receives SIGTERM, no process of that group is alive, and the caller ends reporting SIGTERM', ENDS_WITHIN, async (t) => {
+  // The first command exits at once, and the caller is ready once its census's first read of the
+  // process table, which never answers, is in flight.
+  const { directory, seen, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'leaving' }, ps: 'ps-once', after: MID_READ }, {
     signal: 'SIGTERM',
-    // The census stopped the first group's child, and its read of the process table is in flight.
+    // The census's read of the process table is in flight, and the first group's child runs on.
     inspect: (directory) => spawnSync('/bin/ps', ['-o', 'stat=', '-p', read(directory, 'child.1')], { encoding: 'utf8' }).stdout.trim(),
   });
 
-  assert.match(seen, /^T/, 'the census had not stopped the group when the caller was signalled, so this proves nothing');
+  assert.match(seen, /^[^TZ]/, 'the first group\'s child was stopped or gone when the caller was signalled');
   assert.equal(signal, 'SIGTERM', `status ${status}: ${stderr}`);
   await assertNoneAlive(directory);
   assert.deepEqual(running(`${directory}/ps-hold`), [], 'the census\'s read of the process table is alive');
@@ -804,8 +820,9 @@ test('given a census that has one group stopped when the caller receives SIGTERM
 test('a caller kept running past SIGTERM, whose census the cleanup cut short, records each process of that group once, and no kill of the group whole', ENDS_WITHIN, async (t) => {
   // The listener says `heard` once both calls to the adapter have settled, so the call whose
   // census read the cleanup killed has done all it will before the caller exits.
-  const after = "process.on('SIGTERM', async () => { while (settled < 2) await turn(); process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });";
-  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, stopped: true, ps: 'ps-once', after }, { signal: 'SIGTERM', whileHeard: () => true });
+  // The caller is ready once the first group's census read is in flight, as above.
+  const after = MID_READ + "\nprocess.on('SIGTERM', async () => { while (settled < 2) await turn(); process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });";
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'leaving' }, ps: 'ps-once', after }, { signal: 'SIGTERM', whileHeard: () => true });
 
   assert.deepEqual({ status, signal }, { status: 3, signal: null }, stderr);
   await assertNoneAlive(directory);
@@ -813,7 +830,7 @@ test('a caller kept running past SIGTERM, whose census the cleanup cut short, re
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed'), []);
   const pids = kills(events).map(({ pid }) => pid);
   assert.deepEqual(pids, [...new Set(pids)], 'a process was recorded as killed twice');
-  assert.ok(pids.includes(Number(read(directory, 'child.1'))), 'the stopped group\'s child was not recorded as killed');
+  assert.ok(pids.includes(Number(read(directory, 'child.1'))), 'the first group\'s child was not recorded as killed');
 });
 
 // The confirmation of the exit kill.
@@ -1035,9 +1052,9 @@ test('given a sink that has no state directory yet, after the caller receives SI
 
 // proves R-STATE-9, R-STATE-15
 test('the cleanup hands each command\'s step the exit code of its command: its own where it had exited, and a killed one\'s where the cleanup ended it', ENDS_WITHIN, async (t) => {
-  // The first command exits 0 at once, and its census holds its group stopped. The second runs
-  // until the cleanup kills it.
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, stopped: true, ps: 'ps-once', exits: true }, { signal: 'SIGTERM' });
+  // The first command exits 0 at once, and the caller is ready once its census's first read of the
+  // process table, which never answers, is in flight. The second runs until the cleanup kills it.
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'leaving' }, ps: 'ps-once', exits: true, after: MID_READ }, { signal: 'SIGTERM' });
 
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);

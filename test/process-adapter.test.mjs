@@ -490,20 +490,18 @@ test('a process that joins the group after the group is killed is dead when the 
  * One run of `ps` reads a process's name from the process table, and its arguments a moment later
  * (the engineer judge on #354). On a read that carries the command line, the stand-in makes that
  * moment as wide as it can be: it reads every other column, tells the survivor to go, waits until
- * the survivor runs `tail` or is stopped, then reads the command lines and joins the two row by
- * row. Any other read goes to `ps` as it is. `before` is shell run first, on the stand-in's first
- * call alone. The stand-in is `warmed`, because the census's first read is its first exec, which
- * must reach its body within `readTimeout`.
+ * the survivor runs `tail`, then reads the command lines and joins the two row by row. Any other
+ * read goes to `ps` as it is. The stand-in is `warmed`, because the census's first read is its
+ * first exec, which must reach its body within `readTimeout`.
  */
-function reExecuting(directory, before = '') {
+function reExecuting(directory) {
   fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/go" ]; do :; done\nexec ${TAIL}`);
   const ps = warmed(fixture(directory, 'ps', [
-    `if /bin/mkdir "$here/called" 2>/dev/null; then ${before || ':'}; fi`,
     'case "$5" in *,command=) ;; *) exec /bin/ps "$@" ;; esac',
     '/bin/ps "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
     ': > "$here/go"',
     'survivor=$(/bin/cat "$here/survivor.pid")',
-    'until /bin/ps -o ucomm= -p "$survivor" | /usr/bin/grep -q "^tail" || /bin/ps -o stat= -p "$survivor" | /usr/bin/grep -q "^T"; do :; done',
+    'until /bin/ps -o ucomm= -p "$survivor" | /usr/bin/grep -q "^tail"; do :; done',
     '/bin/ps "$1" "$2" "$3" -o command= > "$here/arguments"',
     '/usr/bin/paste -d " " "$here/names" "$here/arguments"',
   ].join('\n')));
@@ -512,27 +510,16 @@ function reExecuting(directory, before = '') {
   return { command, ps };
 }
 
-test('a survivor told to re-execute inside a read of the process table is recorded by the name and command line of one image', SETTLES_WITHIN, async (t) => {
+// proves R-STATE-12
+test('a survivor told to re-execute inside a read of the process table is recorded by the name and command line the last read found', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
   const { events } = await recorded(directory, reExecuting(directory));
 
+  // The census's first round reads the survivor as `bash` and its command line as `tail`'s, so it
+  // reads again, and the next round finds `tail` throughout.
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
-    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
-  ]);
-});
-
-test('a survivor not yet stopped when the process table is read is read again once it is', SETTLES_WITHIN, async (t) => {
-  const directory = holding(t);
-  // The first read finds the survivor running, because the stand-in resumes the group before it.
-  // A census that went on from that read would reach the command line with the survivor free to
-  // re-execute. One that stops the group again first reaches it with the survivor stopped.
-  const { command, ps } = reExecuting(directory, 'kill -s CONT -- "-$3"');
-
-  const { events } = await recorded(directory, { command, ps });
-
-  assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
-    { event: 'survivor.killed', name: 'bash', cmd: `/bin/bash ${directory}/first` },
+    { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
   ]);
 });
 
@@ -570,15 +557,17 @@ test('a survivor is recorded by its own name and command line whatever its execu
   }
 });
 
-test('a survivor whose state reads as ? is stopped and read again, not left unnamed', SETTLES_WITHIN, async (t) => {
+test('a survivor whose state reads as ? is read again, not left unnamed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // `ps` prints the state `?` for a process caught mid-exec (the engineer judge on #354). This
-  // stand-in's first answer shows the survivor that way, in place of its stopped state. It is
-  // `warmed`, because the census's first read is its first exec, which must reach its body within
-  // `readTimeout`.
+  // `ps` prints the state `?` for a process caught mid-exec (the engineer judge on #354), whose
+  // name can then be either image's. This stand-in's first answer shows every process that way, in
+  // place of its state, and its first read of a name answers `mid-exec`. A census that kept that
+  // round would record the survivor by that name. It is `warmed`, because the census's first read
+  // is its first exec, which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *ucomm=*) /bin/mkdir "$here/named" 2>/dev/null && { echo mid-exec; exit 0; } ;; esac',
     'if /bin/mkdir "$here/called" 2>/dev/null; then',
-    `  /bin/ps "$@" | /usr/bin/sed -E 's/(^ *[0-9]+ .*) T( |$)/\\1 ?\\2/'`,
+    `  /bin/ps "$@" | /usr/bin/sed -E 's/^( *[0-9]+) .*$/\\1 ?/'`,
     'else',
     '  exec /bin/ps "$@"',
     'fi',
@@ -952,20 +941,21 @@ test('while the call waits for a killed group to empty, it uses less than a tent
 
 test('while the call re-reads a census, it uses less than a tenth of those re-reads\' time of the processor', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The stand-in resumes the group before every read of states, so the census never finds it
-  // stopped and reads again until it gives up. Its second call marks the re-reads' start, and
-  // each call leaves a file in `reads`. It is compiled, and `exec`s `ps`, so that a read costs
-  // what a read of `ps` costs, near enough: a shell stand-in costs a shell's start on every read.
+  // The stand-in shows every process caught mid-exec, state `?`, in each of the census's reads of
+  // states, which begin `-ww`, so the census's reads never agree and it reads again until its
+  // bound, then keeps its last round. Its second call marks the re-reads' start, and each call
+  // leaves a file in `reads`. It is compiled, and runs `ps`, so that a read costs what a read of
+  // `ps` costs, near enough: a shell stand-in costs a shell's start on every read.
   // It is `warmed`, because the census's first read is its first exec, which must reach its body
   // within `readTimeout`. Run with `RIGGER_FIXTURE_WARMING` set, it exits before marking a call,
   // so its first call is still the census's.
   writeFileSync(join(directory, 'ps.c'), [
     '#include <fcntl.h>',
-    '#include <signal.h>',
     '#include <stdio.h>',
     '#include <stdlib.h>',
     '#include <string.h>',
     '#include <sys/stat.h>',
+    '#include <sys/wait.h>',
     '#include <unistd.h>',
     'int main(int argc, char **argv) {',
     '  char here[4096], path[4608];',
@@ -976,13 +966,21 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
     '  if (mkdir(path, 0700) != 0) { snprintf(path, sizeof path, "%s/second", here); close(open(path, O_CREAT | O_EXCL | O_WRONLY, 0600)); }',
     '  snprintf(path, sizeof path, "%s/reads/%d", here, getpid());',
     '  close(open(path, O_CREAT | O_WRONLY, 0600));',
-    '  int group = 0;',
-    '  snprintf(path, sizeof path, "%s/group", here);',
-    '  FILE *file = fopen(path, "r");',
-    '  if (file) { if (fscanf(file, "%d", &group) != 1) group = 0; fclose(file); }',
-    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "stat=") && group > 0) kill(-group, SIGCONT);',
-    '  execv("/bin/ps", argv);',
-    '  return 127;',
+    '  int states = 0;',
+    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "stat=")) states = 1;',
+    '  if (!states || strcmp(argv[1], "-ww") != 0) { execv("/bin/ps", argv); return 127; }',
+    '  int out[2];',
+    '  if (pipe(out) != 0) return 127;',
+    '  pid_t pid = fork();',
+    '  if (pid < 0) return 127;',
+    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv("/bin/ps", argv); _exit(127); }',
+    '  close(out[1]);',
+    '  FILE *in = fdopen(out[0], "r");',
+    '  char line[4096];',
+    '  while (fgets(line, sizeof line, in)) { int row; if (sscanf(line, "%d", &row) == 1) printf("%d ?\\n", row); }',
+    '  int status;',
+    '  if (waitpid(pid, &status, 0) != pid) return 127;',
+    '  return WIFEXITED(status) ? WEXITSTATUS(status) : 127;',
     '}',
   ].join('\n'));
   const ps = join(directory, 'ps');
@@ -990,14 +988,14 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
   warmed(ps);
   mkdirSync(join(directory, 'reads'));
-  const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
+  const command = fixture(directory, 'command', `${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
   const readTimeout = 1_500;
   const used = process.cpuUsage();
 
   const { events } = await recorded(directory, { command, ps, readTimeout });
 
   const { user, system } = process.cpuUsage(used);
-  assert.deepEqual(events.map(({ event }) => event), ['group.killed'], 'the census did not give up on a group it never found stopped');
+  assert.deepEqual(events.map(({ event }) => event), ['survivor.killed'], 'the census did not keep its last round once its reads never agreed');
   assert.ok(writtenAt(directory, 'called') >= writtenAt(directory, 'exited'), 'the stand-in\'s first call came before the census, so its second call marks no re-read');
   // The census began once the command had exited, and re-read until `readTimeout` had passed
   // from its start, so the re-reads lasted at least this long.
@@ -1010,11 +1008,10 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
 
 test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The quitter exits once told to go. The stand-in tells it to go, and resumes it, inside the
-  // census's last read of states, which it answers as the table stood before, so the census names
-  // the quitter and has read the table for the last time before it is gone. The stand-in is
-  // `warmed`, because the census's first read is its first exec, which must reach its body within
-  // `readTimeout`.
+  // The quitter exits once told to go. The stand-in tells it to go inside the census's last read of
+  // states, which it answers as the table stood before, so the census names the quitter and is gone
+  // before the read just before the kill. The stand-in is `warmed`, because the census's first read
+  // is its first exec, which must reach its body within `readTimeout`.
   fixture(directory, 'quitter', 'while [ ! -f "$here/go" ]; do :; done\nexit 0');
   const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
@@ -1023,7 +1020,6 @@ test('a survivor the census named that exits on its own before the kill is not r
     '    table=$(/bin/ps "$@")',
     '    quitter=$(/bin/cat "$here/quitter.pid")',
     '    : > "$here/go"',
-    '    kill -s CONT "$quitter"',
     '    while kill -0 "$quitter" 2>/dev/null; do :; done',
     '    printf "%s\\n" "$table"',
     '    exit 0',
@@ -1099,10 +1095,9 @@ test('a survivor whose argv[0] differs from its executable\'s name is recorded b
 /**
  * A command that leaves a keeper, and a `ps` stand-in that has the keeper's child, the quitter,
  * exit on its own inside one read of states once the census has read the names. The keeper forks
- * the quitter, which exits once told to go, and never reaps it. The keeper is in the group, so
- * the census stops it too, and the quitter stays a zombie until the kill. The stand-in reads the
- * table, then tells the quitter to go and resumes it, and answers with the table it read once the
- * quitter is a zombie.
+ * the quitter, which exits once told to go, and never reaps it, so the quitter stays a zombie until
+ * the kill. The stand-in reads the table, then tells the quitter to go, and answers with the table
+ * it read once the quitter is a zombie.
  *
  * `at` is `census` for the census's last read of states, or `kill` for the read the adapter takes
  * after the census, just before its kill, which begins `-g` where the census's begin `-ww`. Every
@@ -1126,7 +1121,6 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"
     '  table=$(/bin/ps "$@")',
     '  quitter=$(/bin/cat "$here/quitter.pid")',
     '  : > "$here/go"',
-    '  kill -s CONT "$quitter"',
     '  until /bin/ps -o stat= -p "$quitter" | /usr/bin/grep -q "^Z"; do :; done',
     '  printf "%s\\n" "$table"',
     '  exit 0',
@@ -1164,23 +1158,26 @@ test('a survivor the census named that exits on its own before the kill, left un
   assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
 });
 
-test('a survivor the census named that exits on its own inside the read of states just before the kill, and is left unreaped, is not recorded as killed', SETTLES_WITHIN, async (t) => {
+test('a survivor the census named that exits on its own inside the read of states just before the kill, and is left unreaped, is counted as killed, the limit the code records', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
   const { events } = await recorded(directory, quittingUnreaped(directory, { at: 'kill' }));
 
   assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
-  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+  // That read answers as the table stood before the quitter exited, and nothing after the kill
+  // tells its own exit from the kill (`contain`).
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })).sort((one, other) => one.pid - other.pid), [
     { event: 'survivor.killed', pid: Number(read(directory, 'keeper.pid')) },
-  ]);
+    { event: 'survivor.killed', pid: Number(read(directory, 'quitter.pid')) },
+  ].sort((one, other) => one.pid - other.pid));
 });
 
 test('a survivor the census named that exits on its own before the kill, and whose parent outside the group reaps it at once, is not recorded as killed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The parent leaves the command's group and forks the quitter, which joins it, exits once told
-  // to go, and is reaped by the parent at once. The stand-in reads the table the kill's first round
-  // asks for, then tells the quitter to go, resumes it, and answers with that table once the
-  // quitter is gone, so the kill is sent to a pid that has already been reaped.
+  // to go, and is reaped by the parent at once. The stand-in reads the table the census's last read
+  // of states asks for, then tells the quitter to go, and answers with that table once the quitter
+  // is gone, so the census names a pid that is reaped before the read just before the kill.
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'parent'), [
     'my ($here, $group) = @ARGV;',
@@ -1194,20 +1191,17 @@ test('a survivor the census named that exits on its own before the kill, and who
   ].join('\n'));
   const ps = warmed(fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
-    'case "$*" in *ppid=*) [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
+    'case "$*" in "-ww -g "*" -o pid=,stat=") [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
     '  table=$(/bin/ps "$@")',
     '  quitter=$(/bin/cat "$here/quitter.pid")',
     '  : > "$here/go"',
-    '  kill -s CONT "$quitter"',
     '  while kill -0 "$quitter" 2>/dev/null; do :; done',
     '  printf "%s\\n" "$table"',
     '  exit 0',
     '} ;; esac',
     'exec /bin/ps "$@"',
   ].join('\n')));
-  // The quitter is the group's one member once the command exits. With another member stopped
-  // there, the quitter's exit would leave the group orphaned, and the kernel would end that member
-  // with `SIGHUP`.
+  // The quitter is the group's one member once the command exits.
   const command = fixture(directory, 'command', [
     '/usr/bin/perl "$here/parent" "$here" $$ >/dev/null 2>"$here/parent.err" &',
     'until [ -f "$here/quitter.pid" ] && /bin/ps -o pgid= -p "$(/bin/cat "$here/quitter.pid")" | /usr/bin/grep -q "^ *$$\\$"; do :; done',
@@ -1246,88 +1240,46 @@ function chain(directory, depth) {
   return fixture(directory, 'command', `/usr/bin/perl "$here/chain" "$here" ${depth} &\nwhile [ ! -f "$here/ready" ]; do :; done`);
 }
 
-test('while the call kills a group that takes many rounds, it uses less than a tenth of that kill\'s time of the processor', SETTLES_WITHIN, async (t) => {
+test('a kill whose reads of the group after the kill never answer still records the survivor the reads before it named, and settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  const command = chain(directory, 60);
-  // The stand-in `exec`s `ps`, so that a read costs what a read of `ps` costs, near enough. On
-  // the kill's first read it marks `rounds` and waits for `measure`, so the test can start its
-  // measure there, after the census.
-  const ps = compiled(directory, 'ps', [
-    '#include <fcntl.h>',
-    '#include <stdio.h>',
-    '#include <string.h>',
-    '#include <sys/stat.h>',
-    '#include <unistd.h>',
-    'int main(int argc, char **argv) {',
-    '  char here[4096], path[4608];',
-    '  snprintf(here, sizeof here, "%s", argv[0]);',
-    '  *strrchr(here, \'/\') = 0;',
-    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "ppid=")) {',
-    '    snprintf(path, sizeof path, "%s/rounds", here);',
-    '    if (mkdir(path, 0700) == 0) {',
-    '      snprintf(path, sizeof path, "%s/measure", here);',
-    '      while (access(path, F_OK) != 0) {}',
-    '    }',
-    '  }',
-    '  execv("/bin/ps", argv);',
-    '  return 127;',
-    '}',
-  ]);
-  let sample;
-  const started = (async () => {
-    while (!existsSync(join(directory, 'rounds'))) await turn(t);
-    sample = { cpu: process.cpuUsage(), at: performance.now() };
-    writeFileSync(join(directory, 'measure'), '');
-  })();
-
-  // The kill takes twenty times the processor time it uses, which on a slow CI runner came near the
-  // default `READ_TIMEOUT` for a chain twice as deep, so the test gives it room.
-  const { events } = await recorded(directory, { command, ps, readTimeout: 10_000 });
-
-  const settled = performance.now();
-  await started;
-  const { user, system } = process.cpuUsage(sample.cpu);
-  const cpu = (user + system) / 1000;
-  const killing = settled - sample.at;
-  assert.equal(events.filter(({ event }) => event === 'survivor.killed').length, 61, 'the kill did not name every member of the chain');
-  t.diagnostic(`${cpu} ms of the processor over a kill of ${killing} ms`);
-  assert.ok(cpu < killing / 10, `the call used ${cpu} ms of the processor over a kill of ${killing} ms`);
-});
-
-test('a kill whose read of the table never answers records the group\'s kill with a reason that names the kill, not the census', SETTLES_WITHIN, async (t) => {
-  const directory = holding(t);
-  // The stand-in answers every read of the census, and none of the kill's, which ask for `ppid`.
-  // It is `warmed`, because the census's first read is its first exec, which must reach its body
-  // within `readTimeout`.
-  const ps = warmed(fixture(directory, 'ps', 'case "$*" in *ppid=*) exec /usr/bin/tail -f "$here/hold" ;; esac\nexec /bin/ps "$@"'));
+  // The stand-in answers every read of the census, which begin `-ww`, and the first of the group's
+  // states alone, the read just before the kill, and none after it, which mark `after`. It is
+  // `warmed`, because the census's first read is its first exec, which must reach its body within
+  // `readTimeout`.
+  const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in "-g "*" -o pid=,stat=")',
+    '  /bin/mkdir "$here/before" 2>/dev/null || { : > "$here/after"; exec /usr/bin/tail -f "$here/hold"; } ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n')));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   // Long enough for the census to finish on a loaded host, where the whole suite runs at once.
   const { events } = await recorded(directory, { command, ps, readTimeout: 2_000 });
 
-  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
-  assert.match(events[0].census, /^the kill /);
+  assert.equal(existsSync(join(directory, 'before')), true, 'the kill was never read before, so the test proves nothing');
+  assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }]);
 });
 
 /**
- * A `ps` stand-in that answers every read as `ps` does, except the kill's second read of the
- * table, the reads that ask for `ppid`, where it runs the shell lines `failing` instead and marks
- * `$here/failed`. By then the kill's first round has sent the kill to the chain's last process,
- * and every other process of the chain is still to be killed. It is `warmed`, because the census's
- * first read is its first exec, which must reach its body within `readTimeout`.
+ * A `ps` stand-in that answers every read as `ps` does, except the read of the group's states just
+ * before the kill, the first read of the group's states alone, where it runs the shell lines
+ * `failing` instead and marks `$here/failed`. By then the census has named every process of the
+ * chain, and none is yet killed. It is `warmed`, because the census's first read is its first exec,
+ * which must reach its body within `readTimeout`.
  */
 const failingOnce = (directory, failing) => warmed(fixture(directory, 'ps', [
-  'case "$*" in *ppid=*)',
-  '  if [ -f "$here/first" ] && /bin/mkdir "$here/failed" 2>/dev/null; then',
+  'case "$*" in "-g "*" -o pid=,stat=")',
+  '  if /bin/mkdir "$here/failed" 2>/dev/null; then',
   failing,
-  '  fi',
-  '  : > "$here/first" ;;',
+  '  fi ;;',
   'esac',
   'exec /bin/ps "$@"',
 ].join('\n')));
 
 /**
- * Runs a chain 3 deep through the adapter, the kill's second read of the table failing as
+ * Runs a chain 3 deep through the adapter, the read of the table just before the kill failing as
  * `failing` does, and asserts every process of the chain is recorded, each by name, or all by the
  * kill of their group. Hands back the events.
  */
@@ -1338,7 +1290,7 @@ async function recordsEveryProcess(t, failing, options = {}) {
 
   const { events } = await recorded(directory, { command, ps, ...options });
 
-  assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the kill failed, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'failed')), true, 'no read before the kill failed, so the test proves nothing');
   const chained = read(directory, 'chain.pids').split('\n').map(Number).sort((a, b) => a - b);
   assert.equal(chained.length, 4);
   if (!events.some(({ event }) => event === 'group.killed')) {
@@ -1348,7 +1300,7 @@ async function recordsEveryProcess(t, failing, options = {}) {
   return events;
 }
 
-test('a kill during which one read of the table exits 1 and prints nothing records every process of the group it ended', SETTLES_WITHIN, async (t) => {
+test('a kill whose read just before it exits 1 and prints nothing records every process of the group it ended', SETTLES_WITHIN, async (t) => {
   await recordsEveryProcess(t, '    exit 1');
 });
 
@@ -1359,7 +1311,7 @@ for (const [what, failing, options] of [
   ['exits 0 printing nothing but a failure to standard error', '    echo "Failure calling sysctl: Cannot allocate memory" >&2\n    exit 0'],
   ['exits 0 after printing only part of the table', '    /bin/ps "$@" | /usr/bin/head -n 1\n    exit 0'],
 ]) {
-  test(`a kill during which one read of the table ${what} records every process of the group it ended`, SETTLES_WITHIN, async (t) => {
+  test(`a kill whose read just before it ${what} records every process of the group it ended`, SETTLES_WITHIN, async (t) => {
     await recordsEveryProcess(t, failing, options);
   });
 }
@@ -1447,19 +1399,19 @@ function unread(directory, events, nothing) {
   return `the kill made no read, because the census gave up, as designed (O48, O50), and the stream records why the group went unnamed: ${why.length > 0 ? why.join('; ') : `nothing, among ${JSON.stringify(events)}`}`;
 }
 
-test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
+test('a census, and the kill\'s every read after the read just before it, that leave out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
-  // second survivor's row from every read of both, and answers every other read as `ps` does. The
-  // census's reads and the kill's each mark that they were cut in a file of their own, so a read
-  // of one never stands in for the other. Every read of the kill also marks that it was made, in
-  // `kill.read`, so a kill that made no read, because its census gave up, is told apart from one
-  // whose reads went uncut. It is `warmed`, because the census's first read is its first exec,
-  // which must reach its body within `readTimeout`.
+  // The census reads the group with `-ww`, and the reads around the kill read the group's states
+  // alone. The stand-in answers the first of those, the read just before the kill, as `ps` does,
+  // and marks it made in `kill.read`, so a kill that made no read, because its census gave up, is
+  // told apart from one that did. It drops the second survivor's row from every other read of the
+  // group, and marks which were cut, the census's in `census.cut` and the kill's in `kill.cut`. It
+  // answers every other read as `ps` does. It is `warmed`, because the census's first read is its
+  // first exec, which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
-    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
-    'case "$*" in "-ww -g "*|*ppid=*)',
-    '  case "$*" in *ppid=*) : > "$here/kill.cut" ;; *) : > "$here/census.cut" ;; esac',
+    'case "$*" in "-g "*" -o pid=,stat=") /bin/mkdir "$here/kill.read" 2>/dev/null && exec /bin/ps "$@" ;; esac',
+    'case "$*" in "-ww -g "*|"-g "*" -o pid=,stat=")',
+    '  case "$*" in "-ww -g "*) : > "$here/census.cut" ;; *) : > "$here/kill.cut" ;; esac',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
     '  exit 0 ;;',
     'esac',
@@ -1471,7 +1423,7 @@ test('a census and a kill whose every read leaves out one of two survivors still
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
   assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
-  assert.equal(existsSync(join(directory, 'kill.cut')), true, unread(directory, events, 'no read of the kill was cut, so the test proves nothing'));
+  assert.equal(existsSync(join(directory, 'kill.read')), true, unread(directory, events, 'the kill was never read before, so the test proves nothing'));
   assert.deepEqual(survivors.map(alive), [false, false]);
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
@@ -1484,19 +1436,19 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   // leave out a leader that answers signal 0 reads again until it gives up, and the kill is then
   // never reached. Every other read of the group, the kill's and the reads after it, is cut down
   // to the zombie's row and exits 0. A read of one pid is answered as `ps` answers it. A read of
-  // the kill, which asks for `ppid`, marks that it listed the zombie only while the leader, whose
-  // pid is the group's, answers signal 0, so no read made after the leader is gone stands in for
-  // it. Every read of the kill also marks that it was made, in `kill.read`, so a kill that made no
-  // read, because its census gave up, is told apart from one whose reads did not list the zombie
-  // while the leader lived. It is `warmed`, because the census's first read is its first exec,
+  // the group's states alone, around the kill, marks that it listed the zombie only while the
+  // leader, whose pid is the group's, answers signal 0, so no read made after the leader is gone
+  // stands in for it. Each such read also marks that it was made, in `kill.read`, so a kill that
+  // made no read, because its census gave up, is told apart from one whose reads did not list the
+  // zombie while the leader lived. It is `warmed`, because the census's first read is its first exec,
   // which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
-    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
+    'case "$*" in "-g "*" -o pid=,stat=") : > "$here/kill.read" ;; esac',
     'case "$*" in "-ww -g "*) exec /bin/ps "$@" ;; esac',
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
     '  [ -z "$rows" ] && exit 0',
-    '  case "$*" in *ppid=*) /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/kill.cut" ;; esac',
+    '  case "$*" in "-g "*" -o pid=,stat=") /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/kill.cut" ;; esac',
     '  echo "$rows"',
     '  exit 0 ;;',
     'esac',
@@ -1604,11 +1556,13 @@ test('where the reads of the group before its kill list nothing while signal 0 r
   assert.doesNotMatch(events[1].census, /held a live process/);
 });
 
-test('a kill during which one read of the table exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
+test('a kill whose read just before it exits 1 with a failure on standard error, and nothing else, records the group\'s kill naming that failure', SETTLES_WITHIN, async (t) => {
   const events = await recordsEveryProcess(t, '    echo "ps: failing on purpose" >&2\n    exit 1');
 
-  assert.deepEqual(events.map(({ event }) => event), ['group.killed']);
-  assert.match(events[0].census, /ps: failing on purpose/);
+  // The census's processes are read by pid in that read's place, so each is still named beside it.
+  const killed = events.filter(({ event }) => event === 'group.killed');
+  assert.deepEqual(killed.length, 1, JSON.stringify(events));
+  assert.match(killed[0].census, /ps: failing on purpose/);
 });
 
 test('a call with no timeout starts no process, and fails naming the missing timeout', async (t) => {
@@ -2063,71 +2017,26 @@ test('a command that never started and a refused event reject with codes that te
   assert.equal(refusal.code, EVENT_REFUSED);
 });
 
-test('a chain 250 deep is killed and named in full within the default read timeout', SETTLES_WITHIN, async (t) => {
+// proves R-STATE-7, R-STATE-12
+test('a chain 250 deep is killed whole, its group empty when the call settles, and each of its processes recorded by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  // The signal call notes when each kill of the group is sent, one a round of the kill loop.
+  const rounds = [];
+  let group;
+  const kill = (target, name) => {
+    if (target < 0 && name === 'SIGKILL') rounds.push(performance.now());
+    return process.kill(target, name);
+  };
 
-  const { events } = await recorded(directory, { command: chain(directory, 250) });
+  const { events } = await recorded(directory, { command: chain(directory, 250), kill, onGroup: (id) => { group = id; } });
 
-  assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
-  assert.equal(events.length, 251);
-});
-
-test('a kill of a chain reads a number of rows of the table that grows with the chain\'s depth, not with its square', SETTLES_WITHIN, async (t) => {
-  const depth = 200;
-  const directory = holding(t);
-  // The stand-in answers every read as `ps` does, and adds the rows each of the kill's reads, the
-  // reads that ask for `ppid`, printed to `$here/rows`, one line per read. The kill makes one read
-  // a level, so what a read costs is paid two hundred times over. So the stand-in is compiled and
-  // starts `ps` and nothing else: a shell script counting with `grep` starts four or five
-  // processes a read, and under load two hundred of those take longer than the read timeout.
-  const ps = compiled(directory, 'ps', [
-    '#include <stdio.h>',
-    '#include <string.h>',
-    '#include <sys/wait.h>',
-    '#include <unistd.h>',
-    'int main(int argc, char **argv) {',
-    '  int kill = 0;',
-    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "ppid=")) kill = 1;',
-    '  if (!kill) { execv("/bin/ps", argv); return 127; }',
-    '  int out[2];',
-    '  if (pipe(out) != 0) return 127;',
-    '  pid_t pid = fork();',
-    '  if (pid < 0) return 127;',
-    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv("/bin/ps", argv); _exit(127); }',
-    '  close(out[1]);',
-    '  char buffer[65536];',
-    '  ssize_t got;',
-    '  long rows = 0;',
-    '  char last = \'\\n\';',
-    '  while ((got = read(out[0], buffer, sizeof buffer)) > 0) {',
-    '    for (ssize_t i = 0; i < got; i++) { if (buffer[i] == \'\\n\' && last != \'\\n\') rows++; last = buffer[i]; }',
-    '    for (ssize_t sent = 0, wrote; sent < got; sent += wrote) if ((wrote = write(1, buffer + sent, got - sent)) < 0) return 127;',
-    '  }',
-    '  if (last != \'\\n\') rows++;',
-    '  int status;',
-    '  if (waitpid(pid, &status, 0) != pid) return 127;',
-    '  char here[4096], path[4608];',
-    '  snprintf(here, sizeof here, "%s", argv[0]);',
-    '  *strrchr(here, \'/\') = 0;',
-    '  snprintf(path, sizeof path, "%s/rows", here);',
-    '  FILE *file = fopen(path, "a");',
-    '  if (file == NULL) return 127;',
-    '  fprintf(file, "%ld\\n", rows);',
-    '  fclose(file);',
-    '  return WIFEXITED(status) ? WEXITSTATUS(status) : 127;',
-    '}',
-  ]);
-
-  const { events } = await recorded(directory, { command: chain(directory, depth), ps, readTimeout: 10_000 });
-
-  assert.deepEqual([...new Set(events.map(({ event }) => event))], ['survivor.killed'], `the kill was not named: ${events[0]?.census}`);
-  assert.equal(events.length, depth + 1);
-  const rows = read(directory, 'rows').split('\n').map(Number).reduce((sum, each) => sum + each, 0);
-  t.diagnostic(`${rows} rows over the kill's reads of a chain ${depth + 1} processes long`);
-  // A kill that reads the whole group every round reads about half the chain's length squared,
-  // 20,301 rows here. Four rows a process is a bound linear in the depth, with room for the first
-  // read, which holds the whole group.
-  assert.ok(rows <= 4 * (depth + 1), `the kill read ${rows} rows of the table for a chain ${depth + 1} processes long`);
+  t.diagnostic(`the kill loop took ${rounds.length} rounds over ${(rounds.at(-1) - rounds[0]).toFixed(1)} ms`);
+  const chained = read(directory, 'chain.pids').split('\n').map(Number);
+  assert.equal(chained.length, 251);
+  assert.equal(alive(-group), false, 'a process of the chain\'s group is alive');
+  assert.deepEqual(chained.filter(alive), [], 'a process of the chain is alive');
+  const named = new Set(events.filter(({ event }) => event === 'survivor.killed').map(({ pid }) => pid));
+  if (!events.some(({ event }) => event === 'group.killed')) assert.deepEqual(chained.filter((pid) => !named.has(pid)), [], 'a process of the chain was recorded neither by name nor by the group\'s kill');
 });
 
 test('given bytes for standard input, the command reads them and then end of file, so a copy of its input ends', async (t) => {
