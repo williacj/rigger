@@ -42,10 +42,10 @@ export async function engine({ directory, repository, command, ps, workspace }) 
   mkdirSync(stand, { recursive: true });
   const agent = installStandInAgent(stand, { '*': { engineer: { exec: ['/bin/sh', command] } } });
   const handle = async (number) => {
-    if (workspace !== undefined) return { path: workspace };
+    if (workspace !== undefined) return { path: workspace, scratch: join(directory, 'workspaces', 'scratch', `rigger-${number}`), repository };
     const path = join(directory, 'workspaces', `rigger-${number}`);
     mkdirSync(path, { recursive: true });
-    return { path };
+    return { path, scratch: join(directory, 'workspaces', 'scratch', `rigger-${number}`), repository };
   };
   const kill = () => killRecordedGroups({ directory: state, sink });
   await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, state, environment: { ...process.env, PATH: agent.first() }, ps }).pull();

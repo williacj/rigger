@@ -24,6 +24,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { makerRuns, positive } from './loop-world.mjs';
 import { mkdirSync } from 'node:fs';
+import { repositoryAt } from './git-repository.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH each loop is handed. */
 const agent = standInAgent();
@@ -515,7 +516,8 @@ test('given a loop world whose kinds option lists one step for the card\'s kind,
 test('given a loop world whose kinds option lists no step, L3 still calls its workspace stand-in once per attempt, and dispatches no step', async () => {
   const calls = [];
   const under = temporaryDirectory('rigger-attempt-workspaces-');
-  const built = world({ cards: [1, 2], concurrency: 2, workspace: async (card) => { calls.push(card); const path = join(under, `rigger-${card}`); mkdirSync(path, { recursive: true }); return { path }; } });
+  const repository = repositoryAt(join(under, 'repository'));
+  const built = world({ cards: [1, 2], concurrency: 2, workspace: async (card) => { calls.push(card); const path = join(under, `rigger-${card}`); mkdirSync(path, { recursive: true }); return { path, scratch: join(under, 'scratch', `rigger-${card}`), repository }; } });
 
   const pull = built.loop.pull();
   // Positive: until both cards' stand-ins are held.
@@ -526,7 +528,7 @@ test('given a loop world whose kinds option lists no step, L3 still calls its wo
   assert.deepEqual([...calls].sort(), [1, 2]);
   const dispatched = built.events().filter((each) => each.layer === 'L1' || (each.layer === 'L3' && each.event === 'dispatch'));
   assert.deepEqual(dispatched.filter((each) => each.step !== undefined), [], 'no step was dispatched');
-  assert.deepEqual(dispatched.map(({ layer, event, card }) => `${card} ${layer} ${event}`).sort(), ['1 L1 dispatch.end', '1 L1 dispatch.start', '1 L3 dispatch', '2 L1 dispatch.end', '2 L1 dispatch.start', '2 L3 dispatch']);
+  assert.deepEqual(dispatched.map(({ layer, event, card }) => `${card} ${layer} ${event}`).sort(), ['1 L1 dispatch.end', '1 L1 dispatch.start', '1 L1 workspace.made', '1 L3 dispatch', '2 L1 dispatch.end', '2 L1 dispatch.start', '2 L1 workspace.made', '2 L3 dispatch']);
   assert.deepEqual([...built.dispatches.started].sort(), [1, 2]);
 });
 

@@ -2,9 +2,10 @@
 // the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
 // at the main line and `head` at the pull request's head, through L0's workspace adapter.
 
-import { chmodSync, lstatSync, readdirSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
+import { within as underOrAt } from './run.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADDING, workspaces } from '../substrate/worktrees.mjs';
 
@@ -21,8 +22,16 @@ export const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';
 export const topicFor = (topic, card) => topic.replaceAll('{number}', String(card));
 
 /**
+ * The scratch base of card `card`, `<root>/scratch/<topic>`, under which `roleDispatch` makes each
+ * role's scratch directory (the architect's ruling 19 on #467). Both makes answer it beside their
+ * own paths, and neither creates it. No topic derives `scratch`, since every topic holds a digit.
+ */
+const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic, card));
+
+/**
  * Makes card `card`'s workspace fresh for an attempt that starts its work from the beginning, and
- * settles on its `path` and `branch` (`R-WORK-3`, `R-WORK-10`).
+ * settles on its `path` and `branch` (`R-WORK-3`, `R-WORK-10`), the card's scratch base as
+ * `scratch` (`scratchBase`), and `repository` as it was handed (the architect's ruling 21 on #467).
  *
  * `root` is the absolute root the verb resolved (the architect's ruling 3, P3, on #423), `topic`
  * the rule naming the workspace and its branch, `repository` the working tree of the repository
@@ -71,12 +80,13 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
   if (removed !== undefined) recorded(events, card, 'workspace.removed', { path: removed });
   await step(() => adapter.make(path, branch));
   recorded(events, card, 'workspace.made', { path, branch });
-  return { path, branch };
+  return { path, branch, scratch: scratchBase(root, topic, card), repository };
 }
 
 /**
  * Makes the directory judge `role` of card `card` runs in, `<root>/judges/<topic>/<role>`, and
- * settles on its `path` and the paths of the two worktrees it holds, each at a detached commit:
+ * settles on its `path`, the card's scratch base as `scratch` (`scratchBase`), `repository` as it
+ * was handed (ruling 21), and the paths of the two worktrees it holds, each at a detached commit:
  * `main` at the commit the main line held on `origin` as L1 made it, and `head` at `head`, the
  * pull request's head commit L1 was handed, fetched from `origin` (the owner's O3; ruling 1 Q3).
  *
@@ -112,7 +122,197 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
     await adapter.makeDetached(trees.head, head);
   });
   recorded(events, card, 'workspace.made', { role, path, main, head });
-  return { path, ...trees };
+  return { path, ...trees, scratch: scratchBase(root, topic, card), repository };
+}
+
+/**
+ * Makes role `role`'s scratch directory of card `card`, `<base>/<role>`, fresh, and settles on its
+ * path (the architect's ruling 19 on #467). `base` is the card's scratch base, which L1's makes
+ * answer (`scratchBase`), and which this makes where it does not exist yet.
+ *
+ * A directory already there is removed first, without following any symbolic link inside it, once
+ * `scratchChecked` has passed what is there. L1
+ * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
+ * the path, and a `workspace.failed` carrying them and why. Every failure rejects with
+ * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
+ * event on the way, as `makeWorkspace` does.
+ */
+export async function makeScratch({ base, role, card, repository, sink }) {
+  const events = sink.emitter({ layer: 'L1', card });
+  const path = join(base, role);
+  const step = async (work) => {
+    try {
+      return await work();
+    } catch (cause) {
+      throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause);
+    }
+  };
+  await step(() => noCheckoutAbove(base, path));
+  const there = await step(() => scratchChecked(base, path));
+  await step(() => unregistered({ path, there, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
+  if (there) {
+    await step(async () => {
+      const checkout = checkoutIn(path);
+      if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`);
+      writable(path);
+      rmSync(path, { recursive: true });
+    });
+    recorded(events, card, 'workspace.removed', { role, path });
+  }
+  await step(() => mkdirSync(path, { recursive: true }));
+  recorded(events, card, 'workspace.made', { role, path });
+  return path;
+}
+
+/**
+ * Fails naming `path` and a `.git` where one is, of any kind and unfollowed, at any ancestor of
+ * `path` from its parent, the scratch base `base`, up to the file system's root, as written and as
+ * the real path of the nearest existing one reads: then `path` lies in a checkout, of this
+ * repository or another, and L1 makes and removes nothing there, since the scratch directory lies
+ * outside every worktree. The real path's ancestors are walked too, so a root reached through a
+ * symbolic link into a checkout is found. An ancestor where L1 cannot read whether a `.git` is
+ * there fails too, as does a real path L1 cannot resolve for any reason but absence, since L1
+ * cannot tell. So an operator whose home directory is a checkout is refused, naming that `.git`.
+ */
+function noCheckoutAbove(base, path) {
+  noCheckoutFrom(base, path);
+  let real;
+  try {
+    real = nearestReal(base);
+  } catch (error) {
+    throw new Error(`${path} lies under ${base}, whose real path L1 cannot resolve, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
+  }
+  if (real !== base) noCheckoutFrom(real, path);
+}
+
+/** `noCheckoutAbove`'s walk from `start` up to the file system's root, for `path`. */
+function noCheckoutFrom(start, path) {
+  for (let ancestor = start; ; ancestor = dirname(ancestor)) {
+    const git = join(ancestor, '.git');
+    let found = true;
+    try {
+      lstatSync(git);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`${path} lies under ${ancestor}, where L1 cannot read whether ${git} is there, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
+      found = false;
+    }
+    if (found) throw new Error(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
+    if (dirname(ancestor) === ancestor) return;
+  }
+}
+
+/** `path`'s real path as a failure adds it, where it differs from `path` and can be read. */
+function realNamed(path) {
+  try {
+    const real = realpathSync.native(path);
+    return real === path ? '' : ` (${real})`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Checks what is at a role's scratch directory, `path`, under the scratch base `base`, changing
+ * nothing, and hands back whether a directory is there to replace. The worktree root's `scratch`
+ * and the base must each be a directory, not a symbolic link, where they exist, so nothing L1
+ * removes or makes lies elsewhere. At `path` must be nothing, or a directory, not a symbolic link,
+ * whose real path resolves. Anything else fails naming the path, as does a path L1 cannot read,
+ * since L1 cannot tell what is there. `makeScratch` then asks git (`unregistered`) and walks the
+ * directory (`checkoutIn`) before it removes anything.
+ */
+function scratchChecked(base, path) {
+  for (const each of [dirname(base), base]) {
+    const there = lstatOrAbsent(each);
+    if (there === undefined) return false;
+    if (!there.isDirectory()) throw notDirectory(each, there);
+  }
+  const there = lstatOrAbsent(path);
+  if (there === undefined) return false;
+  if (!there.isDirectory()) throw notDirectory(path, there);
+  try {
+    realpathSync.native(path);
+  } catch (error) {
+    throw new Error(`${path} cannot be resolved: ${error.message}`, { cause: error });
+  }
+  return true;
+}
+
+/**
+ * Fails naming `path` and the worktree where git, asked through L0's workspace adapter `adapter`
+ * over `repository`, lists a worktree, the main working tree included, that `path` is or lies in,
+ * by the real path of `path` or, where it is not there yet, of its nearest existing parent; or,
+ * where a directory is `there`, a worktree that lies in it (the architect's ruling 21 on #467). So
+ * L1 makes and removes nothing in a worktree, and removes none. Registration is git's fact (`D16`
+ * rule 1), so a worktree whose `.git` was moved aside is still found. A registration whose
+ * directory is gone lies nowhere; one L1 cannot resolve for any other reason fails, since L1 cannot
+ * tell where it lies.
+ *
+ * Where it can be wrong (`D16` rule 3): this git lists only this repository's worktrees, and
+ * `checkoutIn`, the second check, finds another repository's only by its `.git`. So a worktree of
+ * another repository whose `.git` was moved aside is found by neither, and is removed.
+ */
+async function unregistered({ path, there, repository, adapter }) {
+  const real = nearestReal(path);
+  for (const listed of await adapter.registered()) {
+    let tree;
+    try {
+      tree = realpathSync.native(listed);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw new Error(`${path} may lie in or hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
+    }
+    if (underOrAt(real, tree)) throw new Error(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`);
+    if (there && underOrAt(tree, real)) throw new Error(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
+  }
+}
+
+/**
+ * The real path of `path`, or, where nothing is there, its nearest existing parent's joined to
+ * the rest of it. Any failure but absence throws, so L1 cannot take an unreadable path for absent.
+ */
+function nearestReal(path) {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    if (error.code !== 'ENOENT' || dirname(path) === path) throw error;
+    return join(nearestReal(dirname(path)), basename(path));
+  }
+}
+
+/** The failure for `path`, which `lstat` read as `there`, no directory: a symbolic link, which is never followed, or anything else. */
+const notDirectory = (path, there) => new Error(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`);
+
+/** What `lstat` reads at `path`, or nothing where nothing is there; anything else unreadable throws naming it. */
+function lstatOrAbsent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw new Error(`${path} cannot be read: ${error.message}`, { cause: error });
+  }
+}
+
+/**
+ * The first `.git` under the directory `path`, at any depth, or nothing where it holds none, read
+ * in name order. No symbolic link is followed. A directory that cannot be read throws naming it,
+ * since L1 cannot tell it holds no checkout, and nothing is changed to read it.
+ */
+function checkoutIn(path) {
+  let names;
+  try {
+    names = readdirSync(path, { withFileTypes: true }).sort((one, other) => (one.name < other.name ? -1 : 1));
+  } catch (error) {
+    throw new Error(`${path} cannot be read, so L1 cannot tell it holds no git checkout, and leaves it as it is: ${error.message}`, { cause: error });
+  }
+  for (const entry of names) {
+    const at = join(path, entry.name);
+    if (entry.name === '.git') return at;
+    if (entry.isDirectory()) {
+      const found = checkoutIn(at);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 /**
