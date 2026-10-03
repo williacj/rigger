@@ -93,7 +93,7 @@ export const real = (dir) => {
  * A worktree is where a dispatched maker works, so a check that refused one would refuse every
  * card this engine is built by.
  */
-function within(outer, inner) {
+export function within(outer, inner) {
   const step = relative(outer, inner);
   return step === '' || (!step.startsWith('..') && !isAbsolute(step));
 }

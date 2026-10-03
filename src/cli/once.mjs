@@ -3,7 +3,8 @@
 // board through L0, moves the card through L2, and records through L5. `run` is the same verb with
 // no claim limit, so what the two share is one function here.
 
-import { join, resolve } from 'node:path';
+import { lstatSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
@@ -14,7 +15,7 @@ import { factsCall } from '../workflow/facts.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, consumerConfig, real, sameTree, settled } from './doctor.mjs';
+import { PACKAGE, consumerConfig, gitAnswer, real, sameTree, settled, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
 
@@ -31,6 +32,51 @@ const failuresIn = (failure) => (failure instanceof AggregateError ? failure.err
  * architect's ruling 3, P3, on #423).
  */
 const worktreeRoot = (config, top) => resolve(top, config.worktrees?.root ?? `../${config.repo.split('/')[1]}-worktrees`);
+
+/**
+ * The real path of `path`, read with `realpathSync.native`. Where `path` is absent, the real path
+ * of its nearest existing parent with the rest taken as written. Any other failure throws: a link
+ * whose target is not there is present rather than absent, and a path that cannot be read is
+ * refused rather than guessed at, which is where this differs from `real`.
+ */
+function strictReal(path) {
+  try {
+    return realpathSync.native(path);
+  } catch (failure) {
+    if (failure.code !== 'ENOENT') throw failure;
+    try {
+      lstatSync(path);
+    } catch (absent) {
+      if (absent.code !== 'ENOENT' || dirname(path) === path) throw absent;
+      return join(strictReal(dirname(path)), basename(path));
+    }
+    throw failure;
+  }
+}
+
+/**
+ * Why a verb named `verb` refuses the worktree root `root` for the repository whose top level is
+ * `top`, or undefined where it does not: the root is that working tree, or the main working tree
+ * of the repository where `top` is a linked worktree, or lies inside either, read as real paths.
+ * A workspace, a judge's directory or a role's scratch directory there would sit in the tree a
+ * maker stages from. A root or a tree whose real path cannot be read is refused too. Git names the
+ * main working tree, through L0 with `options` (`gitAnswer`).
+ */
+async function rootInsideTree(verb, root, top, options) {
+  const { stdout, why } = await gitAnswer(['-C', top, 'worktree', 'list', '--porcelain'], options);
+  if (why !== undefined) return `rigger ${verb}: git could not name the main working tree of ${top} (${why}), so Rigger cannot tell whether the worktree root ${root} lies inside it, and refuses it.`;
+  const main = stdout.split('\n')[0].replace(/^worktree /, '');
+  let paths;
+  try {
+    paths = [root, top, main].map(strictReal);
+  } catch (failure) {
+    return `rigger ${verb}: the real path of the worktree root ${root} cannot be read (${failure.message}), so Rigger cannot tell whether it lies inside the working tree ${top}, and refuses it. Declare a \`worktrees.root\` outside it.`;
+  }
+  const [there, ...trees] = paths;
+  const tree = trees.find((each) => within(each, there));
+  if (tree === undefined) return undefined;
+  return `rigger ${verb}: the worktree root ${root} lies inside the working tree ${tree}, where every workspace Rigger made would sit in the tree a maker stages from. Declare a \`worktrees.root\` outside it.`;
+}
 
 /**
  * What a verb named `verb` that fires one pull through L3's dispatching entry point prints, and the
@@ -72,6 +118,8 @@ async function claiming(verb, limit, opened, {
       code: 1,
     };
   }
+  const inside = await rootInsideTree(verb, root, named, { ask, emitter: sink.emitter({ layer: 'L0' }) });
+  if (inside !== undefined) return { text: inside, code: 1 };
   let workspace;
   try {
     workspace = await workspaceHandle({ root, topic: worktreeTopic(config), repository: named, sink });
