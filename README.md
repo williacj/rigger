@@ -188,7 +188,7 @@ evidence that would bring it back.
 - A GitHub repository with a Projects v2 board. `rigger setup-board` creates the columns, fields
   and labels.
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
-- One coding-agent CLI, authenticated. Claude Code is the shipped adapter; Codex is next.
+- One coding-agent CLI, authenticated. Claude Code is the default adapter; Codex is shipped beside it.
 - Node.js 20 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
   v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
