@@ -172,13 +172,11 @@ function scratchChecked(base, path) {
   for (const each of [dirname(base), base]) {
     const there = lstatOrAbsent(each);
     if (there === undefined) return false;
-    if (there.isSymbolicLink()) throw new Error(`${each} is a symbolic link, so L1 leaves it as it is`);
-    if (!there.isDirectory()) throw new Error(`${each} is not a directory, so L1 leaves it as it is`);
+    if (!there.isDirectory()) throw notDirectory(each, there);
   }
   const there = lstatOrAbsent(path);
   if (there === undefined) return false;
-  if (there.isSymbolicLink()) throw new Error(`${path} is a symbolic link, so L1 leaves it as it is`);
-  if (!there.isDirectory()) throw new Error(`${path} is not a directory, so L1 leaves it as it is`);
+  if (!there.isDirectory()) throw notDirectory(path, there);
   try {
     realpathSync.native(path);
   } catch (error) {
@@ -188,6 +186,9 @@ function scratchChecked(base, path) {
   if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, which may be a worktree of the repository, so L1 leaves it as it is`);
   return true;
 }
+
+/** The failure for `path`, which `lstat` read as `there`, no directory: a symbolic link, which is never followed, or anything else. */
+const notDirectory = (path, there) => new Error(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`);
 
 /** What `lstat` reads at `path`, or nothing where nothing is there; anything else unreadable throws naming it. */
 function lstatOrAbsent(path) {
