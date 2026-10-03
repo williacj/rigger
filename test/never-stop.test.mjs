@@ -12,7 +12,7 @@ import { constants } from 'node:os';
 import { join } from 'node:path';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, warmed } from './process-fixtures.mjs';
+import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -643,4 +643,83 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
   assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
   assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
   assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+});
+
+/**
+ * A perl program in `directory`, `joiner`, run with the scratch directory and a group's id: it
+ * leaves its own group and forks a child that joins the group named and runs `tail`, writes that
+ * child's pid to `$here/two.pid` once it has joined, and then blocks for good without ever reaping
+ * it. So once the child is killed it stays a zombie in that group while the program lives. The
+ * program names the scratch directory in its command line, so its test's teardown ends it.
+ */
+function zombieJoiner(directory) {
+  // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
+  writeFileSync(join(directory, 'joiner'), [
+    'my ($here, $group) = @ARGV;',
+    'setpgrp(0, 0) or die "leave: $!";',
+    'my $child = fork() // die "fork: $!";',
+    'if ($child == 0) { setpgrp(0, $group) or die "join: $!"; exec "/usr/bin/tail", "-f", "$here/hold"; }',
+    '1 until `/bin/ps -o pgid=,ucomm= -p $child` =~ /^\\s*$group\\s+tail/;',
+    'open(my $f, ">", "$here/two.tmp") or die; print $f $child; close $f;',
+    'rename("$here/two.tmp", "$here/two.pid") or die;',
+    'select(undef, undef, undef, undef);',
+  ].join('\n'));
+  return join(directory, 'joiner');
+}
+
+/** Lines of a command that start `zombieJoiner`'s program for the command's own group, and wait until its child has joined. */
+const joining = (directory) => [
+  `/usr/bin/perl "${zombieJoiner(directory)}" "$here" $$ >/dev/null 2>&1 &`,
+  'while [ ! -f "$here/two.pid" ]; do :; done',
+].join('\n');
+
+/** Asserts `events` record the kill of the group for the joiner, saying a read after the kill found it exited. */
+function assertJoinerRecorded(events) {
+  const kills = events.filter(({ event }) => event === 'group.killed');
+  assert.equal(kills.length, 1, `the group's kill was not recorded once: ${JSON.stringify(events)}`);
+  assert.match(kills[0].census, /a read after the kill found/);
+}
+
+// proves R-STATE-12, R-STATE-7
+test('on the call\'s containment, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
+  const signals = standIn(directory);
+
+  const { events } = await called(directory, { command, ps: hidingTwoUntilKilled(directory), kill: markingKill(directory, signals) });
+
+  const two = pidIn(directory, 'two');
+  assert.ok(processState(two).startsWith('Z'), `the joiner is not a zombie, so the test proves nothing: ${processState(two)}`);
+  assert.deepEqual(events.filter(({ pid }) => pid !== undefined).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: pidIn(directory, 'one') }]);
+  assertJoinerRecorded(events);
+});
+
+// proves R-STATE-12, R-STATE-10
+test('on a start\'s kill of a recorded group, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  spawn('/usr/bin/perl', [zombieJoiner(directory), directory, String(started.group)], { stdio: 'ignore' });
+  await until(() => existsSync(join(directory, 'two.pid')), t);
+  const signals = standIn(directory);
+
+  const { events } = await startKilled(started, { ps: hidingTwoUntilKilled(directory), kill: markingKill(directory, signals) });
+
+  const two = pidIn(directory, 'two');
+  assert.ok(processState(two).startsWith('Z'), `the joiner is not a zombie, so the test proves nothing: ${processState(two)}`);
+  assertJoinerRecorded(events);
+  assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
+});
+
+// proves R-STATE-12, R-STATE-9
+test('on the exit cleanup, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+  hidingTwoUntilKilled(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group' });
+
+  const two = pidIn(directory, 'two');
+  assert.equal(status, 0);
+  assert.ok(processState(two).startsWith('Z'), `the joiner is not a zombie, so the test proves nothing: ${processState(two)}`);
+  assertJoinerRecorded(events);
 });
