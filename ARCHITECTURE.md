@@ -367,21 +367,21 @@ and settles. A process the kill ended that no read before it found is recorded a
 group, as when L0 cannot read the table.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
-card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
-runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
-fresh before L3 dispatches that judge. Each role's dispatch also has a scratch directory,
+card's maker and its provisioning steps run one at a time in the card's workspace. Each judge runs
+in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes fresh
+before L3 dispatches that judge. Each role's dispatch also has a scratch directory,
 `scratch/<topic>/<role>` under the worktree root and outside every worktree, which L1 makes fresh
 before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that belongs in
-no worktree. After L0 kills a dispatch's group, it also kills every
-process of Rigger's own user whose working directory is that directory or lies under it. L0
-records each as it records a survivor. Where such a process is one L0 may not signal, or outlives
-that kill for the longer bound above, L0 records it by name and command line as a process it could
-not end, and waits on it no further. Where L0 cannot read which processes work there, it records
-the directory and why in their place, and waits on them no further. L1 hands L0 that directory and
-records it in the dispatch's entry. A later start does the same only where the directory at that
-path is still the one recorded. Where it is not, or L0 cannot tell, the start sweeps nothing there
-and records why. A command that is not a dispatch has no such directory, and its group remains its
-whole containment.
+no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's own user
+whose working directory is the dispatch's directory, or its scratch directory where it has one, or
+lies under either. L0 records each as it records a survivor. Where such a process is one L0 may not
+signal, or outlives that kill for the longer bound above, L0 records it by name and command line as
+a process it could not end, and waits on it no further. Where L0 cannot read which processes work in
+one of them, it records that directory and why in their place, and waits on them no further. L1
+hands L0 each of them and records it in the dispatch's entry. A later start does the same for each
+only where the directory at its path is still the one recorded. Where it is not, or L0 cannot tell,
+the start sweeps nothing there and records why. A command that is not a dispatch has no such
+directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
