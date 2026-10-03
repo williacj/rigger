@@ -92,7 +92,7 @@ test('given three pullable cards and a change kind listing one step whose run is
 
   const columns = Object.fromEntries((await (await here.fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
   assert.deepEqual(Object.values(columns).filter((column) => column === 'Coding').length, 1, ran.said);
-  assert.deepEqual(under(here.worktrees).length, 1, ran.said);
+  assert.deepEqual(under(here.worktrees).filter((name) => name !== 'scratch').length, 1, ran.said);
 });
 
 /** Each card on the fake board by number, with the display name of the column it is in now. */
@@ -107,7 +107,7 @@ test('given that world, the workspace lies at the path the configured topic deri
   const ran = here.verb('once');
 
   assert.match(ran.err, /claimed #10\b/, ran.said);
-  assert.deepEqual(under(here.worktrees), ['rigger-10'], ran.said);
+  assert.deepEqual(under(here.worktrees), ['rigger-10', 'scratch'], ran.said);
   assert.equal(realpathSync(join(here.worktrees, 'rigger-10')), derived(here, 10));
 });
 
@@ -372,7 +372,7 @@ test('given four pullable cards, N 3, and a change kind listing one step whose r
 
   const ran = here.verb('run');
 
-  const made = under(here.worktrees).map((name) => realpathSync(join(here.worktrees, name)));
+  const made = under(here.worktrees).filter((name) => name !== 'scratch').map((name) => realpathSync(join(here.worktrees, name)));
   assert.equal(new Set(made).size, 3, `${ran.said}\n${made.join('\n')}`);
   assert.deepEqual(await columnsOf(here), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.said);
 });

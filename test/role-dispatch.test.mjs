@@ -6,6 +6,12 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { chmodSync, lstatSync, readlinkSync, statSync } from 'node:fs';
+import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { renameSync, rmSync } from 'node:fs';
+import { EVENT_REFUSED } from '../src/substrate/process.mjs';
+import { gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
+import { dirname } from 'node:path';
 
 import { readGroups } from '../src/execution/groups.mjs';
 import { roleDispatch } from '../src/execution/role.mjs';
@@ -51,20 +57,30 @@ function standIn(command, { args = [], unset = [], env = {} } = {}) {
   };
 }
 
+/** The scratch base of a dispatch whose directory is `directory`: `scratch/rigger-1412/` beside it. */
+const scratchOf = (directory) => join(dirname(directory), 'scratch', 'rigger-1412');
+
+/** The repository of a dispatch whose directory is `directory`: an empty git repository, `repository/`, beside it. */
+const repositoryOf = (directory) => join(dirname(directory), 'repository');
+
 /**
- * A judge's layout in a scratch directory: the dispatch's directory `judge/`, its working
- * directory `judge/main/` and its reached directory `judge/head/`, and the state directory
- * `.rigger/` beside them, with a sink open on it.
+ * A judge's layout in the test's own temporary directory: the dispatch's directory `judge/`, its
+ * working directory `judge/main/` and its reached directory `judge/head/`, the dispatch's scratch
+ * base `scratch/rigger-1412/` beside `judge/` and outside it, an empty git repository
+ * `repository/` beside them as the repository L1 made from, and the state directory `.rigger/`
+ * beside them, with a sink open on it.
  */
 function layout(t) {
   const root = scratch(t);
   const directory = join(root, 'judge');
   const cwd = join(directory, 'main');
   const head = join(directory, 'head');
-  for (const each of [cwd, head]) mkdirSync(each, { recursive: true });
+  const base = scratchOf(directory);
+  for (const each of [cwd, head, base]) mkdirSync(each, { recursive: true });
+  const repository = repositoryAt(repositoryOf(directory));
   const state = join(root, '.rigger');
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
-  return { root, directory, cwd, head, state, sink };
+  return { root, directory, cwd, head, scratch: base, repository, state, sink };
 }
 
 /**
@@ -97,7 +113,7 @@ function seenIn(root) {
  * dispatch's result, or rejects as either does.
  */
 async function throughL1({ sink, state, ...request }) {
-  const handed = await roleDispatch({ sink, id: 'd-role', card: 1412, ...request });
+  const handed = await roleDispatch({ sink, id: 'd-role', card: 1412, ...request, scratch: request.scratch ?? scratchOf(request.directory), repository: request.repository ?? repositoryOf(request.directory) });
   return dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed });
 }
 
@@ -108,7 +124,7 @@ test('roleDispatch answers what L1\'s dispatch is handed: the command, arguments
   const { directory, cwd, head, sink } = layout(t);
   const { adapter } = standIn('/usr/bin/true', { args: ['--stand-in'] });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, reach: [head], env: { KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [head], env: { KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(
     { command: handed.command, args: handed.args, input: handed.input.toString('utf8'), cwd: handed.cwd, workspace: handed.workspace, env: handed.env, timeout: handed.timeout },
@@ -121,7 +137,7 @@ test('roleDispatch asks the module the role answer\'s provider names in the adap
   const named = standIn('/usr/bin/true');
   const other = standIn('/usr/bin/false');
 
-  const handed = await roleDispatch({ answer: answerOf({ provider: 'named' }), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { other: other.adapter, named: named.adapter } });
+  const handed = await roleDispatch({ answer: answerOf({ provider: 'named' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { other: other.adapter, named: named.adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
   assert.equal(named.requests.length, 1);
@@ -131,7 +147,7 @@ test('roleDispatch asks the module the role answer\'s provider names in the adap
 test('roleDispatch reads the adapter map L0 holds where its caller gives none, so a role answer naming `claude` is answered by the Claude Code adapter', async (t) => {
   const { directory, cwd, sink } = layout(t);
 
-  const handed = await roleDispatch({ answer: answerOf({ provider: 'claude' }), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412 });
+  const handed = await roleDispatch({ answer: answerOf({ provider: 'claude' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412 });
 
   assert.equal(handed.command, 'claude');
 });
@@ -166,7 +182,7 @@ test('roleDispatch hands the adapter\'s invocation the reach it was handed uncha
   const { adapter, requests } = standIn('/usr/bin/true');
   const reach = [head];
 
-  await roleDispatch({ answer: answerOf(), cwd, directory, reach, env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach, env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(requests[0].reach, reach);
   assert.deepEqual(requests[0].reach, [head]);
@@ -176,7 +192,7 @@ test('the agent path roleDispatch hands the adapter is the role\'s agent file jo
   const { directory, cwd, sink } = layout(t);
   const { adapter, requests } = standIn('/usr/bin/true');
 
-  await roleDispatch({ answer: answerOf({ agent: '.claude/agents/reviewer.md' }), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf({ agent: '.claude/agents/reviewer.md' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(requests[0].agent, `${cwd}/.claude/agents/reviewer.md`);
 });
@@ -185,7 +201,7 @@ test('the timeout roleDispatch answers is the role answer\'s timeout', async (t)
   const { directory, cwd, sink } = layout(t);
   const { adapter } = standIn('/usr/bin/true');
 
-  const handed = await roleDispatch({ answer: answerOf({ timeout: 14_400_000 }), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf({ timeout: 14_400_000 }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.timeout, 14_400_000);
 });
@@ -202,10 +218,10 @@ test('roleDispatch hands the adapter\'s invocation an L0 emitter under the dispa
     },
   };
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
-  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card }) => ({ layer, event, id, card })), [{ layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412 }]);
+  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L1', event: 'workspace.made', id: undefined, card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
 });
 
 test('given a role dispatch through L1, the stand-in agent reads on its standard input exactly the role answer\'s instruction followed by its evidence', SETTLES_WITHIN, async (t) => {
@@ -265,7 +281,7 @@ test('roleDispatch builds a role\'s environment as the environment handed, less 
   const set = join(directory, '.stand-in-tmp');
   const { adapter } = standIn('/usr/bin/true', { unset: ['UNINHERITED'], env: { STAND_IN_TMPDIR: set } });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, reach: [], env: { STAND_IN_TMPDIR: '/handed/value', UNINHERITED: 'dropped', GIT_DIR: '/elsewhere/.git', KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { STAND_IN_TMPDIR: '/handed/value', UNINHERITED: 'dropped', GIT_DIR: '/elsewhere/.git', KEEP: 'kept' }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.deepEqual(handed.env, { STAND_IN_TMPDIR: set, KEEP: 'kept' });
 });
@@ -404,7 +420,7 @@ test('given an adapter whose env value is a path under the dispatch\'s directory
   const set = join(directory, 'not', 'yet', 'made');
   const { adapter } = standIn('/usr/bin/true', { env: { STAND_IN_TMPDIR: set } });
 
-  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.env.STAND_IN_TMPDIR, set);
   assert.equal(existsSync(join(directory, 'not')), false, 'roleDispatch made the path');
@@ -538,4 +554,660 @@ test('given a role dispatch through L1 whose stand-in agent outlives its timeout
   assert.equal(result.timedOut, true);
   assert.notEqual(result.exit, 0);
   assert.deepEqual(readEvents(state).filter((event) => event.event === 'dispatch.timeout').map(({ dispatch: id, timeout }) => ({ id, timeout })), [{ id: 'd-role', timeout: OUTLIVED }]);
+});
+
+/**
+ * A stand-in provider adapter that records, at the moment `invocation` is asked, the `scratch` it
+ * was handed and whether a directory was there, and answers `command` with `args` and the
+ * environment `env(scratch)` builds from that path.
+ */
+function scratchReading(command, { args = [], env = () => ({}) } = {}) {
+  const asked = [];
+  return {
+    asked,
+    adapter: {
+      name: 'stand-in',
+      async invocation(request) {
+        asked.push({ scratch: request.scratch, there: existsSync(request.scratch) && lstatSync(request.scratch).isDirectory(), holds: existsSync(request.scratch) ? readdirSync(request.scratch) : [] });
+        return { command, args, input: Buffer.alloc(0), unset: [], env: env(request.scratch) };
+      },
+    },
+  };
+}
+
+/** Every L1 workspace event the stream in `state` holds, as the fields a reader names it by. */
+const scratchEventsIn = (state) => eventsIn(state)
+  .filter((event) => event.layer === 'L1' && event.event.startsWith('workspace.'))
+  .map(({ event, card, role, path }) => ({ event, card, role, path }));
+
+test('roleDispatch makes <scratch>/<role> before it asks the adapter for the invocation, and hands the adapter that absolute path as scratch', async (t) => {
+  const { directory, cwd, scratch: base, sink } = layout(t);
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(asked, [{ scratch: join(base, 'engineer'), there: true, holds: [] }]);
+});
+
+test('roleDispatch makes the scratch base and <scratch>/<role> where neither exists yet', async (t) => {
+  const { root, directory, cwd, sink } = layout(t);
+  const base = join(root, 'worktrees', 'scratch', 'rigger-42');
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await roleDispatch({ answer: answerOf({ role: 'reviewer' }), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 42, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(asked, [{ scratch: join(base, 'reviewer'), there: true, holds: [] }]);
+});
+
+test('given a scratch that is not an absolute path, roleDispatch rejects with NOT_STARTED naming scratch, and no process starts', SETTLES_WITHIN, async (t) => {
+  for (const given of ['scratch/rigger-1412', '', 42]) {
+    const { root, directory, cwd, state, sink } = layout(t);
+    const { command, args } = agentIn(root);
+    const { adapter, asked } = scratchReading(command, { args });
+
+    await assert.rejects(
+      throughL1({ answer: answerOf(), cwd, directory, scratch: given, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } }).then(() => assert.fail(`${given}: L1 settled`)),
+      (failure) => failure.code === NOT_STARTED && /\bscratch\b/.test(failure.message),
+    );
+    assert.deepEqual(asked, [], `${given}: the adapter was asked for an invocation`);
+    assert.equal(seenIn(root), undefined, `${given}: the stand-in agent ran`);
+    assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
+  }
+});
+
+test('given no scratch at all, roleDispatch rejects with NOT_STARTED naming scratch, and asks the adapter for no invocation', async (t) => {
+  const { directory, cwd, sink } = layout(t);
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await assert.rejects(
+    roleDispatch({ answer: answerOf(), cwd, directory, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } }),
+    (failure) => failure.code === NOT_STARTED && /\bscratch\b/.test(failure.message),
+  );
+  assert.deepEqual(asked, []);
+});
+
+test('given a directory already at <scratch>/<role> holding a file and a symbolic link to a file outside it, roleDispatch removes it first, the adapter finds it empty, and the file outside is byte-identical afterwards', async (t) => {
+  const { root, directory, cwd, scratch: base, sink } = layout(t);
+  const role = join(base, 'engineer');
+  mkdirSync(join(role, 'deep'), { recursive: true });
+  writeFileSync(join(role, 'deep', 'left.txt'), 'the first attempt\'s\n');
+  const outside = join(root, 'outside.txt');
+  writeFileSync(outside, 'not Rigger\'s\n');
+  symlinkSync(outside, join(role, 'link'));
+  symlinkSync(root, join(role, 'deep', 'up'));
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(asked, [{ scratch: role, there: true, holds: [] }]);
+  assert.equal(readFileSync(outside, 'utf8'), 'not Rigger\'s\n');
+  assert.ok(existsSync(join(root, 'judge', 'main')), 'the removal followed a link out of the scratch directory');
+});
+
+test('L1 records under the card the scratch directory it made, and the one it replaced, each carrying the role and the path', async (t) => {
+  const { directory, cwd, scratch: base, state, sink } = layout(t);
+  const { adapter } = scratchReading('/usr/bin/true');
+  const role = join(base, 'engineer');
+
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-role-2', card: 1412, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(scratchEventsIn(state), [
+    { event: 'workspace.made', card: 1412, role: 'engineer', path: role },
+    { event: 'workspace.removed', card: 1412, role: 'engineer', path: role },
+    { event: 'workspace.made', card: 1412, role: 'engineer', path: role },
+  ]);
+});
+
+/**
+ * Asserts that a role dispatch through L1 of role `engineer`, handed the scratch base `base`,
+ * rejects with NOT_STARTED naming `path`, that the adapter was asked for no invocation, that the
+ * stand-in agent never ran, and that L1 recorded no dispatch.start. Hands back the failure.
+ */
+async function assertScratchRefused({ root, directory, cwd, state, sink }, base, path) {
+  const { command, args } = agentIn(root);
+  const { adapter, asked } = scratchReading(command, { args });
+  let failure;
+  await throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } })
+    .then(() => assert.fail('L1 settled'), (thrown) => { failure = thrown; });
+  assert.equal(failure.code, NOT_STARTED, failure.stack);
+  assert.ok(failure.message.includes(path), `the failure does not name ${path}: ${failure.message}`);
+  assert.deepEqual(asked, [], 'the adapter was asked for an invocation');
+  assert.equal(seenIn(root), undefined, 'the stand-in agent ran');
+  assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
+  return failure;
+}
+
+/** Every entry under `path`, not following links, with each file's bytes and each link's target. */
+function contents(path) {
+  const held = lstatSync(path);
+  if (held.isSymbolicLink()) return { link: readlinkSync(path) };
+  if (!held.isDirectory()) return { file: readFileSync(path, 'utf8'), mode: held.mode };
+  return { mode: held.mode, entries: Object.fromEntries(readdirSync(path).sort().map((name) => [name, contents(join(path, name))])) };
+}
+
+test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, roleDispatch rejects with NOT_STARTED naming the link, starts no process, and the link and what it points at are unchanged', SETTLES_WITHIN, async (t) => {
+  for (const linked of [['scratch'], ['scratch', 'rigger-1412']]) {
+    const placed = layout(t);
+    const top = join(placed.root, 'worktrees');
+    const elsewhere = join(placed.root, 'elsewhere');
+    mkdirSync(join(elsewhere, 'engineer'), { recursive: true });
+    writeFileSync(join(elsewhere, 'engineer', 'kept.txt'), 'not Rigger\'s\n');
+    const link = join(top, ...linked);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(elsewhere, link);
+    if (linked.length === 1) mkdirSync(join(elsewhere, 'rigger-1412', 'engineer'), { recursive: true });
+    const before = [contents(top), contents(elsewhere)];
+
+    await assertScratchRefused(placed, join(top, 'scratch', 'rigger-1412'), link);
+
+    assert.deepEqual([contents(top), contents(elsewhere)], before, `${link}: something changed`);
+  }
+});
+
+test('given a worktree of the repository registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and that worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
+  for (const under of [[], ['deep', 'tree']]) {
+    const placed = layout(t);
+    const repository = repositoryAt(join(placed.root, 'repository'), { 'kept.txt': 'committed\n' });
+    const path = join(placed.scratch, 'engineer');
+    const tree = worktreeAt(repository, join(path, ...under), 'held');
+    writeFileSync(join(tree, 'uncommitted.txt'), 'the agent\'s\n');
+    const branch = gitIn(repository, 'rev-parse', 'refs/heads/held');
+    const before = { files: contents(tree), list: worktreeList(repository) };
+
+    await assertScratchRefused(placed, placed.scratch, path);
+
+    assert.deepEqual({ files: contents(tree), list: worktreeList(repository) }, before, `${tree}: something changed`);
+    assert.equal(gitIn(repository, 'rev-parse', 'refs/heads/held'), branch);
+  }
+});
+
+test('given a file, a symbolic link to a directory, or a symbolic link to nothing at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the path is unchanged', SETTLES_WITHIN, async (t) => {
+  for (const put of [
+    (path) => writeFileSync(path, 'not a directory\n'),
+    (path, root) => symlinkSync(join(root, 'judge'), path),
+    (path, root) => symlinkSync(join(root, 'nowhere'), path),
+  ]) {
+    const placed = layout(t);
+    const path = join(placed.scratch, 'engineer');
+    put(path, placed.root);
+    const before = [contents(placed.scratch), contents(placed.directory)];
+
+    await assertScratchRefused(placed, placed.scratch, path);
+
+    assert.deepEqual([contents(placed.scratch), contents(placed.directory)], before);
+  }
+});
+
+test('given a <scratch>/<role> whose real path cannot be resolved, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const path = join(placed.scratch, 'engineer');
+  mkdirSync(path);
+  writeFileSync(join(path, 'left.txt'), 'the first attempt\'s\n');
+  chmodSync(placed.scratch, 0o000);
+  t.after(() => chmodSync(placed.scratch, 0o700));
+
+  await assertScratchRefused(placed, placed.scratch, path);
+
+  assert.equal(lstatSync(placed.scratch).mode & 0o7777, 0o000, 'the scratch base\'s mode changed');
+  chmodSync(placed.scratch, 0o700);
+  assert.deepEqual(readdirSync(path), ['left.txt']);
+  assert.equal(readFileSync(join(path, 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});
+
+/**
+ * Every entry under `path` with its mode, not following links, as `lstat` reads it; a directory
+ * that cannot be read is recorded as such, with nothing under it read.
+ */
+function modes(path) {
+  const held = lstatSync(path);
+  if (!held.isDirectory()) return { mode: held.mode };
+  let names;
+  try {
+    names = readdirSync(path).sort();
+  } catch (error) {
+    return { mode: held.mode, unreadable: error.code };
+  }
+  return { mode: held.mode, entries: Object.fromEntries(names.map((name) => [name, modes(join(path, name))])) };
+}
+
+test('given a worktree of another repository at <scratch>/<role> holding a directory of mode 000 that sorts before .git, or one holding such a worktree, roleDispatch rejects with NOT_STARTED naming the unreadable directory, and every mode and entry is unchanged', SETTLES_WITHIN, async (t) => {
+  for (const at of ['worktree holding it', 'it holding the worktree']) {
+    const placed = layout(t);
+    const repository = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+    const path = join(placed.scratch, 'engineer');
+    const locked = at === 'worktree holding it' ? join(path, '.a-locked') : join(path, 'locked');
+    const tree = worktreeAt(repository, at === 'worktree holding it' ? path : join(locked, 'tree'), 'held');
+    mkdirSync(locked, { recursive: true });
+    writeFileSync(join(locked, 'inside.txt'), 'unread\n');
+    chmodSync(locked, 0o000);
+    t.after(() => chmodSync(locked, 0o700));
+    const before = { modes: modes(path), list: worktreeList(repository) };
+
+    await assertScratchRefused(placed, placed.scratch, locked);
+
+    assert.deepEqual({ modes: modes(path), list: worktreeList(repository) }, before, `${at}: something changed`);
+    chmodSync(locked, 0o700);
+    assert.equal(readFileSync(join(locked, 'inside.txt'), 'utf8'), 'unread\n');
+    assert.ok(existsSync(join(tree, 'kept.txt')), `${at}: the worktree lost its file`);
+  }
+});
+
+test('L1 records under the card a scratch directory it could not make, carrying the role, the path and why', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const path = join(placed.scratch, 'engineer');
+  writeFileSync(path, 'not a directory\n');
+
+  const failure = await assertScratchRefused(placed, placed.scratch, path);
+
+  const failed = eventsIn(placed.state).filter((event) => event.event === 'workspace.failed');
+  assert.deepEqual(failed.map(({ layer, card, role, path: at }) => ({ layer, card, role, path: at })), [{ layer: 'L1', card: 1412, role: 'engineer', path }]);
+  assert.ok(failure.message.includes(failed[0].reason), `the failure does not carry the reason L1 recorded: ${failure.message}`);
+});
+
+/** `sink`, refusing every append of `refused` and passing every other on. */
+const refusing = (sink, refused) => ({
+  emitter: (context) => {
+    const inner = sink.emitter(context);
+    return {
+      emit: (event, fields) => {
+        if (event === refused) throw new Error(`the sink refuses ${event}`);
+        inner.emit(event, fields);
+      },
+    };
+  },
+});
+
+test('a refused workspace.made, workspace.removed or workspace.failed while roleDispatch makes a scratch directory rejects as a refused event naming it, and asks the adapter for no invocation', async (t) => {
+  for (const event of ['workspace.made', 'workspace.removed', 'workspace.failed']) {
+    const { directory, cwd, scratch: base, sink } = layout(t);
+    if (event === 'workspace.removed') mkdirSync(join(base, 'engineer'));
+    if (event === 'workspace.failed') writeFileSync(join(base, 'engineer'), 'not a directory\n');
+    const { adapter, asked } = scratchReading('/usr/bin/true');
+    let failure;
+    await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository: repositoryOf(directory), reach: [], env: {}, sink: refusing(sink, event), id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } })
+      .then(() => assert.fail(`${event}: roleDispatch settled`), (thrown) => { failure = thrown; });
+    assert.equal(failure.code, EVENT_REFUSED, `${event}: ${failure.stack}`);
+    assert.ok(failure.message.includes(event), `${event}: ${failure.message}`);
+    assert.deepEqual(asked, [], `${event}: the adapter was asked for an invocation`);
+  }
+});
+
+// The ruling 18 case: an adapter keeps what its CLI writes, which belongs in no worktree, in the scratch directory.
+test('given a role dispatch through L1 whose adapter\'s env sets a variable to a path under the scratch directory, roleDispatch admits it, and the stand-in agent reads that variable and finds that path', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, scratch: base, state, sink } = layout(t);
+  const { command, args } = agentIn(root);
+  const { adapter } = scratchReading(command, { args, env: (scratchDirectory) => ({ STAND_IN_HOME: join(scratchDirectory, 'home') }) });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } });
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.equal(seenIn(root).env.STAND_IN_HOME, join(base, 'engineer', 'home'));
+});
+
+/**
+ * Asserts that a role dispatch through L1 whose stand-in adapter sets STAND_IN_HOME to what
+ * `value(scratch)` answers for the scratch directory it is handed rejects with NOT_STARTED naming
+ * the key and not the value, and that nothing ran or started.
+ */
+async function assertScratchValueRefused(placed, value) {
+  const { root, directory, cwd, scratch: base, state, sink } = placed;
+  const { command, args } = agentIn(root);
+  const given = [];
+  const { adapter } = scratchReading(command, { args, env: (scratchDirectory) => { given.push(value(scratchDirectory)); return { STAND_IN_HOME: given.at(-1) }; } });
+  let failure;
+  await throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } })
+    .then(() => assert.fail('L1 settled'), (thrown) => { failure = thrown; });
+  assert.equal(failure.code, NOT_STARTED, failure.stack);
+  assert.ok(failure.message.includes('STAND_IN_HOME'), failure.message);
+  assert.equal(given.length, 1, 'the adapter was not asked once');
+  assert.equal(failure.message.includes(given[0]), false, `the failure names the value: ${failure.message}`);
+  assert.equal(seenIn(root), undefined, 'the stand-in agent ran');
+  assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
+}
+
+test('given an adapter whose env sets a variable to a path under the scratch directory that reaches outside it through a symbolic link, roleDispatch rejects with NOT_STARTED naming the key and not the value, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const outside = join(placed.root, 'outside');
+  mkdirSync(outside);
+
+  await assertScratchValueRefused(placed, (scratchDirectory) => {
+    symlinkSync(outside, join(scratchDirectory, 'link'));
+    return join(scratchDirectory, 'link', 'home');
+  });
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+test('given an adapter whose env sets a variable to a path beside the scratch directory whose name begins with the scratch directory\'s, roleDispatch rejects with NOT_STARTED naming the key and not the value, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+
+  await assertScratchValueRefused(placed, (scratchDirectory) => `${scratchDirectory}-beside`);
+});
+
+test('given an adapter whose env sets a variable to the scratch base, above the role\'s scratch directory, roleDispatch rejects with NOT_STARTED naming the key and not the value, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+
+  await assertScratchValueRefused(placed, (scratchDirectory) => join(dirname(scratchDirectory), 'reviewer'));
+});
+
+/** The device and inode of the directory at `path`'s real path, as decimal strings. */
+function identity(path) {
+  const { dev, ino } = statSync(realpathSync.native(path), { bigint: true });
+  return { device: String(dev), inode: String(ino) };
+}
+
+test('while a role dispatch through L1 runs, its record entry carries its scratch directory\'s real path, device and inode beside the dispatch\'s directory', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, scratch: base, state, sink } = layout(t);
+  const { command, args } = shellAgent(root, [': > "$here/ready"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+  const { adapter } = standIn(command, { args });
+
+  const running = throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } });
+  await until(() => existsSync(join(root, 'ready')), t);
+  const entries = readGroups(state);
+  const held = identity(join(base, 'engineer'));
+  writeFileSync(join(root, 'release'), '');
+  const result = await running;
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.deepEqual(entries.map(({ dispatch: id, workspace, scratch: recorded }) => ({ id, workspace, scratch: recorded })), [
+    { id: 'd-role', workspace: realpathSync.native(directory), scratch: { path: realpathSync.native(join(base, 'engineer')), ...held } },
+  ]);
+});
+
+test('while a step\'s dispatch through L1 runs, its record entry records no scratch directory', SETTLES_WITHIN, async (t) => {
+  const { root, directory, state, sink } = layout(t);
+  const body = fixture(root, 'step', [': > "$here/ready"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+
+  const running = dispatch({ id: 'd-step', card: 1412, directory: state, sink, ...stepDispatch({ run: `/bin/sh '${body}'` }, directory, {}) });
+  await until(() => existsSync(join(root, 'ready')), t);
+  const entries = readGroups(state);
+  writeFileSync(join(root, 'release'), '');
+  const result = await running;
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.equal(entries.length, 1);
+  assert.equal(Object.hasOwn(entries[0], 'scratch'), false, `the step's entry records a scratch directory: ${JSON.stringify(entries[0])}`);
+  assert.equal(typeof entries[0].workspace, 'string', 'the step\'s entry records no directory, so the test proves nothing');
+});
+
+// proves R-STATE-17
+test('given a role dispatch through L1 whose stand-in agent leaves a process outside its group working in the scratch directory, that process is not alive when the dispatch settles, and its kill is recorded under the dispatch\'s id and card', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, scratch: base, state, sink } = layout(t);
+  writeFileSync(join(root, 'hold'), '');
+  const { command, args } = shellAgent(root, `${leaveWorking('scratch/rigger-1412/engineer/work', 'left')}\nexit 0`);
+  const { adapter } = standIn(command, { args });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } });
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  const left = Number(read(root, 'left.pid'));
+  assert.equal(alive(left), false, 'the process working in the scratch directory is alive');
+  const kills = readEvents(state).filter((event) => event.layer === 'L0' && event.pid === left);
+  assert.deepEqual(kills.map(({ event, dispatch: id, card, directory: swept }) => ({ event, id, card, swept })), [
+    { event: 'survivor.killed', id: 'd-role', card: 1412, swept: realpathSync.native(join(base, 'engineer')) },
+  ]);
+});
+
+test('the Claude Code adapter answers the same invocation with a scratch directory given as without it', async (t) => {
+  const { cwd, scratch: base, sink } = layout(t);
+  mkdirSync(join(cwd, '.claude', 'agents'), { recursive: true });
+  const agent = join(cwd, '.claude', 'agents', 'engineer.md');
+  writeFileSync(agent, '---\nname: engineer\n---\n\n# Engineer\n');
+  const request = { agent, tier: 'standard', prompt: 'the prompt', directory: cwd, reach: [], emitter: sink.emitter({ layer: 'L0', card: 1412, dispatch: 'd-role' }) };
+
+  const without = await ADAPTERS.claude.invocation(request);
+  const given = await ADAPTERS.claude.invocation({ ...request, scratch: join(base, 'engineer') });
+
+  assert.deepEqual(given, without);
+});
+
+test('given a worktree of the repository whose .git entry has been moved out of it, registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path and the worktree, starts no process, and the worktree\'s files, its registration and its branch are unchanged', SETTLES_WITHIN, async (t) => {
+  for (const under of [[], ['deep', 'tree']]) {
+    const placed = layout(t);
+    repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+    const path = join(placed.scratch, 'engineer');
+    const tree = worktreeAt(placed.repository, join(path, ...under), 'held');
+    writeFileSync(join(tree, 'uncommitted.txt'), 'the agent\'s\n');
+    renameSync(join(tree, '.git'), join(placed.root, 'moved-git'));
+    const branch = gitIn(placed.repository, 'rev-parse', 'refs/heads/held');
+    const before = { files: contents(tree), list: worktreeList(placed.repository) };
+
+    const failure = await assertScratchRefused(placed, placed.scratch, path);
+
+    assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+    assert.deepEqual({ files: contents(tree), list: worktreeList(placed.repository) }, before, `${tree}: something changed`);
+    assert.equal(gitIn(placed.repository, 'rev-parse', 'refs/heads/held'), branch);
+  }
+});
+
+test('given a worktree of the repository registered at a path whose real path cannot be resolved for a reason other than its absence, roleDispatch rejects with NOT_STARTED naming that worktree, and the directory at <scratch>/<role> is unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const locked = join(placed.root, 'locked');
+  const tree = worktreeAt(placed.repository, join(locked, 'tree'), 'held');
+  chmodSync(locked, 0o000);
+  t.after(() => chmodSync(locked, 0o700));
+  const path = join(placed.scratch, 'engineer');
+  mkdirSync(path);
+  writeFileSync(join(path, 'left.txt'), 'the first attempt\'s\n');
+  const before = contents(path);
+
+  const failure = await assertScratchRefused(placed, placed.scratch, path);
+
+  assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+  assert.deepEqual(contents(path), before);
+});
+
+test('given a worktree of the repository registered inside <scratch>/<role> whose directory is gone, roleDispatch takes it to lie nowhere, and replaces the scratch directory', async (t) => {
+  const { directory, cwd, scratch: base, repository, sink } = layout(t);
+  repositoryAt(repository, { 'kept.txt': 'committed\n' });
+  const path = join(base, 'engineer');
+  const tree = worktreeAt(repository, join(path, 'gone'), 'held');
+  rmSync(path, { recursive: true, force: true });
+  mkdirSync(path);
+  assert.ok(worktreeList(repository).includes(tree), 'git no longer lists the worktree, so the test proves nothing');
+  const { adapter, asked } = scratchReading('/usr/bin/true');
+
+  await roleDispatch({ answer: answerOf(), cwd, directory, scratch: base, repository, reach: [], env: {}, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': adapter } });
+
+  assert.deepEqual(asked, [{ scratch: path, there: true, holds: [] }]);
+});
+
+test('given a worktree of another repository, which the repository\'s git does not list, at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+  const path = join(placed.scratch, 'engineer');
+  const tree = worktreeAt(another, path, 'held');
+  writeFileSync(join(tree, 'uncommitted.txt'), 'the agent\'s\n');
+  const branch = gitIn(another, 'rev-parse', 'refs/heads/held');
+  const before = { files: contents(tree), list: worktreeList(another) };
+  assert.equal(worktreeList(placed.repository).includes(tree), false, 'the repository\'s git lists the worktree, so the test proves nothing');
+
+  await assertScratchRefused(placed, placed.scratch, path);
+
+  assert.deepEqual({ files: contents(tree), list: worktreeList(another) }, before);
+  assert.equal(gitIn(another, 'rev-parse', 'refs/heads/held'), branch);
+});
+
+/**
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * naming `<base>/engineer` and the worktree `tree`, and that nothing under `tree` changed, as
+ * `before` held it, and no `<base>/engineer` was made.
+ */
+async function assertInsideRefused(placed, base, tree) {
+  const before = contents(tree);
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
+  assert.deepEqual(contents(tree), before, `${tree}: something changed`);
+  assert.equal(existsSync(join(base, 'engineer')), false, 'L1 made the scratch directory inside the worktree');
+}
+
+test('given a scratch base that is a registered worktree of the repository, holding a staged file, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+  mkdirSync(join(tree, 'engineer'));
+  writeFileSync(join(tree, 'engineer', 'staged.txt'), 'staged\n');
+  gitIn(tree, 'add', 'engineer/staged.txt');
+
+  await assertScratchRefused(placed, tree, join(tree, 'engineer')).then((failure) => assert.ok(failure.message.includes(tree), failure.message));
+
+  assert.equal(readFileSync(join(tree, 'engineer', 'staged.txt'), 'utf8'), 'staged\n');
+  assert.match(gitIn(tree, 'status', '--porcelain'), /^A {2}engineer\/staged\.txt$/m);
+});
+
+test('given a scratch base lying inside a registered worktree of the repository, not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+
+  await assertInsideRefused(placed, join(tree, 'scratch', 'rigger-1412'), tree);
+});
+
+test('given a scratch base lying inside the repository\'s main working tree, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+
+  await assertInsideRefused(placed, join(placed.repository, 'scratch', 'rigger-1412'), placed.repository);
+});
+
+test('given a scratch base spelled through a symbolic link into a registered worktree of the repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and leaves the worktree unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+  const link = join(placed.root, 'linked');
+  symlinkSync(tree, link);
+
+  await assertInsideRefused(placed, join(link, 'scratch', 'rigger-1412'), tree);
+
+  assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the worktree');
+});
+
+/**
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * naming `<base>/engineer` and `named`, that every mode and entry under `kept` is unchanged, and
+ * that no `<base>/engineer` was made. Hands back the failure.
+ */
+async function assertAncestorRefused(placed, base, named, kept) {
+  const before = modes(kept);
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+  assert.deepEqual(modes(kept), before, `${kept}: something changed`);
+  return failure;
+}
+
+test('given a scratch base inside a linked worktree of an unrelated repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree\'s .git, and makes nothing in that worktree', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(another, join(placed.root, 'unrelated-tree'), 'held');
+  const base = join(tree, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(tree, '.git'), tree);
+
+  assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the unrelated worktree');
+});
+
+test('given a .git file at an ancestor of <scratch>/<role> between it and the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  writeFileSync(join(base, 'engineer', 'left.txt'), 'the first attempt\'s\n');
+  writeFileSync(join(root, 'scratch', '.git'), 'gitdir: /nowhere\n');
+
+  await assertAncestorRefused(placed, base, join(root, 'scratch', '.git'), root);
+
+  assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});
+
+test('given a .git directory at the worktree root itself, the parent of scratch/, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and makes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  mkdirSync(join(root, '.git'), { recursive: true });
+  const base = join(root, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(root, '.git'), root);
+
+  assert.equal(existsSync(join(root, 'scratch')), false, 'L1 made the scratch base');
+});
+
+test('given an ancestor of <scratch>/<role> up to the worktree root that L1 cannot read, roleDispatch rejects with NOT_STARTED naming the scratch directory and the .git it could not look for, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  chmodSync(root, 0o000);
+  t.after(() => chmodSync(root, 0o700));
+
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+
+  assert.ok(failure.message.includes(join(base, '.git')), `the failure does not name ${join(base, '.git')}: ${failure.message}`);
+  assert.equal(lstatSync(root).mode & 0o7777, 0o000, 'the worktree root\'s mode changed');
+  chmodSync(root, 0o700);
+  assert.deepEqual(readdirSync(join(base, 'engineer')), []);
+});
+
+test('given a scratch base inside a registered worktree of the repository whose .git was moved aside, not yet made, plain or through a symbolic link, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  for (const spelled of ['plain', 'through a link']) {
+    const placed = layout(t);
+    repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+    const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+    renameSync(join(tree, '.git'), join(placed.root, 'moved-git'));
+    const top = spelled === 'plain' ? tree : join(placed.root, 'linked');
+    if (spelled !== 'plain') symlinkSync(tree, top);
+
+    await assertInsideRefused(placed, join(top, 'scratch', 'rigger-1412'), tree);
+
+    assert.equal(existsSync(join(tree, 'scratch')), false, `${spelled}: L1 made the scratch base inside the worktree`);
+  }
+});
+
+test('given a scratch base deeper inside the repository\'s main working tree than the worktree root, where no ancestor up to that root holds a .git, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const base = join(placed.repository, 'x', 'y', 'scratch', 'rigger-1412');
+  const before = modes(placed.repository);
+
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+
+  assert.ok(failure.message.includes(placed.repository), `the failure does not name the main working tree: ${failure.message}`);
+  assert.deepEqual(modes(placed.repository), before, 'something changed in the main working tree');
+  assert.equal(existsSync(join(placed.repository, 'x')), false, 'L1 made a directory inside the main working tree');
+});
+
+test('given a worktree root nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const other = repositoryAt(join(placed.root, 'other-checkout'), { 'kept.txt': 'committed\n' });
+  const base = join(other, 'nested-root', 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(other, '.git'), other);
+
+  assert.equal(existsSync(join(other, 'nested-root')), false, 'L1 made a directory inside the unrelated checkout');
+});
+
+test('given a .git file at an ancestor above the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const above = join(placed.root, 'above');
+  const root = join(above, 'deep', 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  writeFileSync(join(base, 'engineer', 'left.txt'), 'the first attempt\'s\n');
+  writeFileSync(join(above, '.git'), 'gitdir: /nowhere\n');
+
+  await assertAncestorRefused(placed, base, join(above, '.git'), above);
+
+  assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});
+
+test('given a worktree root that is a symbolic link to a directory nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const foreign = repositoryAt(join(placed.root, 'foreign'), { 'kept.txt': 'committed\n' });
+  mkdirSync(join(foreign, 'nested'));
+  const link = join(placed.root, 'link');
+  symlinkSync(join(foreign, 'nested'), link);
+  const base = join(link, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(foreign, '.git'), foreign);
+
+  assert.deepEqual(readdirSync(join(foreign, 'nested')), [], 'L1 made something inside the unrelated checkout');
 });
