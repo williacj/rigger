@@ -22,6 +22,13 @@ const { 20_000: SETTLES_WITHIN } = BOUNDS;
 /** The state directory a test's record and stream live in: `.rigger/` in the scratch directory. */
 const stateOf = (directory) => join(directory, '.rigger');
 
+/**
+ * FORCING (#580, evidence only): a `ps` in `directory` that runs the real one until `calling`
+ * exists there, and from then on holds every read, following a file nothing writes to. It is the
+ * real read outlasting the read bound, without load, a sleep or a timer.
+ */
+const heldPs = (directory) => warmed(fixture(directory, 'real-ps', '[ -e "$here/calling" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"'));
+
 /** Runs L1's kill of recorded groups over the state directory in `directory`. */
 function killIn(directory, options = {}) {
   const state = stateOf(directory);
@@ -539,37 +546,17 @@ test('given a recorded group whose leader is dead and whose live member\'s start
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });
 
-/**
- * A stand-in's body that prints the file `table` beside it as its start-time read, and exits 0.
- * It runs builtins of the shell alone, so a read of it never waits on the real `ps`. That read's
- * time grows with the host's process table and load. Run inside a test's 300 ms read bound, it
- * could outlast the bound before answering, and the failure then says only that the read timed
- * out.
- */
-const PRINTS_TABLE = 'while IFS= read -r row; do printf "%s\\n" "$row"; done < "$here/table"; exit 0';
-
-/**
- * Writes `table` in `directory` for `PRINTS_TABLE`: `group`'s rows, read as L0 reads its start
- * times, less its leader's row. Its pid is the group's id.
- */
-function writeTableLess(directory, group) {
-  const read = spawnSync('/bin/ps', ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], { env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, encoding: 'utf8' });
-  assert.equal(read.status, 0, `reading group ${group}'s table failed: ${read.error?.message ?? read.stderr}`);
-  const rows = read.stdout.split('\n').filter((row) => row !== '' && !new RegExp(`^ *${group} `).test(row));
-  assert.notEqual(rows.length, 0, `group ${group}'s table held no row but its leader's: ${read.stdout}`);
-  writeFileSync(join(directory, 'table'), rows.map((row) => `${row}\n`).join(''));
-}
-
-test('given a live group that is not the recorded one, whose start-time read prints the table less its live leader\'s row and exits 0, the call kills no process of that group, fails naming its entry, and the record still holds that entry', SETTLES_WITHIN, async (t) => {
+for (let forced = 1; forced <= 10; forced += 1) test(`given a live group that is not the recorded one, whose start-time read prints the table less its live leader's row and exits 0, the call kills no process of that group, fails naming its entry, and the record still holds that entry (forced run ${forced})`, SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const started = await startGroup(t, directory, 'group');
   // The entry names a leader that started five seconds before this group's, so this group is not
-  // the one recorded, and only its leader's start shows that. The table is read before the call,
-  // so the call's reads answer without waiting on the real `ps`.
+  // the one recorded, and only its leader's start shows that. The read's third argument is the
+  // group's id, which is its leader's pid.
   const entry = entryFor(started, { started: started.started - 5, dispatch: 'd-leaderless', card: 33 });
   writeGroups(stateOf(directory), [entry]);
-  writeTableLess(directory, started.group);
-  const ps = warmed(fixture(directory, 'ps', PRINTS_TABLE));
+  heldPs(directory);
+  const ps = warmed(fixture(directory, 'ps', '"$here/real-ps" "$@" | /usr/bin/grep -v "^ *$3 "; exit 0'));
+  writeFileSync(join(directory, 'calling'), '');
 
   await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
     for (const named of [`group ${started.group}`, 'd-leaderless', '#33']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
@@ -589,17 +576,18 @@ test('given a live group that is not the recorded one, whose start-time read pri
  */
 const ANSWERED_SHORT = {
   'lists no process of the group': ['exit 1', () => /listed no process of the group/],
-  'leaves out its live leader': [PRINTS_TABLE, (group) => new RegExp(`left out its leader, pid ${group},`)],
+  'leaves out its live leader': ['"$here/real-ps" "$@" | /usr/bin/grep -v "^ *$3 "; exit 0', (group) => new RegExp(`left out its leader, pid ${group},`)],
 };
 
-for (const [how, [body, cause]] of Object.entries(ANSWERED_SHORT)) {
-  test(`given a recorded group whose first start-time read ${how} and whose next never answers, the call kills no process of that group, fails saying what the read that answered left out, and the record still holds that entry`, SETTLES_WITHIN, async (t) => {
+for (let forced = 1; forced <= 10; forced += 1) for (const [how, [body, cause]] of Object.entries(ANSWERED_SHORT)) {
+  test(`given a recorded group whose first start-time read ${how} and whose next never answers, the call kills no process of that group, fails saying what the read that answered left out, and the record still holds that entry (forced run ${forced})`, SETTLES_WITHIN, async (t) => {
     const directory = scratch(t);
     const started = await startGroup(t, directory, 'group');
     const entry = entryFor(started, { dispatch: 'd-short', card: 36 });
     writeGroups(stateOf(directory), [entry]);
-    writeTableLess(directory, started.group);
+    heldPs(directory);
     const ps = warmed(fixture(directory, 'ps', ['/bin/mkdir "$here/answered" 2>/dev/null || exec /usr/bin/tail -f "$here/hold"', body].join('\n')));
+    writeFileSync(join(directory, 'calling'), '');
 
     await assert.rejects(killIn(directory, { ps, readTimeout: 300 }), (failure) => {
       for (const named of [`group ${started.group}`, 'd-short', '#36']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
