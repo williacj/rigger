@@ -920,24 +920,25 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
   let unread;
   let stuck = [];
   try {
-    // Its reads have room past its own bound, so a member still alive at the bound is read as such.
-    ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout), ps, readTimeout, Date.now() + readTimeout + UNREAPED_BOUND));
+    ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout), ps, readTimeout));
     if (leader === undefined && stuck.length === 0) unread = 'the process table did not list it';
   } catch (error) {
     // The kill was sent on every look but one whose read failed before the first kill, so that
     // kill is sent now.
     if (!seen.sent) signal(group, 'SIGKILL', kill);
     unread = error.message;
+    // No read after the kill showed the members ended, so each the read before it found alive that
+    // signal 0 still reaches is not shown to have ended, but the leader, whose zombie Node reaps only
+    // once this process exits (`D16` rule 3: another member's zombie, not yet reaped, is counted too).
+    stuck = (named ?? []).filter(({ pid }) => pid !== group && answers(pid, kill)).map(({ pid }) => ({ pid, reason: `not shown to have ended: the process table could not be read within the exit cleanup's read bound of ${readTimeout} ms` }));
   }
   // Every member the census named was read alive or gone just before the kill, so a live one the
   // confirmation finds that no read before it named joined the group after that read.
   if (unnamed === undefined && seen.live) left ??= 'the confirmation of the kill found a live process in the group that joined it after the last read before its kill, which the kill of the group ended';
-  let unended = stuck;
-  try {
-    unended = readingNow(described(stuck, named), ps, readTimeout);
-  } catch {
-    // The process table cannot be read, so each is recorded by its pid and why alone.
-  }
+  // A member the census named is recorded by its name and command line, and one it did not by its
+  // pid alone: the cleanup reads nothing past its own bound.
+  const known = new Map((named ?? []).map((member) => [member.pid, member]));
+  const unended = stuck.map(({ pid, reason }) => ({ ...known.get(pid), pid, reason }));
   // A leader the read before the kill found alive was ended by the cleanup's kill, where no later
   // read could tell, unless it exited on its own between that read and the kill (`contain`).
   const alive = named?.some(({ pid }) => pid === group) ?? false;
@@ -952,12 +953,13 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  * this process exits, and the group never empties while the cleanup runs. So each look reads the
  * group's states, and a group of zombies is ended: none of them can run again.
  *
- * A member still alive `bound` milliseconds after the first kill is one L0 could not end, and so is
- * each still alive where every one answers `EPERM`. A read that fails is taken again, with the kill
- * sent on every look, until `UNREAPED_BOUND` has passed since the cleanup's reads began to fail,
- * and then its failure is thrown. That clock is the cleanup's, not the group's (`unreadSince`), so a
- * process table that cannot be read holds the process's ending back once, and not once for each
- * group.
+ * Its reads end at the cleanup's own bound, `bound`, the read timeout from the start of its first
+ * read, as every step of the cleanup's do. A member the last read after a kill found alive, when the
+ * next read can no longer be made, is one L0 could not end, and so is each still alive where every
+ * one answers `EPERM`. A read that fails is taken again, with the kill sent on every look, until
+ * `UNREAPED_BOUND` has passed since the cleanup's reads began to fail, or the bound has, and then
+ * its failure is thrown. That clock is the cleanup's, not the group's (`unreadSince`), so a process
+ * table that cannot be read holds the process's ending back once, and not once for each group.
  *
  * Where `seen.first` is set, it reads the group once before its first kill, so a process that
  * joined the group after the reads before it is read live before the kill ends it. It sets
@@ -967,27 +969,31 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  * before it had named.
  */
 function* emptied(group, seen, kill, bound) {
-  let since;
+  // What the last read after a kill found: the leader's wait status, and each member alive.
+  let last;
   for (let sent = !seen.first; ; sent = true) {
     if (sent) {
       signal(group, 'SIGKILL', kill);
       seen.sent = true;
-      since ??= Date.now();
     }
     if (!occupied(group, kill)) return { stuck: [] };
     let states;
     try {
       states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=,xstat=']);
     } catch (error) {
-      if (unreadSince === undefined || Date.now() - unreadSince >= UNREAPED_BOUND) throw error;
+      // A read the bound cut short leaves each member the last read found alive not ended.
+      if (last !== undefined && (error.code === LATE || error.code === 'ETIMEDOUT')) return { leader: last.leader, stuck: last.living.map((pid) => ({ pid, reason: `still alive when the exit cleanup's read bound of ${bound} ms ran out` })) };
+      if (error.code === LATE || unreadSince === undefined || Date.now() - unreadSince >= UNREAPED_BOUND) throw error;
       continue;
     }
     const living = [...states].filter(([, state]) => live(state)).map(([pid]) => pid);
     if (living.some((pid) => !seen.named.has(pid))) seen.live = true;
-    if (living.length === 0 && sent) return { leader: states.get(group)?.split(/\s+/)[1], stuck: [] };
-    if (living.length === 0 || since === undefined) continue;
-    const stuck = unended(living, kill, Date.now() - since >= bound, bound);
-    if (stuck !== undefined) return { leader: states.get(group)?.split(/\s+/)[1], stuck };
+    const leader = states.get(group)?.split(/\s+/)[1];
+    if (living.length === 0 && sent) return { leader, stuck: [] };
+    if (!sent) continue;
+    last = { leader, living };
+    const stuck = unended(living, kill, false, bound);
+    if (stuck !== undefined) return { leader, stuck };
   }
 }
 
@@ -1192,13 +1198,18 @@ function* settled(found, kill, bound) {
  */
 function* reaped(pids, kill, bound) {
   const since = Date.now();
+  let last;
   for (let wait = 1; ; wait = longer(wait)) {
     const left = pids.filter((pid) => answers(pid, kill));
     if (left.length === 0) return [];
     let living;
     try {
       living = [...rowsOf(yield ['-p', left.join(','), '-o', 'pid=,stat='])].filter(([, state]) => live(state)).map(([pid]) => pid);
-    } catch {
+      last = living;
+    } catch (error) {
+      // Past the reads' deadline no read can be made: what the last read found alive is not ended,
+      // and the rest the table could not show had ended.
+      if (error.code === LATE) return (last ?? left).map((pid) => [pid, last ? `still alive when L0's read bound ran out after its kill` : 'not shown to have ended: the process table could not be read']);
       living = undefined;
     }
     if (living?.length === 0) return [];
@@ -1314,12 +1325,19 @@ async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed
   return sweptEvents(directory, await reading(settled(found, kill, KILL_BOUND), ps, readTimeout, Date.now() + KILL_BOUND + readTimeout), killed);
 }
 
-/** `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own, `readTimeout`. */
+/**
+ * `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own: the
+ * census lists, kills and waits within one read timeout, as every step of the cleanup's does.
+ */
 function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const found = readingNow(sweeping(directory, lsof, kill), ps, readTimeout);
-  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout), ps, readTimeout, Date.now() + 2 * readTimeout), killed);
+  return sweptEvents(directory, readingNow(sweptWithin(directory, lsof, kill, readTimeout), ps, readTimeout), killed);
+}
+
+/** `sweeping` and then `settled`, as one step, so the exit cleanup's census reads within one bound, `bound`. */
+function* sweptWithin(directory, lsof, kill, bound) {
+  return yield* settled(yield* sweeping(directory, lsof, kill), kill, bound);
 }
 
 /** The events `swept` hands back, from what `sweeping` found in `directory`: each process it could not end among them, as such. */
