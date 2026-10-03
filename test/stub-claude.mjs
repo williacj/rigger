@@ -56,8 +56,10 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
  * - `forever`: never exits, until it is killed;
- * - `leave`: starts `/usr/bin/tail -f` on `left-<card>` beside itself, in the run's process group,
- *   and leaves it running when it exits, for L0 to kill once the run's group is contained;
+ * - `leave`: starts `/usr/bin/tail -f` on `left-<card>` beside itself, in a process group of its
+ *   own and holding the run's output open, and leaves it running when it exits. L0 then reads the
+ *   run's output for its bound once the group is empty, and its census kills the process, which
+ *   works in the run's directory, once that bound has passed;
  * - `exit`: the code it exits with, 0 where none is given.
  *
  * A plan may also hold, under the card `*`, `{ [role]: { exec } }`, a command and its arguments
@@ -200,7 +202,7 @@ export async function standInMain() {
   }
   if (act.leave) {
     writeFileSync(join(dir, `left-${card}`), '');
-    spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { stdio: 'ignore' }).unref();
+    spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
   }
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;

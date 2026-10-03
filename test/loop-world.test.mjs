@@ -10,9 +10,9 @@ import { join } from 'node:path';
 
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import {
-  COLUMNS, boardOf, drive, positive, settledOf, settling, stoppedRun, waitFor, world,
+  COLUMNS, boardOf, drive, endStandIns, positive, settledOf, settling, stoppedRun, waitFor, world,
 } from './loop-world.mjs';
-import { alive, running } from './process-fixtures.mjs';
+import { alive, running, sweep } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -110,7 +110,8 @@ test('given an answer that is an Error, that card\'s maker dispatch rejects with
 });
 
 test('given a held stand-in released while its group is still being contained, drive does not release the next round until that card\'s slot.release is recorded', SETTLES_WITHIN, async () => {
-  // Card 1's stand-in leaves a process in its group for L0 to kill once it exits. Cards 1 and 2
+  // Card 1's stand-in leaves a process outside its group holding its output open, so L0 contains
+  // card 1 for its output bound, a second, before its census kills that process. Cards 1 and 2
   // are released together, card 2's slot frees and card 3 is pulled and held while card 1 is
   // contained. Each release drive makes records the slot releases tried by then.
   const built = world({ cards: [1, 2, 3], concurrency: 2 });
@@ -129,6 +130,22 @@ test('given a held stand-in released while its group is still being contained, d
   assert.ok(third, JSON.stringify(rounds));
   assert.ok(third.released.includes(1), `card 3 was released before card 1's slot.release was recorded: ${JSON.stringify(rounds)}`);
   assert.equal(existsSync(join(built.agent.dir, 'left-1')), true, 'card 1\'s stand-in left a process');
+});
+
+test('endStandIns ends every stand-in a world made in a scratch directory its caller gave, for a caller with no test to end them', SETTLES_WITHIN, async () => {
+  // Its teardown ends what this test failed to, so a failure here ends rather than hangs.
+  const scratch = temporaryDirectory('rigger-loop-world-given-', { beforeRemoval: () => sweep(scratch) });
+  const built = world({ cards: [1], concurrency: 1, scratch });
+  const pull = built.loop.pull();
+  pull.catch(() => {});
+  await positive(() => built.dispatches.held() === 1);
+  const pid = built.agent.holder(1);
+
+  endStandIns();
+
+  await positive(() => !alive(pid));
+  assert.deepEqual(running(scratch), []);
+  await pull.catch(() => {});
 });
 
 /** The source of a test file whose one test holds a world's maker, writes its pid, and then fails. */
