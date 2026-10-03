@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { readGroups } from '../src/execution/groups.mjs';
@@ -346,6 +346,59 @@ test('given an adapter whose env value is a relative path, roleDispatch rejects 
   await assertRefused(placed, { env: { STAND_IN_TMPDIR: 'judge/.stand-in-tmp' } }, 'STAND_IN_TMPDIR');
 });
 
+test('given an adapter whose env value is a relative path naming the dispatch\'s directory from the root, roleDispatch rejects with NOT_STARTED naming the key, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+
+  await assertRefused(placed, { env: { STAND_IN_TMPDIR: join(placed.directory, '.stand-in-tmp').slice(1) } }, 'STAND_IN_TMPDIR');
+});
+
+test('given an adapter whose env value is refused, the refusal names the key and not the value, which may be a credential', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink } = layout(t);
+  const value = join(root, 'outside-c483-secret-value');
+  const { adapter } = standIn('/usr/bin/true', { env: { STAND_IN_TOKEN: value } });
+
+  await assert.rejects(
+    throughL1({ answer: answerOf(), cwd, directory, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } }),
+    (failure) => failure.code === NOT_STARTED && failure.message.includes('STAND_IN_TOKEN') && !failure.message.includes('c483-secret-value'),
+  );
+});
+
+/**
+ * A judge's layout whose dispatch's directory holds `link`, a symbolic link to `outside/`, a
+ * directory beside it, as `outside`.
+ */
+function linkedOut(t) {
+  const placed = layout(t);
+  const outside = join(placed.root, 'outside');
+  mkdirSync(outside);
+  symlinkSync(outside, join(placed.directory, 'link'));
+  return { ...placed, outside };
+}
+
+/** Asserts that `outside` is as empty as `linkedOut` made it: nothing was made there. */
+const assertEmpty = (outside) => assert.deepEqual(readdirSync(outside), [], 'something was made outside the dispatch\'s directory');
+
+test('given an adapter whose env value reaches a symbolic link out of the dispatch\'s directory after an absent directory and `..`, as `missing/../link/x`, roleDispatch rejects with NOT_STARTED naming the key, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = linkedOut(t);
+
+  await assertRefused(placed, { env: { STAND_IN_TMPDIR: `${placed.directory}/missing/../link/x` } }, 'STAND_IN_TMPDIR');
+  assertEmpty(placed.outside);
+});
+
+test('given an adapter whose env value reaches a symbolic link out of the dispatch\'s directory after two absent directories and two `..`, as `a/b/../../link/x`, roleDispatch rejects with NOT_STARTED naming the key, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = linkedOut(t);
+
+  await assertRefused(placed, { env: { STAND_IN_TMPDIR: `${placed.directory}/a/b/../../link/x` } }, 'STAND_IN_TMPDIR');
+  assertEmpty(placed.outside);
+});
+
+test('given an adapter whose env value goes through a symbolic link out of the dispatch\'s directory and then `..`, as `link/../y`, roleDispatch rejects with NOT_STARTED naming the key, and no process starts', SETTLES_WITHIN, async (t) => {
+  const placed = linkedOut(t);
+
+  await assertRefused(placed, { env: { STAND_IN_TMPDIR: `${placed.directory}/link/../y` } }, 'STAND_IN_TMPDIR');
+  assertEmpty(placed.outside);
+});
+
 test('given an adapter whose env value is a path under the dispatch\'s directory that does not exist yet, roleDispatch admits it, resolving it through its nearest existing parent', async (t) => {
   const { directory, cwd, sink } = layout(t);
   const set = join(directory, 'not', 'yet', 'made');
@@ -472,7 +525,15 @@ test('given a role dispatch through L1 whose stand-in agent outlives its timeout
   const { command, args } = shellAgent(root, `exec ${TAIL}`);
   const { adapter } = standIn(command, { args });
 
-  const result = await throughL1({ answer: answerOf({ timeout: OUTLIVED }), cwd, directory, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } });
+  const running = throughL1({ answer: answerOf({ timeout: OUTLIVED }), cwd, directory, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } });
+  // Where the assertion below fails, the test ends before this settles, and its teardown ends the
+  // stand-in. The rejection that may follow is no longer this test's to report.
+  running.catch(() => {});
+  // The time L1 runs the role for is read off its start, before the dispatch settles, so a dispatch
+  // given longer than the answer allows fails here on that assertion, not on the test's own bound.
+  await until(() => eventsIn(state).some((event) => event.event === 'dispatch.start'), t);
+  assert.equal(startIn(state).timeout, OUTLIVED, 'L1 runs the role for a time other than the one its answer allows');
+  const result = await running;
 
   assert.equal(result.timedOut, true);
   assert.notEqual(result.exit, 0);

@@ -3,7 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { within } from './run.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
@@ -54,7 +54,7 @@ export async function roleDispatch({ answer, cwd, directory, reach, env, sink, i
   const { command, args, input, unset, env: set } = invoked;
   for (const [key, value] of Object.entries(set)) {
     const why = unsettable(key, value, unset, directory);
-    if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key} to ${JSON.stringify(value)}, which ${why}`);
+    if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key}, which ${why}`);
   }
   const environment = gitEnvironment(env);
   for (const name of unset) delete environment[name];
@@ -76,36 +76,51 @@ const unstarted = (reason, cause) => Object.assign(new Error(`the role's dispatc
  * measurement behind it. A value must be an absolute path whose real path is `directory` or lies
  * under it, compared as `escapes` in L1's dispatching function compares a step's working directory,
  * so whatever the agent writes there stays within the census's reach and workspace removal. A path
- * that does not exist yet resolves through its nearest existing parent, so a symbolic link out of
- * the directory is caught either way. A path that cannot be resolved is refused.
+ * that does not exist yet resolves through its nearest existing parent (`realOnDisk`). A path that
+ * cannot be resolved is refused. The reason never holds the value, which an adapter that set a
+ * credential by mistake would carry to whoever records the failure.
  */
 function unsettable(key, value, unset, directory) {
   if (Object.keys(gitEnvironment({ [key]: '' })).length === 0) return 'is a variable that redirects git, which L1 removes';
   if (unset.includes(key)) return 'is a variable the same adapter says its CLI must not inherit';
-  if (typeof value !== 'string' || !isAbsolute(value)) return 'is no absolute path';
+  if (typeof value !== 'string' || !isAbsolute(value)) return 'is set to no absolute path';
   let real;
   let root;
   try {
-    real = realThroughParent(value);
+    real = realOnDisk(value);
     root = realpathSync.native(directory);
   } catch (cause) {
-    return `cannot be resolved under the dispatch's directory ${directory}: ${cause.message}`;
+    return `is set to a path that cannot be resolved (${cause.code ?? 'unreadable'})`;
   }
-  return within(real, root) ? undefined : `is ${real}, which lies outside the dispatch's directory ${root}`;
+  return within(real, root) ? undefined : `is set to a path whose real path lies outside the dispatch's directory ${root}`;
 }
 
 /**
- * The real path of `path`, which need not exist: the real path of its nearest existing ancestor,
- * with the rest of `path` after it. Anything but an absent path, such as a link that cannot be
- * resolved, throws, so it is refused rather than taken for absent.
+ * The real path of the absolute path `path`, which need not exist, read one segment at a time
+ * from the root as the file system reads it. A segment that exists is resolved, a symbolic link
+ * included, before the next is read; one that does not is taken as written, and so is everything
+ * under it. `..` goes up from the real path reached so far, never from the path as written, so
+ * `missing/../link` resolves `link`, and `link/..` is the parent of where `link` points. Anything
+ * but an absent segment, such as a link that cannot be resolved, throws, so it is refused rather
+ * than taken for absent.
  */
-function realThroughParent(path) {
-  try {
-    lstatSync(path);
-  } catch (failure) {
-    const parent = dirname(path);
-    if (failure.code !== 'ENOENT' || parent === path) throw failure;
-    return join(realThroughParent(parent), basename(path));
+function realOnDisk(path) {
+  let real = sep;
+  for (const segment of path.split(sep)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      real = dirname(real);
+      continue;
+    }
+    const next = join(real, segment);
+    try {
+      lstatSync(next);
+    } catch (failure) {
+      if (failure.code !== 'ENOENT') throw failure;
+      real = next;
+      continue;
+    }
+    real = realpathSync.native(next);
   }
-  return realpathSync.native(path);
+  return real;
 }
