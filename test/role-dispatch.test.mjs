@@ -1070,3 +1070,15 @@ test('given a scratch base lying inside the repository\'s main working tree, rol
 
   await assertInsideRefused(placed, join(placed.repository, 'scratch', 'rigger-1412'), placed.repository);
 });
+
+test('given a scratch base spelled through a symbolic link into a registered worktree of the repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and leaves the worktree unchanged', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+  const link = join(placed.root, 'linked');
+  symlinkSync(tree, link);
+
+  await assertInsideRefused(placed, join(link, 'scratch', 'rigger-1412'), tree);
+
+  assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the worktree');
+});
