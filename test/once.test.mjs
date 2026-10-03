@@ -189,21 +189,21 @@ test('once, given N 3, an unclaimed review card L2 would dispatch and a ready ca
   assert.notEqual(ran.code, 0);
 });
 
-test('once, given N 3, an unclaimed review card L2 would dispatch and a ready card L2 would dispatch, leaves no move of either in the fake board\'s write record', async () => {
+test('once, given N 3, an unclaimed review card L2 would dispatch and a ready card L2 would dispatch, the forge holding nothing for either, moves the review card to coding and leaves the ready card unmoved in the fake board\'s write record', async () => {
   const ran = once(REDO_AND_READY);
 
   assert.match(ran.err, /claimed #40\b/, ran.err);
-  assert.deepEqual(await movesOf(ran), []);
-  assert.deepEqual(await columnsOf(ran), { 30: 'Ready', 40: 'Review' });
+  assert.deepEqual(await movesOf(ran), [['item-2', 'Coding']]);
+  assert.deepEqual(await columnsOf(ran), { 30: 'Ready', 40: 'Coding' });
 });
 
-test('once, given N 3, an unclaimed review card L2 would dispatch and a ready card L2 would dispatch, leaves no L2 transition event in the state directory\'s stream', () => {
+test('once, given N 3, an unclaimed review card L2 would dispatch and a ready card L2 would dispatch, the forge holding nothing for either, records one L2 transition event in the state directory\'s stream, for the review card, from review to coding', () => {
   const ran = once(REDO_AND_READY);
 
   assert.match(ran.err, /claimed #40\b/, ran.err);
   const events = eventsOf(ran);
   assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === 40), JSON.stringify(events));
-  assert.deepEqual(events.filter((event) => event.layer === 'L2'), []);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 40, from: 'review', to: 'coding' }]);
 });
 
 // proves R-SAFE-5

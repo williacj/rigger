@@ -5,20 +5,18 @@
 
 import { join, resolve } from 'node:path';
 
-import { validate } from '../config/validate.mjs';
+import { validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
 import { workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
-import { readSide } from '../substrate/forge/read.mjs';
+import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
+import { factsCall } from '../workflow/facts.mjs';
 import { nextAction } from '../workflow/next-action.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, real, sameTree, settled } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
-
-/** The topic rule where the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
-const TOPIC = 'rigger-{number}';
 
 /**
  * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
@@ -76,29 +74,35 @@ async function claiming(verb, limit, opened, {
   }
   let workspace;
   try {
-    workspace = await workspaceHandle({ root, topic: config.worktrees?.topic ?? TOPIC, repository: named, sink });
+    workspace = await workspaceHandle({ root, topic: worktreeTopic(config), repository: named, sink });
   } catch (failure) {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
 
-  const board = readSide({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink, send });
+  const forge = { ...config.board, repo: config.repo };
+  const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
+  const reads = repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
+  const l2 = columnChanges({ config, sink, send, pullRequests: reads.readPullRequests });
   // L3 answers the cards that reached the maker and nothing about the rest, so every card L2
   // refuses is seen here, through the next action this verb hands L3 (the reviewer's ruling on
-  // #312). Within an attempt L2 answers from the provisioning steps as well (ruling 6, Q-A).
+  // #312), the refusals from what the forge holds among them. Within an attempt L2 answers from
+  // the provisioning steps as well (ruling 6, Q-A), and answers the maker as a role.
   const refusals = [];
   const decide = (card, outcomes, { attempt, workspace: unmade } = {}) => {
-    const next = nextAction(card, config.kinds, config.epicLabel, { provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade });
+    const next = nextAction(card, config.kinds, config.epicLabel, {
+      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade,
+    });
     if (next.action === 'refuse') refusals.push(next);
     return next;
   };
+  const facts = factsCall({ config, reads, decide });
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
   const { project } = config.board;
   const stoppedAt = (reached) => reached.map(({ card, workspace: path }) => `rigger ${verb}: claimed #${card} from board ${project}; no maker runs before M4, so it stopped at its workspace, ${path}`);
   let reached;
   try {
-    reached = await loop({ config, board, decide, l2, sink, kill, workspace, state }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, state }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start

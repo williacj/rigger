@@ -1,6 +1,7 @@
 // ABOUTME: Tests how L2 settles a dispatch that exited zero, driven through L3's loop over the fake
-// board: a redo pulled from review is left there with no write and no transition, a redo pulled
-// from coding moves once to review, and a claimed ready card moves twice, each move with its event.
+// board: a redo pulled from review with no pull request is moved to coding at its claim, then to
+// review on a zero exit with a pull request, a redo pulled from coding moves once to review, and a
+// claimed ready card moves twice, each move with its event.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +39,7 @@ async function bounded(built, most) {
 /** A run of the loop over a fake board holding `cards`, each dispatched once and exiting zero. */
 const exitingZero = (cards) => bounded(world({ fake: boardOf(cards), concurrency: cards.length }), cards.length);
 
-/** A card in the review column that L2 would dispatch, which L3 pulls as a redo. */
+/** A card in the review column that L2 would dispatch, which L3 pulls as a redo, and for which the forge holds no pull request or branch. */
 const IN_REVIEW = cardIn(6, COLUMNS.review);
 
 /** A card in the coding column that L2 would dispatch, which L3 pulls as a redo. */
@@ -67,24 +68,24 @@ const transitionsOf = (built, number) =>
     .filter((event) => event.layer === 'L2' && event.event === 'transition' && event.card === number)
     .map(({ from, to, cause }) => ({ from, to, cause }));
 
-// proves R-WORK-5
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the write record holds no write for it once L2 has settled the outcome', async () => {
+// proves R-WORK-5, R-WORK-24
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the write record holds two moves for it once L2 has settled the outcome, to coding and then to review', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
-  assert.deepEqual(await writesTo(built, 6), []);
+  assert.deepEqual(await writesTo(built, 6), [['moveItem', 'coding'], ['moveItem', 'review']]);
 });
 
-// proves R-WORK-5
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the event stream holds no L2 transition event for it', async () => {
+// proves R-WORK-5, R-WORK-24
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the event stream holds two L2 transition events for it, review to coding and then coding to review', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
-  assert.deepEqual(transitionsOf(built, 6), []);
+  assert.deepEqual(transitionsOf(built, 6).map(({ from, to }) => [from, to]), [['review', 'coding'], ['coding', 'review']]);
 });
 
 // proves R-WORK-5
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, a read of the board after the outcome is settled shows it in review', async () => {
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, a read of the board after the outcome is settled shows it in review, after it was done again from coding', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
@@ -143,6 +144,6 @@ test('in one run over a redo in review, a redo in coding and a claimed ready car
     .filter((event) => event.layer === 'L2' && event.event === 'transition')
     .map(({ card, from, to }) => JSON.stringify({ card, from, to }));
 
-  assert.equal(transitions.length, 3, `three transitions, two for the ready card and one for the coding redo: ${transitions}`);
+  assert.equal(transitions.length, 5, `five transitions, two for the ready card, one for the coding redo and two for the review redo: ${transitions}`);
   for (const transition of transitions) assert.ok(moves.includes(transition), `${transition} has no matching move in ${moves}`);
 });

@@ -317,7 +317,7 @@ test('given one pullable card and two free slots, two pull triggers whose reads 
 });
 
 test('after a card\'s slot is released with freshness "not fresh", the next tick pulls that card again', async () => {
-  const built = world({ cards: [5], concurrency: 1, fresh: false });
+  const built = world({ cards: [5], concurrency: 1, fresh: false, answer: () => ({ exit: 1, output: '' }) });
 
   const first = built.loop.pull();
   await waitFor(() => built.dispatches.held() > 0);
@@ -894,20 +894,22 @@ test('given concurrency 3, no ready card, and one dispatchable card each in codi
   await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the board records no move of either after `loop`\'s single pull', SETTLES_WITHIN, async (t) => {
+// proves R-WORK-24
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the forge holding nothing for either, the board records one move after `loop`\'s single pull, of the review card to coding', SETTLES_WITHIN, async (t) => {
   const { claimed, columns, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.equal(claimed.length, 2);
-  assert.deepEqual(built.fake.writes(), []);
-  assert.deepEqual(columns, { 5: COLUMNS.coding, 6: COLUMNS.review });
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: [(await built.fake.operations.readItems()).find((item) => item.number === 6).id, COLUMNS.coding] }]);
+  assert.deepEqual(columns, { 5: COLUMNS.coding, 6: COLUMNS.coding });
   await release();
 });
 
-test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the event stream holds no L2 transition event for either after `loop`\'s single pull', SETTLES_WITHIN, async (t) => {
+// proves R-WORK-24
+test('given concurrency 3, no ready card, and one dispatchable card each in coding and in review, the forge holding nothing for either, the event stream holds exactly one L2 transition after `loop`\'s single pull, the review card\'s from review to coding', SETTLES_WITHIN, async (t) => {
   const { claimed, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.equal(claimed.length, 2);
-  assert.deepEqual(built.events().filter((event) => event.layer === 'L2'), []);
+  assert.deepEqual(built.events().filter((event) => event.layer === 'L2').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 6, from: 'review', to: 'coding' }]);
   await release();
 });
 

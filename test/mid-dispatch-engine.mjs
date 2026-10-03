@@ -11,6 +11,9 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { factsCall } from '../src/workflow/facts.mjs';
+import { oneOpenFromEveryLine } from './loop-world.mjs';
 
 /**
  * A timeout no dispatch here reaches: the test ends the engine, or the command exits, first.
@@ -32,11 +35,12 @@ export async function engine({ directory, repository, command, ps, workspace }) 
   const state = join(repository, '.rigger');
   const sink = openSink({ directory: state, run: randomUUID(), now: Date.now });
   const board = readSide({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink });
+  const reads = repositoryReads({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
+  const l2 = columnChanges({ config, sink, pullRequests: oneOpenFromEveryLine });
   const decide = (card, outcomes) => nextAction(card, Object.fromEntries(Object.entries(config.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])), config.epicLabel, { provisioning: config.provisioning ?? {}, outcomes, sink });
   const dispatching = ({ card }) => dispatch({
     id: `d-${randomUUID()}`, card: card.number, directory: state, sink, command: '/bin/sh', args: [command], cwd: workspace ?? directory, workspace, env: { PATH: '/usr/bin:/bin' }, timeout: UNREACHED, ps,
   });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, l2, dispatch: dispatching, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, dispatch: dispatching, sink, kill, workspace: async () => ({ path: directory }), state }).pull();
 }
