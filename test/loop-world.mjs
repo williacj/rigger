@@ -512,9 +512,10 @@ export const columnsOf = async (fake) => Object.fromEntries((await fake.operatio
 
 /**
  * The most rounds a run is driven before the test gives up on it. A judgment, whose premise is a
- * measurement: with Node 26.5.0 on macOS 27.0 on 2026-09-28, each of the 27 drives and 3 runs to
- * an end in `loop.test.mjs` and `restart.test.mjs` ended within 6 rounds. A round waits on nothing
- * but steps already queued, so a run still going after this many never ends.
+ * measurement with stand-in maker processes: across three full `npm test` runs with Node 26.5.0 on
+ * macOS 27.0 on this 12-CPU host on 2026-10-03, at one-minute loads of 20.85, 19.38 and 20.00 as
+ * each began, every one of the 30 drives a run made ended within 6 rounds. A round waits until the
+ * world has settled, so a run still going after this many never ends.
  */
 export const DRIVEN_ROUNDS = 100;
 

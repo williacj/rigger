@@ -10,9 +10,11 @@ import { COLUMNS, boardOf, cardIn, columnsOf, waitFor, world } from './loop-worl
 import { settling } from './loop-world.mjs';
 
 /**
- * The most rounds a run is driven before the test gives up on it. Each round lets every queued
- * step run and then releases every held dispatch; a run over these boards needs one round per
- * dispatch and one to end, so a run still going after this many never would.
+ * The most rounds a run is driven before the test gives up on it. Each round waits until the world
+ * has settled and then releases every held maker stand-in. A judgment, whose premise is a
+ * measurement: across three full `npm test` runs with Node 26.5.0 on macOS 27.0 on this 12-CPU
+ * host on 2026-10-03, at one-minute loads of 20.85, 19.38 and 20.00 as each began, each of the 8
+ * runs here ended within 2 rounds, so a run still going after this many never would.
  */
 const ROUNDS = 10;
 

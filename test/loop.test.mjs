@@ -726,9 +726,9 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
  * How long a test of the single pull may run, which bounds each of its condition waits: `until`
  * rejects once the test has ended, and each wait of the harness rejects at half of it. A judgment,
  * whose premise is a measurement of waits on stand-in maker processes run through L1: across
- * three full `npm test` runs, the longest any wait took is under half this bound, as the pull
- * request for #487 gives with its host, date and loads. So a condition that has not held in half
- * this long never will.
+ * three full `npm test` runs with Node 26.5.0 on macOS 27.0 on this 12-CPU host on 2026-10-03, at
+ * one-minute loads of 20.85, 19.38 and 20.00 as each began, the longest of the 221 waits a run
+ * made that held took 1,139 ms. So a condition that has not held in half this long never will.
  */
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
