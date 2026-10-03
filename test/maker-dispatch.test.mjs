@@ -268,6 +268,9 @@ function opened(path) {
 async function refusedWhileTwoRuns(t, plan) {
   const gate = join(temporaryDirectory('rigger-maker-gate-'), 'gate');
   execFileSync('/usr/bin/mkfifo', [gate]);
+  // However the test ends, the gate is opened at its teardown, so card 1's `read` returns and no
+  // step is left waiting on it. Opened for reading and writing, it never blocks, reader or none.
+  t.after(() => closeSync(openSync(gate, files.O_RDWR | files.O_NONBLOCK)));
   let atRefusal;
   let built;
   built = makerWorld({
@@ -285,13 +288,16 @@ async function refusedWhileTwoRuns(t, plan) {
   let settled = false;
   const pull = built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => ({ failure: thrown, transitions: named(built.events(), 'L2', 'transition') }));
   pull.then(() => { settled = true; }, () => { settled = true; });
-  await until(() => built.agent.held(2) || settled, t);
+  // Card 2's slot is released once its work has ended, held or not, so a maker that never holds
+  // ends this wait too, on the assertion below.
+  const released = (number) => named(built.events(), 'L3', 'slot.release').some((event) => event.card === number);
+  await until(() => built.agent.held(2) || released(2) || settled, t);
   assert.ok(built.agent.held(2), `card 2's maker never held: ${JSON.stringify(built.events())}`);
   await until(() => opened(gate) || settled, t);
   await until(() => atRefusal !== undefined || settled, t);
   assert.deepEqual(atRefusal, { held: true, runs: 1, wrote: false }, 'card 1\'s refusal came while card 2\'s maker held');
   // Card 1's slot is released only once its work has failed, after whatever its refusal did.
-  await until(() => named(built.events(), 'L3', 'slot.release').some((event) => event.card === 1) || settled, t);
+  await until(() => released(1) || settled, t);
   return { built, atRefusal, pull };
 }
 

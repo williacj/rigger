@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -48,9 +48,9 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * An act holds, in the order the run does them:
  *
  * - `hold`: writes its pid to `held-<card>-<role>` beside itself, and waits until the test releases
- *   it with `SIGUSR1`, whose listener it adds before it writes that file, so a release sent at any
- *   moment after the file appears is heard. A wait on a change to its directory missed one sent in
- *   the moment after (the engineer's review on #556);
+ *   it with `SIGUSR1`, removing the file once it hears it. It adds the listener before it writes
+ *   the file, so a release sent at any moment after the file appears is heard. A wait on a change
+ *   to its directory missed one sent in the moment after (the engineer's review on #556);
  * - `write`: writes `wrote-<card>-<role>` beside itself;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
@@ -90,27 +90,34 @@ export function installStandInAgent(dir, plan = {}) {
     act: (card, role) => read()[card]?.[role],
     /** Every run, oldest first: its name, arguments, working directory, card, role, input, recorded variables and pid. */
     runs: () => (existsSync(join(dir, RUNS)) ? readFileSync(join(dir, RUNS), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []),
-    /** Whether a run for `card` in `role` is holding. */
+    /** Whether a run for `card` in `role` is holding: it has said so, and has not yet been released. */
     held: (card, role = 'engineer') => existsSync(marker(dir, 'held', card, role)),
     /** Whether the run for `card` in `role` that held is still alive. */
     alive: (card, role = 'engineer') => {
       try {
-        process.kill(Number(readFileSync(marker(dir, 'held', card, role), 'utf8')), 0);
+        process.kill(heldPid(dir, card, role), 0);
         return true;
       } catch (failure) {
-        if (failure.code === 'ESRCH') return false;
+        if (failure.code === 'ESRCH' || failure.code === 'ENOENT') return false;
         throw failure;
       }
     },
     /** Releases the run for `card` in `role` that holds, which `held` has said it does. */
-    release: (card, role = 'engineer') => {
-      const pid = Number(readFileSync(marker(dir, 'held', card, role), 'utf8'));
-      if (!Number.isInteger(pid) || pid <= 1) throw new Error(`the stand-in's hold for card ${card} names no pid it could release`);
-      process.kill(pid, 'SIGUSR1');
-    },
+    release: (card, role = 'engineer') => process.kill(heldPid(dir, card, role), 'SIGUSR1'),
     /** Whether a run for `card` in `role` wrote its file. */
     wrote: (card, role = 'engineer') => existsSync(marker(dir, 'wrote', card, role)),
   };
+}
+
+/**
+ * The pid of the run for `card` in `role` that holds, as its `held` file in `dir` names it. A file
+ * naming no pid above 1 is refused rather than signalled, since a signal to 0 or 1 would reach a
+ * process group or `launchd`.
+ */
+function heldPid(dir, card, role) {
+  const pid = Number(readFileSync(marker(dir, 'held', card, role), 'utf8'));
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error(`the stand-in's hold for card ${card} names no pid it could signal`);
+  return pid;
 }
 
 /** The value following `flag` among `args`, or undefined where `flag` is not there. */
@@ -130,6 +137,8 @@ async function holding(held) {
   writeFileSync(`${held}.partial`, String(process.pid));
   renameSync(`${held}.partial`, held);
   await heard;
+  // Gone once heard, so no later `alive` or `release` reads a pid another process may have taken.
+  unlinkSync(held);
   clearInterval(alive);
 }
 
