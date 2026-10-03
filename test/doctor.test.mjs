@@ -422,6 +422,7 @@ test('the agent CLI check answers the `loggedIn` a recorded answer states, and a
   // `loggedIn: true` and exits 0, and pointed at an empty `CLAUDE_CONFIG_DIR` it states
   // `loggedIn: false` and exits 1. The check against the installed `claude`'s own answer is
   // `test/doctor-claude-live.test.mjs`, which runs only under `RIGGER_LIVE_CLAUDE=1`.
+
   const signedIn = answering(RECORDED.agentIn);
   const out = answering(RECORDED.agentOut);
   assert.equal((await agentAuth({ ask: signedIn })).ok, true);
