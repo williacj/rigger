@@ -893,7 +893,7 @@ function assertRecorded(events, group, pids) {
 const membersOf = (directory, label) => [Number(read(directory, `group.${label}`)), Number(read(directory, `child.${label}`))];
 
 test('given a survivor that exits on its own after the census names it and before the cleanup\'s kill, no event and no standard-error line records it as killed', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'quitting' }, ps: 'ps-quit' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'quitting' }, ps: 'ps-quit' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'told')), 'the child was never told to go, so the test proves nothing');
