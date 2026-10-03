@@ -20,7 +20,6 @@ import { cloneInto, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { stubClaude } from './stub-claude.mjs';
-import * as claudeAdapter from '../src/substrate/providers/claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 

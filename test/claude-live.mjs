@@ -1,5 +1,5 @@
-// ABOUTME: What the gated live runs of a real `claude` session share: the gate, the PATH past
-// npm test's refusing agent CLIs, the stand-in MCP server and agent file, and reading the run's record.
+// ABOUTME: What the gated live runs of the installed `claude` share: the gate and the PATH past npm
+// test's refusing agent CLIs, and for the runs that start a session, its stand-ins and its record.
 
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
