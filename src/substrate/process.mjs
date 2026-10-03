@@ -578,7 +578,9 @@ function signal(group, name, kill = SIGNAL) {
  * pauses and reads again. Each read of a round earns the pause one look earns (`LONGEST_PAUSE`),
  * and the census waits the round's pauses out together after it, so its reads stay close together
  * and re-reading costs one read's processor time per look's pause however many reads a round
- * holds (#574). No pause runs past `deadline`. A zombie is left out, because it is already dead.
+ * holds (#574). No pause runs past `deadline`, and where the time left would hold another round
+ * as long as the last, the census reads again before it, however large the group and its earned
+ * pause. A zombie is left out, because it is already dead.
  * Where `deadline` passes first, it keeps what the last round held, each live process the last
  * state read found, by the name and the command line read in that round, and leaves out one a read
  * in that round missed.
@@ -681,12 +683,19 @@ function* census(group, kill, deadline) {
     for (; reads > 0; reads -= 1) pause += (wait = longer(wait));
     return pause;
   };
+  // How long the last round took.
+  let took = 0;
   for (let pause = 0; ; pause = earned()) {
-    // A round's pauses are waited out together after it, so its reads stay close together, and
-    // never past `deadline`.
-    const until = Math.min(pause, deadline - Date.now());
+    // A round's pauses are waited out together after it, so its reads stay close together. Where
+    // the time left holds another round as long as the last, the pause is cut to leave it twice
+    // that where it can, and at once where it cannot. Otherwise the census waits out `deadline`
+    // and keeps the last round, though a timer can end a moment early.
+    const left = deadline - Date.now();
+    const again = left >= took;
+    const until = Math.min(pause, again ? left - 2 * took : left);
     if (until > 0) yield until;
-    if (last !== undefined && Date.now() >= deadline) return last;
+    if (last !== undefined && (!again || Date.now() >= deadline)) return last;
+    const began = Date.now();
     let round;
     try {
       const before = yield* column('stat');
@@ -695,6 +704,7 @@ function* census(group, kill, deadline) {
       const commands = yield* column('command');
       const after = yield* column('stat');
       round = { before, lines, names, commands, after };
+      took = Date.now() - began;
     } catch (error) {
       // A read given up on at `deadline` leaves the last round to keep, where there is one.
       if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return last;
