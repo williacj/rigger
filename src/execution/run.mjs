@@ -19,7 +19,8 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
 /**
  * Runs dispatch `id`'s `command` with `args` in `cwd` under exactly `env`, for at most `timeout`
  * milliseconds, and settles on L0's result for it: the exit code `exit`, whether the timeout
- * ended it, and the output as bytes, `stdout` and `stderr`. `card` is the dispatch's card, where
+ * ended it, and the output as bytes, `stdout` and `stderr`. `input`, where the caller gives it, is
+ * written to the command's standard input. `card` is the dispatch's card, where
  * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
  * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
  * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
@@ -36,6 +37,10 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * entry, so a later start does the same (`ARCHITECTURE.md`, "Failure model"). A workspace that is
  * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
  * started, naming the directory. `lsof` stands in for L0's census tool where the caller gives it.
+ *
+ * For a role's dispatch, `roleDispatch` also hands `facts`, the facts L2 attached to identify the
+ * work, and `digest`, a digest of the evidence L2 composed, and `dispatch.start` carries each it is
+ * given as given (`ARCHITECTURE.md`, "Telemetry").
  *
  * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
  * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
@@ -71,7 +76,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, cwd, workspace, env, timeout, ps, lsof, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, env, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -80,7 +85,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
   if (!holdsDispatch(id, card)) throw new Error(`L1's record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`);
   const events = sink.emitter({ layer: 'L1', card, dispatch: id });
   const began = clock();
-  const start = { command, timeout, ...(workspace === undefined ? {} : { workspace }) };
+  const start = { command, timeout, ...(workspace === undefined ? {} : { workspace }), ...(facts === undefined ? {} : { facts }), ...(digest === undefined ? {} : { digest }) };
   try {
     events.emit('dispatch.start', start);
   } catch (cause) {
@@ -106,6 +111,7 @@ export async function dispatch({ id, card, directory, sink, command, args, cwd, 
     result = await runCommand({
       command,
       args,
+      input,
       cwd,
       // In a card's workspace, an inherited redirecting variable would send the command's git to
       // another repository, which is #151's fault (the architect's ruling 1, A7, on #423).
@@ -221,7 +227,7 @@ function escapes(cwd, workspace) {
   } catch (cause) {
     return `its working directory ${cwd} in the workspace ${workspace} cannot be read: ${cause.message}`;
   }
-  if (real === root || real.startsWith(`${root}${sep}`)) return undefined;
+  if (within(real, root)) return undefined;
   return `its working directory ${cwd} is ${real}, which lies outside the workspace ${workspace}`;
 }
 
@@ -244,11 +250,13 @@ function placed(cwd, workspace, directory) {
   } catch (cause) {
     return { escape: `its workspace ${workspace} cannot be read: ${cause.message}` };
   }
-  const within = (inner, outer) => inner === outer || inner.startsWith(`${outer}${sep}`);
   const holder = readGroups(directory).find((entry) => entry.workspace !== undefined && (within(place, entry.workspace) || within(entry.workspace, place)));
   if (holder === undefined) return { place, identity };
   return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}` };
 }
+
+/** Whether the path `inner` is `outer` or lies under it, each a real path. */
+export const within = (inner, outer) => inner === outer || inner.startsWith(`${outer}${sep}`);
 
 /**
  * `refusal`, L1's failure for its unrecorded events, carried alongside the `failure` the dispatch
