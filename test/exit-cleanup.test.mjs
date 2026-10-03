@@ -15,6 +15,7 @@ import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -353,10 +354,14 @@ function fixtures(directory) {
  * `heard`. Then, where `again` names a signal, the caller is sent it; and where it does not, the
  * test writes `go`. `took` is how many milliseconds passed from the signal to the caller's end. Where `stuck` is set, the caller's standard error is a pipe nothing drains,
  * and what it wrote there is not read.
+ * Where `warm` is set, the stand-in for `ps` that `options.ps` names is run once before the caller
+ * starts, so the system's hold on the first exec of a file just written (`warmed`) is not paid
+ * inside a read of the caller's.
  */
-async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
+async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false, warm = false } = {}) {
   const directory = scratch(t);
   fixtures(directory);
+  if (warm) warmed(join(directory, options.ps));
   if (refusing) {
     // The state directory exists and takes no file, so the sink refuses every append.
     mkdirSync(join(directory, 'state'));
@@ -918,11 +923,11 @@ test('given three groups held when the caller receives SIGTERM, and a process-ta
 
 for (const [ps, what, mark] of [['ps-partial', 'exits 0 listing only the leader on every read', 'hidden'], ['ps-silent', 'exits 1 and prints nothing on every read', 'silenced']]) {
   test(`given a group whose leader and child are alive, and a census that ${what}, the cleanup leaves neither alive and records each`, ENDS_WITHIN, async (t) => {
-    // A read timeout long enough for the stand-in, a shell script, to start and mark its answer
-    // on a loaded host. At 300 ms, both tests failed their guard in one fresh-clone run at a load
-    // average near 30. A first read timed out before the stand-in marked it would explain that,
-    // but it was not measured.
-    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 2_000 }, { signal: 'SIGTERM' });
+    // Unwarmed, the census's first read of group 1 is the stand-in's first exec, which the system
+    // holds until it has assessed the file (`warmed`). Measured for #563 with Node 26.5.0 on macOS
+    // 27.0 on 2026-10-03: where that read outlasted the read timeout, it timed out before the
+    // stand-in's first line, and the cleanup read that `ps` no more (`runNow`), so nothing marked.
+    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 2_000 }, { signal: 'SIGTERM', warm: true });
 
     assert.equal(signal, 'SIGTERM', stderr);
     assert.ok(existsSync(join(directory, mark)), 'the stand-in never answered a census read of the group, so the test proves nothing');
