@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { dirname } from 'node:path';
 
 import config from '../rigger.config.mjs';
 import { workspaceHandle } from '../src/execution/workspace.mjs';
@@ -184,7 +185,7 @@ test('given a workspace that cannot be made on the first attempt and can on the 
   const events = built.events();
   assert.deepEqual(built.made, [1, 1]);
   assert.deepEqual(named(events, 'L1', 'workspace.failed').map((each) => each.path), [path]);
-  assert.deepEqual(named(events, 'L1', 'workspace.made').map((each) => each.path), [path]);
+  assert.deepEqual(named(events, 'L1', 'workspace.made').map(({ role, path: at }) => ({ role, path: at })), [{ role: undefined, path }, { role: 'engineer', path: join(dirname(path), 'scratch', 'rigger-1', 'engineer') }]);
   assert.deepEqual(named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined).map(({ step: name, attempt }) => [name, attempt]), [['a', 2]]);
   assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.workspace), [path, path]);
 });

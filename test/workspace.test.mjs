@@ -1252,3 +1252,17 @@ test('given a root spelled in another case than its directory on disk, on a volu
   assert.match(failure.message, /kept by a person/);
   assert.deepEqual(untouched(here, here.disk), before);
 });
+
+test('L1\'s workspace make for card 42 answers scratch, the absolute path <root>/scratch/rigger-42, beside path, and makes nothing there', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  assert.equal(made.scratch, join(here.root, 'scratch', 'rigger-42'));
+  assert.equal(made.path, join(here.root, 'rigger-42'));
+  assert.equal(existsSync(join(here.root, 'scratch')), false, 'the make created the scratch base');
+});
+
+test('L1\'s workspace make answers repository, the path of the repository it made from, beside scratch', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  assert.equal(made.repository, here.repository);
+});
