@@ -3,13 +3,13 @@
 // may hold L3's dispatching entry point or L1's dispatching function, and to running no code it
 // builds at run time or runs in a worker.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * The smallest tree the rules read: the forge adapter's three side modules, the one module
@@ -671,18 +671,14 @@ test('a package.json under src/ is refused, because it can make the .js modules 
 });
 
 test('the source tree carries a package.json under src/, so the whole-tree run meets it', () => {
-  const root = mkdtempSync(join(tmpdir(), 'layer-boundaries-'));
-  try {
-    const files = { ...ADAPTER, 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/move.js': 'export const move = 1;' };
-    for (const [path, source] of Object.entries(files)) {
-      mkdirSync(dirname(join(root, path)), { recursive: true });
-      writeFileSync(join(root, path), source);
-    }
-    const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
-    assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+  const root = temporaryDirectory('layer-boundaries-');
+  const files = { ...ADAPTER, 'src/workflow/package.json': '{ "type": "commonjs" }', 'src/workflow/move.js': 'export const move = 1;' };
+  for (const [path, source] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), source);
   }
+  const found = boundaryReport(sourceTree(root)).violations.map((violation) => violation.message);
+  assert.ok(found.some((message) => message.startsWith('src/workflow/package.json ') && message.includes('breaks the CommonJS rule:')), found.join('\n') || '(nothing)');
 });
 
 test('importing node:module fails, because its loaders reach require by routes this test cannot follow', () => {

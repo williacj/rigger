@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -22,6 +22,7 @@ import { UNKILLED } from './process-fixtures.mjs';
 import { stubClaude } from './stub-claude.mjs';
 import * as claudeAdapter from '../src/substrate/providers/claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -65,7 +66,7 @@ test('a worktree beside the source tree is not the source tree, however its name
   //
   // The two paths are asserted to be a prefix pair before the claim, so this keeps its bite if
   // the naming convention ever changes.
-  const where = mkdtempSync(join(tmpdir(), 'rigger-siblings-'));
+  const where = temporaryDirectory('rigger-siblings-');
   const packageRoot = join(where, 'rigger');
   const worktree = join(where, 'rigger-worktrees', 'card-1');
   mkdirSync(packageRoot, { recursive: true });
@@ -91,7 +92,7 @@ test('a second spelling of the source tree is still the source tree', () => {
   // directory link Windows creates without elevation and which POSIX ignores in favour of an
   // ordinary symlink. Where the host refuses to make one at all there is nothing to measure, and
   // the test says so rather than passing quietly.
-  const where = mkdtempSync(join(tmpdir(), 'rigger-spellings-'));
+  const where = temporaryDirectory('rigger-spellings-');
   const packageRoot = join(where, 'rigger');
   const second = join(where, 'by-another-name');
   mkdirSync(join(packageRoot, 'docs'), { recursive: true });
@@ -150,7 +151,7 @@ test('a tree git cannot name is refused rather than compared against the working
   // sitting in the directory being checked, and an agent clearing that directory takes the
   // runtime with it. Refusing one tree too many costs a consumer a message; refusing one too few
   // costs them the runtime mid-run.
-  const consumer = mkdtempSync(join(tmpdir(), 'rigger-unnamed-'));
+  const consumer = temporaryDirectory('rigger-unnamed-');
   const installed = join(consumer, 'node_modules', '@williacj', 'rigger');
   const from = join(consumer, 'src');
   mkdirSync(installed, { recursive: true });
@@ -184,7 +185,7 @@ test('a tree git cannot name is refused rather than compared against the working
 
 /** A package directory declaring one `engines.node` and nothing else that matters here. */
 function packageDeclaring(engines) {
-  const where = mkdtempSync(join(tmpdir(), 'rigger-engines-'));
+  const where = temporaryDirectory('rigger-engines-');
   writeFileSync(join(where, 'package.json'), `${JSON.stringify({ name: 'x', engines: { node: engines } }, null, 2)}\n`);
   return where;
 }
@@ -232,8 +233,8 @@ test('a package.json the check cannot read is reported as unread, and never thro
   //
   // Found by a mutation that stopped `repoRoot` asking git, which pointed the check at a
   // directory with no `package.json` and turned a refusal into an ENOENT.
-  const empty = mkdtempSync(join(tmpdir(), 'rigger-nopackage-'));
-  const malformed = mkdtempSync(join(tmpdir(), 'rigger-malformed-'));
+  const empty = temporaryDirectory('rigger-nopackage-');
+  const malformed = temporaryDirectory('rigger-malformed-');
   writeFileSync(join(malformed, 'package.json'), '{ "engines": ');
 
   for (const packageRoot of [empty, malformed]) {
@@ -489,7 +490,7 @@ function pastRefusingAgents(path = '') {
 
 /** A directory holding one config file, written as the text given. */
 function holding(source) {
-  const where = mkdtempSync(join(tmpdir(), 'rigger-config-'));
+  const where = temporaryDirectory('rigger-config-');
   if (source !== null) writeFileSync(join(where, CONFIG), source);
   return where;
 }
@@ -743,7 +744,7 @@ test('the whole report is lines, and carries no stack trace', async () => {
  * a local path is no such thing, and the config `init` writes would name a repository nobody has.
  */
 function freshClone() {
-  const into = cloneInto(root, join(mkdtempSync(join(tmpdir(), 'rigger-clone-')), 'rigger'));
+  const into = cloneInto(root, join(temporaryDirectory('rigger-clone-'), 'rigger'));
   const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
@@ -855,7 +856,7 @@ const STARTER_HELD = {
  * `owner` where one is given and under the repository's owner otherwise.
  */
 async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.project, auth = true, owner } = {}) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-doctor-gh-')), { ...STARTER_BOARD, owner, project, board });
+  const fake = installFakeGh(temporaryDirectory('rigger-doctor-gh-'), { ...STARTER_BOARD, owner, project, board });
   const path = `${dirname(fake.gh)}${delimiter}${process.env.PATH}`;
   const ask = (command, args) => {
     if (command === 'claude') return RECORDED.agentIn;

@@ -4,8 +4,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +12,7 @@ import { repositoryIn } from './git-repository.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { validate } from '../src/config/validate.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'src', 'cli', 'rigger.mjs');
@@ -83,7 +82,7 @@ async function setUp(board, config = CONFIG) {
  * board numbered `project`, which is the config's unless a test says otherwise.
  */
 async function runIn(target, board, project = WHERE.project) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-setup-board-gh-')), { ...WHERE, project, board });
+  const fake = installFakeGh(temporaryDirectory('rigger-setup-board-gh-'), { ...WHERE, project, board });
   const ran = spawnSync(process.execPath, [BIN, 'setup-board'], {
     cwd: target,
     encoding: 'utf8',
@@ -173,6 +172,15 @@ test('given a config with no epicLabel key, against a repository holding no labe
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED].sort());
+});
+
+test("given a config whose role's labels names tier:high, against a repository lacking it, setup-board creates the label tier:high and makes no other write", async () => {
+  const engineer = { ...CONFIG.roles.engineer, labels: { 'tier:high': 'high' } };
+  const { ran, writes, model } = await setUp(COMPLETE, { ...CONFIG, roles: { ...CONFIG.roles, engineer } });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes, [{ operation: 'createLabel', args: ['tier:high'] }]);
+  assert.ok((await held(model)).labels.includes('tier:high'), 'the fake repository holds no tier:high afterwards');
 });
 
 /**

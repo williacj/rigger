@@ -21,7 +21,7 @@ async function fromCheckout() {
 // proves R-SAFE-7
 test('a live claude session started from the invocation loads exactly the directory\'s one MCP server, none of the owner\'s connectors or user sources, and its agent file\'s last sentence; it calls the server\'s tool and finds a connector absent', { skip, timeout: 2 * SESSION }, async (t) => {
   assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
-  const base = scratch(t);
+  const base = scratch();
   // A parent holding a `CLAUDE.md`, which the invocation's exclusions must keep out.
   put(base, 'CLAUDE.md', 'If asked for a CLAUDE.md marker, the marker is HERON-parent-480.\n');
   const directory = join(base, 'repo');
@@ -93,7 +93,7 @@ test('a live claude session started from the invocation writes a background task
   // c33 found the output under `/tmp/claude-<uid>/<encoded working directory>/` without it. The
   // background task is a `Monitor`, which runs one `echo` and no Bash tool call.
   assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
-  const directory = join(scratch(t), 'repo');
+  const directory = join(scratch(), 'repo');
   forgetting(t, directory);
   put(directory, '.claude/agents/live.md', AGENT('HERON-agentend-480c'));
   // The directory's own settings allow the one `Monitor`, and turn off tool search, so that

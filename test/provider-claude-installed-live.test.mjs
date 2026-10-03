@@ -16,7 +16,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // proves R-SAFE-6, R-SAFE-7
 test('a live dispatch through the installed package loads the consumer\'s skill and hook, and none of the same names the installed package\'s templates hold', { skip, timeout: 2 * SESSION + 120_000 }, async (t) => {
   assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
-  const base = scratch(t);
+  const base = scratch();
   const { consumer } = installFromTarball(root, base);
   forgetting(t, consumer);
   const installed = join(consumer, 'node_modules', '@williacj', 'rigger');

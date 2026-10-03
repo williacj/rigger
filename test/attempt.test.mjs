@@ -4,8 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import config from '../rigger.config.mjs';
@@ -19,6 +18,7 @@ import {
 } from './loop-world.mjs';
 import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 // A bound on a test that waits on a real command, so one whose condition never holds fails here
 // rather than holding the suite.
@@ -49,7 +49,7 @@ const step = (run, required = true) => ({ run, required });
 function attemptWorld({
   cards = [1], concurrency = 1, steps = [], provisioning = {}, maker, refuse = () => false, workspace, decide: standIn, settings = { ...config, concurrency }, refuseMoves = false,
 } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-attempt-'));
+  const directory = temporaryDirectory('rigger-attempt-');
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: cards.map((number) => readyCard(number)), refuseMoves });
   const real = openSink({ directory, run: 'r-attempt', now: Date.now });
   const sink = {
@@ -465,7 +465,7 @@ test('given a step whose command ran and whose record removal L1\'s record refus
 });
 
 test('given a loop world whose kinds option lists one step for the card\'s kind, and whose workspace stand-in makes the directory it answers, L3 dispatches that step in that directory, as the event stream shows', SETTLES_WITHIN, async (t) => {
-  const under = mkdtempSync(join(tmpdir(), 'rigger-attempt-workspaces-'));
+  const under = temporaryDirectory('rigger-attempt-workspaces-');
   const workspace = makingWorkspaces(under);
   const built = world({ cards: [1], concurrency: 1, kinds: kindListing(['mark']), provisioning: { mark: step('pwd -P > where') }, workspace });
 

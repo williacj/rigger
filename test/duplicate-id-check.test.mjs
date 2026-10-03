@@ -3,12 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, idRows } from '../scripts/duplicate-id-check.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -51,7 +51,7 @@ test('an id named in a section heading is not a second allocation of it', () => 
 
 /** A repository whose register holds the given files, each keyed by its name under docs/spec. */
 function register(files) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-ids-'));
+  const root = temporaryDirectory('rigger-ids-');
   mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
   for (const [name, rows] of Object.entries(files)) {
     const header = name.startsWith('decisions') ? '| id | decision | status |' : '| id | requirement |';

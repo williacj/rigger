@@ -3,13 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname } from 'node:path';
 
 import { installFakeGh } from './fake-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** The repository and board the fake `gh` answers for, and the config names. */
 const WHERE = { repo: 'octo/widgets', project: 3 };
@@ -25,7 +24,7 @@ const ours = (number) => ({ type: 'issue', repository: WHERE.repo, number, title
  * `PATH`, as ruling 1 (U9) places it, so the read runner's own spawn of `gh` reaches it.
  */
 async function reported(items) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-sharing-gh-')), { ...WHERE, board: { columns: ['Ready'], items } });
+  const fake = installFakeGh(temporaryDirectory('rigger-sharing-gh-'), { ...WHERE, board: { columns: ['Ready'], items } });
   const held = process.env.PATH;
   process.env.PATH = `${dirname(fake.gh)}${delimiter}${held}`;
   try {

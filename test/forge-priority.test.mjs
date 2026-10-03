@@ -4,15 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { installFakeGh } from './fake-gh.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { pullOrder } from '../src/scheduling/pull-order.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** Where the fake `gh` says its board lives: this repository's board, as its config names it. */
 const WHERE = { repo: 'williacj/rigger', project: 6 };
@@ -31,7 +29,7 @@ const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer'
  * `items`, and the send that runs it as the read runner's spawn runs `gh`.
  */
 function fakeForge(items) {
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), {
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), {
     ...WHERE,
     board: { columns: ['Backlog', ...Object.values(COLUMNS)], fields: [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }], items },
   });
@@ -84,7 +82,7 @@ test('through the fake gh, a declared priority field past the first page of fiel
   // A hundred fields ahead of Priority fill the first page the read asks for, so Priority is
   // answered only on the second, to the request that carries the first page's cursor.
   const fillers = Array.from({ length: 100 }, (_, i) => ({ name: `Field ${i + 1}`, options: ['Yes'] }));
-  const fake = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-fake-gh-')), {
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), {
     ...WHERE,
     board: { columns: Object.values(COLUMNS), fields: [...fillers, { name: 'Priority', options: ['Low', 'High', 'Normal'] }], items: [card(61, 'Normal')] },
   });

@@ -2,11 +2,11 @@
 // that names the environment every child runs under, a repository built at a root, and a clone.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * Runs git in the repository at `root` and returns what it printed, refusing anything it did not
@@ -75,7 +75,7 @@ export function repositoryAt(root, files = {}) {
  * a directory left behind says which suite wanted it.
  */
 export function repositoryIn(prefix, files = {}) {
-  return repositoryAt(mkdtempSync(join(tmpdir(), prefix)), files);
+  return repositoryAt(temporaryDirectory(prefix), files);
 }
 
 /**

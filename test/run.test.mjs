@@ -5,8 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +15,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -47,7 +47,7 @@ const config = (concurrency) => ({ ...template, repo: REPO, board: { ...template
  * directory of its own, so the workspaces the default root names beside it are its alone.
  */
 const consumerRepository = (concurrency) => {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-run-'));
+  const directory = temporaryDirectory('rigger-run-');
   return withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config(concurrency))};\n` }), join(directory, 'origin.git'));
 };
 
@@ -82,12 +82,12 @@ function spawnRun(consumer, env) {
  */
 function run(board, { concurrency, record = 'accepting' }) {
   const consumer = consumerRepository(concurrency);
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-run-gh-'));
+  const dir = temporaryDirectory('rigger-run-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
   const agent = installAgentCli(dir);
   const stream = join(consumer, '.rigger', 'events.jsonl');
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
-  const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(mkdtempSync(join(tmpdir(), 'rigger-run-wrap-')), fake.gh, stream))] : [];
+  const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-run-wrap-'), fake.gh, stream))] : [];
   const env = { ...process.env, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   const shared = { consumer, model: fake.model, agentRuns: agent.runs };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
@@ -317,7 +317,7 @@ test('run run against the source tree it is running from exits non-zero, names R
   // the call: every forge command the verb might run reaches it and is recorded there, so a
   // board read or a move shows as a call, and never reaches the real `gh`.
   const consumer = consumerRepository(3);
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-run-gh-'));
+  const dir = temporaryDirectory('rigger-run-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [card(10, 'Ready')] } });
   const asked = (command, args) => {
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
