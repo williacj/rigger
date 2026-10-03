@@ -45,7 +45,7 @@ is a small sample. The load is what widens the window between the fork and the `
 **That race is L0's, and is outside this card.** The fix removes every detached maintenance from
 the fixture's repositories. A consumer's own repository still runs git's maintenance as the
 consumer configures it, and L0's census can still leave one stopped there. The card's acceptance
-leaves `src/` alone, so this is reported, not fixed.
+leaves `src/` alone, so this is reported, not fixed; it is #539.
 
 **`gc.auto=1` does not make a detached maintenance outlive a run.** The card proposed it as the
 forcing for items 2 and 3. With it in the run's global configuration, 49 of 50 runs at the base,
@@ -54,6 +54,17 @@ figures are in the pull request. The fiftieth, a run of `retry` started at a loa
 stopped (`Ts`), under pid 1, its own process group: the census race above, in a real test. The
 maintenance still starts on every call that checks for one, as the trace above shows, but it finds
 nothing to do in these repositories and exits on its own. One outlives the run only where a census
-stopped it, and at these loads that was far rarer than once a run. So item 2
-cannot be met with that forcing, no other setting was found that keeps a detached maintenance
-alive, and items 2 and 3 go back to the card's author.
+stopped it, and at these loads that was far rarer than once a run. So item 2 could not be met
+with that forcing, and no other setting was found that keeps a detached maintenance alive. The
+maker escalated items 2 and 3 to the card's author.
+
+**Counting starts rather than survivors met the restated items.** The author restated both items
+on the number of `git maintenance run --auto` starts a run records in git's trace2 events. A run
+that starts none can leave none behind, whatever the census does. Each named file was run ten
+times at the base and ten at the head, each run starting at a one-minute load of 24 or less, with
+`GIT_TRACE2_EVENT` naming a directory beside the run's `TMPDIR`. Every base run recorded starts,
+the same number in each run of a file: `fake-gh` 10, `judge-directory` 98, `retry` 34,
+`workspace` 61, `worktrees` 91. Every head run recorded none. The base runs also left 45 stopped
+maintenance processes under their `TMPDIR`s, in 19 of the 50 runs, against 1 in 50 without
+trace2. A reasonable reading is that trace2's writes slow each git and widen the race's window,
+but that is a judgment, not a measurement. The race is #539.
