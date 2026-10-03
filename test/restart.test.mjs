@@ -5,8 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import config from '../rigger.config.mjs';
@@ -17,9 +16,10 @@ import {
 } from './loop-world.mjs';
 import { settledOf } from './loop-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** A new empty temporary directory, named for what it stands in for. */
-const scratch = (name) => mkdtempSync(join(tmpdir(), `rigger-restart-${name}-`));
+const scratch = (name) => temporaryDirectory(`rigger-restart-${name}-`);
 
 /** Fires one pull on `built`'s loop, releases whatever it dispatched, and waits for it to settle. */
 async function pullOnce(built) {

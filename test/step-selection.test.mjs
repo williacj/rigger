@@ -3,13 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** A body whose acceptance passes the form check under the title `Add a verb`. */
 const PASSING = '## Acceptance\n\n- The verb prints its help.\n';
@@ -76,15 +75,14 @@ const twoSteps = (required) => ({
  * An L5 sink over a state directory of the test's own under `TMPDIR`, removed at the test's
  * teardown, and a reader of the events it holds.
  */
-function sinkFor(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-steps-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+function sinkFor() {
+  const directory = temporaryDirectory('rigger-steps-');
   return { sink: openSink({ directory, run: 'r-test', now: () => 0 }), events: () => (existsSync(streamPath(directory)) ? readEvents(directory) : []) };
 }
 
 test('given a required step\'s outcome of exit 3, L2\'s next action is neither a later step nor the maker', (t) => {
   const { kinds, provisioning } = twoSteps(true);
-  const next = nextAction(card(20), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink });
+  const next = nextAction(card(20), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor().sink });
   assert.equal(next.step, undefined, `L2 answered a step: ${JSON.stringify(next)}`);
   assert.equal(next.maker, undefined, `L2 answered the maker: ${JSON.stringify(next)}`);
   assert.notEqual(next.action, 'dispatch');
@@ -93,14 +91,14 @@ test('given a required step\'s outcome of exit 3, L2\'s next action is neither a
 // proves R-PROV-2
 test('given an optional step\'s outcome of exit 3 and a later selected step, L2\'s next action is that later step', (t) => {
   const { kinds, provisioning } = twoSteps(false);
-  const next = nextAction(card(21), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink });
+  const next = nextAction(card(21), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor().sink });
   assert.deepEqual(next, { action: 'dispatch', kind: 'change', step: { name: 'later', run: 'true' } });
 });
 
 // proves R-PROV-2
 test('given an optional step\'s outcome of exit 3, the event stream holds an L2 event under the card naming the step, the exit code 3, and that the step is optional', (t) => {
   const { kinds, provisioning } = twoSteps(false);
-  const { sink, events } = sinkFor(t);
+  const { sink, events } = sinkFor();
   nextAction(card(22), kinds, undefined, { provisioning, outcomes: [exited(3)], sink });
   const recorded = events().filter((each) => each.layer === 'L2' && each.card === 22);
   assert.deepEqual(recorded.map(({ event, step, exit, optional }) => ({ event, step, exit, optional })), [{ event: 'step.failed', step: 'first', exit: 3, optional: true }]);
@@ -109,7 +107,7 @@ test('given an optional step\'s outcome of exit 3, the event stream holds an L2 
 // proves R-PROV-2
 test('given an optional step\'s outcome of exit 3 as the last selected step, L2\'s next action is the maker', (t) => {
   const provisioning = { only: { run: 'exit 3' } };
-  const next = nextAction(card(23), kindsListing(['only']), undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink });
+  const next = nextAction(card(23), kindsListing(['only']), undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor().sink });
   assert.deepEqual(next, { action: 'dispatch', kind: 'change', maker: 'engineer' });
 });
 
@@ -122,14 +120,14 @@ const neverStarted = () => ({ status: 'rejected', reason: Object.assign(new Erro
 // proves R-PROV-2
 test('given an optional step\'s outcome that it never started and a later selected step, L2\'s next action is that later step', (t) => {
   const { kinds, provisioning } = twoSteps(false);
-  const next = nextAction(card(24), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor(t).sink });
+  const next = nextAction(card(24), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor().sink });
   assert.deepEqual(next, { action: 'dispatch', kind: 'change', step: { name: 'later', run: 'true' } });
 });
 
 // proves R-PROV-2
 test('given an optional step\'s outcome that it never started, the event stream holds an L2 event under the card naming the step, why it did not start, and that the step is optional', (t) => {
   const { kinds, provisioning } = twoSteps(false);
-  const { sink, events } = sinkFor(t);
+  const { sink, events } = sinkFor();
   nextAction(card(25), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink });
   const recorded = events().filter((each) => each.layer === 'L2' && each.card === 25);
   assert.deepEqual(recorded.map(({ event, step, reason, optional }) => ({ event, step, reason, optional })), [{ event: 'step.failed', step: 'first', reason: WHY, optional: true }]);
@@ -137,13 +135,13 @@ test('given an optional step\'s outcome that it never started, the event stream 
 
 test('given a required step\'s outcome of exit 3, L2 classifies the failure as its environment\'s, naming the step and the exit code 3', (t) => {
   const { kinds, provisioning } = twoSteps(true);
-  const next = nextAction(card(26), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor(t).sink, attempt: 2 });
+  const next = nextAction(card(26), kinds, undefined, { provisioning, outcomes: [exited(3)], sink: sinkFor().sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 26, failure: { class: 'environment', step: 'first', exit: 3 } });
 });
 
 test('given a required step\'s outcome that it never started, L2 classifies the failure as its environment\'s, naming the step and why it did not start', (t) => {
   const { kinds, provisioning } = twoSteps(true);
-  const next = nextAction(card(27), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor(t).sink, attempt: 2 });
+  const next = nextAction(card(27), kinds, undefined, { provisioning, outcomes: [neverStarted()], sink: sinkFor().sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 27, failure: { class: 'environment', step: 'first', reason: WHY } });
 });
 
@@ -153,7 +151,7 @@ const timedOut = () => ({ status: 'fulfilled', value: { exit: 143, timedOut: tru
 // proves R-PROV-2, R-PROV-5
 test('given an optional step\'s outcome that its timeout ended it, L2\'s next action is the next selected step or the maker, and the event stream records the step as failed, naming its time', (t) => {
   const provisioning = { first: { run: 'sleep 60', timeout: 50 }, later: { run: 'true' } };
-  const { sink, events } = sinkFor(t);
+  const { sink, events } = sinkFor();
   const next = nextAction(card(28), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink });
   assert.deepEqual(next, { action: 'dispatch', kind: 'change', step: { name: 'later', run: 'true' } });
   const last = nextAction(card(28), kindsListing(['first']), undefined, { provisioning, outcomes: [timedOut()], sink });
@@ -169,13 +167,13 @@ test('given an optional step\'s outcome that its timeout ended it, L2\'s next ac
 test('given a required step\'s outcome that its timeout ended it, L2 classifies the failure as its environment\'s, naming the step and its time', (t) => {
   // The step declares no timeout, so its time is the 1,800,000 ms `ARCHITECTURE.md` gives one that declares none.
   const provisioning = { first: { run: 'sleep 60', required: true }, later: { run: 'true' } };
-  const next = nextAction(card(29), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink: sinkFor(t).sink, attempt: 2 });
+  const next = nextAction(card(29), kindsListing(['first', 'later']), undefined, { provisioning, outcomes: [timedOut()], sink: sinkFor().sink, attempt: 2 });
   assert.deepEqual(next, { action: 'stop', card: 29, failure: { class: 'environment', step: 'first', timeout: 1_800_000 } });
 });
 
 test('given an optional step\'s outcome that is neither L1\'s result nor a command that never started, such as a refused event, L2 answers no action, naming the card and the step, and records no failure of the step', (t) => {
   const { kinds, provisioning } = twoSteps(false);
-  const { sink, events } = sinkFor(t);
+  const { sink, events } = sinkFor();
   const refusedEvent = { status: 'rejected', reason: Object.assign(new Error('the sink refused 1 L1 event(s)'), { code: 'EVENT_REFUSED' }) };
   assert.throws(() => nextAction(card(30), kinds, undefined, { provisioning, outcomes: [refusedEvent], sink }), (failure) => /#30/.test(failure.message) && /`first`/.test(failure.message) && /refused 1 L1 event/.test(failure.message));
   assert.deepEqual(events().filter((each) => each.layer === 'L2'), []);
@@ -189,5 +187,5 @@ test('given an optional step\'s failure the sink refuses to record, L2 answers n
 
 test('given more outcomes than L2 selected steps for the card, L2 answers no action, naming the card and both counts', (t) => {
   const provisioning = { only: { run: 'true' } };
-  assert.throws(() => nextAction(card(32), kindsListing(['only']), undefined, { provisioning, outcomes: [exited(0), exited(0)], sink: sinkFor(t).sink }), (failure) => /#32/.test(failure.message) && /2 outcome/.test(failure.message) && /1 step/.test(failure.message));
+  assert.throws(() => nextAction(card(32), kindsListing(['only']), undefined, { provisioning, outcomes: [exited(0), exited(0)], sink: sinkFor().sink }), (failure) => /#32/.test(failure.message) && /2 outcome/.test(failure.message) && /1 step/.test(failure.message));
 });

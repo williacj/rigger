@@ -5,12 +5,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, declarationsIn, register, render } from '../scripts/build-test-matrix.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -198,7 +198,7 @@ const ALSO_RUN = {
 
 /** A fixture repository holding the files a run reads, and nothing else. */
 function fixture(files) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-matrix-'));
+  const dir = temporaryDirectory('rigger-matrix-');
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(join(dir, dirname(path)), { recursive: true });
     writeFileSync(join(dir, path), content);

@@ -4,10 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -22,7 +22,7 @@ const run = (check, fixture) =>
 
 /** A fixture repository: an architecture that states a budget, and files to weigh against it. */
 function fixture(architecture, files) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-check-'));
+  const dir = temporaryDirectory('rigger-check-');
   writeFileSync(join(dir, 'ARCHITECTURE.md'), architecture);
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(join(dir, dirname(path)), { recursive: true });

@@ -319,10 +319,10 @@ test('the caller\'s onGroup is handed, with the group, its leader\'s start time 
 test('given an onGroup and a start-time read that fails, the call rejects naming that read, onGroup is not called, and no process of the command is alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', `exec ${TAIL}`);
-  const ps = fixture(directory, 'ps', 'exit 2');
+  const ps = warmed(fixture(directory, 'ps', 'exit 2'));
   let called = false;
 
-  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started/);
+  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .* ended with 2$/);
 
   assert.equal(called, false, 'onGroup was called');
   assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
@@ -1433,14 +1433,31 @@ test('a census whose every read of the group lists only its zombie, while a surv
   }
 });
 
+/**
+ * What a reached check that found no read of the kill to check says: `nothing` where the stand-in
+ * marked, in `kill.read` in `directory`, that the kill read the group, and otherwise why the
+ * stream says the group went unnamed. The census reaches the kill whenever it returns, and the kill
+ * always reads the group at least once, so a kill that made no read is one whose census gave up. A
+ * census whose read fails, as one does where the host refuses its fork at the user's process limit,
+ * gives up and has the group killed unnamed, as designed (O48, O50).
+ */
+function unread(directory, events, nothing) {
+  if (existsSync(join(directory, 'kill.read'))) return nothing;
+  const why = [...new Set(events.filter(({ event }) => event === 'group.killed').map(({ census }) => census))];
+  return `the kill made no read, because the census gave up, as designed (O48, O50), and the stream records why the group went unnamed: ${why.length > 0 ? why.join('; ') : `nothing, among ${JSON.stringify(events)}`}`;
+}
+
 test('a census and a kill whose every read leaves out one of two survivors still have both recorded, by name or by the group\'s kill', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The census reads the group with `-ww`, and the kill asks for `ppid`, so the stand-in drops the
   // second survivor's row from every read of both, and answers every other read as `ps` does. The
   // census's reads and the kill's each mark that they were cut in a file of their own, so a read
-  // of one never stands in for the other. It is `warmed`, because the census's first read is its
-  // first exec, which must reach its body within `readTimeout`.
+  // of one never stands in for the other. Every read of the kill also marks that it was made, in
+  // `kill.read`, so a kill that made no read, because its census gave up, is told apart from one
+  // whose reads went uncut. It is `warmed`, because the census's first read is its first exec,
+  // which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
     'case "$*" in "-ww -g "*|*ppid=*)',
     '  case "$*" in *ppid=*) : > "$here/kill.cut" ;; *) : > "$here/census.cut" ;; esac',
     '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
@@ -1454,7 +1471,7 @@ test('a census and a kill whose every read leaves out one of two survivors still
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
   assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
-  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the kill was cut, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, unread(directory, events, 'no read of the kill was cut, so the test proves nothing'));
   assert.deepEqual(survivors.map(alive), [false, false]);
   if (!events.some(({ event }) => event === 'group.killed')) {
     assert.deepEqual(events.map(({ pid }) => pid).sort((a, b) => a - b), survivors.sort((a, b) => a - b), `not every survivor was recorded: ${JSON.stringify(events)}`);
@@ -1469,9 +1486,12 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   // to the zombie's row and exits 0. A read of one pid is answered as `ps` answers it. A read of
   // the kill, which asks for `ppid`, marks that it listed the zombie only while the leader, whose
   // pid is the group's, answers signal 0, so no read made after the leader is gone stands in for
-  // it. It is `warmed`, because the census's first read is its first exec, which must reach its
-  // body within `readTimeout`.
+  // it. Every read of the kill also marks that it was made, in `kill.read`, so a kill that made no
+  // read, because its census gave up, is told apart from one whose reads did not list the zombie
+  // while the leader lived. It is `warmed`, because the census's first read is its first exec,
+  // which must reach its body within `readTimeout`.
   const ps = warmed(fixture(directory, 'ps', [
+    'case "$*" in *ppid=*) : > "$here/kill.read" ;; esac',
     'case "$*" in "-ww -g "*) exec /bin/ps "$@" ;; esac',
     'case "$*" in *"-g "*)',
     '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
@@ -1491,7 +1511,7 @@ test('a kill whose every read of the group lists only its zombie, while its lead
 
   ready(directory);
   const group = Number(read(directory, 'group'));
-  assert.equal(existsSync(join(directory, 'kill.cut')), true, 'no read of the group by the kill listed the zombie while the leader answered signal 0, so the test proves nothing');
+  assert.equal(existsSync(join(directory, 'kill.cut')), true, unread(directory, events, 'no read of the group by the kill listed the zombie while the leader answered signal 0, so the test proves nothing'));
   assert.equal(alive(group), false);
   assert.deepEqual(statesIn(group).filter((state) => state !== 'Z'), [], 'a live process of the group is left');
   const leader = events.some(({ event }) => event === 'group.killed') || events.some(({ event, pid }) => event === 'timeout.killed' && pid === group);
@@ -2108,4 +2128,45 @@ test('a kill of a chain reads a number of rows of the table that grows with the 
   // 20,301 rows here. Four rows a process is a bound linear in the depth, with room for the first
   // read, which holds the whole group.
   assert.ok(rows <= 4 * (depth + 1), `the kill read ${rows} rows of the table for a chain ${depth + 1} processes long`);
+});
+
+test('given bytes for standard input, the command reads them and then end of file, so a copy of its input ends', async (t) => {
+  // An agent CLI reads its prompt from standard input and starts only once that input ends (ruling
+  // 1 Q1 on #467). The defect this catches is input written and never closed, where `cat` waits
+  // for more and the call runs to its timeout.
+  const directory = scratch(t);
+  const result = await shell(directory, '/bin/cat; printf end', { input: Buffer.from('the prompt\n') });
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.toString('utf8'), 'the prompt\nend');
+});
+
+test('given 1,000,000 bytes for standard input, a command copying its input to its output writes back every byte, unchanged', async (t) => {
+  // A prompt carrying a pull request's diff runs far past a pipe's buffer. The defect this catches
+  // is input cut short at the buffer, or written as text, where a byte that is no UTF-8 changes.
+  const directory = scratch(t);
+  const input = bytes(1_000_000, 11);
+  const result = await shell(directory, 'exec /bin/cat', { input });
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.length, input.length);
+  assert.ok(result.stdout.equals(input), 'standard output holds every byte of the input, unchanged');
+});
+
+test('given input larger than the pipe\'s buffer, a command that exits without reading it settles with its own exit code and no unhandled error', async (t) => {
+  // The write meets a pipe whose reader has gone, which Node reports as an error on standard
+  // input. The defect this catches is that error left unhandled, which ends the engine.
+  const directory = scratch(t);
+  const result = await shell(directory, 'exit 7', { input: bytes(4 * 1024 * 1024, 3) });
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 7);
+});
+
+test('given no standard input, a command reading its standard input reads end of file at once', async (t) => {
+  // As at the base: a command given nothing to read finds nothing, rather than waiting on a pipe
+  // no one writes to.
+  const directory = scratch(t);
+  const result = await shell(directory, '/bin/cat; printf end');
+  assert.equal(result.timedOut, false);
+  assert.equal(result.exit, 0);
+  assert.equal(result.stdout.toString('utf8'), 'end');
 });

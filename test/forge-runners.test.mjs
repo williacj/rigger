@@ -4,12 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { accessSync, constants, mkdtempSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -164,7 +164,7 @@ async function methodGhSends(args, cwd = process.cwd()) {
     });
   });
   await new Promise((listening) => proxy.listen(0, '127.0.0.1', listening));
-  const config = mkdtempSync(join(tmpdir(), 'rigger-gh-method-'));
+  const config = temporaryDirectory('rigger-gh-method-');
   const env = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
@@ -192,7 +192,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
   // The defect this catches is the day `gh` changes its default, which a pinned table would go on
   // agreeing with.
   // The directory gh runs in holds a file named `-X`, for the form whose path slot is `--input`.
-  const inputs = mkdtempSync(join(tmpdir(), 'rigger-gh-input-'));
+  const inputs = temporaryDirectory('rigger-gh-input-');
   const body = join(inputs, 'body.json');
   writeFileSync(body, '{"a":1}');
   writeFileSync(join(inputs, '-X'), '{"a":1}');

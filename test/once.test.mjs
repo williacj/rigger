@@ -5,8 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +15,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -47,7 +47,7 @@ const config = () => ({ ...template, repo: REPO, board: { ...template.board, pro
  * directory of its own, so the workspaces the default root names beside it are its alone.
  */
 const consumerRepository = () => {
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-once-'));
+  const directory = temporaryDirectory('rigger-once-');
   return withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config())};\n` }), join(directory, 'origin.git'));
 };
 
@@ -73,12 +73,12 @@ function installAgentCli(dir) {
  */
 function once(board, { record = 'accepting' } = {}) {
   const consumer = consumerRepository();
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-once-gh-'));
+  const dir = temporaryDirectory('rigger-once-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
   const agent = installAgentCli(dir);
   const stream = join(consumer, '.rigger', 'events.jsonl');
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
-  const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(mkdtempSync(join(tmpdir(), 'rigger-once-wrap-')), fake.gh, stream))] : [];
+  const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-once-wrap-'), fake.gh, stream))] : [];
   const env = { ...process.env, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env });
   assert.equal(ran.error, undefined);

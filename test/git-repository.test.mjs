@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { clonedFromOrigin } from './git-repository.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * The environment a traced git call runs under: git traces every git process it starts, the
@@ -37,8 +37,7 @@ function traceOf(call) {
 // test's own global configuration turns detaching off, so that where the fixture leaves
 // maintenance on, the maintenance this would trace runs to its end inside the call.
 test('no git call in a repository the fixture makes or clones starts git maintenance', (t) => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'rigger-unmaintained-')));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const directory = realpathSync(temporaryDirectory('rigger-unmaintained-', { context: t }));
   const global = join(directory, 'global.gitconfig');
   writeFileSync(global, '[maintenance]\n\tautoDetach = false\n[gc]\n\tautoDetach = false\n');
   const { source, origin, repository } = clonedFromOrigin(directory);

@@ -8,9 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -26,6 +24,7 @@ import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
@@ -371,7 +370,7 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
 test('when the board read fails, L3 hands no card to the dispatch and passes the read\'s error on unchanged', async () => {
   // #215's missing-column error: the read side's column read, through the fake gh, of a board whose
   // Status field lacks the declared `Owner`.
-  const gh = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-loop-gh-')), {
+  const gh = installFakeGh(temporaryDirectory('rigger-loop-gh-'), {
     repo: config.repo,
     project: config.board.project,
     board: { columns: ['Ready', 'Coding', 'Review', 'Needs Owner', 'Done'], items: [readyCard(9)] },
@@ -421,7 +420,7 @@ test('L3 hands L2 every dispatch outcome, one returned and one failed', async ()
 test("the forge adapter's read side, passed whole, is L3's board handle: the declared priority orders the pulls, and the claim move reaches the board", async () => {
   // Card 21 holds Low and card 22 holds High, and the board lists its options Low, High, Normal,
   // so at concurrency 1 the first card dispatched shows which order L3 was handed.
-  const gh = installFakeGh(mkdtempSync(join(tmpdir(), 'rigger-loop-gh-')), {
+  const gh = installFakeGh(temporaryDirectory('rigger-loop-gh-'), {
     repo: config.repo,
     project: config.board.project,
     board: {

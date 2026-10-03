@@ -3,14 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 import { check as lint } from '../scripts/spec-style-lint.mjs';
 import { check as references } from '../scripts/doc-reference-check.mjs';
 import { check as paths } from '../scripts/path-check.mjs';
 import { check as ids } from '../scripts/duplicate-id-check.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const CHECKS = { lint, references, paths, ids };
 
@@ -20,7 +20,7 @@ const CHECKS = { lint, references, paths, ids };
  * id of each kind. Each defect below is one line added to it, and nothing else.
  */
 function repositoryOf(defect = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'rigger-checks-'));
+  const root = temporaryDirectory('rigger-checks-');
   const files = {
     '.claude/skills/spec-style/SKILL.md': [
       '---',

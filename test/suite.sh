@@ -1,6 +1,7 @@
 #!/bin/sh
 # ABOUTME: What `npm test` runs: `node --test` with a refusing, recording `gh` first on PATH, so no
 # test that inherits the suite's PATH reaches the real forge, and a run in which any test called it fails.
+# It does the same for `claude` and `codex`, so no test reaches a real agent session either.
 #
 # Placement and shape are the architect's ruling on #276
 # (https://github.com/williacj/rigger/issues/276#issuecomment-5835306379). Every argument is
@@ -30,6 +31,24 @@ esac
 record="$dir/calls"
 : > "$record"
 
+# A refusing, recording `claude` and `codex`, as `gh` has (engineer 6 on #467), in a directory of
+# their own inside this one, so the trap above removes it and the check above has named its path.
+# It is not `gh`'s directory, so a test that takes it off PATH to ask the installed `claude`
+# whether it is signed in is still refused by `gh`. Each records its own name before its
+# arguments, in the one record beside them.
+agents="$dir/agents"
+mkdir "$agents" || exit 1
+: > "$agents/calls"
+for cli in claude codex; do
+  cat > "$agents/$cli" <<'REFUSING'
+#!/bin/sh
+printf '%s %s\n' "${0##*/}" "$*" >> "${0%/*}/calls"
+printf '%s\n' "${0##*/}: refused under npm test, which starts no real agent session: ${0##*/} $*" >&2
+exit 1
+REFUSING
+  chmod 755 "$agents/$cli"
+done
+
 # `$0` is the path the refusing `gh` was run by, which is its path in this directory wherever
 # PATH found it. `${0%/*}` names the directory without a `dirname`, which a narrow PATH may lack.
 cat > "$dir/gh" <<'REFUSING'
@@ -45,8 +64,22 @@ chmod 755 "$dir/gh"
 RIGGER_REFUSING_GH_DIR=$dir
 export RIGGER_REFUSING_GH_DIR
 
+# The directory holding the refusing `claude` and `codex`, for the tests that ask the installed
+# `claude` whether it is signed in, which starts no session, and for the gated live runs.
+RIGGER_REFUSING_AGENT_DIR=$agents
+export RIGGER_REFUSING_AGENT_DIR
+PATH="$agents:$PATH"
+
 PATH="$dir:$PATH" node --test "$@"
 status=$?
+
+if [ -s "$agents/calls" ]; then
+  printf '%s\n' "npm test: these tests called an agent CLI with no stand-in of their own, and the suite refused each:" >&2
+  while IFS= read -r call; do
+    printf '  %s\n' "$call" >&2
+  done < "$agents/calls"
+  status=1
+fi
 
 if [ -s "$record" ]; then
   printf '%s\n' "npm test: these tests called gh with no stand-in of their own, and the suite refused each (#276):" >&2

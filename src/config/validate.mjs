@@ -5,6 +5,8 @@
 import { posix } from 'node:path';
 import { inspect } from 'node:util';
 
+import { ADAPTERS } from '../substrate/providers/adapters.mjs';
+
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits
  * under. A placeholder is a name where a value belongs, so a config still holding one is refused.
@@ -133,6 +135,16 @@ const OWNER = 'owner';
  * config naming anything else names a route to the owner Rigger does not offer.
  */
 export const CATEGORIES = ['recorded-decision', 'critical', 'ambiguous'];
+
+/**
+ * The tiers a role may run at, which are Rigger's and not the consumer's (`O4` on #467): each
+ * provider adapter maps every one of them to a model of its own, so a config naming another names
+ * a tier no adapter can run (`ARCHITECTURE.md`, below the extension-point table).
+ */
+export const TIERS = ['standard', 'high'];
+
+/** The tiers as a refusal names them. */
+const TIER_NAMES = TIERS.map((tier) => `\`${tier}\``).join(' or ');
 
 /** Where a key sits, written as a reader of a refusal would look for it in the file. */
 const at = (path, key) => (path ? `${path}.${key}` : key);
@@ -282,6 +294,14 @@ function readKinds(config, refusals) {
     if (kind.judges.includes(kind.maker)) {
       refusals.push(`\`${where}\` names \`${kind.maker}\` as both its maker and one of its judges, and no judge is the maker`);
     }
+    // Each judge of a card runs in a directory named for its role, so a judge named twice would
+    // be two dispatches sharing one directory (ruling 1 Q3 on #467; `R-WORK-12`). The owner is
+    // never dispatched, and named twice is named before last, which the owner's own rule below
+    // refuses.
+    const repeated = kind.judges.filter((judge, position) => judge !== OWNER && kind.judges.indexOf(judge) !== position);
+    for (const judge of new Set(repeated)) {
+      refusals.push(`\`${where}.judges\` names \`${judge}\` more than once, and each judge of a card has a directory of its own`);
+    }
     kind.judges.forEach((judge, position) => {
       if (judge !== OWNER && !Object.hasOwn(roles, judge)) {
         refusals.push(`\`${where}.judges\` names \`${judge}\`, which is no role the config declares`);
@@ -292,6 +312,79 @@ function readKinds(config, refusals) {
         refusals.push(`\`${where}.judges\` names \`${OWNER}\` at position ${position + 1} of ${kind.judges.length}, and the owner judges last`);
       }
     });
+  }
+}
+
+/**
+ * What a declared `timeout` may be, on a step or a role alike: the milliseconds L1 lets it run,
+ * which is a count. One that declares none runs for its default, so only a declared one has
+ * anything to read.
+ */
+function readTimeout(holder, where, refusals) {
+  if (Object.hasOwn(holder, 'timeout') && !(Number.isInteger(holder.timeout) && holder.timeout >= 1)) {
+    refusals.push(`\`${where}.timeout\` must be a positive whole number of milliseconds, and the config gives ${inspect(holder.timeout)}`);
+  }
+}
+
+/**
+ * Whether a value is a plain object whose every key is a name holding a string: what an object
+ * literal mapping names to strings is. A Map, a class instance, an inherited or computed entry,
+ * and an enumerable symbol key each hold something `Object.entries` would never show, so the
+ * validator would pass what the engine later reads differently.
+ *
+ * A key of `labels` is an enumerable own key, as for every declaration the validator reads. A key
+ * the config defines as non-enumerable is no declaration: the validator neither reads nor refuses
+ * it, as for every other declaration in the config (ruling 16 on #467).
+ */
+function mapsNamesToStrings(value) {
+  if (!declares(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (Object.getOwnPropertySymbols(value).some((symbol) => Object.getOwnPropertyDescriptor(value, symbol).enumerable)) return false;
+  return Object.keys(value).every((key) => names(key) && typeof Object.getOwnPropertyDescriptor(value, key).value === 'string');
+}
+
+/**
+ * What a role's `labels` may be: card labels, each mapped to the tier it selects for the role.
+ * A card carries labels by name, and the tier a label selects is one of the tiers Rigger fixes.
+ */
+function readTierLabels(labels, where, refusals) {
+  if (!mapsNamesToStrings(labels)) {
+    refusals.push(`\`${where}\` must map label names to tiers, and the config gives ${inspect(labels)}`);
+    return;
+  }
+  for (const [label, tier] of Object.entries(labels)) {
+    if (!TIERS.includes(tier)) {
+      refusals.push(`\`${where}\` maps \`${label}\` to ${inspect(tier)}, and a label selects ${TIER_NAMES}`);
+    }
+  }
+}
+
+/**
+ * What each role may be: a name holding no `/`, and declarations naming a provider Rigger has an
+ * adapter for, the tier it runs at, the labels that select another, and the time it may run.
+ */
+function readRoles(roles, refusals) {
+  // Roles that are no set of declarations earned their refusal where the shape was read.
+  if (!declares(roles)) return;
+  for (const [name, role] of Object.entries(roles)) {
+    const where = `roles.${name}`;
+    // A judge's directory is named for its role, directly under the card's topic, so a `/` would
+    // place it somewhere else (ruling 1 Q3 on #467).
+    if (name.includes('/')) {
+      refusals.push(`\`${where}\` holds a \`/\` in its name, and a role's name names a directory`);
+    }
+    // A role that is no set of declarations, or names no tier, earned its refusal where the shape
+    // was read.
+    if (!declares(role)) continue;
+    if (Object.hasOwn(role, 'tier') && !TIERS.includes(role.tier)) {
+      refusals.push(`\`${where}.tier\` must be ${TIER_NAMES}, and the config gives ${inspect(role.tier)}`);
+    }
+    // L0's adapter map holds every provider a role can name, so the names are its and never
+    // typed here (ruling 3 P11 on #467; `D8`).
+    if (Object.hasOwn(role, 'provider') && !(typeof role.provider === 'string' && Object.hasOwn(ADAPTERS, role.provider))) {
+      refusals.push(`\`${where}.provider\` names ${inspect(role.provider)}, which is no provider Rigger has an adapter for`);
+    }
+    if (Object.hasOwn(role, 'labels')) readTierLabels(role.labels, `${where}.labels`, refusals);
+    readTimeout(role, where, refusals);
   }
 }
 
@@ -384,10 +477,7 @@ function readProvisioning(provisioning, refusals) {
       refusals.push(`\`${where}.run\` must be a command line: a string holding something other than whitespace`);
     }
     if (Object.hasOwn(step, 'cwd')) readStepDirectory(step.cwd, where, refusals);
-    // The milliseconds L1 lets the step run, which is a count.
-    if (Object.hasOwn(step, 'timeout') && !(Number.isInteger(step.timeout) && step.timeout >= 1)) {
-      refusals.push(`\`${where}.timeout\` must be a positive whole number of milliseconds, and the config gives ${inspect(step.timeout)}`);
-    }
+    readTimeout(step, where, refusals);
   }
 }
 
@@ -478,6 +568,7 @@ export function validate(config) {
   // A config file with no `export default` hands this `undefined`, and the rules below read
   // declarations there are none of. The refusal for that is already the one above.
   if (!declares(config)) return refusals;
+  readRoles(config.roles, refusals);
   readKinds(config, refusals);
   readKindSteps(config, refusals);
   readEpicLabel(config, refusals);
@@ -511,6 +602,13 @@ export const workRequires = (step) => step?.required === true;
 export const stepTimeout = (step) => step.timeout ?? 1_800_000;
 
 /**
+ * The milliseconds a role's dispatch may run: its own `timeout`, or 14,400,000, which is four
+ * hours, where it declares none (`O7` on #467; `ARCHITECTURE.md`, below the extension-point
+ * table). This is the one place the number is held (ruling 3 P10 on #467).
+ */
+export const roleTimeout = (role) => role.timeout ?? 14_400_000;
+
+/**
  * Every label an accepted config's kinds and provisioning steps select, each once, kinds first and
  * each in the order declared: the labels a card carries to be selected. The epic label is not
  * among them, because no selector names it.
@@ -522,10 +620,15 @@ export function selectedLabels(config) {
 
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
- * epic label where it declares one. These are the labels `setup-board` gives the repository. Two
- * names GitHub holds as one label are one label here, spelled as the first of them declared.
+ * epic label where it declares one, then those its roles' `labels` map to a tier, roles in the
+ * order declared. These are the labels `setup-board` gives the repository. Two names GitHub holds
+ * as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
-  const declared = [...selectedLabels(config), ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : [])];
+  const declared = [
+    ...selectedLabels(config),
+    ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : []),
+    ...Object.values(config.roles).flatMap((role) => Object.keys(role.labels ?? {})),
+  ];
   return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));
 }

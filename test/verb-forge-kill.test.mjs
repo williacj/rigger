@@ -6,8 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +16,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { childrenIn, ended, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -47,7 +47,7 @@ const card = (number) => ({
 function consumer() {
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, kinds };
-  const directory = mkdtempSync(join(tmpdir(), 'rigger-verb-kill-'));
+  const directory = temporaryDirectory('rigger-verb-kill-');
   const where = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
   return { where, stream: join(where, '.rigger', 'events.jsonl') };
 }
@@ -161,7 +161,7 @@ test('given a sink that refuses every append and a gh stand-in that leaves a chi
  * A `gh` stand-in in `directory` that never answers: it leaves a child alive, writes its own pid to
  * `gh.pid`, marks `ready`, and waits on the child, which runs until killed.
  */
-const hanging = (directory) => fixture(directory, 'gh', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/gh.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+const hanging = (directory) => fixture(fixture(directory, 'claude', `printf '%s\\n' '{"loggedIn": true, "authMethod": "claude.ai"}'`) && directory, 'gh', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/gh.pid"', ': > "$here/ready"', 'wait'].join('\n'));
 
 /**
  * A module a verb's Node process loads first, with `--import`, that sends that process `SIGTERM`

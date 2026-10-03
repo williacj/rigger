@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
+  copyFileSync, existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +22,7 @@ import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { installFromTarball as installRigger } from './installed-rigger.mjs';
 import { gitCalls, gitRecording, holding } from './process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -52,7 +53,7 @@ const unmet = `>=${Number(process.versions.node.split('.')[0]) + 1}`;
  * exit status and everything the install printed on either stream.
  */
 function installUnderRaisedFloor(env) {
-  const dir = mkdtempSync(join(tmpdir(), 'rigger-engines-'));
+  const dir = temporaryDirectory('rigger-engines-');
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: unmet } }, null, 2),
@@ -140,8 +141,10 @@ test('the tarball holds every file under src/, templates/ and scripts/, and of t
  * slow part and the tests below only read it.
  */
 let installed;
+// Made at the file's top level, so it is the file's: removed once all of its tests have ended.
+const installedUnder = temporaryDirectory('rigger-installed-');
 function installFromTarball() {
-  installed ??= installRigger(root, mkdtempSync(join(tmpdir(), 'rigger-installed-')));
+  installed ??= installRigger(root, installedUnder);
   return installed;
 }
 

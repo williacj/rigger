@@ -2,9 +2,8 @@
 // cards, L0's handle on it, L2's column changes and next action, a held injected dispatch, and
 // one sink, wired into a loop, with the helpers that drive a run to its end and stop one mid-dispatch.
 
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import config from '../rigger.config.mjs';
@@ -13,6 +12,7 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -184,7 +184,7 @@ export function readingLater(fake) {
  */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer, run = 'r-test',
-  items = fake.operations, board = handleOn(fake, { columns, priority }), directory = mkdtempSync(join(tmpdir(), 'rigger-loop-')),
+  items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {},
   workspace = async (card) => ({ path: join(directory, 'workspaces', `rigger-${card}`) }),
 } = {}) {
