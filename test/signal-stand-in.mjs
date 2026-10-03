@@ -23,21 +23,27 @@ const membersOf = (group) => spawnSync('/bin/ps', ['-g', String(group), '-o', 'p
  * - the pid `flickers()` names is passed over by each `SIGKILL` that would reach it until, once one
  *   has, it has answered `EPERM` to a signal 0, which it does once: a process that answered signal
  *   0 so for a moment while it was being killed, as the kernel answers for a group whose members
- *   are exiting (`occupied` in `src/substrate/process.mjs`). Every kill after that reaches it.
+ *   are exiting (`occupied` in `src/substrate/process.mjs`). Every kill after that reaches it;
+ * - the pid `outlasts()` names is passed over by the first two `SIGKILL`s that would reach it, and
+ *   reached by every one after: a process L0's kill ends only on a later look.
  *
  * A signal to a group goes to each member by its pid, so it reaches every member but the refused
  * one, and `SIGKILL` reaches neither of those two. It answers as the kernel does: `ESRCH` where the
  * group holds no process, `EPERM` where every member is the refused one, and success otherwise.
  */
-export function signalStandIn({ pairs = [], refused = () => undefined, unkept = () => undefined, flickers = () => undefined } = {}) {
+export function signalStandIn({ pairs = [], refused = () => undefined, unkept = () => undefined, flickers = () => undefined, outlasts = () => undefined } = {}) {
   const flicker = { passed: false, refused: false };
+  let outlasted = 0;
   return (target, name) => {
     pairs.push([target, name]);
     const [no, kept, flickering] = [refused(), unkept(), flickers()];
     // The flickering pid is passed over by every kill that would reach it until it has flickered.
     const passing = name === 'SIGKILL' && flickering !== undefined && !flicker.refused && (target === flickering || (target < 0 && membersOf(-target).includes(flickering)));
     if (passing) flicker.passed = true;
-    const spared = passing ? flickering : kept;
+    const lasting = outlasts();
+    const outlasting = name === 'SIGKILL' && lasting !== undefined && outlasted < 2 && (target === lasting || (target < 0 && membersOf(-target).includes(lasting)));
+    if (outlasting) outlasted += 1;
+    const spared = passing ? flickering : outlasting ? lasting : kept;
     if (target === no) throw refusal();
     if (name === 0 && target === flickering && flicker.passed && !flicker.refused) {
       flicker.refused = true;

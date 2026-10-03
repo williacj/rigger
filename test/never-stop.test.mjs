@@ -70,10 +70,10 @@ const failing = (directory) => warmed(fixture(directory, 'ps', 'case "$*" in *ls
  * its first kill of a group in `first.at`, and `killedAt(target)`, when it first sent `target` the
  * kill, or nothing where it never did.
  */
-function standIn(directory, { refused, unkept, flickers, pairs = [] } = {}) {
+function standIn(directory, { refused, unkept, flickers, outlasts, pairs = [] } = {}) {
   const first = {};
   const kills = new Map();
-  const kill = signalStandIn({ pairs, refused: () => refused && pidIn(directory, refused), unkept: () => unkept && pidIn(directory, unkept), flickers: () => flickers && pidIn(directory, flickers) });
+  const kill = signalStandIn({ pairs, refused: () => refused && pidIn(directory, refused), unkept: () => unkept && pidIn(directory, unkept), flickers: () => flickers && pidIn(directory, flickers), outlasts: () => outlasts && pidIn(directory, outlasts) });
   return {
     pairs,
     first,
@@ -126,7 +126,7 @@ const CALLER = [
   'const here = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
   "const pidIn = (name) => (name && existsSync(join(here, `${name}.pid`)) ? Number(readFileSync(join(here, `${name}.pid`), 'utf8')) : undefined);",
-  'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept), flickers: () => pidIn(options.flickers) });',
+  'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept), flickers: () => pidIn(options.flickers), outlasts: () => pidIn(options.outlasts) });',
   "const hangs = () => (options.hangAfter === 'group' ? -pidIn('group') : pidIn(options.hangAfter));",
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) appendFileSync(join(here, 'hang'), ''); return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`) };",
@@ -189,38 +189,37 @@ test('L0 sends SIGSTOP to no process group on the call\'s containment, a start\'
   }
 });
 
+/** Each of `events` by its name and pid, and by its name and command line where it carries them, ordered by pid. */
+const byPid = (events) => events.map(({ event, pid, name, cmd }) => ({ event, pid, name, cmd })).sort((one, other) => (one.pid ?? 0) - (other.pid ?? 0));
+
 // proves R-STATE-12, R-STATE-7
-test('on the call\'s containment, a survivor the census named is recorded by name and command line, and one no read before the kill named is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+test('on the call\'s containment, a survivor the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
 
   const { events } = await called(directory, { command: leavingTwo(directory), ps: cuttingTwo(directory) });
 
-  assert.deepEqual(events.map(({ event, pid, name, cmd }) => ({ event, pid, name, cmd })), [
-    { event: 'survivor.killed', pid: pidIn(directory, 'one'), ...tailOf(directory) },
-    { event: 'group.killed', pid: undefined, name: undefined, cmd: undefined },
-  ]);
-  assert.match(events[1].census, /live process the census and the kill had not named/);
+  assert.deepEqual(byPid(events), byPid(['one', 'two'].map((name) => ({ event: 'survivor.killed', pid: pidIn(directory, name), ...tailOf(directory) }))));
   assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
 });
 
 // proves R-STATE-12, R-STATE-10
-test('on a start\'s kill of a recorded group, a member the census named is recorded by name and command line, and one no read before the kill named is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+test('on a start\'s kill of a recorded group, a member the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
   writeFileSync(join(directory, 'two.pid'), String(started.member));
 
   const { events } = await startKilled(started, { ps: cuttingTwo(directory) });
 
-  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
+  assert.deepEqual(byPid(events).map(({ event, pid, name }) => ({ event, pid, named: name !== undefined })), byPid([
     { event: 'recorded.killed', pid: started.leader },
-    { event: 'group.killed', pid: undefined },
-  ]);
-  assert.match(events[1].census, /live process the census and the kill had not named/);
+    { event: 'recorded.killed', pid: started.member },
+  ]).map(({ event, pid }) => ({ event, pid, named: true })));
+  assert.deepEqual(events.find(({ pid }) => pid === started.member).cmd, `/usr/bin/tail -f ${directory}/hold`);
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
 // proves R-STATE-12, R-STATE-9
-test('on the exit cleanup, a survivor the census named is recorded by name and command line, and one no read before the kill named is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+test('on the exit cleanup, a survivor the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   holdingTwo(directory);
   cuttingTwo(directory);
@@ -228,10 +227,73 @@ test('on the exit cleanup, a survivor the census named is recorded by name and c
   const { status, events } = await cleanedUp(directory, { ps: 'ps' });
 
   assert.equal(status, 0);
-  const one = pidIn(directory, 'one');
-  assert.deepEqual(events.filter(({ pid }) => pid === one).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
-  assert.deepEqual(events.filter(({ event }) => event === 'group.killed').map(({ census }) => /live process/.test(census)), [true]);
-  assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+  const pids = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.deepEqual(byPid(events.filter(({ pid }) => pids.includes(pid))), byPid(pids.map((pid) => ({ event: 'survivor.killed', pid, ...tailOf(directory) }))));
+  assert.deepEqual(events.filter(({ event }) => event === 'group.killed'), []);
+  assert.deepEqual(pids.map(alive), [false, false]);
+});
+
+/**
+ * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
+ * marks that L0 has sent its group the kill, and answers every read as `ps` does from then on.
+ */
+const hidingTwoUntilKilled = (directory) => warmed(fixture(directory, 'ps', [
+  '[ -f "$here/hang" ] && exec /bin/ps "$@"',
+  '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+  'exit 0',
+].join('\n')));
+
+/**
+ * The signal call `standIn` hands back, which also marks `$here/hang` as it first sends the group
+ * the kill, and passes `outlasts`'s process over for the first two kills.
+ */
+function markingKill(directory, signals) {
+  return (target, name) => {
+    if (target < 0 && name === 'SIGKILL') writeFileSync(join(directory, 'hang'), '');
+    return signals.kill(target, name);
+  };
+}
+
+// proves R-STATE-12, R-STATE-7
+test('on the call\'s containment, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const signals = standIn(directory, { outlasts: 'two' });
+
+  const { events } = await called(directory, { command: leavingTwo(directory), ps: hidingTwoUntilKilled(directory), kill: markingKill(directory, signals) });
+
+  const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /a read after the kill found/);
+  assert.deepEqual([one, two].map(alive), [false, false]);
+});
+
+// proves R-STATE-12, R-STATE-10
+test('on a start\'s kill of a recorded group, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  writeFileSync(join(directory, 'two.pid'), String(started.member));
+  const signals = standIn(directory, { outlasts: 'two' });
+
+  const { events } = await startKilled(started, { ps: hidingTwoUntilKilled(directory), kill: markingKill(directory, signals) });
+
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'recorded.killed', pid: started.leader }, { event: 'group.killed', pid: undefined }]);
+  assert.match(events[1].census, /a read after the kill found/);
+  assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
+});
+
+// proves R-STATE-12, R-STATE-9
+test('on the exit cleanup, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+  hidingTwoUntilKilled(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', outlasts: 'two' });
+
+  const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.equal(status, 0);
+  assert.deepEqual(events.filter(({ pid }) => pid === one || pid === two).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }]);
+  assert.deepEqual(events.filter(({ event }) => event === 'group.killed').length, 1);
+  assert.deepEqual([one, two].map(alive), [false, false]);
 });
 
 // proves R-STATE-19, R-STATE-12

@@ -347,8 +347,10 @@ function answers(target, kill = SIGNAL) {
 /**
  * Kills every process left in `group` through `kill`, and settles once the group is empty, or once
  * `UNREAPED_BOUND` has passed with no read of its states finding a member that is not a zombie, and
- * hands back each member L0 could not end, by pid, with why: `EPERM` where L0 may not signal it, or
- * that it was still alive `bound` milliseconds after the first kill. A look that finds every member
+ * hands back as `stuck` each member L0 could not end, by pid, with why: `EPERM` where L0 may not
+ * signal it, or that it was still alive `bound` milliseconds after the first kill; and as `joined`
+ * whether a read after the kill found a live member that `found`, the members the read just before
+ * the kill found alive, did not hold. A look that finds every member
  * still alive answering `EPERM` to signal 0, asked of each by its pid, settles at once, because no
  * kill can reach any of them. The wait is on those conditions, looked at after each pause, so
  * nothing else in Rigger stops meanwhile, and it takes no cap on its rounds: a cap that stopped
@@ -369,24 +371,26 @@ function answers(target, kill = SIGNAL) {
  * O66 on #539), and that case is a known gap. `bound` is what ends the wait there, with each member
  * still alive recorded as not ended.
  */
-async function ended(group, { ps, readTimeout, kill }, bound) {
+async function ended(group, { ps, readTimeout, kill }, bound, found) {
   const since = Date.now();
   const refused = new Set();
   let unreapedSince;
+  let joined = false;
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL', kill);
-    if (!occupied(group, kill)) return [];
+    if (!occupied(group, kill)) return { stuck: [], joined };
     if (wait === 0) continue;
     const looked = Date.now();
     const live = await livingIn(group, ps, readTimeout);
+    if (found !== undefined && live.some((pid) => !found.has(pid))) joined = true;
     if (live.length > 0) {
       unreapedSince = undefined;
       const stuck = unended(live, kill, Date.now() - since >= bound, bound, refused);
-      if (stuck !== undefined) return stuck;
+      if (stuck !== undefined) return { stuck, joined };
     } else {
       unreapedSince ??= looked;
-      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return [];
+      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return { stuck: [], joined };
     }
   }
 }
@@ -430,7 +434,8 @@ function forbidden(pid, kill) {
 /**
  * The live members of `group` L0's read of states finds just before its kill, against `members`,
  * those the census named: `named`, each of `members` still alive, and `left`, why the kill of the
- * group is recorded beside them, where that read found a live member the census had not named. A
+ * group is recorded beside them, where that read found a live member the census had not named and
+ * could not read its name and command line (`namedNow`), and `found`, each live member it found. A
  * member the census named that the read finds a zombie, or leaves out once signal 0 no longer
  * reaches it, has exited on its own, and is not recorded as killed (`there`). It yields each read and each pause, as `census` does, so the call and the
  * exit cleanup both take it.
@@ -484,8 +489,13 @@ function* beforeKill(group, members, kill, timeout, deadline) {
     }
     if (states.size === 0) continue;
     const named = members.filter(({ pid }) => there(states, pid, kill));
-    const left = [...states].some(([pid, state]) => live(state) && !named.some((member) => member.pid === pid)) ? 'the group still held a live process the census and the kill had not named, which the kill of the group ended' : undefined;
-    return { named, left };
+    const found = new Set([...states].filter(([, state]) => live(state)).map(([pid]) => pid));
+    const extra = [...found].filter((pid) => !members.some((member) => member.pid === pid));
+    if (extra.length === 0) return { named, found };
+    // A live member the census did not name is named here, before the kill, as the census names one.
+    const late = yield* namedNow(extra);
+    const left = late.length < extra.length ? 'the group still held a live process the census and the kill had not named, which the kill of the group ended' : undefined;
+    return { named: [...named, ...late], left, found };
   }
   const left = `${why}, so the kill of the group may have ended a process the census had not named`;
   if (members.length === 0) return { named: [], left };
@@ -494,6 +504,20 @@ function* beforeKill(group, members, kill, timeout, deadline) {
     return { named: members.filter(({ pid }) => there(states, pid, kill)), left };
   } catch (error) {
     throw new Error(`${why}, and the read of the census's processes by pid failed too: ${error.message}`);
+  }
+}
+
+/**
+ * Each of `pids` by pid, name and command line, read as the census reads them, leaving out one a
+ * read misses, or none where a read fails. It yields each read as `census` does.
+ */
+function* namedNow(pids) {
+  try {
+    const names = yield* namesOf(pids, function* (args) { return yield args; });
+    const commands = rowsOf(yield ['-ww', '-p', pids.join(','), '-o', 'pid=,command=']);
+    return pids.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
+  } catch {
+    return [];
   }
 }
 
@@ -863,11 +887,13 @@ function runOnce(ps, args, remaining, timeout) {
  *   macOS 27.0 on 2026-10-02, against the suite's quitter that exits inside that read: it was
  *   recorded as killed in each of 10 runs.
  * - A name and a command line can come from two images (`census`).
- * - A process that joins the group after the read before the kill, and is ended by the kill, is
- *   ended unrecorded. No read can tell such a joiner from a group holding only zombies: signal 0
- *   reaches both, and once the kill has ended the joiner and a parent outside the group has reaped
- *   it, the table holds only the zombies both leave behind. Recording the kill of the group whenever
- *   that could have happened would record it for every group left holding only zombies.
+ * - A process that joins the group after the read before the kill is recorded as the kill of the
+ *   group where a read after the kill finds it alive (`ended`). One the kill ends before any such
+ *   read, and that a parent outside the group reaps at once, is ended unrecorded. No read can tell
+ *   such a joiner from a group holding only zombies: signal 0 reaches both, and once the kill has
+ *   ended the joiner and its parent has reaped it, the table holds only the zombies both leave
+ *   behind. Recording the kill of the group whenever that could have happened would record it for
+ *   every group left holding only zombies.
  */
 async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   if (!occupied(group, kill)) return [];
@@ -878,14 +904,16 @@ async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   };
   let named;
   let left;
+  let found;
   let unnamed;
   try {
     const members = await within((deadline) => census(group, kill, deadline));
-    ({ named, left } = await within((deadline) => beforeKill(group, members, kill, readTimeout, deadline), readTimeout));
+    ({ named, left, found } = await within((deadline) => beforeKill(group, members, kill, readTimeout, deadline), readTimeout));
   } catch (error) {
     unnamed = error.message;
   }
-  const stuck = await ended(group, { ps, readTimeout, kill }, KILL_BOUND);
+  const { stuck, joined } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, found);
+  if (joined && unnamed === undefined) left ??= 'a read after the kill found a live process in the group that no read before the kill had found, which the kill of the group ended';
   const unended = await reading(described(stuck, named), ps, readTimeout).catch(() => stuck);
   return killsOf(group, { named, unnamed, left, unended }, killed);
 }

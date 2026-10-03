@@ -858,14 +858,15 @@ test('a process that joins a group during the cleanup\'s first read of it after 
   assert.equal(alive(Number(read(directory, 'joined.pid'))), false, 'the process that joined the group is alive');
 });
 
-test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded as the kill of the group, saying the read found it', ENDS_WITHIN, async (t) => {
+test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded by name and command line', ENDS_WITHIN, async (t) => {
   const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM' });
 
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
-  const reasons = groupKills(streamOf(directory), Number(read(directory, 'group.1'))).map(({ census }) => census);
-  assert.equal(reasons.length, 1, JSON.stringify(reasons));
-  assert.match(reasons[0], /still held a live process the census and the kill had not named/);
+  const events = streamOf(directory);
+  const child = Number(read(directory, 'child.1'));
+  assert.deepEqual(kills(events).filter(({ pid }) => pid === child), [{ pid: child, name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` }]);
+  assert.deepEqual(groupKills(events, Number(read(directory, 'group.1'))), [], 'the group\'s kill was recorded on that member\'s account');
 });
 
 // What the exit kill records (#374).
