@@ -80,8 +80,14 @@ const LONGEST_PAUSE = 50;
  * end, before it records the process as one it could not end and settles (`R-STATE-19`). A member
  * L0 may not signal is recorded at once, where every member still alive is one. The exit cleanup
  * waits on its own bound, the read timeout, in its place. A judgment, not a measurement, set by the
- * architect (ruling 15). Its premise is this measurement, which it must stay at least ten times
- * above: MEASURED.
+ * architect (ruling 15). Its premise is this card's measurement, which it must stay at least ten
+ * times above (#539): with Node 26.5.0 on macOS 27.0 on 2026-10-02, over 10 runs of the 250-deep
+ * chain test in `test/process-adapter.test.mjs` at starting loads of 5.15 to 22.22, the kill loop,
+ * from its first kill of the group to its last, took 3 or 4 rounds and at most 31.7 ms; and over
+ * 22 runs of 300 `git fetch`es each through this adapter at starting loads of 60.97 to 125.82, each
+ * of the 12 calls whose group was still occupied at the kill ended in its first round. Ten seconds
+ * is over 300 times the worst of those. How long the loop takes against a group that forks rapidly
+ * without bound was not measured (`ended`).
  */
 export const KILL_BOUND = 10_000;
 
@@ -531,7 +537,9 @@ function signal(group, name, kill = SIGNAL) {
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
  * arguments, is recorded by the name of one image and the command line of another. Measured with
- * this census against the suite's survivor that re-executes inside a read: MEASURED-IMAGES.
+ * Node 26.5.0 on macOS 27.0 on 2026-10-02, against the suite's survivor that re-executes inside the
+ * first read of command lines: over 10 runs, the census recorded the image it became, by its name
+ * and command line alike, since its name is read after that read.
  *
  * Reads that agree on no process at all are kept only where signal 0 no longer reaches the group,
  * because a read that failed can list nothing, even one that exits 1 and prints nothing (`run`).
@@ -837,8 +845,9 @@ function runOnce(ps, args, remaining, timeout) {
  * Where this can be wrong (`D16` rule 3):
  *
  * - A member that exits on its own between the read before the kill and the kill is recorded as
- *   killed: nothing after the kill tells its own exit from the kill. Measured against the suite's
- *   quitter that exits inside that read: MEASURED-QUIT.
+ *   killed: nothing after the kill tells its own exit from the kill. Measured with Node 26.5.0 on
+ *   macOS 27.0 on 2026-10-02, against the suite's quitter that exits inside that read: it was
+ *   recorded as killed in each of 10 runs.
  * - A name and a command line can come from two images (`census`).
  * - A process that joins the group after the read before the kill, and is ended by the kill, is
  *   ended unrecorded. No read can tell such a joiner from a group holding only zombies: signal 0

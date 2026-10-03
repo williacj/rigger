@@ -516,8 +516,8 @@ test('a survivor told to re-execute inside a read of the process table is record
 
   const { events } = await recorded(directory, reExecuting(directory));
 
-  // The census's first round reads the survivor as `bash` and its command line as `tail`'s, so it
-  // reads again, and the next round finds `tail` throughout.
+  // The survivor becomes `tail` inside the census's first read of command lines, and the census
+  // reads names after that read, so it records `tail` by name and command line alike.
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
     { event: 'survivor.killed', name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
   ]);
