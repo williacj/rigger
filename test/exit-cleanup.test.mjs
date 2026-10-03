@@ -15,6 +15,7 @@ import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -353,10 +354,14 @@ function fixtures(directory) {
  * `heard`. Then, where `again` names a signal, the caller is sent it; and where it does not, the
  * test writes `go`. `took` is how many milliseconds passed from the signal to the caller's end. Where `stuck` is set, the caller's standard error is a pipe nothing drains,
  * and what it wrote there is not read.
+ * Where `warm` is set, the stand-in for `ps` that `options.ps` names is run once before the caller
+ * starts, so the system's hold on the first exec of a file just written (`warmed`) is not paid
+ * inside a read of the caller's.
  */
-async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
+async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false, warm = false } = {}) {
   const directory = scratch(t);
   fixtures(directory);
+  if (warm) warmed(join(directory, options.ps));
   if (refusing) {
     // The state directory exists and takes no file, so the sink refuses every append.
     mkdirSync(join(directory, 'state'));
@@ -829,7 +834,7 @@ test('a caller kept running past SIGTERM, whose census the cleanup cut short, re
 // The confirmation of the exit kill.
 
 test('a process that joins a group after the cleanup has killed it is killed before the caller ends', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'joined.pid')), 'no process joined the group after its kill, so this proves nothing');
@@ -839,7 +844,7 @@ test('a process that joins a group after the cleanup has killed it is killed bef
 });
 
 test('a process that joins a group after the cleanup\'s last read before its kill is recorded, by name or by the kill of the group', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-late' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-late' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'late')), 'the stand-in never held the last read before the kill, so this proves nothing');
@@ -850,7 +855,7 @@ test('a process that joins a group after the cleanup\'s last read before its kil
 });
 
 test('a process that joins a group during the cleanup\'s first read of it after the last read before its kill, which fails, is killed before the caller ends', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join-fails' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join-fails' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'failed')), 'the stand-in never failed the confirmation\'s first read, so this proves nothing');
@@ -859,7 +864,7 @@ test('a process that joins a group during the cleanup\'s first read of it after 
 });
 
 test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded by name and command line', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
@@ -888,7 +893,7 @@ function assertRecorded(events, group, pids) {
 const membersOf = (directory, label) => [Number(read(directory, `group.${label}`)), Number(read(directory, `child.${label}`))];
 
 test('given a survivor that exits on its own after the census names it and before the cleanup\'s kill, no event and no standard-error line records it as killed', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'quitting' }, ps: 'ps-quit' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'quitting' }, ps: 'ps-quit' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'told')), 'the child was never told to go, so the test proves nothing');
@@ -918,11 +923,11 @@ test('given three groups held when the caller receives SIGTERM, and a process-ta
 
 for (const [ps, what, mark] of [['ps-partial', 'exits 0 listing only the leader on every read', 'hidden'], ['ps-silent', 'exits 1 and prints nothing on every read', 'silenced']]) {
   test(`given a group whose leader and child are alive, and a census that ${what}, the cleanup leaves neither alive and records each`, ENDS_WITHIN, async (t) => {
-    // A read timeout long enough for the stand-in, a shell script, to start and mark its answer
-    // on a loaded host. At 300 ms, both tests failed their guard in one fresh-clone run at a load
-    // average near 30. A first read timed out before the stand-in marked it would explain that,
-    // but it was not measured.
-    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 2_000 }, { signal: 'SIGTERM' });
+    // Unwarmed, the census's first read of group 1 is the stand-in's first exec, which the system
+    // holds until it has assessed the file (`warmed`). Measured for #563 with Node 26.5.0 on macOS
+    // 27.0 on 2026-10-03: where that read outlasted the read timeout, it timed out before the
+    // stand-in's first line, and the cleanup read that `ps` no more (`runNow`), so nothing marked.
+    const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps, readTimeout: 2_000 }, { signal: 'SIGTERM', warm: true });
 
     assert.equal(signal, 'SIGTERM', stderr);
     assert.ok(existsSync(join(directory, mark)), 'the stand-in never answered a census read of the group, so the test proves nothing');
@@ -933,7 +938,7 @@ for (const [ps, what, mark] of [['ps-partial', 'exits 0 listing only the leader 
 }
 
 test('given a census whose read of a survivor\'s name exits 1 and prints nothing, as ps answers for a pid no process holds, the cleanup reads again and records each process by name', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-gone' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-gone' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'gone')), 'the stand-in never answered the read of the name, so the test proves nothing');
