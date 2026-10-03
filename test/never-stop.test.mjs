@@ -1,7 +1,8 @@
 // ABOUTME: Tests that L0 contains a group without ever stopping it, on the call's containment, a
 // start's kill of a recorded group and the exit cleanup: what it records by name and as the group's
-// kill, and how it settles where it cannot read the table, may not signal a process, or cannot end
-// one, in a group and in a dispatch's directory alike.
+// kill, how it settles where it cannot read the table, may not signal a process, or cannot end
+// one, in a group and in a dispatch's directory alike, and what the exit cleanup hands the caller's
+// step where it cannot end the command.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,13 +49,16 @@ const holdingTwo = (directory) => fixture(directory, 'command', [
 /** A command that marks `$here/up` and runs until the test writes `release`, or until killed. */
 const holdingNone = (directory) => fixture(directory, 'command', ': > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
 
+/** The line of a `ps` stand-in that answers a read as `ps` does, with the process `$here/two.pid` names cut out. */
+const CUT_TWO = '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "';
+
 /**
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read of the census,
  * which begin `-ww -g`, and answers every other read as `ps` does.
  */
 const cuttingTwo = (directory) => warmed(fixture(directory, 'ps', [
   'case "$*" in "-ww -g "*)',
-  '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+  `  ${CUT_TWO}`,
   '  exit 0 ;;',
   'esac',
   'exec /bin/ps "$@"',
@@ -239,7 +243,7 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
  */
 const hidingTwoUntilKilled = (directory) => warmed(fixture(directory, 'ps', [
   '[ -f "$here/hang" ] && exec /bin/ps "$@"',
-  '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+  CUT_TWO,
   'exit 0',
 ].join('\n')));
 
@@ -254,7 +258,7 @@ function markingKill(directory, signals) {
   };
 }
 
-// proves R-STATE-12, R-STATE-7
+// proves R-STATE-12, R-STATE-7, R-STATE-20
 test('on the call\'s containment, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const signals = standIn(directory, { outlasts: 'two' });
@@ -267,7 +271,7 @@ test('on the call\'s containment, a member no read before the kill found, which 
   assert.deepEqual([one, two].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-10
+// proves R-STATE-12, R-STATE-10, R-STATE-20
 test('on a start\'s kill of a recorded group, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -281,7 +285,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill f
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-9
+// proves R-STATE-12, R-STATE-9, R-STATE-20
 test('on the exit cleanup, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   holdingTwo(directory);
@@ -646,6 +650,37 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
 });
 
 /**
+ * Has the exit cleanup end a group whose leader is `kept`, as `CALLER` names its options, and
+ * asserts the cleanup hands its step no exit code, but that it could not end the command, for
+ * `why`, and records the leader as a process it could not end.
+ */
+async function assertLeaderUnended(t, kept, why) {
+  const directory = holding(t);
+  holdingTwo(directory);
+
+  const { status, events } = await cleanedUp(directory, { [kept]: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0);
+  assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', /could not end the command/, JSON.stringify(ending));
+  assert.match(ending.unread, why, JSON.stringify(ending));
+  assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event }) => event), ['survivor.unended']);
+}
+
+// proves R-STATE-9, R-STATE-15, R-STATE-19
+test('given a command whose leader the kill does not end, the exit cleanup hands its step no exit code, but that it could not end the command', SETTLES_WITHIN, async (t) => {
+  await assertLeaderUnended(t, 'unkept', /still alive when the exit cleanup's read bound/);
+});
+
+// proves R-STATE-9, R-STATE-15, R-STATE-19
+test('given a command whose leader L0 may not signal, the exit cleanup hands its step no exit code, but that it could not end the command because of EPERM', SETTLES_WITHIN, async (t) => {
+  await assertLeaderUnended(t, 'refused', /EPERM/);
+});
+
+/**
  * A perl program in `directory`, `joiner`, run with the scratch directory and a group's id: it
  * leaves its own group and forks a child that joins the group named and runs `tail`, writes that
  * child's pid to `$here/two.pid` once it has joined, and then blocks for good without ever reaping
@@ -680,7 +715,7 @@ function assertJoinerRecorded(events) {
   assert.match(kills[0].census, /a read after the kill found/);
 }
 
-// proves R-STATE-12, R-STATE-7
+// proves R-STATE-12, R-STATE-7, R-STATE-20
 test('on the call\'s containment, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
@@ -694,7 +729,7 @@ test('on the call\'s containment, a member no read before the kill listed, which
   assertJoinerRecorded(events);
 });
 
-// proves R-STATE-12, R-STATE-10
+// proves R-STATE-12, R-STATE-10, R-STATE-20
 test('on a start\'s kill of a recorded group, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -710,7 +745,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill l
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-9
+// proves R-STATE-12, R-STATE-9, R-STATE-20
 test('on the exit cleanup, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
@@ -735,7 +770,7 @@ function assertUnreadAfterKill(events) {
   assert.match(kills[0].census, /ps: failing on purpose/);
 }
 
-// proves R-STATE-19, R-STATE-12
+// proves R-STATE-19, R-STATE-12, R-STATE-20
 test('on the call\'s containment, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
@@ -747,7 +782,7 @@ test('on the call\'s containment, where every read after the kill fails, the kil
   assertUnreadAfterKill(events);
 });
 
-// proves R-STATE-19, R-STATE-10
+// proves R-STATE-19, R-STATE-10, R-STATE-20
 test('on a start\'s kill of a recorded group, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -761,7 +796,7 @@ test('on a start\'s kill of a recorded group, where every read after the kill fa
   assertUnreadAfterKill(events);
 });
 
-// proves R-STATE-19, R-STATE-9
+// proves R-STATE-19, R-STATE-9, R-STATE-20
 test('on the exit cleanup, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
@@ -772,3 +807,4 @@ test('on the exit cleanup, where every read after the kill fails, the kill of th
   assert.equal(status, 0);
   assertUnreadAfterKill(events);
 });
+
