@@ -967,7 +967,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     unnamed = error.message;
   }
   // Where the group is already recorded as killed whole, the confirmation kills before it reads.
-  const seen = { live: false, first: unnamed === undefined && left === undefined, listed: listed ?? new Set((named ?? []).map(({ pid }) => pid)) };
+  const seen = { live: false, first: unnamed === undefined && left === undefined, listed: listed ?? new Set((named ?? []).map(({ pid }) => pid)), named: new Map(), asked: new Set() };
   let leader;
   let unread;
   let stuck = [];
@@ -988,9 +988,11 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
   // confirmation finds that no read before it named joined the group after that read.
   if (unnamed === undefined && seen.unread !== undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${seen.unread}`;
   if (unnamed === undefined && seen.live) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
-  // A member the census named is recorded by its name and command line, and one it did not by its
-  // pid alone: the cleanup reads nothing past its own bound.
-  const known = new Map((named ?? []).map((member) => [member.pid, member]));
+  // A member the census named is recorded by its name and command line, and so is one that joined
+  // after the read before the kill, where the confirmation read both while it lived (`emptied`).
+  // Otherwise it is recorded by its pid alone, since the cleanup reads nothing past its own bound
+  // (`D16` rule 3): those reads can fail, and the bound can run out before them.
+  const known = new Map([...(named ?? []).map((member) => [member.pid, member]), ...[...seen.named.values()].map((member) => [member.pid, member])]);
   const unended = stuck.map(({ pid, reason }) => ({ ...known.get(pid), pid, reason }));
   // A leader the read before the kill found alive was ended by the cleanup's kill, where no later
   // read could tell, unless it exited on its own between that read and the kill (`contain`), or the
@@ -1023,7 +1025,9 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  * among `seen.listed`, every process the read before the kill listed, it sets `seen.live`, even
  * where a later read fails, because the kill of the group may then have ended a process that no
  * read before it had named. Where a read after a kill fails, it keeps why in `seen.unread`, since the
- * kill of the group may then have ended a process no read listed.
+ * kill of the group may then have ended a process no read listed. It names in `seen.named`, once,
+ * each live process a read after a kill finds that no read before it listed (`namedNow`), and keeps
+ * in `seen.asked` each it has tried to name.
  */
 function* emptied(group, seen, kill, bound) {
   // What the last read after a kill found: the leader's wait status, and each member alive.
@@ -1052,6 +1056,11 @@ function* emptied(group, seen, kill, bound) {
     if (living.length === 0 && sent) return { leader, stuck: [] };
     if (!sent) continue;
     last = { leader, living };
+    // A live process no read before the kill listed is named once, as the census names one, within
+    // the cleanup's own bound, so one the kill cannot end is recorded by name and command line.
+    const unlisted = living.filter((pid) => !seen.listed.has(pid) && !seen.asked.has(pid));
+    for (const pid of unlisted) seen.asked.add(pid);
+    if (unlisted.length > 0) for (const member of yield* namedNow(unlisted)) seen.named.set(member.pid, member);
     const stuck = unended(living, kill, false, bound, refused);
     if (stuck !== undefined) return { leader, stuck };
   }

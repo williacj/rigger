@@ -808,3 +808,55 @@ test('on the exit cleanup, where every read after the kill fails, the kill of th
   assertUnreadAfterKill(events);
 });
 
+/**
+ * A command that writes its pid, its group's id, to `$here/group.pid`, leaves a `tail` in its group,
+ * `one`, starts `zombieJoiner`'s program for its group, whose child joins it as `two`, marks
+ * `$here/up`, and runs until the test writes `release`, or until killed.
+ */
+const joinedLate = (directory) => fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+
+/** Each event in `events` for the process `pid`, by its name, name and command line, and reason. */
+const recordOf = (events, pid) => events.filter((event) => event.pid === pid).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason }));
+
+// proves R-STATE-19, R-STATE-9
+test('on the exit cleanup, a member no read before the kill listed, which outlives the kill, is recorded as a process it could not end by name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  joinedLate(directory);
+  hidingTwoUntilKilled(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', unkept: 'two' });
+
+  const two = pidIn(directory, 'two');
+  assert.equal(status, 0);
+  assert.equal(alive(two), true, 'the kill ended the member, so the test proves nothing');
+  assert.deepEqual(recordOf(events, two), [
+    { event: 'survivor.unended', ...tailOf(directory), reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` },
+  ]);
+});
+
+/**
+ * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
+ * marks that L0 has sent its group the kill, and from then on fails each read of a name, as `ps`
+ * fails, and answers every other read as `ps` does.
+ */
+const hidingTwoUnnamed = (directory) => warmed(fixture(directory, 'ps', [
+  `[ -f "$here/hang" ] || { ${CUT_TWO}; exit 0; }`,
+  'case "$*" in *"-o ucomm="*) echo "ps: failing on purpose" >&2; exit 2 ;; esac',
+  'exec /bin/ps "$@"',
+].join('\n')));
+
+// proves R-STATE-19, R-STATE-9
+test('on the exit cleanup, a member no read before the kill listed, which outlives the kill, and whose name no read after it can read, is recorded as a process it could not end by pid and why', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  joinedLate(directory);
+  hidingTwoUnnamed(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', unkept: 'two' });
+
+  const two = pidIn(directory, 'two');
+  assert.equal(status, 0);
+  assert.equal(alive(two), true, 'the kill ended the member, so the test proves nothing');
+  assert.deepEqual(recordOf(events, two), [
+    { event: 'survivor.unended', name: undefined, cmd: undefined, reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` },
+  ]);
+});
