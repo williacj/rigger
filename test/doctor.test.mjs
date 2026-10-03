@@ -417,46 +417,11 @@ test('an authority this host cannot run at all is reported as unasked, never as 
   }
 });
 
-test('the agent CLI check answers the `loggedIn` the CLI states, and asks every provider by name', async () => {
-  // `D16` rules 1 and 2: Claude Code owns whether Claude Code is signed in. The relation is
-  // asserted against the real CLI rather than the answer it gives here today, and the expected
-  // value is parsed in this test rather than taken from the check's own reader, which would
-  // agree with it by construction.
-  //
+test('the agent CLI check answers the `loggedIn` a recorded answer states, and asks every provider by name', async () => {
   // The two recorded answers below were measured with Claude Code 2.1.281: signed in it states
   // `loggedIn: true` and exits 0, and pointed at an empty `CLAUDE_CONFIG_DIR` it states
-  // `loggedIn: false` and exits 1.
-  //
-  // The command comes out of `AGENT_CLI`, so the source does not name it and cannot rule out a
-  // git. It is asked under `gitEnvironment()` because the check it is compared against asks it
-  // that way, and a relation measured under a different environment from the one production uses
-  // is a relation between two different questions.
-  //
-  // The check asks it through L0's process adapter, so it is handed an emitter: `UNKILLED`, which
-  // fails the test on any kill, since the CLI answering this question leaves no process behind.
-  //
-  // Both ask the installed `claude`, past the refusing one `npm test` puts first on the path
-  // (`test/suite.sh`), by taking the directory it exports for that one off the path. Asking
-  // whether it is signed in starts no session.
-  const inherited = process.env.PATH;
-  process.env.PATH = pastRefusingAgents(inherited);
-  try {
-    const [command, ...args] = claudeAdapter.auth;
-    const tool = spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
-    let stated;
-    try {
-      stated = JSON.parse(tool.stdout).loggedIn;
-    } catch {
-      stated = undefined;
-    }
-
-    const here = await agentAuth({ emitter: UNKILLED });
-
-    assert.equal(here.ok, typeof stated === 'boolean' ? stated : null, `${here.detail} against ${tool.stdout}`);
-  } finally {
-    process.env.PATH = inherited;
-  }
-
+  // `loggedIn: false` and exits 1. The check against the installed `claude`'s own answer is
+  // `test/doctor-claude-live.test.mjs`, which runs only under `RIGGER_LIVE_CLAUDE=1`.
   const signedIn = answering(RECORDED.agentIn);
   const out = answering(RECORDED.agentOut);
   assert.equal((await agentAuth({ ask: signedIn })).ok, true);
@@ -477,16 +442,6 @@ test('every provider Rigger forks assets for has a CLI this check knows how to a
   // have said its CLI was never signed in passes over it in silence.
   assert.deepEqual(Object.keys(AGENT_CLI).sort(), Object.keys(ADAPTERS).sort());
 });
-
-/**
- * `path` without the directory `npm test` puts its refusing `claude` and `codex` in, which
- * `test/suite.sh` exports, so that a spawn on it finds the installed `claude`.
- */
-function pastRefusingAgents(path = '') {
-  const refusing = process.env.RIGGER_REFUSING_AGENT_DIR;
-  if (refusing === undefined) return path;
-  return path.split(delimiter).filter((entry) => resolve(entry || '.') !== resolve(refusing)).join(delimiter);
-}
 
 /** A directory holding one config file, written as the text given. */
 function holding(source) {
