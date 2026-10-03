@@ -372,6 +372,11 @@ function readRoles(roles, refusals) {
     if (name.includes('/')) {
       refusals.push(`\`${where}\` holds a \`/\` in its name, and a role's name names a directory`);
     }
+    // Each of these resolves to the directory above the role's own, or to that directory itself,
+    // so making it fresh would remove what every other card holds there (#558; ruling 19 on #555).
+    if (['..', '.', ''].includes(name)) {
+      refusals.push(`\`${where}\` names no directory of its own beside the others, and a role's name names a directory`);
+    }
     // A role that is no set of declarations, or names no tier, earned its refusal where the shape
     // was read.
     if (!declares(role)) continue;
