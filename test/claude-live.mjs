@@ -1,5 +1,5 @@
-// ABOUTME: What the gated live runs of a real `claude` session share: the gate, the PATH past
-// npm test's refusing agent CLIs, the stand-in MCP server and agent file, and reading the run's record.
+// ABOUTME: What the gated live runs of the installed `claude` share: the gate and the PATH past npm
+// test's refusing agent CLIs, and for the runs that start a session, its stand-ins and its record.
 
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /*
- * What these runs reach. Each starts one real `claude -p` session, signed in as the host's owner,
+ * What the session runs reach. Each starts one `claude -p` session, signed in as the host's owner,
  * which reaches Anthropic's service and nothing else these tests start: no forge, no board, and no
  * connector, since the invocation withholds every one and the attempt on one is meant to find it
  * absent. The MCP server a session may call is a stand-in written here, which answers on standard
