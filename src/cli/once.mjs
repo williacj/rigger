@@ -63,9 +63,10 @@ function strictReal(path) {
  * main working tree, through L0 with `options` (`gitAnswer`).
  */
 async function rootInsideTree(verb, root, top, options) {
-  const { stdout, why } = await gitAnswer(['-C', top, 'worktree', 'list', '--porcelain'], options);
+  const { stdout, why } = await gitAnswer(['-C', top, 'worktree', 'list', '--porcelain', '-z'], options);
   if (why !== undefined) return `rigger ${verb}: git could not name the main working tree of ${top} (${why}), so Rigger cannot tell whether the worktree root ${root} lies inside it, and refuses it.`;
-  const main = stdout.split('\n')[0].replace(/^worktree /, '');
+  // `-z` ends each field with a NUL, so a path holding a line break is read whole.
+  const main = stdout.split('\0')[0].replace(/^worktree /, '');
   let paths;
   try {
     paths = [root, top, main].map(strictReal);

@@ -5,10 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import template from '../templates/rigger.config.mjs';
+import { sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin, worktreeAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -42,12 +43,12 @@ const config = (worktreeRoot) => ({
 const configFile = (worktreeRoot) => `export default ${JSON.stringify(config(worktreeRoot))};\n`;
 
 /**
- * A consumer's repository at `<directory>/widgets`, holding a committed `build/` directory, with a
+ * A consumer's repository at `<directory>/<name>`, `widgets` unless named, holding a committed `build/` directory, with a
  * local bare `origin` beside it. `rootFor` is handed the directory and the consumer's path and
  * answers the `worktrees.root` the config declares, or undefined for none.
  */
-function consumerAt(directory, rootFor) {
-  const consumer = join(directory, 'widgets');
+function consumerAt(directory, rootFor, name = 'widgets') {
+  const consumer = join(directory, name);
   const files = { 'build/.keep': '', 'rigger.config.mjs': configFile(rootFor(directory, consumer)) };
   return withOrigin(repositoryAt(consumer, files), join(directory, 'origin.git'));
 }
@@ -181,6 +182,62 @@ for (const verb of ['once', 'run']) {
     await assertRefused(ran, [inMain, `working tree ${tree}`], { parent: join(consumer, 'build'), before });
   });
 
+  test(`${verb}, run from a linked worktree of a repository whose main working tree's path holds a line break, refuses a root inside that main working tree`, async () => {
+    const directory = temporaryDirectory('rigger-root-');
+    const consumer = consumerAt(directory, () => undefined, 'wid\ngets');
+    const inMain = join(consumer, 'build', 'worktrees');
+    const linked = join(directory, 'linked');
+    worktreeAt(consumer, linked, 'linked');
+    writeFileSync(join(linked, 'rigger.config.mjs'), configFile(inMain));
+    const tree = realpathSync.native(consumer);
+    const before = listing(join(consumer, 'build'));
+
+    const ran = ranFrom(verb, linked);
+
+    await assertRefused(ran, [inMain, `working tree ${tree}`], { parent: join(consumer, 'build'), before });
+  });
+
+  // A name that begins with two dots is a child like any other: only a first step of `..` itself
+  // leaves the tree. The state directory is made before the run, so the run's own opening of it
+  // does not change the tree's listing.
+
+  test(`${verb}, given a worktree root inside the working tree whose name begins with two dots, refuses it`, async () => {
+    const directory = temporaryDirectory('rigger-root-');
+    const consumer = consumerAt(directory, () => '..worktrees');
+    mkdirSync(join(consumer, '.rigger'));
+    const tree = realpathSync.native(consumer);
+    const before = listing(consumer);
+
+    const ran = ranFrom(verb, consumer);
+
+    await assertRefused(ran, [join(tree, '..worktrees'), `working tree ${tree}`], { parent: consumer, before });
+  });
+
+  test(`${verb}, given a worktree root that is a link to a directory inside the working tree whose name begins with two dots, refuses it`, async () => {
+    const directory = temporaryDirectory('rigger-root-');
+    const link = join(directory, 'via');
+    const consumer = consumerAt(directory, () => link);
+    mkdirSync(join(consumer, '..worktrees'));
+    symlinkSync(join(consumer, '..worktrees'), link);
+    const tree = realpathSync.native(consumer);
+
+    const ran = ranFrom(verb, consumer);
+
+    await assertRefused(ran, [link, `working tree ${tree}`], { parent: join(consumer, '..worktrees'), before: [] });
+  });
+
+  test(`${verb}, given an absent worktree root under an absent directory inside the working tree whose name begins with two dots, refuses it`, async () => {
+    const directory = temporaryDirectory('rigger-root-');
+    const consumer = consumerAt(directory, () => '..worktrees/new');
+    mkdirSync(join(consumer, '.rigger'));
+    const tree = realpathSync.native(consumer);
+    const before = listing(consumer);
+
+    const ran = ranFrom(verb, consumer);
+
+    await assertRefused(ran, [join(tree, '..worktrees', 'new'), `working tree ${tree}`], { parent: consumer, before });
+  });
+
   test(`${verb}, given a root beside the working tree whose name begins with the tree's name, does not refuse it, and claims the card`, async () => {
     const directory = temporaryDirectory('rigger-root-');
     const consumer = consumerAt(directory, () => '../widgets-worktrees');
@@ -202,3 +259,14 @@ for (const verb of ['once', 'run']) {
     assert.ok(existsSync(join(directory, 'widgets-worktrees')), ran.said);
   });
 }
+
+test('the source-tree guard reads a directory inside the package whose name begins with two dots as one tree with it', () => {
+  // `sameTree` shares the containment the worktree-root guard reads, so the same name is inside here too.
+  const directory = temporaryDirectory('rigger-root-');
+  const inside = join(directory, '..dotted');
+  mkdirSync(inside);
+
+  assert.equal(sameTree(inside, directory), true);
+  assert.equal(sameTree(directory, inside), true);
+  assert.equal(sameTree(join(dirname(directory), `${basename(directory)}-beside`), directory), false);
+});
