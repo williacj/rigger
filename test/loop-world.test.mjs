@@ -168,14 +168,17 @@ const failingWorld = (harness, pidFile) => [
 
 test('every stand-in a failing test\'s worlds started is gone once that test has ended', SETTLES_WITHIN, () => {
   const directory = temporaryDirectory('rigger-loop-world-failing-');
-  const temporary = temporaryDirectory('rigger-loop-world-tmp-');
+  // The child's TMPDIR, whose teardown here ends whatever the child's own teardown left.
+  const temporary = temporaryDirectory('rigger-loop-world-tmp-', { beforeRemoval: () => sweep(temporary) });
   const pidFile = join(directory, 'held.pid');
   const file = join(directory, 'failing.test.mjs');
   writeFileSync(file, failingWorld(new URL('./loop-world.mjs', import.meta.url).href, pidFile));
 
   // A child inheriting `NODE_TEST_CONTEXT` would report to this run rather than run its own.
   const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const ran = spawnSync(process.execPath, ['--test', '--test-reporter=spec', file], { cwd: directory, encoding: 'utf8', env: { ...env, TMPDIR: temporary }, timeout: 15_000 });
+  // `--test-force-exit` ends the child once its tests and their teardown are done, so a stand-in
+  // the teardown left alive is seen alive here rather than holding the child open.
+  const ran = spawnSync(process.execPath, ['--test', '--test-force-exit', '--test-reporter=spec', file], { cwd: directory, encoding: 'utf8', env: { ...env, TMPDIR: temporary }, timeout: 15_000 });
 
   assert.equal(ran.status, 1, ran.stdout + ran.stderr);
   assert.match(ran.stdout, /this world fails/);

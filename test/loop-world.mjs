@@ -21,6 +21,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { installStandInAgent, standInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
+import { after } from 'node:test';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -299,6 +300,18 @@ export function world({
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
   workspace,
 } = {}) {
+  // Whether the test that made this world has ended. From then on the sink refuses every append
+  // and no workspace is answered, so a run the test left going starts nothing and records
+  // nothing, and teardown ends its stand-ins and waits out every L1 dispatch still in flight
+  // before any directory of the world is removed. A world in a caller's scratch has no test.
+  let stopped = false;
+  if (scratch === undefined) {
+    after(async () => {
+      stopped = true;
+      sweep(agent.dir);
+      await waitFor(() => inFlight() === 0);
+    });
+  }
   const under = scratch ?? temporaryDirectory('rigger-loop-scratch-');
   const own = scratch === undefined ? undefined : join(scratch, `stand-in-${unowned.length}`);
   if (own !== undefined) mkdirSync(own, { recursive: true });
@@ -339,6 +352,7 @@ export function world({
           const attempt = { layer: context.layer, card: context.card, dispatch: context.dispatch, event, fields, accepted: false };
           attempts.push(attempt);
           observe(attempt);
+          if (stopped) throw new Error('the test that made this world has ended, so it records nothing more');
           if (refusing !== null && refusals > 0) {
             refusals -= 1;
             throw new Error(refusing);
@@ -386,6 +400,7 @@ export function world({
   // Each attempt's answer is read as L3 asks for its workspace, so the stand-in holds and then exits
   // as `answer` says, or, for an Error, the maker is handed a workspace that does not exist.
   workspace = async (number) => {
+    if (stopped) throw new Error(`the test that made this world has ended, so card ${number} gets no workspace`);
     const given = answer(read.get(number) ?? { number });
     if (given instanceof Error) {
       // Answered as the handle answers, so a maker that never starts reaches L3's dispatch event
@@ -439,6 +454,9 @@ export function world({
       }
     },
   };
+  /** How many dispatches L1 has recorded the start of and not yet tried to record the end of. */
+  const inFlight = () => attempts.filter((each) => each.layer === 'L1' && each.event === 'dispatch.start' && each.accepted).length
+    - attempts.filter((each) => each.layer === 'L1' && each.event === 'dispatch.end').length;
   const triggered = () => attempts.filter((each) => each.layer === 'L3' && each.event === 'trigger' && each.fields.trigger === 'pull').length;
   /** The cards whose claims L3 holds: an accepted `pull` with no `slot.release` tried for it since. */
   const claimed = () => {

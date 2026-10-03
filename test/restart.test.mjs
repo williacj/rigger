@@ -213,10 +213,13 @@ const FULL_RUN_WITHIN = 30_000;
  * node process whose working directory is `repository`, with `HOME` and `TMPDIR` set to `home` and
  * `temporary` and the state directory at `.rigger/` in the repository. Both worlds make their
  * workspaces and stand-ins in `scratch`, outside all three, and the child ends every stand-in they
- * started once the restart's run has settled. Answers the child's result.
+ * started once the restart's run has settled, through `endStandIns`, and prints, as its last line,
+ * the processes still naming `scratch` then, before its own exit's cleanup ends anything. Answers
+ * the child's result.
  */
 function fullRunIn(repository, { home, temporary, scratch }) {
   const harness = new URL('./loop-world.mjs', import.meta.url).href;
+  const fixtures = new URL('./process-fixtures.mjs', import.meta.url).href;
   const state = join(repository, '.rigger');
   const code = [
     `const { drive, endStandIns, stoppedRun, world } = await import(${JSON.stringify(harness)});`,
@@ -224,7 +227,9 @@ function fullRunIn(repository, { home, temporary, scratch }) {
     `const scratch = ${JSON.stringify(scratch)};`,
     'const fake = await stoppedRun({ directory, scratch });',
     "await drive(world({ fake, concurrency: 2, directory, run: 'r-restart', scratch }));",
+    `const { running } = await import(${JSON.stringify(fixtures)});`,
     'endStandIns();',
+    'console.log(JSON.stringify({ alive: running(scratch) }));',
     'process.exit(0);',
   ].join('\n');
   return spawnSync(process.execPath, ['--input-type=module', '-e', code], {
@@ -245,6 +250,7 @@ function afterFullRun() {
   const before = gitIn(repository, 'status', '--porcelain', '--ignored');
   const ran = fullRunIn(repository, { home, temporary, scratch: standIns });
   assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(JSON.parse(ran.stdout.trim().split('\n').at(-1)).alive, [], 'endStandIns left a stand-in alive in the child');
   assert.deepEqual(running(standIns), [], 'no stand-in the run started is alive after it');
   assert.ok(readEvents(join(repository, '.rigger')).some((event) => event.trigger === 'drain'), 'the run drained');
   return { repository, home, temporary, before };

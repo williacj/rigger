@@ -19,6 +19,8 @@ import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { oneOpenFromEveryLine } from './loop-world.mjs';
+import { READ_TIMEOUT } from '../src/substrate/process.mjs';
+import { sweep } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 // A bound on a test that waits on real processes, so one whose pull never settles fails here
@@ -385,4 +387,32 @@ test('given loop built with neither `ps` nor a read bound, a role\'s dispatch st
 
   assert.equal(built.agent.runs().length, 1, 'the maker ran');
   assert.deepEqual(ps.calls(), []);
+});
+
+/**
+ * A `ps` stand-in whose reads of a start time never answer: it follows a file nothing writes to,
+ * by `exec`, so the read L0 gives up on ends with it. Every other read is `ps`'s own.
+ */
+function hangingStartPs() {
+  const directory = temporaryDirectory('rigger-maker-ps-hangs-', { beforeRemoval: () => sweep(directory) });
+  writeFileSync(join(directory, 'hold'), '');
+  const path = join(directory, 'ps');
+  writeFileSync(path, `#!/bin/sh\ncase "$*" in *lstart=*) exec /usr/bin/tail -f '${join(directory, 'hold')}' ;; esac\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  return path;
+}
+
+/** How long a read is given here, far under L0's own bound of 5,000 ms, which a dropped bound would leave in force. */
+const READ_WITHIN = 300;
+
+test('given loop built with a read bound, a role\'s dispatch reaches L1 with it: L0 gives up on a start-time read that never answers within that bound, not its own', SETTLES_WITHIN, async () => {
+  const built = psWorld({ ps: hangingStartPs(), readTimeout: READ_WITHIN });
+  const began = performance.now();
+
+  const [reached] = await built.loop.pull();
+
+  const took = performance.now() - began;
+  assert.equal(reached.card, 1);
+  assert.equal(reached.outcome.status, 'rejected', JSON.stringify(reached.outcome));
+  assert.match(reached.outcome.reason.message, /could not read when the leader of group \d+ started/);
+  assert.ok(took < READ_TIMEOUT, `the pull took ${took} ms, as long as L0's own bound of ${READ_TIMEOUT} ms`);
 });
