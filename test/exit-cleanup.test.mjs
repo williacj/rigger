@@ -834,7 +834,7 @@ test('a caller kept running past SIGTERM, whose census the cleanup cut short, re
 // The confirmation of the exit kill.
 
 test('a process that joins a group after the cleanup has killed it is killed before the caller ends', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'joined.pid')), 'no process joined the group after its kill, so this proves nothing');
@@ -844,7 +844,7 @@ test('a process that joins a group after the cleanup has killed it is killed bef
 });
 
 test('a process that joins a group after the cleanup\'s last read before its kill is recorded, by name or by the kill of the group', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-late' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-late' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'late')), 'the stand-in never held the last read before the kill, so this proves nothing');
@@ -855,7 +855,7 @@ test('a process that joins a group after the cleanup\'s last read before its kil
 });
 
 test('a process that joins a group during the cleanup\'s first read of it after the last read before its kill, which fails, is killed before the caller ends', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join-fails' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-join-fails' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'failed')), 'the stand-in never failed the confirmation\'s first read, so this proves nothing');
@@ -864,7 +864,7 @@ test('a process that joins a group during the cleanup\'s first read of it after 
 });
 
 test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded by name and command line', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-hides' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
@@ -938,7 +938,7 @@ for (const [ps, what, mark] of [['ps-partial', 'exits 0 listing only the leader 
 }
 
 test('given a census whose read of a survivor\'s name exits 1 and prints nothing, as ps answers for a pid no process holds, the cleanup reads again and records each process by name', ENDS_WITHIN, async (t) => {
-  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-gone' }, { signal: 'SIGTERM' });
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-gone' }, { signal: 'SIGTERM', warm: true });
 
   assert.equal(signal, 'SIGTERM', stderr);
   assert.ok(existsSync(join(directory, 'gone')), 'the stand-in never answered the read of the name, so the test proves nothing');
