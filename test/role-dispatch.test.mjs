@@ -1198,3 +1198,16 @@ test('given a .git file at an ancestor above the worktree root, roleDispatch rej
 
   assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
 });
+
+test('given a worktree root that is a symbolic link to a directory nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const foreign = repositoryAt(join(placed.root, 'foreign'), { 'kept.txt': 'committed\n' });
+  mkdirSync(join(foreign, 'nested'));
+  const link = join(placed.root, 'link');
+  symlinkSync(join(foreign, 'nested'), link);
+  const base = join(link, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(foreign, '.git'), foreign);
+
+  assert.deepEqual(readdirSync(join(foreign, 'nested')), [], 'L1 made something inside the unrelated checkout');
+});

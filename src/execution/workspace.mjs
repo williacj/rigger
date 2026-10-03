@@ -166,14 +166,28 @@ export async function makeScratch({ base, role, card, repository, sink }) {
 
 /**
  * Fails naming `path` and a `.git` where one is, of any kind and unfollowed, at any ancestor of
- * `path` from its parent, the scratch base `base`, up to the file system's root: then `path` lies
- * in a checkout, of this repository or another, and L1 makes and removes nothing there, since the
- * scratch directory lies outside every worktree. An ancestor where L1 cannot read whether a `.git`
- * is there fails too, since L1 cannot tell. So an operator whose home directory is a checkout is
- * refused, naming that `.git`.
+ * `path` from its parent, the scratch base `base`, up to the file system's root, as written and as
+ * the real path of the nearest existing one reads: then `path` lies in a checkout, of this
+ * repository or another, and L1 makes and removes nothing there, since the scratch directory lies
+ * outside every worktree. The real path's ancestors are walked too, so a root reached through a
+ * symbolic link into a checkout is found. An ancestor where L1 cannot read whether a `.git` is
+ * there fails too, as does a real path L1 cannot resolve for any reason but absence, since L1
+ * cannot tell. So an operator whose home directory is a checkout is refused, naming that `.git`.
  */
 function noCheckoutAbove(base, path) {
-  for (let ancestor = base; ; ancestor = dirname(ancestor)) {
+  noCheckoutFrom(base, path);
+  let real;
+  try {
+    real = nearestReal(base);
+  } catch (error) {
+    throw new Error(`${path} lies under ${base}, whose real path L1 cannot resolve, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
+  }
+  if (real !== base) noCheckoutFrom(real, path);
+}
+
+/** `noCheckoutAbove`'s walk from `start` up to the file system's root, for `path`. */
+function noCheckoutFrom(start, path) {
+  for (let ancestor = start; ; ancestor = dirname(ancestor)) {
     const git = join(ancestor, '.git');
     let found = true;
     try {
