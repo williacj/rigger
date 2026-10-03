@@ -19,7 +19,7 @@ import * as codex from '../src/substrate/providers/codex.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { SERVER, pastRefusing, put } from './claude-live.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
-import { gitIn, repositoryAt } from './git-repository.mjs';
+import { detachedWorktreeAt, gitIn, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { onPath } from './on-path.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -59,7 +59,7 @@ function realCodex(t) {
   t.after(() => { process.env.PATH = inherited; });
   const found = onPath('codex', process.env.PATH);
   assert.ok(found !== null, 'no installed codex is on the PATH past the refusing one');
-  quote('codex', spawnSync(found, ['--version'], { encoding: 'utf8' }).stdout.trim());
+  quote('codex', spawnSync(found, ['--version'], { encoding: 'utf8', env: gitEnvironment() }).stdout.trim());
 }
 
 /** Sets `name` in this process's environment to `value` for the rest of the test. */
@@ -283,8 +283,8 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   const main = join(judge, 'main');
   const head = join(judge, 'head');
   mkdirSync(judge, { recursive: true });
-  gitIn(repository, 'worktree', 'add', '-q', '--detach', main, 'main');
-  gitIn(repository, 'worktree', 'add', '-q', '-b', 'rigger-1412', head, 'main');
+  detachedWorktreeAt(repository, main, 'main');
+  worktreeAt(repository, head, 'rigger-1412');
   put(head, 'only-in-head.txt', 'OSPREY-c489-headfile\n');
   put(head, 'AGENTS.md', `If asked for markers, head's AGENTS.md marker is ${HEAD.agents}.\n`);
   put(head, '.agents/skills/c489-head-agents-skill/SKILL.md', `---\nname: c489-head-agents-skill\ndescription: A planted skill, marker ${HEAD.agentsSkill}.\n---\n${HEAD.agentsSkill}\n`);
