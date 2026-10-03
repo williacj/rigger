@@ -1082,3 +1082,82 @@ test('given a scratch base spelled through a symbolic link into a registered wor
 
   assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the worktree');
 });
+
+/**
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * naming `<base>/engineer` and `named`, that every mode and entry under `kept` is unchanged, and
+ * that no `<base>/engineer` was made. Hands back the failure.
+ */
+async function assertAncestorRefused(placed, base, named, kept) {
+  const before = modes(kept);
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
+  assert.deepEqual(modes(kept), before, `${kept}: something changed`);
+  return failure;
+}
+
+test('given a scratch base inside a linked worktree of an unrelated repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree\'s .git, and makes nothing in that worktree', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
+  const tree = worktreeAt(another, join(placed.root, 'unrelated-tree'), 'held');
+  const base = join(tree, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(tree, '.git'), tree);
+
+  assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the unrelated worktree');
+});
+
+test('given a .git file at an ancestor of <scratch>/<role> between it and the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  writeFileSync(join(base, 'engineer', 'left.txt'), 'the first attempt\'s\n');
+  writeFileSync(join(root, 'scratch', '.git'), 'gitdir: /nowhere\n');
+
+  await assertAncestorRefused(placed, base, join(root, 'scratch', '.git'), root);
+
+  assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
+});
+
+test('given a .git directory at the worktree root itself, the parent of scratch/, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and makes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  mkdirSync(join(root, '.git'), { recursive: true });
+  const base = join(root, 'scratch', 'rigger-1412');
+
+  await assertAncestorRefused(placed, base, join(root, '.git'), root);
+
+  assert.equal(existsSync(join(root, 'scratch')), false, 'L1 made the scratch base');
+});
+
+test('given an ancestor of <scratch>/<role> up to the worktree root that L1 cannot read, roleDispatch rejects with NOT_STARTED naming the scratch directory and the .git it could not look for, and changes nothing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const root = join(placed.root, 'worktrees');
+  const base = join(root, 'scratch', 'rigger-1412');
+  mkdirSync(join(base, 'engineer'), { recursive: true });
+  chmodSync(root, 0o000);
+  t.after(() => chmodSync(root, 0o700));
+
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+
+  assert.ok(failure.message.includes(join(base, '.git')), `the failure does not name ${join(base, '.git')}: ${failure.message}`);
+  assert.equal(lstatSync(root).mode & 0o7777, 0o000, 'the worktree root\'s mode changed');
+  chmodSync(root, 0o700);
+  assert.deepEqual(readdirSync(join(base, 'engineer')), []);
+});
+
+test('given a scratch base inside a registered worktree of the repository whose .git was moved aside, not yet made, plain or through a symbolic link, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+  for (const spelled of ['plain', 'through a link']) {
+    const placed = layout(t);
+    repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
+    const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
+    renameSync(join(tree, '.git'), join(placed.root, 'moved-git'));
+    const top = spelled === 'plain' ? tree : join(placed.root, 'linked');
+    if (spelled !== 'plain') symlinkSync(tree, top);
+
+    await assertInsideRefused(placed, join(top, 'scratch', 'rigger-1412'), tree);
+
+    assert.equal(existsSync(join(tree, 'scratch')), false, `${spelled}: L1 made the scratch base inside the worktree`);
+  }
+});

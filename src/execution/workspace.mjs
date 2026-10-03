@@ -147,6 +147,7 @@ export async function makeScratch({ base, role, card, repository, sink }) {
       throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause);
     }
   };
+  await step(() => noCheckoutAbove(base, path));
   const there = await step(() => scratchChecked(base, path));
   await step(() => unregistered({ path, there, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
   if (there) {
@@ -161,6 +162,44 @@ export async function makeScratch({ base, role, card, repository, sink }) {
   await step(() => mkdirSync(path, { recursive: true }));
   recorded(events, card, 'workspace.made', { role, path });
   return path;
+}
+
+/**
+ * Fails naming `path` and a `.git` where one is, of any kind and unfollowed, at an ancestor of
+ * `path` from its parent, the scratch base `base`, up to and including the worktree root, the
+ * parent of `scratch/`: then `path` lies in a checkout, of this repository or another, and L1
+ * makes and removes nothing there. An ancestor where L1 cannot read whether a `.git` is there
+ * fails too, since L1 cannot tell.
+ *
+ * Where it can be wrong (`D16` rule 3): it stops at the worktree root. Above it lies the operator's
+ * layout, and a home directory kept in git would otherwise refuse every dispatch. So a worktree root
+ * that itself lies inside a checkout is not found here; that is a guard on the configured root, as
+ * the verbs keep one for a root inside the repository's tree.
+ */
+function noCheckoutAbove(base, path) {
+  const root = dirname(dirname(base));
+  for (let ancestor = base; ; ancestor = dirname(ancestor)) {
+    const git = join(ancestor, '.git');
+    let found = true;
+    try {
+      lstatSync(git);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error(`${path} lies under ${ancestor}, where L1 cannot read whether ${git} is there, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
+      found = false;
+    }
+    if (found) throw new Error(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
+    if (ancestor === root || dirname(ancestor) === ancestor) return;
+  }
+}
+
+/** `path`'s real path as a failure adds it, where it differs from `path` and can be read. */
+function realNamed(path) {
+  try {
+    const real = realpathSync.native(path);
+    return real === path ? '' : ` (${real})`;
+  } catch {
+    return '';
+  }
 }
 
 /**
