@@ -78,16 +78,21 @@ const LONGEST_PAUSE = 50;
  * How long after its first kill of a group L0 goes on killing a member that is still alive, and how
  * long after its kill of a process working in a dispatch's directory it waits for that process to
  * end, before it records the process as one it could not end and settles (`R-STATE-19`). A member
- * L0 may not signal is recorded at once, where every member still alive is one. The exit cleanup
+ * L0 may not signal is recorded once two looks in a row find it so (`unended`). The exit cleanup
  * waits on its own bound, the read timeout, in its place. A judgment, not a measurement, set by the
- * architect (ruling 15). Its premise is this card's measurement, which it must stay at least ten
- * times above (#539): with Node 26.5.0 on macOS 27.0 on 2026-10-02, over 10 runs of the 250-deep
- * chain test in `test/process-adapter.test.mjs` at starting loads of 5.15 to 22.22, the kill loop,
- * from its first kill of the group to its last, took 3 or 4 rounds and at most 31.7 ms; and over
- * 22 runs of 300 `git fetch`es each through this adapter at starting loads of 60.97 to 125.82, each
- * of the 12 calls whose group was still occupied at the kill ended in its first round. Ten seconds
- * is over 300 times the worst of those. How long the loop takes against a group that forks rapidly
- * without bound was not measured (`ended`).
+ * architect (ruling 15). Its premise is that it stays at least ten times above the kill loop's
+ * worst case, measured from its first kill of the group to its last, with Node 26.5.0 on macOS 27.0
+ * (#539):
+ *
+ * - worst 94.6 ms, in 6 rounds, over 10 runs of the 250-deep chain test in
+ *   `test/process-adapter.test.mjs` at `7a67ffd`, each started at a one-minute load of 24 or less,
+ *   on 2026-10-03;
+ * - one round in each of the 12 calls whose group was still occupied at the kill, over 22 runs of
+ *   300 `git fetch`es each through this adapter at `1bbd7ec`, started at loads of 60.97 to 125.82,
+ *   on 2026-10-02.
+ *
+ * Ten seconds is over 100 times the worst of those. How long the loop takes against a group that
+ * forks rapidly without bound was not measured (`ended`).
  */
 export const KILL_BOUND = 10_000;
 
