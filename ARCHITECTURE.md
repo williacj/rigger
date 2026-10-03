@@ -355,19 +355,30 @@ retries, a bounded number of times, a fetch that another process's fetch beat to
 remote-tracking ref, and records each retry. This is not L3's repo lane, which orders merges. An
 agent's own git commands in its workspace are outside the queue.
 
-A process still in the command's group when the direct child exits is terminated by L0 and recorded
-by name and command line; it never changes the exit code. A process that leaves its group is outside
-this containment.
+A process still in the command's group when the direct child exits is terminated by L0, and recorded
+by name and command line where a read before the kill found it; it never changes the exit code. A
+process that leaves its group is outside this containment. L0 never stops a process group to contain
+it. It reads which processes the group holds, kills the group whole, then kills and reads it again
+until no member is left alive, with two exceptions. Where it cannot read the table, it sends the
+kill on every look until a bound passes, then records the kill of the group and why, and settles
+without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
+for a second, longer bound, L0 records it by name and command line as a process it could not end,
+and settles. A process the kill ended that no read before it found is recorded as the kill of the
+group, as when L0 cannot read the table.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
 runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
 fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
 process of Rigger's own user whose working directory is that directory or lies under it. L0
-records each as it records a survivor. L1 hands L0 that directory and records it in the dispatch's
-entry. A later start does the same only where the directory at that path is still the one recorded.
-Where it is not, or L0 cannot tell, the start sweeps nothing there and records why. A command that
-is not a dispatch has no such directory, and its group remains its whole containment.
+records each as it records a survivor. Where such a process is one L0 may not signal, or outlives
+that kill for the longer bound above, L0 records it by name and command line as a process it could
+not end, and waits on it no further. Where L0 cannot read which processes work there, it records
+the directory and why in their place, and waits on them no further. L1 hands L0 that directory and
+records it in the dispatch's entry. A later start does the same only where the directory at that
+path is still the one recorded. Where it is not, or L0 cannot tell, the start sweeps nothing there
+and records why. A command that is not a dispatch has no such directory, and its group remains its
+whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
