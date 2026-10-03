@@ -941,6 +941,45 @@ test('a role whose name holds a / is refused, and the refusal names the role', (
   }
 });
 
+/** This repository's config with one more role, declared under `name`, as a consumer would. */
+const withRoleNamed = (name) => ({ ...rigger, roles: { ...rigger.roles, [name]: { agent: 'a.md', provider: 'claude', tier: 'high' } } });
+
+// A role's directory is `<base>/<role>`, so `..` resolves to the base's parent, and `.` and the
+// empty string to the base itself. Making either fresh would remove what every other card holds
+// there (#558; ruling 19 on #555).
+// proves R-SCHED-10
+test('a role named .., . or the empty string is refused, and the refusal names the role and says its name names a directory', () => {
+  for (const name of ['..', '.', '']) {
+    const refused = refusal(withRoleNamed(name));
+    assert.ok(refused.includes(`\`roles.${name}\``), `the refusal does not name \`roles.${name}\`: ${refused}`);
+    assert.ok(refused.includes("a role's name names a directory"), `the refusal does not say a role's name names a directory: ${refused}`);
+    for (const other of Object.keys(rigger.roles)) {
+      assert.ok(!refused.includes(other), `the refusal of ${inspect(name)} names the role \`${other}\`: ${refused}`);
+    }
+  }
+});
+
+// proves R-SCHED-10
+test('a kind naming a role named .., . or the empty string as its maker or a judge has that role refused, whatever else it refuses', () => {
+  for (const name of ['..', '.', '']) {
+    const declared = withRoleNamed(name);
+    const asMaker = { ...declared, kinds: { ...declared.kinds, change: { ...declared.kinds.change, maker: name } } };
+    const asJudge = { ...declared, kinds: { ...declared.kinds, change: { ...declared.kinds.change, judges: [name, 'owner'] } } };
+    for (const [where, config] of [['maker', asMaker], ['judge', asJudge]]) {
+      const refusals = validate(config);
+      assert.ok(
+        refusals.some((refused) => refused.includes(`\`roles.${name}\``) && refused.includes("a role's name names a directory")),
+        `a kind naming ${inspect(name)} as its ${where} earned no refusal of the role: ${refusals.join('; ') || 'none'}`,
+      );
+    }
+  }
+});
+
+// The refusal is of the three names alone, not of every name beginning with a dot.
+test('a role named ... or .reviewer is accepted', () => {
+  for (const name of ['...', '.reviewer']) assert.deepEqual(validate(withRoleNamed(name)), [], name);
+});
+
 // proves R-SCHED-10
 test('a role naming a provider the adapter map does not hold is refused, and the refusal names the role and the provider', () => {
   for (const provider of ['codex', 'Claude', 'toString', '', 7, null, ['claude']]) {

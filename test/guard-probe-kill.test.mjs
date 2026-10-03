@@ -18,6 +18,10 @@ import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.mjs';
 import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, warmed, withFirstOnPath } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { standInAgent } from './stub-claude.mjs';
+
+/** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
+const agent = standInAgent();
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
@@ -53,7 +57,7 @@ function fakeGh(directory) {
 }
 
 /** The environment the bin runs under: `directory` and its fake `gh` first on PATH, ahead of the refusing `gh`. */
-const withFirst = (directory) => ({ ...gitEnvironment(), PATH: [directory, join(directory, 'fake'), process.env.PATH].join(delimiter) });
+const withFirst = (directory) => ({ ...gitEnvironment(), PATH: [directory, join(directory, 'fake'), agent.dir, process.env.PATH].join(delimiter) });
 
 /** Runs the bin at `from` with `verb`, in `where`, with `directory` first on PATH, and what it printed. */
 function runBin(verb, where, directory, from = root) {

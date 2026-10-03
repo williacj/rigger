@@ -132,9 +132,7 @@ test('--help lists exactly the verbs the README lists, in that order and no othe
 
 test("--help describes doctor in the words of the README's comment beside doctor", () => {
   // The defect this catches is `doctor` gaining a check that the README's line names and `--help`
-  // does not, or the reverse. Only `doctor` is held to its comment: `once` and `run` say in
-  // `--help` that they dispatch no maker before M4, which their README comments do not. The
-  // expected text is read from the README on every run, so rewording the README's comment moves
+  // does not, or the reverse. Only `doctor` is held to its comment. The expected text is read from the README on every run, so rewording the README's comment moves
   // this test rather than needing the test edited with it.
   const shown = rigger('--help');
 

@@ -1,6 +1,6 @@
 // ABOUTME: Tests `rigger once`: the real bin run in a consumer's repository with the fake `gh` first
 // on PATH, claiming one card through L3's single pull, making and provisioning its workspace,
-// dispatching no maker, saying so, and refusing its own source tree.
+// dispatching its maker through L1 to a stand-in, printing its outcome, and refusing its own source tree.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +16,17 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { spawn } from 'node:child_process';
+import { once as onceEvent } from 'node:events';
+import { readdirSync } from 'node:fs';
+import { parse } from 'acorn';
+import { gitIn } from './git-repository.mjs';
+import { until } from './process-fixtures.mjs';
+import { standInAgent } from './stub-claude.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+
+// A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
+const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -101,16 +112,16 @@ test('once, given N 3 and two ready cards L2 would dispatch and none in coding o
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready' }, ran.err);
 });
 
-test('once names the card it claimed and its workspace, and says no maker runs before M4', () => {
+test('once names the card it claimed, its workspace and its maker\'s outcome', () => {
   const ran = once({ items: [card(10, 'Ready')] });
 
   const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
   assert.ok(line, ran.err);
   assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', 'rigger-10')), line);
-  assert.match(line, /no maker runs before M4/, line);
+  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
 });
 
-test('once exits non-zero after claiming a card it did not work', async () => {
+test('once exits non-zero when the card\'s maker opened no pull request', async () => {
   const ran = once({ items: [card(10, 'Ready')] });
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding' }, ran.err);
@@ -159,14 +170,15 @@ test('once, given a ready card L2 ignores, leaves it in the ready column', async
   assert.doesNotMatch(ran.out, /#13\b/, ran.out);
 });
 
-test('once dispatches the card\'s selected steps and no maker: the agent CLI is never run, and every L1 dispatch event names a step', async () => {
+test('once dispatches the card\'s selected steps and its maker: the agent CLI runs once, as the maker, and every L1 dispatch event is a step\'s or the maker\'s', async () => {
   const ran = once({ items: [card(10, 'Ready'), card(20, 'Ready')] });
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready' }, ran.err);
-  assert.deepEqual(ran.agentRuns(), []);
+  assert.equal(ran.agentRuns().length, 1, JSON.stringify(ran.agentRuns()));
+  assert.match(ran.agentRuns()[0], /--append-system-prompt-file \S*\/rigger-10\/\.claude\/agents\/engineer\.md$/);
   const events = eventsOf(ran);
   assert.ok(events.length > 0, 'the run recorded events');
-  assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && typeof named.step === 'string')), []);
+  assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && (typeof named.step === 'string' || (named.role === 'engineer' && named.tier === 'standard')))), []);
 });
 
 test('after once claims a card from the ready column, the state directory\'s event stream holds an L3 event and an L2 transition event', async () => {
@@ -203,7 +215,8 @@ test('once, given N 3, an unclaimed review card L2 would dispatch and a ready ca
   assert.match(ran.err, /claimed #40\b/, ran.err);
   const events = eventsOf(ran);
   assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === 40), JSON.stringify(events));
-  assert.deepEqual(events.filter((event) => event.layer === 'L2').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 40, from: 'review', to: 'coding' }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 40, from: 'review', to: 'coding' }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })), [{ event: 'review.withheld', card: 40 }]);
 });
 
 // proves R-SAFE-5
@@ -277,11 +290,172 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
-test('--help\'s line for once says it dispatches no maker before M4', () => {
+test('--help\'s line for once says it claims one card, provisions its workspace and dispatches its maker', () => {
   const shown = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });
 
   assert.equal(shown.status, 0, shown.stderr);
   const line = shown.stdout.split('\n').find((held) => /^\s*once\b/.test(held));
   assert.ok(line, shown.stdout);
-  assert.match(line, /dispatches no maker before M4/, line);
+  assert.match(line, /claim one card, provision its workspace and dispatch its maker, then exit/, line);
+  assert.doesNotMatch(line, /before M4/, line);
+});
+
+// The maker, dispatched through L1 to the stand-in agent (#486).
+
+/**
+ * A consumer's repository holding `settings`, its main line on `main`, with a local bare `origin`
+ * beside it, in a directory of its own; `files` are committed with the config.
+ */
+function consumerHolding(settings, files = {}) {
+  const directory = temporaryDirectory('rigger-once-maker-');
+  const repository = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`, ...files });
+  gitIn(repository, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  return { consumer: withOrigin(repository, origin), origin };
+}
+
+/**
+ * Starts the real bin's `once` in a consumer's repository holding `settings` and `files`, with the
+ * stand-in agent `agent` first on PATH, then a fake `gh` holding `board` over the consumer's
+ * `origin`, ahead of the refusing ones `npm test` puts there. `env` is added to the bin's
+ * environment. Answers the consumer, its origin, the fake, and `ran`, which settles on the bin's
+ * status and what it printed; the bin is ended at the test's teardown if it is still running.
+ */
+function onceWithAgent(t, agent, board, { settings = config(), files = {}, env = {} } = {}) {
+  const { consumer, origin } = consumerHolding(settings, files);
+  const dir = temporaryDirectory('rigger-once-maker-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
+  const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (chunk) => { out += chunk; });
+  child.stderr.on('data', (chunk) => { err += chunk; });
+  const ran = onceEvent(child, 'close').then(([code]) => ({ code, out, err }));
+  return { consumer, origin, fake, ran };
+}
+
+/** The line `once` prints for card `number` claimed from the consumer's board, with `outcome` and the workspace at its end. */
+const makerLine = (consumer, number, outcome) => `rigger once: claimed #${number} from board ${PROJECT}; ${outcome}, in its workspace, ${join(dirname(realpathSync(consumer)), 'widgets-worktrees', `rigger-${number}`)}`;
+
+test('given once over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, once prints one line for the card in the verbs\' form, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent();
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  assert.deepEqual(err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
+});
+
+// proves R-WORK-6
+test('given once where the stand-in maker exits 0 and opens a pull request on the fake forge, the card ends in Review, once prints that it is in review naming the pull request, and exits 0', SETTLES_WITHIN, async (t) => {
+  // The kind's only judge is the owner, so no later card's judges reach this card.
+  const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings });
+
+  const { code, out, err } = await ran;
+
+  assert.equal(code, 0, err);
+  const columns = Object.fromEntries((await (await fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
+  assert.deepEqual(columns, { 10: 'Review' });
+  assert.deepEqual(out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')]);
+});
+
+test('given a stand-in that opens a pull request, the world\'s local origin holds the pull request\'s head SHA afterwards', SETTLES_WITHIN, async (t) => {
+  const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { origin, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings });
+
+  await ran;
+
+  const view = spawnSync(fake.gh, ['pr', 'view', '11', '--json', 'headRefOid'], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(view.status, 0, view.stderr);
+  const { headRefOid } = JSON.parse(view.stdout);
+  assert.match(headRefOid, /^[0-9a-f]{40}$/);
+  assert.doesNotThrow(() => gitIn(origin, 'cat-file', '-e', headRefOid));
+});
+
+test('given once where the maker exits non-zero, once exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { exit: 4 } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  assert.deepEqual(err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(consumer, 10, 'its maker exited 4')]);
+});
+
+test('given once where the maker does not start, once exits non-zero, and prints the card and why', SETTLES_WITHIN, async (t) => {
+  // A settings file the Claude Code adapter cannot read, committed so the workspace holds it.
+  const agent = standInAgent();
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { files: { '.claude/settings.json': 'not json' } });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const lines = err.split('\n').filter((line) => /#10\b/.test(line));
+  assert.equal(lines.length, 1, err);
+  assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
+  assert.deepEqual(agent.runs(), []);
+});
+
+// proves R-WORK-2
+test('while a card\'s maker runs, the fake board\'s write record shows no move of that card by anything but L2, and the stand-in\'s run writes nothing to the board', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { hold: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  await until(() => agent.held(10), t);
+  const writesHeld = (await fake.model()).writes();
+  const sentHeld = fake.sent().length;
+  const transitions = eventsOf({ consumer }).filter((event) => event.layer === 'L2' && event.event === 'transition');
+  agent.release(10);
+  await ran;
+
+  assert.deepEqual(writesHeld.map(({ operation, args: [, column] }) => ({ operation, column })), [{ operation: 'moveItem', column: 'Coding' }]);
+  assert.deepEqual(transitions.map(({ card: number, from, to }) => ({ card: number, from, to })), [{ card: 10, from: 'ready', to: 'coding' }]);
+  const run = agent.runs()[0];
+  const during = fake.sent().slice(sentHeld);
+  assert.deepEqual(during.filter((args) => args.join(' ').includes('mutation')), [], `the stand-in's run (pid ${run.pid}) sent a write`);
+  assert.deepEqual((await fake.model()).writes(), writesHeld, 'a move was written after the maker ran');
+});
+
+test('once hands loop the process\'s own environment, which reaches the maker, as a variable set only in the bin\'s environment shows', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent();
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { env: { RIGGER_STAND_IN_MARK: 'from-the-bin' } });
+
+  await ran;
+
+  assert.deepEqual(agent.runs().map((run) => run.env), [{ RIGGER_STAND_IN_MARK: 'from-the-bin' }]);
+});
+
+/** Every module under src/cli/, by its path from the repository's root. */
+const cliModules = () => readdirSync(join(root, 'src', 'cli')).filter((name) => name.endsWith('.mjs')).map((name) => join('src', 'cli', name));
+
+test('no verb hands loop a maker: every loop built under src/cli/ takes no dispatch option', () => {
+  const built = [];
+  const visit = (node, file) => {
+    if (node === null || typeof node !== 'object') return;
+    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'loop') {
+      const [options] = node.arguments;
+      assert.equal(options?.type, 'ObjectExpression', `${file}: loop is handed something other than an object literal`);
+      built.push({ file, keys: options.properties.map((property) => property.key?.name ?? property.type) });
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach((each) => visit(each, file));
+      else if (value && typeof value.type === 'string') visit(value, file);
+    }
+  };
+  for (const file of cliModules()) visit(parse(readFileSync(join(root, file), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' }), file);
+
+  assert.ok(built.length > 0, 'no loop is built under src/cli/');
+  assert.deepEqual(built.filter(({ keys }) => keys.includes('dispatch') || keys.includes('SpreadElement')), []);
+});
+
+test('no source file under src/ prints that no maker runs before M4', () => {
+  const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? files(join(dir, entry.name)) : [join(dir, entry.name)]));
+  const saying = files(join(root, 'src')).filter((file) => readFileSync(file, 'utf8').includes('no maker runs before M4'));
+
+  assert.deepEqual(saying, []);
 });

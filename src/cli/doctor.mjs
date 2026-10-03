@@ -2,7 +2,7 @@
 // at a time, and the source tree it refuses to run against.
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, dirname } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
@@ -91,11 +91,12 @@ export const real = (dir) => {
  * with the same characters as a child: this repository's worktrees live in `rigger-worktrees/`
  * beside the `rigger/` checkout, and `'rigger-worktrees/card-34'.startsWith('rigger')` is true.
  * A worktree is where a dispatched maker works, so a check that refused one would refuse every
- * card this engine is built by.
+ * card this engine is built by. Only a first step of `..` itself leaves `outer`: a child whose
+ * name begins with two dots, such as `..worktrees`, is inside it.
  */
-function within(outer, inner) {
+export function within(outer, inner) {
   const step = relative(outer, inner);
-  return step === '' || (!step.startsWith('..') && !isAbsolute(step));
+  return step === '' || (step !== '..' && !step.startsWith(`..${sep}`) && !isAbsolute(step));
 }
 
 /**

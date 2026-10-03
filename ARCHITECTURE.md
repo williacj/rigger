@@ -222,13 +222,13 @@ A provider adapter is the one place Rigger holds a fact about its agent CLI. Tha
 `doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
 which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
 command line, standard input and environment. A variable the adapter sets holds a path under the
-dispatch's directory, and is never one that L1 removes. L1 runs that command line as it runs a
-step's. The adapter passes the CLI no setting that widens what the consumer's own provider
-settings allow, with one exception. A directory a dispatch reaches is one Rigger gives the dispatch
-beside the directory it runs in, and today that is only a judge's `head`. For each such directory,
-the adapter lets the agent read and edit there and change into it. Changing into it is entry, and
-allows no command. Every command run there still needs a rule the consumer's settings declare, and
-the consumer's deny rules still apply there.
+dispatch's directory or its scratch directory, and is never one that L1 removes. L1 runs that
+command line as it runs a step's. The adapter passes the CLI no setting that widens what the
+consumer's own provider settings allow, with one exception. A directory a dispatch reaches is one
+Rigger gives the dispatch beside the directory it runs in, and today that is only a judge's `head`.
+For each such directory, the adapter lets the agent read and edit there and change into it. Changing
+into it is entry, and allows no command. Every command run there still needs a rule the consumer's
+settings declare, and the consumer's deny rules still apply there.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -367,18 +367,21 @@ and settles. A process the kill ended that no read before it found is recorded a
 group, as when L0 cannot read the table.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
-card's maker and its provisioning steps run one at a time in the card's workspace. Each judge
-runs in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes
-fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it also kills every
-process of Rigger's own user whose working directory is that directory or lies under it. L0
-records each as it records a survivor. Where such a process is one L0 may not signal, or outlives
-that kill for the longer bound above, L0 records it by name and command line as a process it could
-not end, and waits on it no further. Where L0 cannot read which processes work there, it records
-the directory and why in their place, and waits on them no further. L1 hands L0 that directory and
-records it in the dispatch's entry. A later start does the same only where the directory at that
-path is still the one recorded. Where it is not, or L0 cannot tell, the start sweeps nothing there
-and records why. A command that is not a dispatch has no such directory, and its group remains its
-whole containment.
+card's maker and its provisioning steps run one at a time in the card's workspace. Each judge runs
+in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes fresh
+before L3 dispatches that judge. Each role's dispatch also has a scratch directory,
+`scratch/<topic>/<role>` under the worktree root and outside every worktree, which L1 makes fresh
+before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that belongs in
+no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's own user
+whose working directory is the dispatch's directory, or its scratch directory where it has one, or
+lies under either. L0 records each as it records a survivor. Where such a process is one L0 may not
+signal, or outlives that kill for the longer bound above, L0 records it by name and command line as
+a process it could not end, and waits on it no further. Where L0 cannot read which processes work in
+one of them, it records that directory and why in their place, and waits on them no further. L1
+hands L0 each of them and records it in the dispatch's entry. A later start does the same for each
+only where the directory at its path is still the one recorded. Where it is not, or L0 cannot tell,
+the start sweeps nothing there and records why. A command that is not a dispatch has no such
+directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds

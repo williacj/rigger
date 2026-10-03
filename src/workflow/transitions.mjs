@@ -19,6 +19,13 @@ const CHANGES = {
 };
 
 /**
+ * The `code` of the failure `settled` rejects with where a maker exited 0 and L2 left the card in
+ * coding for what the forge holds, so its caller tells it from a refused event or a failed read
+ * without reading the message. The failure carries the facts L2 read as `facts`.
+ */
+export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
+
+/**
  * L2's column changes on the board `config` names, each recorded through `sink`. `items` is the
  * forge adapter's item-write side for that board, whose move L2 hands an `L0` emitter it opens
  * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
@@ -78,11 +85,12 @@ export function columnChanges({
 
   /**
    * Leaves `card` in coding after a maker exited 0, because `why`: records a `review.withheld`
-   * event under the card saying why, and tells its caller the card and why.
+   * event under the card saying why, and tells its caller the card and why, with the `facts` L2
+   * read, as a `REVIEW_WITHHELD` failure.
    */
-  const withheld = (card, why) => {
+  const withheld = (card, why, facts) => {
     note(card, 'review.withheld', { reason: why });
-    throw new Error(`card #${card.number} stays in coding: ${why}`);
+    throw Object.assign(new Error(`card #${card.number} stays in coding: ${why}`), { code: REVIEW_WITHHELD, facts });
   };
 
   return {
@@ -114,7 +122,7 @@ export function columnChanges({
      * work: with exactly one open, the card moves to review (`R-WORK-18`), and L2 answers the
      * facts it read, `{ line, open, merged }`, to its caller; L3's handing them on unread is
      * #488's (the architect's ruling 3, AQ4). With none open, or more than one, the card stays in coding, and L2 records why and
-     * tells its caller the card and why. A read that fails leaves it in coding too, and its
+     * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
     settled: async (card, outcome) => {
@@ -129,8 +137,8 @@ export function columnChanges({
       if (exit !== 0) return undefined;
       const facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), pullRequests);
       const { line, open } = facts;
-      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`);
-      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`);
+      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts);
+      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts);
       await change(card, 'returned');
       return facts;
     },
