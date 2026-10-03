@@ -22,9 +22,9 @@ import { runCommand } from '../process.mjs';
  * network key. `--add-dir` names a writable root, which only a `workspace-write` sandbox the
  * declaration chose honours (#519's x3 to x5).
  *
- * Where `codex`'s answer can differ from what this module expects (`D16` rule 3), measured on this
- * host with codex-cli 0.159.2 by #473's report, #519's report and #489's gated live run
- * (`test/provider-codex-live.test.mjs`):
+ * Where `codex`'s answer can differ from what this module expects (`D16` rule 3), measured with
+ * codex-cli 0.159.2 by #473's report and #519's report. The gated live run,
+ * `test/provider-codex-live.test.mjs`, measures the two facts below marked not yet measured.
  *
  * - **The home.** `CODEX_HOME` names the directory Codex reads its `config.toml`, its
  *   credentials and its bundled skills from, and writes its rollouts under (r1-x16). A version
@@ -34,9 +34,10 @@ import { runCommand } from '../process.mjs';
  *   `config.toml` is read with no trust (r1-x16), so the declaration is copied there. A version
  *   that stops loading MCP servers or instructions from it breaks the route (ruling 18).
  * - **The credentials.** The home's `auth.json` is a symbolic link to the owner's. Codex's own
- *   credential write went through such a link (r1-login-through-link), and #489's live run shows a
- *   token refresh doing so. A version whose refresh replaces the link with a file leaves a copy
- *   of the credentials in the scratch directory (`R-SAFE-1`).
+ *   credential write went through such a link (r1-login-through-link). Whether a token refresh
+ *   does too is not yet measured; the gated live run observes it. A version whose refresh
+ *   replaces the link with a file leaves a copy of the credentials in the scratch directory
+ *   (`R-SAFE-1`).
  * - **Plugins, apps and the host's browser and desktop.** `--disable plugins` withheld every
  *   plugin, the owner's computer-use server among them (r1-x44); `--disable apps` withheld
  *   `request_plugin_install` (x41). `HOST_FEATURES` is the list of features #473 found reaching the
@@ -198,9 +199,9 @@ function skillsIn(answer) {
  * redirecting variables, for at most `timeout` milliseconds, with every kill recorded through
  * `emitter`.
  *
- * `prompt-input` is an undocumented debugging command. #489's live run measured its list against
- * the `host_skills` a session's rollout recorded under the same home, with codex-cli 0.159.2, and
- * the pull request quotes both. A Codex release that drops the command or changes its answer, or a
+ * `prompt-input` is an undocumented debugging command. Its agreement with the `host_skills` a
+ * session's rollout records under the same home is not yet measured; the gated live run compares
+ * the two with the version it names. A Codex release that drops the command or changes its answer, or a
  * documented switch that turns off the user's and the bundled skill roots, replaces the probe.
  */
 async function probed({ directory, home, emitter, timeout }) {
