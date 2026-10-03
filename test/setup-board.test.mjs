@@ -175,6 +175,15 @@ test('given a config with no epicLabel key, against a repository holding no labe
   assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED].sort());
 });
 
+test("given a config whose role's labels names tier:high, against a repository lacking it, setup-board creates the label tier:high and makes no other write", async () => {
+  const engineer = { ...CONFIG.roles.engineer, labels: { 'tier:high': 'high' } };
+  const { ran, writes, model } = await setUp(COMPLETE, { ...CONFIG, roles: { ...CONFIG.roles, engineer } });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes, [{ operation: 'createLabel', args: ['tier:high'] }]);
+  assert.ok((await held(model)).labels.includes('tier:high'), 'the fake repository holds no tier:high afterwards');
+});
+
 /**
  * Whether two label names differ only in letter case. Written with `toLowerCase`, independently of
  * the code under test, and every name compared here is ASCII (#301's scope).
