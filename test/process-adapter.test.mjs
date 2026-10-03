@@ -1231,7 +1231,7 @@ function chain(directory, depth) {
   return fixture(directory, 'command', `/usr/bin/perl "$here/chain" "$here" ${depth} &\nwhile [ ! -f "$here/ready" ]; do :; done`);
 }
 
-test('a kill whose reads of the group after the kill never answer still records the survivor the reads before it named, and settles', SETTLES_WITHIN, async (t) => {
+test('a kill whose reads of the group after the kill never answer still records the survivor the reads before it named, records the kill of the group in place of what those reads could not list, and settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // The stand-in answers every read of the census, which begin `-ww`, and the first of the group's
   // states alone, the read just before the kill, and none after it, which mark `after`. It is
@@ -1250,7 +1250,11 @@ test('a kill whose reads of the group after the kill never answer still records 
 
   assert.equal(existsSync(join(directory, 'before')), true, 'the kill was never read before, so the test proves nothing');
   assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
-  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }]);
+  // A read after the kill is made only where the group is still occupied at its first look, and
+  // that one never answers, so the kill of the group is recorded in place of what it could not list.
+  const after = existsSync(join(directory, 'after'));
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')) }, ...(after ? [{ event: 'group.killed', pid: undefined }] : [])]);
+  if (after) assert.match(events[1].census, /after its kill failed/);
 });
 
 /**

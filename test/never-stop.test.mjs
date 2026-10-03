@@ -723,3 +723,52 @@ test('on the exit cleanup, a member no read before the kill listed, which the ki
   assert.ok(processState(two).startsWith('Z'), `the joiner is not a zombie, so the test proves nothing: ${processState(two)}`);
   assertJoinerRecorded(events);
 });
+
+/** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on fails each as `ps` fails. */
+const failingAfterKill = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+
+/** Asserts `events` record the kill of the group in place of what reads after the kill could not list. */
+function assertUnreadAfterKill(events) {
+  const kills = events.filter(({ event }) => event === 'group.killed');
+  assert.equal(kills.length, 1, `the group's kill was not recorded once: ${JSON.stringify(events)}`);
+  assert.match(kills[0].census, /after its kill failed/);
+  assert.match(kills[0].census, /ps: failing on purpose/);
+}
+
+// proves R-STATE-19, R-STATE-12
+test('on the call\'s containment, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
+  const signals = standIn(directory);
+
+  const { events } = await called(directory, { command, ps: failingAfterKill(directory), kill: markingKill(directory, signals) });
+
+  assert.ok(processState(pidIn(directory, 'two')).startsWith('Z'), 'the group did not stay occupied after the kill, so no read after it was made and the test proves nothing');
+  assertUnreadAfterKill(events);
+});
+
+// proves R-STATE-19, R-STATE-10
+test('on a start\'s kill of a recorded group, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  spawn('/usr/bin/perl', [zombieJoiner(directory), directory, String(started.group)], { stdio: 'ignore' });
+  await until(() => existsSync(join(directory, 'two.pid')), t);
+  const signals = standIn(directory);
+
+  const { events } = await startKilled(started, { ps: failingAfterKill(directory), kill: markingKill(directory, signals) });
+
+  assert.ok(processState(pidIn(directory, 'two')).startsWith('Z'), 'the group did not stay occupied after the kill, so no read after it was made and the test proves nothing');
+  assertUnreadAfterKill(events);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('on the exit cleanup, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+  failingAfterKill(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group' });
+
+  assert.equal(status, 0);
+  assertUnreadAfterKill(events);
+});
