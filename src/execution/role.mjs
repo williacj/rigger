@@ -1,0 +1,126 @@
+// ABOUTME: L1's role runner: what L1's dispatching function is handed to run one role's agent CLI,
+// asked of the provider adapter L2's role answer names.
+
+import { createHash } from 'node:crypto';
+import { lstatSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+
+import { within } from './run.mjs';
+import { gitEnvironment } from '../substrate/git-environment.mjs';
+import { NOT_STARTED } from '../substrate/process.mjs';
+import { ADAPTERS } from '../substrate/providers/adapters.mjs';
+
+/**
+ * What L1's `dispatch` is handed to run `answer`, L2's role answer (the architect's ruling 1, Q1
+ * and Q4, on #467): the command, arguments and standard input the provider adapter answers, `cwd`
+ * as the agent CLI's working directory, `directory` as the dispatch's directory, which `dispatch`
+ * takes as its `workspace`, the environment, and the answer's `timeout`. It also answers the
+ * answer's `facts` and a digest of its `evidence`, which `dispatch.start` records. The caller adds
+ * the dispatch's id, card, state directory and sink, and runs it once this has answered (ruling 5).
+ *
+ * L3 hands the directories beside L2's answer, which names none (ruling 3, P8): for a judge, `cwd`
+ * is `main` and `directory` the judge's directory, and they differ. `reach` goes to the adapter
+ * unchanged. The adapter is the module `adapters`, L0's map unless a test gives one, holds under
+ * the answer's `provider`. It is handed the agent file joined under `cwd` as an absolute path, the
+ * answer's `tier`, the prompt as `instruction` then `evidence`, and an L0 emitter under dispatch
+ * `id` and `card`, through `sink`, for any process it runs (ruling 5).
+ *
+ * The environment is built in four steps (ruling 9): `env`, as L3 hands it; less every variable
+ * that redirects git (`gitEnvironment`); less the variables the adapter's `unset` names; and then
+ * the adapter's `env`, set over what is left. The digest is SHA-256 over `evidence` alone, so two
+ * judges handed the same evidence record the same one whatever their instructions, and the
+ * evidence itself reaches no event.
+ *
+ * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
+ * `dispatch.start` for it: a provider the map does not hold, naming it; an `invocation` that
+ * rejects, naming its reason; and a variable the adapter may not set (`unsettable`), naming it.
+ */
+export async function roleDispatch({ answer, cwd, directory, reach, env, sink, id, card, adapters = ADAPTERS }) {
+  const { provider } = answer;
+  if (!Object.hasOwn(adapters, provider)) throw unstarted(`L0 holds no provider adapter named ${JSON.stringify(provider)}, which role ${answer.role} names`);
+  let invoked;
+  try {
+    invoked = await adapters[provider].invocation({
+      agent: resolve(join(cwd, answer.agent)),
+      tier: answer.tier,
+      prompt: `${answer.instruction}${answer.evidence}`,
+      directory: cwd,
+      reach,
+      emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
+    });
+  } catch (cause) {
+    throw unstarted(`the ${provider} adapter answered no invocation for role ${answer.role}: ${cause.message}`, cause);
+  }
+  const { command, args, input, unset, env: set } = invoked;
+  for (const [key, value] of Object.entries(set)) {
+    const why = unsettable(key, value, unset, directory);
+    if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key}, which ${why}`);
+  }
+  const environment = gitEnvironment(env);
+  for (const name of unset) delete environment[name];
+  Object.assign(environment, set);
+  const digest = createHash('sha256').update(answer.evidence, 'utf8').digest('hex');
+  return { command, args, input, cwd, workspace: directory, env: environment, timeout: answer.timeout, facts: answer.facts, digest };
+}
+
+/**
+ * The failure of a role's dispatch that never started, which L3 hands L2 as the environment's
+ * failure (the architect's ruling 5 on #467). L1 recorded no `dispatch.start` for it.
+ */
+const unstarted = (reason, cause) => Object.assign(new Error(`the role's dispatch did not start: ${reason}`, { cause }), { code: NOT_STARTED });
+
+/**
+ * Why an adapter may not set `key` to `value` for a dispatch whose directory is `directory`, or
+ * nothing where it may (the architect's ruling 9 on #467). A key L1 removes would undo the removal:
+ * one `gitEnvironment` removes, for #151, or one the adapter's own `unset` names, for the
+ * measurement behind it. A value must be an absolute path whose real path is `directory` or lies
+ * under it, compared as `escapes` in L1's dispatching function compares a step's working directory,
+ * so whatever the agent writes there stays within the census's reach and workspace removal. A path
+ * that does not exist yet resolves through its nearest existing parent (`realOnDisk`). A path that
+ * cannot be resolved is refused. The reason never holds the value, which an adapter that set a
+ * credential by mistake would carry to whoever records the failure.
+ */
+function unsettable(key, value, unset, directory) {
+  if (Object.keys(gitEnvironment({ [key]: '' })).length === 0) return 'is a variable that redirects git, which L1 removes';
+  if (unset.includes(key)) return 'is a variable the same adapter says its CLI must not inherit';
+  if (typeof value !== 'string' || !isAbsolute(value)) return 'is set to no absolute path';
+  let real;
+  let root;
+  try {
+    real = realOnDisk(value);
+    root = realpathSync.native(directory);
+  } catch (cause) {
+    return `is set to a path that cannot be resolved (${cause.code ?? 'unreadable'})`;
+  }
+  return within(real, root) ? undefined : `is set to a path whose real path lies outside the dispatch's directory ${root}`;
+}
+
+/**
+ * The real path of the absolute path `path`, which need not exist, read one segment at a time
+ * from the root as the file system reads it. A segment that exists is resolved, a symbolic link
+ * included, before the next is read; one that does not is taken as written, and so is everything
+ * under it. `..` goes up from the real path reached so far, never from the path as written, so
+ * `missing/../link` resolves `link`, and `link/..` is the parent of where `link` points. Anything
+ * but an absent segment, such as a link that cannot be resolved, throws, so it is refused rather
+ * than taken for absent.
+ */
+function realOnDisk(path) {
+  let real = sep;
+  for (const segment of path.split(sep)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      real = dirname(real);
+      continue;
+    }
+    const next = join(real, segment);
+    try {
+      lstatSync(next);
+    } catch (failure) {
+      if (failure.code !== 'ENOENT') throw failure;
+      real = next;
+      continue;
+    }
+    real = realpathSync.native(next);
+  }
+  return real;
+}
