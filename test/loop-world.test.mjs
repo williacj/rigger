@@ -20,15 +20,18 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 // here rather than holding the suite.
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
-/** Settles on how many milliseconds `promise` took to reject, with its failure. */
-async function rejection(promise) {
+/**
+ * Settles on how many milliseconds the promise `waiting()` answers took to reject, with its
+ * failure. The clock is read before `waiting` is called, so the wait's own clock starts no earlier.
+ */
+async function rejection(waiting) {
   const began = performance.now();
-  const failure = await promise.then(() => assert.fail('the wait settled'), (thrown) => thrown);
+  const failure = await waiting().then(() => assert.fail('the wait settled'), (thrown) => thrown);
   return { took: performance.now() - began, failure };
 }
 
 test('a wait on a condition that never holds, in a test that takes no bound, rejects once 5,000 ms has passed, naming the condition and its bound', async () => {
-  const { took, failure } = await rejection(waitFor(() => 'the board' === 'empty'));
+  const { took, failure } = await rejection(() => waitFor(() => 'the board' === 'empty'));
 
   assert.match(failure.message, /'the board' === 'empty'/);
   assert.match(failure.message, /\b5000 ms\b/);
@@ -39,7 +42,7 @@ test('drive\'s wait on a run that never settles rejects once 5,000 ms has passed
   // Card 1's workspace is never answered, so its claim is never held at a stand-in.
   const built = world({ cards: [1], concurrency: 1, workspace: () => new Promise(() => {}) });
 
-  const { took, failure } = await rejection(drive(built));
+  const { took, failure } = await rejection(() => drive(built));
 
   assert.match(failure.message, /settles\(\)/);
   assert.match(failure.message, /\b5000 ms\b/);
@@ -51,7 +54,7 @@ test('stoppedRun\'s wait on makers that never hold rejects once 5,000 ms has pas
   const scratch = temporaryDirectory('rigger-loop-world-');
   writeFileSync(join(scratch, 'workspaces'), '');
 
-  const { took, failure } = await rejection(stoppedRun({ scratch }));
+  const { took, failure } = await rejection(() => stoppedRun({ scratch }));
 
   assert.match(failure.message, /held\(\) === 2/);
   assert.match(failure.message, /\b5000 ms\b/);
