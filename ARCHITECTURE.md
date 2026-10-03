@@ -373,10 +373,12 @@ fresh before L3 dispatches that judge. After L0 kills a dispatch's group, it als
 process of Rigger's own user whose working directory is that directory or lies under it. L0
 records each as it records a survivor. Where such a process is one L0 may not signal, or outlives
 that kill for the longer bound above, L0 records it by name and command line as a process it could
-not end, and waits on it no further. L1 hands L0 that directory and records it in the dispatch's
-entry. A later start does the same only where the directory at that path is still the one recorded.
-Where it is not, or L0 cannot tell, the start sweeps nothing there and records why. A command that
-is not a dispatch has no such directory, and its group remains its whole containment.
+not end, and waits on it no further. Where L0 cannot read which processes work there, it records
+the directory and why in their place, and waits on them no further. L1 hands L0 that directory and
+records it in the dispatch's entry. A later start does the same only where the directory at that
+path is still the one recorded. Where it is not, or L0 cannot tell, the start sweeps nothing there
+and records why. A command that is not a dispatch has no such directory, and its group remains its
+whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
