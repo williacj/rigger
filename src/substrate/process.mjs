@@ -687,9 +687,10 @@ function* census(group, kill, deadline) {
   let took = 0;
   for (let pause = 0; ; pause = earned()) {
     // A round's pauses are waited out together after it, so its reads stay close together. Where
-    // the time left holds another round as long as the last, the pause is cut to leave it twice
-    // that where it can, and at once where it cannot. Otherwise the census waits out `deadline`
-    // and keeps the last round, though a timer can end a moment early.
+    // the time left holds another round as long as the last, the pause is cut to leave twice that
+    // where it can, and skipped where it cannot, and the census reads again. Otherwise it waits out
+    // its pause, never past `deadline`, and keeps the last round, though a timer can end a moment
+    // early.
     const left = deadline - Date.now();
     const again = left >= took;
     const until = Math.min(pause, again ? left - 2 * took : left);
