@@ -371,6 +371,7 @@ function answers(target, kill = SIGNAL) {
  */
 async function ended(group, { ps, readTimeout, kill }, bound) {
   const since = Date.now();
+  const refused = new Set();
   let unreapedSince;
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
@@ -381,7 +382,7 @@ async function ended(group, { ps, readTimeout, kill }, bound) {
     const live = await livingIn(group, ps, readTimeout);
     if (live.length > 0) {
       unreapedSince = undefined;
-      const stuck = unended(live, kill, Date.now() - since >= bound, bound);
+      const stuck = unended(live, kill, Date.now() - since >= bound, bound, refused);
       if (stuck !== undefined) return stuck;
     } else {
       unreapedSince ??= looked;
@@ -392,13 +393,26 @@ async function ended(group, { ps, readTimeout, kill }, bound) {
 
 /**
  * Each of `live`, the members a look found alive, by pid and why L0 could not end it, where L0 is
- * done waiting on them: where every one answers `EPERM` to signal 0 through `kill`, or where `late`
- * says `bound` has passed. Nothing where it waits on.
+ * done waiting on them: where every one answers `EPERM` to signal 0 through `kill` on this look and
+ * on the look before it, which `refused` holds and this updates, or where `late` says `bound` has
+ * passed. Nothing where it waits on.
+ *
+ * One answer of `EPERM` is not enough (`D16` rule 3). The kernel answers signal 0 to a group with
+ * `EPERM` while its members are exiting (`occupied`), and a member being killed can answer so for
+ * a moment too: taking one such answer for good had the exit cleanup record a killed command as
+ * having exited 0, in macOS CI's Node 20 job on #553, which the suite's stand-in forces. Not seen on
+ * this host: 1,000 groups of two killed at once, each pid asked signal 0 at once, answered `EPERM`
+ * none of the times, with Node 26.5.0 on macOS 27.0 on 2026-10-03. So a member counts as one L0 may not signal only once two looks in a row have found it so, with
+ * L0's kill sent between them. A process that answers `EPERM` for a moment on each of two looks in
+ * a row is taken as refused all the same.
  */
-function unended(live, kill, late, bound) {
-  const refused = new Set(live.filter((pid) => forbidden(pid, kill)));
-  if (refused.size < live.length && !late) return undefined;
-  return live.map((pid) => ({ pid, reason: refused.has(pid) ? 'EPERM' : `still alive ${bound} ms after L0's first kill` }));
+function unended(live, kill, late, bound, refused) {
+  const now = new Set(live.filter((pid) => forbidden(pid, kill)));
+  const lasting = live.every((pid) => now.has(pid) && refused.has(pid));
+  refused.clear();
+  for (const pid of now) refused.add(pid);
+  if (!lasting && !late) return undefined;
+  return live.map((pid) => ({ pid, reason: now.has(pid) ? 'EPERM' : `still alive ${bound} ms after L0's first kill` }));
 }
 
 /** Whether signal 0 sent through `kill` to `pid` answers `EPERM`: L0 may not signal it. */
@@ -940,8 +954,11 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
   const known = new Map((named ?? []).map((member) => [member.pid, member]));
   const unended = stuck.map(({ pid, reason }) => ({ ...known.get(pid), pid, reason }));
   // A leader the read before the kill found alive was ended by the cleanup's kill, where no later
-  // read could tell, unless it exited on its own between that read and the kill (`contain`).
-  const alive = named?.some(({ pid }) => pid === group) ?? false;
+  // read could tell, unless it exited on its own between that read and the kill (`contain`), or the
+  // kill could not end it, which the cleanup hands the caller's step as why its ending is unread.
+  const leaderUnended = stuck.find(({ pid }) => pid === group);
+  if (leaderUnended !== undefined) unread = `the exit cleanup could not end the command: ${leaderUnended.reason}`;
+  const alive = leaderUnended === undefined && (named?.some(({ pid }) => pid === group) ?? false);
   return { kills: killsOf(group, { named, unnamed, left, unended }, 'survivor.killed'), leader, unread, alive };
 }
 
@@ -971,6 +988,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
 function* emptied(group, seen, kill, bound) {
   // What the last read after a kill found: the leader's wait status, and each member alive.
   let last;
+  const refused = new Set();
   for (let sent = !seen.first; ; sent = true) {
     if (sent) {
       signal(group, 'SIGKILL', kill);
@@ -988,11 +1006,12 @@ function* emptied(group, seen, kill, bound) {
     }
     const living = [...states].filter(([, state]) => live(state)).map(([pid]) => pid);
     if (living.some((pid) => !seen.named.has(pid))) seen.live = true;
-    const leader = states.get(group)?.split(/\s+/)[1];
+    // A wait status is the leader's own only once it has exited: a live process's reads 0.
+    const leader = living.includes(group) ? undefined : states.get(group)?.split(/\s+/)[1];
     if (living.length === 0 && sent) return { leader, stuck: [] };
     if (!sent) continue;
     last = { leader, living };
-    const stuck = unended(living, kill, false, bound);
+    const stuck = unended(living, kill, false, bound, refused);
     if (stuck !== undefined) return { leader, stuck };
   }
 }

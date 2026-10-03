@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants } from 'node:os';
 import { join } from 'node:path';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
@@ -64,14 +65,15 @@ const failing = (directory) => warmed(fixture(directory, 'ps', 'case "$*" in *ls
 
 /**
  * A signal call for a test in `directory`: `signalStandIn`'s, with the pid `$here/<refused>.pid`
- * names refused and the one `$here/<unkept>.pid` names unkept, each once it is there, the time of
+ * names refused, the one `$here/<unkept>.pid` names unkept, and the one `$here/<flickers>.pid` names
+ * flickering, each once it is there, the time of
  * its first kill of a group in `first.at`, and `killedAt(target)`, when it first sent `target` the
  * kill, or nothing where it never did.
  */
-function standIn(directory, { refused, unkept, pairs = [] } = {}) {
+function standIn(directory, { refused, unkept, flickers, pairs = [] } = {}) {
   const first = {};
   const kills = new Map();
-  const kill = signalStandIn({ pairs, refused: () => refused && pidIn(directory, refused), unkept: () => unkept && pidIn(directory, unkept) });
+  const kill = signalStandIn({ pairs, refused: () => refused && pidIn(directory, refused), unkept: () => unkept && pidIn(directory, unkept), flickers: () => flickers && pidIn(directory, flickers) });
   return {
     pairs,
     first,
@@ -111,7 +113,9 @@ async function startKilled(started, options) {
  * signal call refusing `refused` and leaving `unkept`, as `standIn` does. It appends each `L0`
  * event, and each signal sent, to `events` and `pairs` as lines of JSON. Where `hangAfter` names a
  * pid file, or `group` for `group.pid`'s group, it marks `hang` as it first sends that target the
- * kill, so that `hanging`'s reads hang from then on. It waits until the command
+ * kill, so that `hanging`'s reads hang from then on. `flickers` names a pid file whose pid
+ * flickers, as `signalStandIn` has it. The step it hands the adapter for the exit writes how the
+ * command ended to `ending` as JSON. It waits until the command
  * marks `up`, then exits 0 while the call is still running, so its exit cleanup ends the group.
  */
 const CALLER = [
@@ -122,11 +126,12 @@ const CALLER = [
   'const here = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
   "const pidIn = (name) => (name && existsSync(join(here, `${name}.pid`)) ? Number(readFileSync(join(here, `${name}.pid`), 'utf8')) : undefined);",
-  'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept) });',
+  'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept), flickers: () => pidIn(options.flickers) });',
   "const hangs = () => (options.hangAfter === 'group' ? -pidIn('group') : pidIn(options.hangAfter));",
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) appendFileSync(join(here, 'hang'), ''); return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`) };",
-  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps) });",
+  "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
+  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "appendFileSync(join(here, 'exiting'), String(Date.now()));",
   'process.exit(0);',
@@ -545,4 +550,35 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.ok(!processState(outside).startsWith('T'), `the census left the outside process stopped: ${processState(outside)}`);
   const killed = killedIn(pairs, outside);
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
+});
+
+// proves R-STATE-12, R-STATE-19
+test('given a member that answers signal 0 with EPERM once, as it is being killed, the call records it as killed, not as a process it could not end', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const signals = standIn(directory, { flickers: 'one' });
+
+  const { events } = await called(directory, { command: leavingTwo(directory), kill: signals.kill });
+
+  const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.ok(signals.pairs.filter(([target, name]) => target === one && name === 0).length > 0, 'the call never asked signal 0 of the flickering member, so the test proves nothing');
+  assert.deepEqual([one, two].map(alive), [false, false]);
+  assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })).sort((a, b) => a.pid - b.pid), [
+    { event: 'survivor.killed', pid: one },
+    { event: 'survivor.killed', pid: two },
+  ].sort((a, b) => a.pid - b.pid));
+});
+
+// proves R-STATE-9, R-STATE-15, R-STATE-19
+test('given a command whose leader answers signal 0 with EPERM once, as the exit cleanup kills it, the cleanup hands its step the killed command\'s exit code and records no process it could not end', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+
+  const { status, events, pairs } = await cleanedUp(directory, { flickers: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0);
+  assert.ok(pairs.filter(([target, name]) => target === group && name === 0).length > 0, 'the cleanup never asked signal 0 of the leader, so the test proves nothing');
+  assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
+  assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
+  assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
 });
