@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
@@ -55,7 +56,16 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
  * - `forever`: never exits, until it is killed;
+ * - `leave`: starts `/usr/bin/tail -f` on `left-<card>` beside itself, in a process group of its
+ *   own and holding the run's output open, and leaves it running when it exits. L0 then reads the
+ *   run's output for its bound once the group is empty, and its census kills the process, which
+ *   works in the run's directory, once that bound has passed;
  * - `exit`: the code it exits with, 0 where none is given.
+ *
+ * A plan may also hold, under the card `*`, `{ [role]: { exec } }`, a command and its arguments
+ * for every run in that role. Such a run does none of the above: before it reads its input or
+ * records itself, it replaces itself with that command, which keeps the run's pid and so leads the
+ * run's process group, and is handed the input unread.
  *
  * It runs under the executable running this suite, by its absolute path, so a test can put it on
  * a path too narrow to hold `node`, and it asks the path for `git` and `gh` only to open a pull
@@ -106,6 +116,15 @@ export function installStandInAgent(dir, plan = {}) {
     release: (card, role = 'engineer') => process.kill(heldPid(dir, card, role), 'SIGUSR1'),
     /** Whether a run for `card` in `role` wrote its file. */
     wrote: (card, role = 'engineer') => existsSync(marker(dir, 'wrote', card, role)),
+    /** The pid of the run for `card` in `role` that holds now, or undefined where none holds. */
+    holder: (card, role = 'engineer') => {
+      try {
+        return heldPid(dir, card, role);
+      } catch (failure) {
+        if (failure.code === 'ENOENT') return undefined;
+        throw failure;
+      }
+    },
   };
 }
 
@@ -162,6 +181,8 @@ function inWorktree() {
 export async function standInMain() {
   const dir = dirname(process.argv[1]);
   const args = process.argv.slice(2);
+  const every = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))['*']?.[basename(following(args, '--append-system-prompt-file') ?? '', '.md')];
+  if (every?.exec) process.execve(every.exec[0], every.exec, process.env);
   const input = readFileSync(0, 'utf8');
   const agent = following(args, '--append-system-prompt-file');
   const role = agent === undefined ? undefined : basename(agent, '.md');
@@ -178,6 +199,10 @@ export async function standInMain() {
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
     ran('git', ['push', '-q', 'origin', branch]);
     ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
+  }
+  if (act.leave) {
+    writeFileSync(join(dir, `left-${card}`), '');
+    spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
   }
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;

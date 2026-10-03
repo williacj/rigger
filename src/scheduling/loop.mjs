@@ -17,7 +17,7 @@ const DEFAULT_CONCURRENCY = 3;
 /**
  * What the loop holds over the board `config` names: N, the claims held
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
- * it. The arguments are `loop`'s, less the dispatch.
+ * it. The arguments are `loop`'s, less those only a dispatch reads.
  *
  * `kill` is L1's kill of the process groups a dead engine left, injected. A handle is refused
  * where it is not a function, when the handle is built, because a start that could not kill has
@@ -172,11 +172,13 @@ function released(release, claim, failure) {
  * `attempt` numbering the attempt from 1. It alone names the steps L3 dispatches, and whether the
  * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). `l2`
  * is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the maker's
- * outcome alone, and answers what it read of the forge, which L3 reads nothing of. `dispatch({ card, kind })`
- * is the maker, injected, and answers its result or throws; where none is injected, L3 dispatches
- * the role L2's maker answer names through L1, as `dispatchRole` says, until #487 removes the
- * injection (the architect's ruling 3, AQ6, on #467). `environment` is the environment L3 hands
- * every dispatch it makes, each step's and the maker's (ruling 2, AQ1). `workspace(card)` is L1's
+ * outcome alone, and answers what it read of the forge, which L3 reads nothing of. The maker is
+ * always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says (the
+ * architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
+ * every dispatch it makes, each step's and the maker's (ruling 2, AQ1). `ps` and `readTimeout`
+ * stand in for L0's own process-table reader and read bound, and L3 hands both to L1 unread for
+ * every dispatch it makes, each step's and the maker's, where neither is given L0 using its own
+ * (ruling 3, AQ7). `workspace(card)` is L1's
  * workspace handle, injected, and
  * answers the attempt's workspace as `{ path }` (ruling 5, P4). `state` is the state directory
  * L1 records each step's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
@@ -202,7 +204,7 @@ function released(release, claim, failure) {
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
  */
-export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, workspace, state, environment }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, state, environment, ps, readTimeout }) {
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
   if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
   if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
@@ -229,7 +231,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
     } catch (refusal) {
       throw refused(`card #${card.number}'s step \`${step.name}\` was not started, because the event sink refused to record its start`, refusal);
     }
-    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, ...stepDispatch(step, path, environment) })]);
+    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...stepDispatch(step, path, environment) })]);
     return outcome;
   };
 
@@ -252,7 +254,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
     }
     const run = async () => {
       const handed = await roleDispatch({ answer, cwd: path, directory: path, reach: [], env: environment, sink, id, card: card.number });
-      return dispatchOnL1({ id, card: card.number, directory: state, sink, ...handed });
+      return dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
     return outcome;
@@ -269,21 +271,20 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
   };
 
   /**
-   * The attempts at `card` of kind `kind`, from `next`, L2's answer for it at the pull, under its
+   * The attempts at `card`, from `next`, L2's answer for it at the pull, under its
    * one claim. Each attempt has L1 make the workspace, then dispatches each step L2 names, one at a
    * time, handing L2 each outcome unread with the attempt's number and asking it again, until L2
    * names no step. A later attempt asks L2 for its first step once its workspace is made.
    *
-   * An answer that dispatches no step is the maker: `dispatch` where one was injected, handed
-   * `card` and `kind`, whose outcome L2's column changes settle; where none was, the role the
-   * answer's `maker` names, dispatched through L1 as `dispatchRole` says. That outcome is handed to
+   * An answer that dispatches no step is the maker: the role the answer's `maker` names,
+   * dispatched through L1 as `dispatchRole` says. That outcome is handed to
    * L2's `settled` unread, and the attempt answers the card, its workspace, the maker's `outcome`
    * and L2's `settled`, each as `Promise.allSettled` records it, neither read here. An answer naming the
    * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
    * attempt's failure, in order. Any other answer stops the attempts, naming the card and what L2
    * answered.
    */
-  const attempt = async (card, kind, next) => {
+  const attempt = async (card, next) => {
     const failures = [];
     let answer = next;
     for (let number = 1; ; number += 1) {
@@ -309,14 +310,9 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
       if (answer.action !== 'dispatch') {
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
-      if (dispatch === undefined) {
-        const outcome = await dispatchRole(card, answer.maker, path, number);
-        const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
-        return { card: card.number, workspace: path, outcome, settled };
-      }
-      const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(dispatch({ card, kind })))]);
-      await l2.settled(card, outcome);
-      return undefined;
+      const outcome = await dispatchRole(card, answer.maker, path, number);
+      const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
+      return { card: card.number, workspace: path, outcome, settled };
     }
   };
 
@@ -328,11 +324,11 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
    * #228, so a board refusing every claim, or a sink refusing every event, cannot keep a run
    * pulling. A failure of the work and a refused release event are both reported, as `released`
    * says. L2's report of a refused transition event passes through unchanged as the work's failure
-   * where it comes from the claim or from an injected maker's settle; for a maker dispatched
-   * through L1 it comes back in the card's `settled`, as `attempt` says.
+   * where it comes from the claim; from the maker's settle it comes back in the card's `settled`,
+   * as `attempt` says.
    */
   const work = async (claim, freed) => {
-    const { card, kind, next } = claim;
+    const { card, next } = claim;
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
     let claimed = false;
     let failure = null;
@@ -340,7 +336,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
     try {
       await start(claim);
       claimed = true;
-      reached = await attempt(card, kind, next);
+      reached = await attempt(card, next);
     } catch (thrown) {
       failure = thrown;
     }
@@ -356,7 +352,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
    * card's work is not over until it settles.
    *
    * It claims no more than `limit` cards, N where none is given. Settles once every card it
-   * claimed has been worked, on the cards among them that reached the maker with none injected,
+   * claimed has been worked, on the cards among them that reached the maker,
    * each `{ card, workspace, outcome, settled }`, naming its number, its workspace's path, the
    * maker's outcome and L2's settle of it, as `attempt` answers them. A read that fails
    * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
@@ -402,7 +398,7 @@ export function loop({ config, board, decide, facts, l2, dispatch, sink, kill, w
      * once every pull it fired has settled, which is once a pull fired on a freed slot claims
      * nothing and no card it claimed is still being worked.
      *
-     * Settles on every card its pulls answered as reaching the maker with none injected, as
+     * Settles on every card its pulls answered as reaching the maker, as
      * `trigger` says. A pull that fails stops no other. Once the run has ended, every failed pull is reported in
      * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
