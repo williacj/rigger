@@ -145,6 +145,33 @@ to state its intended action before acting, with inspectable evidence of what it
 Require proof on a fake for every behaviour a fake can prove. A real-system run cannot replace
 that proof. Make each requirement a separate acceptance item.
 
+## Systems outside Rigger's code
+
+**Enumerate an outside system's states; never sample them.** Some items depend on how a system
+outside Rigger's code behaves. The OS process table and signals, the filesystem and its symbolic
+links, git, and an agent CLI's output are instances of that class, not the whole of it. For such
+an item, name each dimension its outcome depends on, and that dimension's values. Mark each
+combination in or out of scope, and say that each in-scope cell gets a test.
+
+**An absolute needs that table or a stated edge.** "Every", "never", "outside every" and "all"
+are instances of the class of absolutes, not a list of barred words. An item promises an absolute
+about such a system only where that table bounds it, or where the item states the edge past which
+the absolute does not hold.
+
+A sampled item leaves the cells it never named to its judges, who find them one round at a time.
+#586 asked that a member L0 could not end, on the call's containment and on a start's kill, was
+never be recorded as killed. It named one sequence of reads after the kill: every read fails. The
+table it needed, with the exit cleanup out of scope:
+
+| Reads of the process table after the kill | Member the kill left alive | Member answering `EPERM` |
+|---|---|---|
+| Every read fails | in: #586 | in: #586 |
+| One read answers and lists the member alive, then every read fails | in: missed, became #599 | in: missed, became #599 |
+| Every read answers | in | in |
+
+All three of #589's judges found the missed row. Named before filing, it would have been one more
+test in #586.
+
 ## What is checked, and what is not
 
 The form check reads acceptance as `R-CARD-12` states. It refuses a card with no items it counts,
@@ -155,6 +182,12 @@ So the bar being right is yours. `D2`'s notes say what that buys and what it doe
 proves an acceptance adequate, and a green marker is never a warranty that the card asked for
 the right things. A judge rules on whether the acceptance covered what the card asked, and
 returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
+
+## Have it attacked before dispatch
+
+Before a card is dispatched, a second agent reviews its acceptance for missing cells and
+unbounded absolutes. For a process, filesystem or structure card, that agent is the architect.
+You revise the acceptance before any maker starts. This review is part of filing.
 
 ## Before you file
 
@@ -174,3 +207,8 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 14. Are each dependency's card and required result named?
 15. Must a maker state an outside-system action before acting if undo is unclear?
 16. Must every fake-provable behaviour be proven on a fake?
+17. Where an item depends on a system outside Rigger's code, does it name the dimensions and
+    their values, mark each cell in or out of scope, and give each in-scope cell a test?
+18. Does every absolute about such a system carry that table or a stated edge?
+19. Has a second agent, the architect for a process, filesystem or structure card, reviewed the
+    acceptance for missing cells and unbounded absolutes, and have you revised before dispatch?
