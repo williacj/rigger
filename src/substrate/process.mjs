@@ -584,7 +584,8 @@ function signal(group, name, kill = SIGNAL) {
  * and re-reading costs one read's processor time per look's pause however many reads a round
  * holds (#574). No pause runs past `deadline`, and where the time left would hold another round
  * as long as the last, the census reads again before it, however large the group and its earned
- * pause. A zombie is left out, because it is already dead.
+ * pause, and leaves that round at least half the time left, because it can run longer than the
+ * last on a loaded host. A zombie is left out, because it is already dead.
  * Where `deadline` passes first, it keeps what the last round held, each live process the last
  * state read found, by the name and the command line read in that round, and leaves out one a read
  * in that round missed.
@@ -691,13 +692,13 @@ function* census(group, kill, deadline) {
   let took = 0;
   for (let pause = 0; ; pause = earned()) {
     // A round's pauses are waited out together after it, so its reads stay close together. Where
-    // the time left holds another round as long as the last, the pause is cut to leave twice that
-    // where it can, and skipped where it cannot, and the census reads again. Otherwise it waits out
-    // its pause, never past `deadline`, and keeps the last round, though a timer can end a moment
-    // early.
+    // the time left holds another round as long as the last, the census reads again, its pause cut
+    // to at most half of what the time left holds beyond one such round, so that the next round has
+    // room to run longer than the last. Otherwise it waits out its pause, never past `deadline`, and
+    // keeps the last round, though a timer can end a moment early.
     const left = deadline - Date.now();
     const again = left >= took;
-    const until = Math.min(pause, again ? left - 2 * took : left);
+    const until = Math.min(pause, again ? (left - took) / 2 : left);
     if (until > 0) yield until;
     if (last !== undefined && (!again || Date.now() >= deadline)) return last;
     const began = Date.now();

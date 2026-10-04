@@ -1092,8 +1092,9 @@ test('a census whose reads never agree pauses, from its third round on, at least
   // out together after it, so every read from the eleventh on has reached `LONGEST_PAUSE`: those
   // are the third round's on, a round here being five reads. The pause after a round runs from the
   // end of its last read to the start of the next round's first. The census cuts a pause short
-  // only to leave twice a round's length before its deadline, `READ_TIMEOUT` after its first read
-  // at the latest, so a pause that ends a second or more before then is whole.
+  // only to at most half of what the time left before its deadline holds beyond a round,
+  // `READ_TIMEOUT` after its first read at the latest, so a pause that ends a second or more before
+  // then is whole.
   const whole = census[0].began + READ_TIMEOUT - 1_000;
   const pauses = starts.slice(2, -1).map((start, nth) => ({ start, next: starts[nth + 3] })).filter(({ next }) => census[next].began < whole)
     .map(({ start, next }) => ({ reads: next - start, paused: census[next].began - census[next - 1].ended }));
@@ -1117,6 +1118,14 @@ test('a census of 100 survivors whose first read of states disagrees reads again
   // The first round disagreed, so a second that agreed is the census's last: two rounds, of four
   // reads of states between them.
   assert.equal(starts.length, 2, `the census read in ${starts.length} rounds, not a disagreeing first and an agreeing second`);
+  // A second round can run longer than the first, on a loaded host or for a group that grew, so the
+  // census leaves it at least half of what the first round left before the deadline, and not only
+  // room for a round as long as the first.
+  const deadline = census[0].began + READ_TIMEOUT;
+  const leftAfterFirst = deadline - census[starts[1] - 1].ended;
+  const leftAtSecond = deadline - census[starts[1]].began;
+  t.diagnostic(`the first round took ${Math.round(census[starts[1] - 1].ended - census[0].began)} ms and left ${Math.round(leftAfterFirst)} ms; the second began with ${Math.round(leftAtSecond)} ms left`);
+  assert.ok(leftAtSecond >= leftAfterFirst / 2, `the census began its second round with ${leftAtSecond} ms left of the ${leftAfterFirst} ms its first round left, less than half`);
   assert.equal(census.filter(({ args }) => args.startsWith('-ww ') && args.endsWith('stat=')).length, 4, 'the census\'s second round did not read its states twice');
   // Its deadline falls `READ_TIMEOUT` after its first read began, at the latest.
   assert.ok(took < READ_TIMEOUT, `the census's reads ran ${took} ms, past its deadline`);
