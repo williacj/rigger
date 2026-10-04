@@ -418,7 +418,8 @@ test('given a recorded group whose start-time read never answers, the call kills
  * Stand-ins for `ps`, by how the start-time read fails, each the body of a script whose arguments
  * are the read's: the group's id is the third. Beside each, what the failure says of that read,
  * which a read that never answered does not say. The first is how `ps` reports that no process
- * matched, whatever it is asked. The partial table is the real read's first row alone. Each is
+ * matched, whatever it is asked. The partial table is the leader's row alone, as `startGroup`
+ * wrote its pid to `$here/group.pids`, with a start no read here gets as far as parsing. Each is
  * `warmed`, because the start-time read is its first exec, which must reach its body within
  * `readTimeout`.
  */
