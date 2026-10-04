@@ -668,6 +668,56 @@ test('given a read after the exit cleanup\'s kill that exits 1 and prints nothin
   assert.ok(processState(group).startsWith('Z') || !alive(group), `the leader outlived the kill, so the test proves nothing: ${processState(group)}`);
 });
 
+/** Where `CALLER` defines its signal call: the line the settling variant below extends. */
+const KILL_ANCHOR = 'const kill = (target, name) => { ';
+
+/**
+ * `CALLER`, but with a leader that answers signal 0 with `EPERM` on every look but one that follows a
+ * kill sent to it or to its group since the look before: a process still exiting, as the kernel
+ * answers for one for a moment (`unended` in `src/substrate/process.mjs`), until L0's next kill
+ * reaches it. Every signal still reaches the leader as `CALLER`'s own signal call sends it. It
+ * appends each look at the leader to `$here/looks`: `E` where it answered `EPERM`, `A` otherwise.
+ */
+const SETTLING = (() => {
+  assert.equal(CALLER.split(KILL_ANCHOR).length, 2, 'CALLER no longer defines its signal call where the settling variant extends it');
+  return CALLER.replace(KILL_ANCHOR, [
+    'let killedSinceLook = false;',
+    "const settling = (target, name) => { const leader = pidIn('group'); if (name === 'SIGKILL' && (target === leader || target === -leader)) killedSinceLook = true; if (name !== 0 || target !== leader) return; const killed = killedSinceLook; killedSinceLook = false; appendFileSync(join(here, 'looks'), killed ? 'A' : 'E'); if (!killed) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM', errno: -1, syscall: 'kill' }); };",
+    `${KILL_ANCHOR}settling(target, name); `,
+  ].join('\n'));
+})();
+
+/** `cleanedUp`, run with `caller`'s source in place of `CALLER`'s. */
+async function cleanedUpBy(caller, directory, options) {
+  const path = join(directory, 'caller.mjs');
+  writeFileSync(path, caller);
+  const run = spawn(process.execPath, [path, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(run, 'exit');
+  return { status, stderr, events: linesOf(directory, 'events') };
+}
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader that answers signal 0 with EPERM until the next kill reaches it, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup does not record the leader as one it may not signal, nor as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+  hanging(directory);
+
+  const { status, stderr, events } = await cleanedUpBy(SETTLING, directory, { ps: 'ps', hangAfter: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0, stderr);
+  assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
+  assert.match(read(directory, 'looks'), /E/, 'the leader never answered EPERM, so the test proves nothing');
+  const recorded = events.filter(({ pid }) => pid === group);
+  assert.deepEqual(recorded.map(({ event }) => event), ['survivor.unended'], JSON.stringify(recorded));
+  assert.match(recorded[0].reason, /^not shown to have ended: /);
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', /the command was not shown to have ended/, JSON.stringify(ending));
+});
+
 // proves R-STATE-12, R-STATE-19
 test('given a member that answers signal 0 with EPERM once, as it is being killed, the call records it as killed, not as a process it could not end', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -720,12 +770,12 @@ async function assertLeaderUnended(t, kept, why) {
   assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event }) => event), ['survivor.unended']);
 }
 
-// proves R-STATE-9, R-STATE-15, R-STATE-19
+// proves R-STATE-9, R-STATE-19
 test('given a command whose leader the kill does not end, the exit cleanup hands its step no exit code, but that it could not end the command', SETTLES_WITHIN, async (t) => {
   await assertLeaderUnended(t, 'unkept', /still alive when the exit cleanup's read bound/);
 });
 
-// proves R-STATE-9, R-STATE-15, R-STATE-19
+// proves R-STATE-9, R-STATE-19
 test('given a command whose leader L0 may not signal, the exit cleanup hands its step no exit code, but that it could not end the command because of EPERM', SETTLES_WITHIN, async (t) => {
   await assertLeaderUnended(t, 'refused', /EPERM/);
 });
