@@ -148,8 +148,11 @@ test('the Codex reader answers what the installed codex says of whether it is si
   for (const home of [undefined, scratch('rigger-codex-live-empty-')]) {
     if (home !== undefined) setFor(t, 'CODEX_HOME', home);
     const tool = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', env: gitEnvironment() });
-    const said = `${tool.stderr}${tool.stdout}`;
-    const stated = said.startsWith('Logged in using ') ? true : said.startsWith('Not logged in') ? false : null;
+    // The verdict is read as a line anywhere in what the CLI said. Under a `CODEX_HOME` in `TMPDIR`,
+    // codex-cli 0.159.2 writes a `WARNING: … Refusing to create helper binaries under temporary dir`
+    // line to standard error before `Not logged in` (round 1's N2 on #583, measured on Linux and macOS).
+    const said = `${tool.stderr}\n${tool.stdout}`.split('\n');
+    const stated = said.some((line) => line.startsWith('Logged in using ')) ? true : said.includes('Not logged in') ? false : null;
 
     const here = await agentAuth({ adapters: { codex }, emitter: { emit: (event) => assert.fail(`the check emitted ${event}`) } });
 
