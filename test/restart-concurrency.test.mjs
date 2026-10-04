@@ -225,7 +225,7 @@ async function killedAtTwo(t, world) {
   const settledAtTwo = () => {
     const now = makers();
     for (const maker of now) for (const role of ['standIn', 'intermediate', 'grandchild']) if (maker[role] !== undefined) world.recorded.set(maker[role], `card #${maker.card}'s ${role}`);
-    return now.length === 2 && now.every((maker) => held(world, maker.run) && maker.grandchild !== undefined && living(maker.grandchild) && maker.intermediate !== undefined && !living(maker.intermediate));
+    return now.length >= 2 && now.every((maker) => held(world, maker.run) && maker.grandchild !== undefined && living(maker.grandchild) && maker.intermediate !== undefined && !living(maker.intermediate));
   };
   await killedOnce(t, engine, settledAtTwo, 'both stand-ins held with their grandchildren alive and their intermediates exited');
   return makers();
@@ -237,6 +237,14 @@ test('given four pullable cards and N 2, the installed run killed outright while
 
   const makers = await killedAtTwo(t, world);
 
+  // Items 7 and 8: the killed run's record is complete, since no maker exited and so no slot freed.
+  const killed = runRecord(world, 0);
+  const pulls = pullsIn(killed);
+  assert.equal(pulls.length, 2, JSON.stringify(killed));
+  for (const pull of pulls) assert.ok(pull.inFlight <= 2, JSON.stringify(pull));
+  assert.equal(killed.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').length, 2, JSON.stringify(killed));
+  assert.ok(mostOverlapping(killed) <= 2, JSON.stringify(killed));
+
   // Items 2 to 5, read as the kill was sent: each stand-in alive in its own recorded group, its
   // grandchild alive outside that group, working in its card's workspace, and its intermediate gone.
   assert.deepEqual(makers.map((maker) => ORPHANING[maker.card].engineer.orphanIn).sort(), ['.', 'sub/deeper'], `the held cards ${makers.map((maker) => maker.card)} are not one of each`);
@@ -247,14 +255,6 @@ test('given four pullable cards and N 2, the installed run killed outright while
     assert.equal(living(maker.standIn), true, `card #${maker.card}'s stand-in did not outlive the engine`);
     assert.equal(living(maker.grandchild), true, `card #${maker.card}'s grandchild did not outlive the engine`);
   }
-
-  // Items 7 and 8: the killed run's record is complete, since no maker exited and so no slot freed.
-  const killed = runRecord(world, 0);
-  const pulls = pullsIn(killed);
-  assert.equal(pulls.length, 2, JSON.stringify(killed));
-  for (const pull of pulls) assert.ok(pull.inFlight <= 2, JSON.stringify(pull));
-  assert.equal(killed.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').length, 2, JSON.stringify(killed));
-  assert.ok(mostOverlapping(killed) <= 2, JSON.stringify(killed));
 
   // Item 9: the restart under N 1, against the same repository and board.
   const watched = makers.flatMap((maker) => [['stand-in', maker.standIn], ['grandchild', maker.grandchild]]);
@@ -307,7 +307,7 @@ test('given four pullable cards and a config declaring no concurrency, the insta
   await killedOnce(t, engine, () => {
     const now = makersAfter(world);
     for (const run of now) world.recorded.set(run.pid, `card #${run.card}'s stand-in`);
-    return now.length === 3 && now.every((run) => held(world, run));
+    return now.length >= 3 && now.every((run) => held(world, run));
   }, 'three stand-ins held');
 
   const pulls = pullsIn(runRecord(world, 0));
