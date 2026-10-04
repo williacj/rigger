@@ -901,6 +901,9 @@ function runOnce(ps, args, remaining, timeout) {
  *   signal 0 reaches both, and once its parent has reaped it, the table holds only the zombies both
  *   leave behind. Recording the kill of the group whenever that could have happened would record it
  *   for every group left holding only zombies.
+ * - Where a read after the kill fails, each member the read before the kill found alive that signal
+ *   0 still reaches is recorded as not shown to have ended, though it may be a zombie the kill
+ *   ended (`reachedUnread`).
  */
 async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   if (!occupied(group, kill)) return [];
@@ -922,8 +925,30 @@ async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   const { stuck, joined, unread } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
   if (joined && unnamed === undefined) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
   if (unread !== undefined && unnamed === undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${unread}`;
-  const unended = await reading(described(stuck, named), ps, readTimeout).catch(() => stuck);
+  const unshown = [...stuck, ...reachedUnread(named, stuck, unread, kill)];
+  const unended = await reading(described(unshown, named), ps, readTimeout).catch(() => unshown);
   return killsOf(group, { named, unnamed, left, unended }, killed);
+}
+
+/**
+ * Each of `named`, the members the read before the kill found alive, that `stuck` does not hold and
+ * that signal 0, sent through `kill` to its pid, still reaches once `ended` has settled, where
+ * `unread` says a read of the group after its kill failed, by pid and why: `EPERM` where L0 may not
+ * signal it, and otherwise that it was not shown to have ended. No read listed it after the kill,
+ * so nothing shows the kill ended it, and it is not recorded as killed (`R-STATE-19`).
+ *
+ * Where this can be wrong (`D16` rule 3): signal 0 reaches a zombie as it reaches a live process,
+ * and a process given the pid of a member the kill ended, so either is recorded here as not shown
+ * to have ended though the kill may have ended it. Only a read of the table tells a zombie from a
+ * live process, and none could be made. One answer of `EPERM` is taken as refused here, unlike in
+ * `unended`, because it is asked once `ended` has settled, after the kill was sent on more than one
+ * look, and not while a member is being killed: that this is long enough is a judgment, not a
+ * measurement.
+ */
+function reachedUnread(named = [], stuck, unread, kill) {
+  if (unread === undefined) return [];
+  const held = new Set(stuck.map(({ pid }) => pid));
+  return named.filter(({ pid }) => !held.has(pid) && answers(pid, kill)).map(({ pid }) => ({ pid, reason: forbidden(pid, kill) ? 'EPERM' : `not shown to have ended: signal 0 still reaches it, alive or a zombie, and the reads of the group after its kill failed: ${unread}` }));
 }
 
 /**
