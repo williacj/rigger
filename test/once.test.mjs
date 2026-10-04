@@ -25,6 +25,8 @@ import { until } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
+import { sweep } from './process-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -405,6 +407,51 @@ test('given once where the maker does not start, once exits non-zero, and prints
   assert.deepEqual(agent.runs(), []);
 });
 
+/**
+ * The stand-in agent acting as `plan` says, installed in a directory of its own that also holds a
+ * `git` answering as the git first on this process's PATH does and, once it has answered a command
+ * naming a judge's directory under the consumer's worktree root, replacing the consumer's event
+ * stream with a directory of that name, which no append can open: L1 has made the judge's
+ * directory, and the record then refuses its event. The consumer is `consumer` beside the root,
+ * as `consumerHolding` and the default root place them.
+ * The `git` is run once before this returns (`warmed`), exiting before its body, so its first exec
+ * is not held inside a run.
+ */
+function standInRefusingStreamAfterJudgeMake(plan) {
+  const dir = temporaryDirectory('rigger-once-judge-git-', { beforeRemoval: () => sweep(dir) });
+  const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  assert.match(git, /^\//, 'no git was found on PATH');
+  writeFileSync(join(dir, 'git'), [
+    '#!/bin/sh',
+    EXIT_IF_WARMING,
+    `'${git}' "$@"`,
+    'status=$?',
+    'for arg in "$@"; do',
+    '  case "$arg" in */widgets-worktrees/judges/*) stream="${arg%%/widgets-worktrees/judges/*}/consumer/.rigger/events.jsonl"; rm -f "$stream"; mkdir -p "$stream" ;; esac',
+    'done',
+    'exit $status',
+    '',
+  ].join('\n'));
+  chmodSync(join(dir, 'git'), 0o755);
+  warmed(join(dir, 'git'));
+  return installStandInAgent(dir, plan);
+}
+
+test('given once where the stand-in maker exits 0 and opens a pull request, and the judge then dispatched under the same claim fails, once prints the claimed line with the maker\'s outcome and the judge\'s failure naming the card and the judge, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // The template's `change` kind names `reviewer` as its one judge.
+  const agent = standInRefusingStreamAfterJudgeMake({ 10: { engineer: { pr: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const columns = Object.fromEntries((await (await fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
+  assert.deepEqual(columns, { 10: 'Review' }, err);
+  const lines = err.split('\n');
+  assert.ok(lines.includes(makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')), err);
+  assert.ok(lines.some((line) => /^rigger once: card #10's judge `reviewer` handed back no outcome: /.test(line)), err);
+});
+
 // proves R-WORK-2
 test('while a card\'s maker runs, the fake board\'s write record shows no move of that card by anything but L2, and the stand-in\'s run writes nothing to the board', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent({ 10: { engineer: { hold: true } } });
@@ -471,4 +518,11 @@ test('the agent CLI stand-in, once installed, has recorded no run, and its direc
 
   assert.deepEqual(agent.runs(), []);
   assert.deepEqual(readdirSync(dir).sort(), ['claude']);
+});
+
+test('the stand-in that refuses the stream once a judge\'s directory is made, once made, has recorded no run, and its directory holds only its git, itself and its plan', () => {
+  const agent = standInRefusingStreamAfterJudgeMake({});
+
+  assert.deepEqual(agent.runs(), []);
+  assert.deepEqual(readdirSync(agent.dir).sort(), ['claude', 'git', 'plan.json']);
 });

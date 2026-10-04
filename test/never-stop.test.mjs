@@ -947,3 +947,115 @@ test('on a start\'s kill of a recorded group, where only the first read after th
 
   assertZombieKilled(events, directory, 'recorded.killed');
 });
+
+/**
+ * A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and then answers
+ * each read of the group's states as `ps` does until one lists the process `$here/<name>.pid` names
+ * as `shown` has it, `alive` or a `zombie` beside no live process, which it copies to
+ * `$here/answered`. Every read after that one it fails as `ps` fails, marking `$here/failed`.
+ */
+function answeringOnceAfterKill(directory, name, shown) {
+  const lists = {
+    alive: '$1 == pid && $2 !~ /^Z/ { found = 1 } END { exit !found }',
+    zombie: '$1 == pid && $2 ~ /^Z/ { found = 1 } $2 !~ /^Z/ { live = 1 } END { exit !(found && !live) }',
+  }[shown];
+  return fixture(directory, 'ps', [
+    '[ -f "$here/answered" ] && { : > "$here/failed"; echo "ps: failing on purpose" >&2; exit 2; }',
+    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    'case "$*" in *stat=*) ;; *) exec /bin/ps "$@" ;; esac',
+    'rows=$(/bin/ps "$@") || exit $?',
+    'printf "%s\\n" "$rows"',
+    `printf "%s\\n" "$rows" | /usr/bin/awk -v pid="$(/bin/cat "$here/${name}.pid")" '${lists}' && printf "%s\\n" "$rows" > "$here/answered"`,
+    'exit 0',
+  ].join('\n'));
+}
+
+/** Asserts that the read after the kill that answered listed `pid` alive, and that a read after it failed. */
+function assertShownAliveThenUnread(directory, pid) {
+  assert.ok(existsSync(join(directory, 'answered')), 'no read after the kill listed the member alive, so the test proves nothing');
+  assert.ok(existsSync(join(directory, 'failed')), 'no read failed after the one that listed the member alive, so the test proves nothing');
+  assert.match(read(directory, 'answered'), new RegExp(`^\\s*${pid}\\s+[^Z\\s]`, 'm'));
+}
+
+/** The reason for a member the last read that answered showed alive, before later reads failed. */
+const SHOWN_ALIVE = /not shown to have ended[^]*last read[^]*answered[^]*alive[^]*later reads failed[^]*ps: failing on purpose/;
+
+// proves R-STATE-19, R-STATE-12
+test('on the call\'s containment, where a read after the kill lists a member alive and every later read fails, the member is recorded as a process not shown to have ended, not as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const signals = standIn(directory, { unkept: 'one' });
+
+  const { events } = await called(directory, { command: leavingTwo(directory), ps: answeringOnceAfterKill(directory, 'one', 'alive'), kill: markingKill(directory, signals) });
+
+  const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.equal(alive(one), true, 'the member the kill does not end was ended, so the test proves nothing');
+  assertShownAliveThenUnread(directory, one);
+  assertUnendedUnread(events, { stuck: one, ended: two, unended: 'survivor.unended', directory, reason: SHOWN_ALIVE });
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on the call\'s containment, where a read after the kill lists a member that answers EPERM alive and every later read fails, the member is recorded as a process not shown to have ended, not as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const signals = standIn(directory, { refused: 'one' });
+
+  const { events } = await called(directory, { command: leavingTwo(directory), ps: answeringOnceAfterKill(directory, 'one', 'alive'), kill: markingKill(directory, signals) });
+
+  const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
+  assert.equal(alive(one), true, 'the member L0 may not signal was ended, so the test proves nothing');
+  assertShownAliveThenUnread(directory, one);
+  assertUnendedUnread(events, { stuck: one, ended: two, unended: 'survivor.unended', directory, reason: /^EPERM$/ });
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on a start\'s kill of a recorded group, where a read after the kill lists a member alive and every later read fails, the member is recorded as a process not shown to have ended, not as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  writeFileSync(join(directory, 'member.pid'), String(started.member));
+  const signals = standIn(directory, { unkept: 'member' });
+
+  const { events } = await startKilled(started, { ps: answeringOnceAfterKill(directory, 'member', 'alive'), kill: markingKill(directory, signals) });
+
+  assert.equal(alive(started.member), true, 'the member the kill does not end was ended, so the test proves nothing');
+  assertShownAliveThenUnread(directory, started.member);
+  assertUnendedUnread(events, { stuck: started.member, ended: started.leader, unended: 'recorded.unended', directory, reason: SHOWN_ALIVE });
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on a start\'s kill of a recorded group, where a read after the kill lists a member that answers EPERM alive and every later read fails, the member is recorded as a process not shown to have ended, not as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  writeFileSync(join(directory, 'member.pid'), String(started.member));
+  const signals = standIn(directory, { refused: 'member' });
+
+  const { events } = await startKilled(started, { ps: answeringOnceAfterKill(directory, 'member', 'alive'), kill: markingKill(directory, signals) });
+
+  assert.equal(alive(started.member), true, 'the member L0 may not signal was ended, so the test proves nothing');
+  assertShownAliveThenUnread(directory, started.member);
+  assertUnendedUnread(events, { stuck: started.member, ended: started.leader, unended: 'recorded.unended', directory, reason: /^EPERM$/ });
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on the call\'s containment, where a read after the kill lists a member a zombie and every later read fails, the member is recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
+  const signals = standIn(directory);
+
+  const { events } = await called(directory, { command, ps: answeringOnceAfterKill(directory, 'two', 'zombie'), kill: markingKill(directory, signals) });
+
+  assert.ok(existsSync(join(directory, 'answered')), 'no read after the kill listed the member a zombie, so the test proves nothing');
+  assertZombieKilled(events, directory, 'survivor.killed');
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on a start\'s kill of a recorded group, where a read after the kill lists a member a zombie and every later read fails, the member is recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  spawn('/usr/bin/perl', [zombieJoiner(directory), directory, String(started.group)], { stdio: 'ignore' });
+  await until(() => existsSync(join(directory, 'two.pid')), t);
+  const signals = standIn(directory);
+
+  const { events } = await startKilled(started, { ps: answeringOnceAfterKill(directory, 'two', 'zombie'), kill: markingKill(directory, signals) });
+
+  assert.ok(existsSync(join(directory, 'answered')), 'no read after the kill listed the member a zombie, so the test proves nothing');
+  assertZombieKilled(events, directory, 'recorded.killed');
+});

@@ -23,6 +23,7 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { installStandInAgent, standInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { after } from 'node:test';
+import { spawnSync } from 'node:child_process';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['owner'] } };
@@ -98,15 +99,34 @@ export function settledOf(promise) {
 }
 
 /**
+ * Runs the stand-in agent `agent` installed once, to its exit, before any maker: Node ends the run
+ * in a preload, before the stand-in's own code, so it records no run, takes no plan step and writes
+ * nothing. The system holds the first exec of a file just written until it has assessed it, as
+ * `warmed` (`test/process-fixtures.mjs`) records. Measured with Node 26.5.0 on macOS 27.0 on this
+ * 12-CPU host on 2026-10-04 (#593), across 42 runs of `test/loop.test.mjs:87` alone at one-minute
+ * loads of 9.92 to 20.65, a world's first exec of its stand-in reached the stand-in's first line
+ * 664 to 3,373 ms after L1's `dispatch.start`, and every later exec 20 to 63 ms after. In one
+ * whole suite, begun at a load of 12.18, the first execs took 5,061 to 5,556 ms, past
+ * `WAIT_WITHIN`, and the settling wait over those makers ran out before they held. Paid here,
+ * the assessment falls outside every wait that bounds a maker's start.
+ */
+function warmedAgent(agent) {
+  const run = spawnSync(join(agent.dir, 'claude'), [], { env: { NODE_OPTIONS: '--import=data:text/javascript,process.exit()' }, encoding: 'utf8' });
+  if (run.status !== 0) throw new Error(`warming the stand-in agent in ${agent.dir} failed: ${run.error?.message ?? run.stderr}`);
+}
+
+/**
  * The held makers of a world whose stand-in agent is `agent`, run as `role`, over `attempts`, the
  * world's record of every append L3, L2, L1 and L0 tried. Each maker is a stand-in process L1
  * started, which records a started marker and holds until the test releases it. `started` holds
  * each card's number at its maker's L3 `dispatch` event the sink accepted, so a card whose maker
  * never starts still counts there; the markers, not `started`, say that a maker process ran.
  * `most()` is the most makers L1 had running at once, from their `dispatch.start` and
- * `dispatch.end` attempts.
+ * `dispatch.end` attempts. The stand-in is run once here, before any maker, as `warmedAgent` says,
+ * so no maker's start pays the system's assessment of a file just written.
  */
 export function heldStandIns(agent, role, attempts) {
+  warmedAgent(agent);
   const started = [];
   // The pids of the stand-ins the test has released, whose markers may outlive the release a moment.
   const released = new Set();
