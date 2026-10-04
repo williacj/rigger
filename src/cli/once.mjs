@@ -196,7 +196,8 @@ async function claiming(verb, limit, opened, {
     // unconfirmed group or unreadable record. A card stopped after its second attempt names each
     // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
     // model"). The record is not used to say so, because the record is what failed. The cards the
-    // same pull left at their workspaces are named first, as they would be had none failed.
+    // same pull left at their workspaces are named first, as they would be had none failed, a card
+    // whose maker ran and whose judges then failed among them, its judges' failure said after.
     return {
       text: [...said(outcomes(failure.reached ?? [])), ...failuresIn(failure).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'),
       code: 1,

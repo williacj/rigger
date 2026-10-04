@@ -24,6 +24,8 @@ import { gitIn } from './git-repository.mjs';
 import { until } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
+import { sweep } from './process-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -399,6 +401,47 @@ test('given once where the maker does not start, once exits non-zero, and prints
   assert.equal(lines.length, 1, err);
   assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
+});
+
+/**
+ * The stand-in agent acting as `plan` says, installed in a directory of its own that also holds a
+ * `git` answering as the git first on this process's PATH does and, once it has answered a command
+ * naming a judge's directory under the consumer's worktree root, replacing the consumer's event
+ * stream with a directory of that name, which no append can open: L1 has made the judge's
+ * directory, and the record then refuses its event. The consumer is `consumer` beside the root,
+ * as `consumerHolding` and the default root place them.
+ */
+function standInRefusingStreamAfterJudgeMake(plan) {
+  const dir = temporaryDirectory('rigger-once-judge-git-', { beforeRemoval: () => sweep(dir) });
+  const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  assert.match(git, /^\//, 'no git was found on PATH');
+  writeFileSync(join(dir, 'git'), [
+    '#!/bin/sh',
+    `'${git}' "$@"`,
+    'status=$?',
+    'for arg in "$@"; do',
+    '  case "$arg" in */widgets-worktrees/judges/*) stream="${arg%%/widgets-worktrees/judges/*}/consumer/.rigger/events.jsonl"; rm -f "$stream"; mkdir -p "$stream" ;; esac',
+    'done',
+    'exit $status',
+    '',
+  ].join('\n'));
+  chmodSync(join(dir, 'git'), 0o755);
+  return installStandInAgent(dir, plan);
+}
+
+test('given once where the stand-in maker exits 0 and opens a pull request, and the judge then dispatched under the same claim fails, once prints the claimed line with the maker\'s outcome and the judge\'s failure naming the card and the judge, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // The template's `change` kind names `reviewer` as its one judge.
+  const agent = standInRefusingStreamAfterJudgeMake({ 10: { engineer: { pr: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const columns = Object.fromEntries((await (await fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
+  assert.deepEqual(columns, { 10: 'Review' }, err);
+  const lines = err.split('\n');
+  assert.ok(lines.includes(makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')), err);
+  assert.ok(lines.some((line) => /^rigger once: card #10's judge `reviewer` handed back no outcome: /.test(line)), err);
 });
 
 // proves R-WORK-2
