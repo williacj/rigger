@@ -17,6 +17,7 @@ import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand }
 import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { listingOf } from './listing-stand-in.mjs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -529,7 +530,8 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
-  const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, refused: 'outside' });
+  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, lsof: 'lsof', refused: 'outside' });
 
   assert.equal(status, 0);
   assertUnended(directory, events, 'survivor.unended', 'EPERM');
@@ -605,7 +607,8 @@ test('given a process table that stops answering once the exit cleanup\'s census
   holdingNone(directory);
   hanging(directory);
 
-  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', directory: work, lsof: 'lsof', hangAfter: 'outside', unkept: 'outside' });
 
   const outside = pidIn(directory, 'outside');
   assert.equal(status, 0);

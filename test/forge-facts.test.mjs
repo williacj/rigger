@@ -72,6 +72,10 @@ test('given its read of the branches failing, L2\'s facts call rejects naming ev
   );
 });
 
+/** A diff the forge serves, and the merge base it computes it from, each written by hand. */
+const DIFF = 'diff --git a/src/verb.mjs b/src/verb.mjs\n+export const verb = 1;\n';
+const BASE = 'c'.repeat(40);
+
 /** A pull request from card `number`'s line of work, numbered `pull`, merged where `merged` says. */
 const pullFrom = (number, pull, merged = false) => ({ number: pull, head: `rigger-${number}`, sha: `${pull}`.padStart(40, 'a'), merged });
 
@@ -134,10 +138,11 @@ test('given a Review card with no open or merged pull request and its line of wo
   assert.match(next.reason, /\brigger-6\b/);
 });
 
-test('given a Review card with one open pull request from its line of work, L2 answers ignore', async () => {
-  const [next] = await decided([cardIn(7, columns.review)], readsOver({ pullRequests: [pullFrom(7, 71)] }).reads);
+test('given a Review card with one open pull request from its line of work, L2 answers its agent judges', async () => {
+  const [next] = await decided([cardIn(7, columns.review)], readsOver({ pullRequests: [{ ...pullFrom(7, 71), diff: DIFF, mergeBase: BASE }] }).reads);
 
-  assert.deepEqual(next, { action: 'ignore' });
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  assert.deepEqual(next.judges.map(({ role, facts }) => ({ role, facts })), [{ role: 'reviewer', facts: { card: 7, revision: null, pull: 71, base: BASE, head: pullFrom(7, 71).sha } }]);
 });
 
 // proves R-WORK-24
@@ -191,4 +196,48 @@ test('given a Ready card whose line of work the forge holds, whose acceptance th
   assert.equal(next.action, 'refuse', JSON.stringify(next));
   assert.equal(next.card, 15);
   for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-15\b/, /missing acceptance/]) assert.match(next.reason, named);
+});
+
+test('given a Review card with one open pull request from its line of work and agent judges, L2 answers ignore where injected freshness answers fresh, whatever the forge holds', async () => {
+  const [next] = await decided([cardIn(16, columns.review)], readsOver({ pullRequests: [{ ...pullFrom(16, 161), diff: DIFF, mergeBase: BASE }] }).reads, { fresh: () => true });
+
+  assert.deepEqual(next, { action: 'ignore' });
+});
+
+test('L2\'s facts call reads, for each Review card holding exactly one open pull request from its line of work, that pull request, its diff, its comments and the acceptance\'s revision, and reads none of them for any other card', async () => {
+  const seed = {
+    pullRequests: [
+      { ...pullFrom(17, 171), diff: DIFF, mergeBase: BASE },
+      pullFrom(18, 181),
+      pullFrom(19, 191), pullFrom(19, 192),
+      pullFrom(20, 201),
+    ],
+  };
+  const { reads, made } = readsOver(seed);
+  const cards = [cardIn(17, columns.review), cardIn(18, columns.ready), cardIn(19, columns.review), cardIn(20, columns.coding), cardIn(21, columns.review)];
+
+  await factsCall({ config, reads, decide: () => ({ action: 'ignore' }) })(cards);
+
+  const reviewReads = made.filter(([operation]) => !['readPullRequests', 'readBranches'].includes(operation));
+  assert.deepEqual(reviewReads.sort(), [['readComments', 171], ['readDiff', 171], ['readEditedAt', 17], ['readMergeBase', 171]]);
+});
+
+test('L2\'s facts call answers a Review card\'s one open pull request as its number, the merge base its diff is taken from and its head, beside its diff, comments and revision, each as the read settled', async () => {
+  const comments = [{ body: 'Findings at x by reviewer', createdAt: '2026-10-03T09:00:00Z' }];
+  const seed = { pullRequests: [{ ...pullFrom(22, 221), diff: DIFF, mergeBase: BASE, comments }], edited: { 22: '2026-10-02T08:00:00Z' } };
+  let forge;
+  const decide = (card) => {
+    forge = card.forge;
+    return { action: 'ignore' };
+  };
+
+  (await factsCall({ config, reads: readsOver(seed).reads, decide })([cardIn(22, columns.review)]))(cardIn(22, columns.review));
+
+  const { pull, diff, comments: read, editedAt } = forge;
+  assert.deepEqual({ pull, diff, comments: read, editedAt }, {
+    pull: { status: 'fulfilled', value: { number: 221, base: BASE, head: pullFrom(22, 221).sha } },
+    diff: { status: 'fulfilled', value: DIFF },
+    comments: { status: 'fulfilled', value: comments },
+    editedAt: { status: 'fulfilled', value: '2026-10-02T08:00:00Z' },
+  });
 });

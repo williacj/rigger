@@ -476,6 +476,14 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
 }
 
 /**
+ * Builds L1's make of a judge's directory over `root` and `topic` for the repository at
+ * `repository`: the function L3 is handed as `judgeDirectory`, which makes judge `role`'s directory
+ * of card `card` at the head commit `head`, as `makeJudgeDirectory` does (the architect's ruling 4's
+ * addendum on #467).
+ */
+export const judgeDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeJudgeDirectory({ root, topic, card, role, head, repository, sink });
+
+/**
  * Takes away the lock on a registration at `path`, whose directory is gone, where git lists it on
  * exactly `branch` and locked with `ADDING`, the reason `git worktree add` writes while it makes a
  * worktree: what an engine killed during that command leaves, which fails every later attempt

@@ -24,6 +24,9 @@ import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { makerRuns } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { readsWith } from './loop-world.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
@@ -70,7 +73,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   const events = () => (existsSync(streamPath(state)) ? readEvents(state) : []);
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(card)] });
   const settings = { ...config, concurrency: 1 };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) });
   const settled = [];
   const l2 = {
     claimed: changes.claimed,
@@ -91,7 +94,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   };
   const agent = standInAgent(maker === undefined ? {} : { [card]: { engineer: maker } });
   const makerCalls = makerRuns(agent, directory, events, maker !== undefined);
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, state, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state, environment: { ...process.env, PATH: agent.first() } });
   return { directory, root, path: join(root, `rigger-${card}`), fake, loop: built, events, made, makerCalls, settled };
 }
 
