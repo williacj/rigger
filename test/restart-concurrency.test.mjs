@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -154,10 +154,7 @@ function startRun(world, { first = false } = {}) {
   return engine;
 }
 
-/**
- * The stand-in runs in the maker's role started after the first `from`, each with its card and pid,
- * and the pid each holds under, where it holds now.
- */
+/** The stand-in's runs in the maker's role, oldest first, leaving out the first `from`, each with its card and pid. */
 const makersAfter = (world, from = 0) => world.agent.runs().filter((run) => run.role === 'engineer').slice(from);
 
 /** Whether the dispatch record in `world`'s state directory names `pid` as a group. */
