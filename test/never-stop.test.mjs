@@ -777,12 +777,14 @@ test('on the exit cleanup, where every read after the kill fails, the kill of th
  * Asserts that `events` record `stuck`, a member L0 could not end under a table that fails every
  * read after the kill, by its name and command line as a process not shown to have ended, under
  * `unended`, with a reason matching `reason`, and never as killed; and that they record `ended`,
- * a member the kill did end, which is not alive.
+ * a member the kill did end, which is not alive, as killed, under `unended` with `.unended`
+ * swapped for `.killed`, and not as a process not shown to have ended.
  */
 function assertUnendedUnread(events, { stuck, ended, unended, directory, reason }) {
   assert.deepEqual(events.filter(({ pid }) => pid === stuck).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: unended, ...tailOf(directory) }], JSON.stringify(events));
   assert.match(events.find(({ pid }) => pid === stuck).reason, reason);
   assert.equal(events.filter(({ pid }) => pid === ended).length, 1, `the member the kill ended was not recorded once: ${JSON.stringify(events)}`);
+  assert.equal(events.find(({ pid }) => pid === ended).event, unended.replace('.unended', '.killed'), `the member the kill ended was not recorded as killed: ${JSON.stringify(events)}`);
   assert.equal(alive(ended), false, 'the member the kill ended is alive');
 }
 
