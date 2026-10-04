@@ -583,20 +583,21 @@ test('given once where a judge is not dispatched because a required step failed 
 
 /**
  * A module the bin's Node process loads first, through `NODE_OPTIONS`, under which the consumer's
- * event stream refuses one append alone: L3's `dispatch` event for the judge `role`. It changes
- * `node:fs` itself, and `syncBuiltinESMExports` carries the change to the sink, which imports
- * `appendFileSync` by name, so the sink refuses that start without knowing it is under test.
+ * event stream refuses the appends alone of each event `condition`, JavaScript over `event`, holds
+ * for, saying it refuses `what`. It changes `node:fs` itself, and `syncBuiltinESMExports` carries
+ * the change to the sink, which imports `appendFileSync` by name, so the sink refuses those appends
+ * without knowing it is under test.
  */
-function refusingJudgeStart(role) {
-  const path = join(temporaryDirectory('rigger-once-refuse-start-'), 'refuse-judge-start.mjs');
+function refusingAppend(condition, what) {
+  const path = join(temporaryDirectory('rigger-once-refuse-append-'), 'refuse-append.mjs');
   writeFileSync(path, [
     "import fs from 'node:fs';",
     "import { syncBuiltinESMExports } from 'node:module';",
     'const { appendFileSync } = fs;',
     'fs.appendFileSync = (path, data, ...rest) => {',
     "  const event = String(path).endsWith('/.rigger/events.jsonl') ? JSON.parse(String(data)) : {};",
-    `  if (event.layer === 'L3' && event.event === 'dispatch' && event.role === ${JSON.stringify(role)}) {`,
-    "    throw Object.assign(new Error(`EACCES: the test refuses L3's dispatch of ${event.role} on ${path}`), { code: 'EACCES' });",
+    `  if (${condition}) {`,
+    `    throw Object.assign(new Error(\`EACCES: the test refuses \${${JSON.stringify(what)}} on \${path}\`), { code: 'EACCES' });`,
     '  }',
     '  return appendFileSync(path, data, ...rest);',
     '};',
@@ -605,6 +606,9 @@ function refusingJudgeStart(role) {
   ].join('\n'));
   return path;
 }
+
+/** `refusingAppend` for L3's `dispatch` event, its start, of the judge `role` alone. */
+const refusingJudgeStart = (role) => refusingAppend(`event.layer === 'L3' && event.event === 'dispatch' && event.role === ${JSON.stringify(role)}`, `L3's dispatch of ${role}`);
 
 test('given once where a judge\'s start event is refused, once prints the judge\'s role and the refused event, and exits non-zero', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent({ 10: { engineer: { pr: true } } });
@@ -694,4 +698,57 @@ test('given once over a Review card whose agent judge has no findings at the hea
     judgeLine(10, 'reviewer', 'exited 0'),
   ]);
   assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer', 'reviewer']);
+});
+
+test('given once where a judge does not start, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // A Bash rule for a compound command line admits nothing, and the Claude Code adapter refuses it
+  // only for a role that reaches a directory, as a judge reaches its `head` and the maker reaches none.
+  const files = { '.claude/settings.json': JSON.stringify({ permissions: { allow: ['Bash(npm ci && npm test)'] } }) };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { files });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'did not start: the role\'s dispatch did not start: the claude adapter answered no invocation for role reviewer: ')), line);
+  assert.match(line, /Bash\(npm ci && npm test\), a rule for a compound command line/, line);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+test('given once where a judge is dispatched and its dispatch then fails, once prints the judge\'s role and the failure, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // L1's start of the judge's dispatch is refused: of the role dispatches, only a judge's carries the facts of the head it rules on.
+  const preload = refusingAppend("event.layer === 'L1' && event.event === 'dispatch.start' && event.facts !== undefined", 'L1\'s start of a judge\'s dispatch');
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { env: { NODE_OPTIONS: `--import ${preload}` } });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was dispatched, and its dispatch failed: ')), line);
+  // L1's failure names the refused event on the lines after its first.
+  assert.match(line, /the sink refused 1 L1 event\(s\) of dispatch d-[0-9a-f-]+, card #10, so they went unrecorded:$/, line);
+  assert.match(err, /EACCES: the test refuses L1's start of a judge's dispatch on /, err);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+test('given once where a judge\'s directory cannot be made, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // A plain file where the judges' directories go, beside the workspaces under the default root.
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+  const root = join(dirname(consumer), 'widgets-worktrees');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'judges'), 'not a directory');
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was not dispatched, because its directory could not be made: ')), line);
+  assert.match(line, /judges\/rigger-10\/reviewer/, line);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
 });
