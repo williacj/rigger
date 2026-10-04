@@ -11,6 +11,7 @@ import config from '../rigger.config.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { WORKSPACE_NOT_MADE } from '../src/execution/workspace.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
+import { columnChanges } from '../src/workflow/transitions.mjs';
 import { BASE, DIFF, HEAD, alive, cardIn, judgeDispatch, judgeWorld, pullFor, recorded } from './judge-world.mjs';
 import { COLUMNS, makingJudgeDirectories, waitFor } from './loop-world.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -401,6 +402,68 @@ test('given one judge\'s dispatch refused at its start event, the other judges\'
   assert.equal(l1.find((each) => each.event === 'dispatch.end')?.exit, 0);
   const [card] = failure.errors;
   assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+});
+
+/** What `failure`, a pull's rejection, holds as messages, every AggregateError in it opened, however deep. */
+const messagesIn = (failure) => failure.errors.flatMap(function flat(error) { return error instanceof AggregateError ? error.errors.flatMap(flat) : [error.message]; });
+
+/** The maker's result for card `card` among `reached`, a pull's answer, as its workspace, its exit code and its settle's status. */
+const makerOf = (reached, card) => reached.filter((each) => each.card === card).map(({ workspace, outcome, settled }) => ({ workspace, exit: outcome?.value?.exit, settled: settled?.status }));
+
+test('given a claim in which the maker exits 0 and opens a pull request, and a judge\'s L3 dispatch event is then refused under the same claim, the pull rejects, its failure\'s reached holds the card with the maker\'s result, and its failure names the card and the judge', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)], refuse: ({ layer, event, fields }) => layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer' });
+
+  const failure = await built.loop.pull().then(() => assert.fail('the pull settled with no failure'), (error) => error);
+
+  assert.deepEqual(built.fake.writes().map(({ args: [, column] }) => column), [COLUMNS.coding, COLUMNS.review], 'the maker did not move the card to Review, so the test proves nothing');
+  assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
+  assert.ok(messagesIn(failure).some((message) => /card #3/.test(message) && /\breviewer\b/.test(message) && /refused/.test(message)), JSON.stringify(messagesIn(failure)));
+  const [card] = failure.errors;
+  assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+});
+
+test('given that claim where the settle\'s read of the acceptance\'s revision is rejected, so L2\'s judge answer throws, the pull rejects, its failure\'s reached holds the card with the maker\'s result, and its failure carries L2\'s failure naming the card and the read', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)] });
+  const { handed } = built;
+  // L2's real column changes over the same board, whose forge refuses the one read the settle makes of the acceptance's revision.
+  const reads = { ...built.repository.operations, readEditedAt: async (number) => { throw new Error(`the forge refused the read of issue #${number}'s last edit`); } };
+  const refusing = loop({ ...handed, l2: columnChanges({ config: handed.config, sink: handed.sink, items: built.fake.operations, reads }) });
+
+  const failure = await refusing.pull().then(() => assert.fail('the pull settled with no failure'), (error) => error);
+
+  assert.deepEqual(built.fake.writes().map(({ args: [, column] }) => column), [COLUMNS.coding, COLUMNS.review], 'the maker did not move the card to Review, so the test proves nothing');
+  assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
+  assert.deepEqual(messagesIn(failure), ['card #3\'s read of the acceptance\'s revision, the issue body\'s last edit failed, so L2 names no judge for it: the forge refused the read of issue #3\'s last edit']);
+  assert.deepEqual(rolesDispatched(built, 3), ['engineer']);
+});
+
+test('given that claim where L2\'s judge answer throws for one judge, on a directory outcome that is not L1\'s failure to make it, the pull rejects, its failure\'s reached holds the card with the maker\'s result, and its failure names the card and the judge', SETTLES_WITHIN, async () => {
+  let built;
+  const judgeDirectory = async (card, role, head) => {
+    if (role === 'reviewer') throw new Error('the test fails the make of reviewer\'s directory with no code of L1\'s');
+    return makingJudgeDirectories(join(built.scratch, 'workspaces'))(card, role, head);
+  };
+  built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)], judgeDirectory });
+
+  const failure = await built.loop.pull().then(() => assert.fail('the pull settled with no failure'), (error) => error);
+
+  assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
+  assert.ok(messagesIn(failure).some((message) => /card #3's judge `reviewer`/.test(message) && /not L1's failure to make it/.test(message)), JSON.stringify(messagesIn(failure)));
+  const [card] = failure.errors;
+  assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+});
+
+test('given a pull claiming two cards whose makers both run, one with a judge whose L3 dispatch event is refused and one whose judges all hand back, the pull rejects, and its failure\'s reached holds both cards, the second with its judges', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready), cardIn(4, COLUMNS.ready)], concurrency: 2, refuse: ({ layer, card, event, fields }) => layer === 'L3' && card === 3 && event === 'dispatch' && fields.role === 'reviewer' });
+
+  const failure = await built.loop.pull().then(() => assert.fail('the pull settled with no failure'), (error) => error);
+
+  assert.deepEqual(failure.reached.map((each) => each.card).sort(), [3, 4]);
+  assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
+  assert.deepEqual(makerOf(failure.reached, 4), [{ workspace: join(built.scratch, 'workspaces', 'rigger-4'), exit: 0, settled: 'fulfilled' }]);
+  const [four] = failure.reached.filter((each) => each.card === 4);
+  assert.deepEqual(four.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'reviewer', exit: 0 }, { role: 'architect', exit: 0 }]);
+  assert.equal(failure.errors.length, 1, JSON.stringify(messagesIn(failure)));
 });
 
 test('given one judge\'s dispatch that runs past its time, the other judges\' outcomes still reach L3, and the pull\'s answer names that judge and its timeout', SETTLES_WITHIN, async () => {
