@@ -12,6 +12,7 @@ import template from '../templates/rigger.config.mjs';
 import { plan as planVerb } from '../src/cli/plan.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
+import { seedRepository } from './fake-gh.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -170,4 +171,49 @@ test('plan run against the source tree it is running from exits non-zero, names 
   assert.notEqual(ran.code, 0, ran.text);
   assert.match(ran.text, /R-SAFE-5/);
   assert.deepEqual(sent, []);
+});
+
+// A Review card's judges, from the same facts call and next action `once` and `run` use (#488).
+
+/** The head SHA and merge base of the pull request the judge tests below seed, each written by hand. */
+const JUDGED_HEAD = '6'.repeat(40);
+const JUDGED_BASE = '7'.repeat(40);
+
+/**
+ * Runs the real bin's `verb` in a fresh consumer repository whose config is the template's, with
+ * the consumer's repository and board filled in and `roles` in place of its roles where given,
+ * over a fake `gh` holding `board` and, beside it, the repository `seed`, first on PATH.
+ */
+function verbOver(verb, board, seed, { roles } = {}) {
+  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, ...(roles && { roles }) };
+  const consumer = repositoryIn('rigger-plan-judges-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  const fake = installFakeGh(temporaryDirectory('rigger-plan-judges-gh-'), { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
+  seedRepository(fake, seed);
+  const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` };
+  const ran = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8', env });
+  assert.equal(ran.error, undefined);
+  return { out: ran.stdout, err: ran.stderr, code: ran.status, again: (other) => spawnSync(process.execPath, [bin, other], { cwd: consumer, encoding: 'utf8', env }) };
+}
+
+/** Card `number`'s one open pull request from its line of work, numbered `100 + number`. */
+const openFor = (number) => ({ number: 100 + number, head: `rigger-${number}`, sha: JUDGED_HEAD, diff: 'diff --git a/x b/x\n', mergeBase: JUDGED_BASE });
+
+test('given a Review card whose agent judges have no findings at its head, plan names it as a pull and names each judge it would dispatch', () => {
+  const ran = verbOver('plan', { items: [card(50, 'Review')] }, { pullRequests: [openFor(50)] });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pullLines(ran.out), ['  pull    #50  change  judges reviewer'], ran.out);
+});
+
+// proves R-LOOP-13
+test('given a Review card carrying two labels that select different tiers for one of its judge roles, plan names it as a refusal naming that role and both labels, as once over the same board refuses it', () => {
+  const roles = { ...template.roles, reviewer: { ...template.roles.reviewer, labels: { 'tier:high': 'high', 'tier:low': 'standard' } } };
+  const ran = verbOver('plan', { items: [card(51, 'Review', { labels: ['type:change', 'tier:high', 'tier:low'] })] }, { pullRequests: [openFor(51)] }, { roles });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), []);
+  const line = refusalOf(ran.out, 51);
+  for (const named of [/\breviewer\b/, /tier:high/, /tier:low/]) assert.match(line ?? '', named, ran.out);
+  const once = ran.again('once');
+  assert.equal(refusalOf(once.stdout, 51), line, `${once.stdout}${once.stderr}`);
 });

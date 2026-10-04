@@ -16,6 +16,9 @@ import { factsCall } from '../src/workflow/facts.mjs';
 import { oneOpenFromEveryLine } from './loop-world.mjs';
 import { mkdirSync } from 'node:fs';
 import { installStandInAgent } from './stub-claude.mjs';
+import { readsWith } from './loop-world.mjs';
+import { judgeDirectoryHandle } from '../src/execution/workspace.mjs';
+import { worktreeTopic } from '../src/config/validate.mjs';
 
 /**
  * Fires one pull of L3's loop over the board the config in `repository` names, recording to that
@@ -36,7 +39,7 @@ export async function engine({ directory, repository, command, ps, workspace }) 
   const sink = openSink({ directory: state, run: randomUUID(), now: Date.now });
   const board = readSide({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
   const reads = repositoryReads({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink, pullRequests: oneOpenFromEveryLine });
+  const l2 = columnChanges({ config, sink, reads: readsWith(oneOpenFromEveryLine) });
   const decide = (card, outcomes) => nextAction(card, Object.fromEntries(Object.entries(config.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }])), config.epicLabel, { roles: config.roles, provisioning: config.provisioning ?? {}, outcomes, sink });
   const stand = join(directory, 'stand-in');
   mkdirSync(stand, { recursive: true });
@@ -48,5 +51,5 @@ export async function engine({ directory, repository, command, ps, workspace }) 
     return { path, scratch: join(directory, 'workspaces', 'scratch', `rigger-${number}`), repository };
   };
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, state, environment: { ...process.env, PATH: agent.first() }, ps }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), state, environment: { ...process.env, PATH: agent.first() }, ps }).pull();
 }

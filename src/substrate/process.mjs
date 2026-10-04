@@ -151,7 +151,9 @@ const reads = new Set();
 /**
  * Each `ps` a read of which the exit cleanup gave up on as it ran, by the timeout it waited out.
  * The cleanup reads it no more, so a process table that never answers holds the process's ending
- * back by one read timeout, and not by one for each read of each group it holds (`runNow`).
+ * back by one read timeout, and not by one for each read of each group it holds (`runNow`). One
+ * exception: a census of a dispatch's directory that gave up on it at its own bound before it sent
+ * its kill reads it again in its wait on what it killed, which has a bound of its own (`sweptNow`).
  */
 const unanswered = new Map();
 
@@ -355,9 +357,12 @@ function answers(target, kill = SIGNAL) {
  * signal it, or that it was still alive `bound` milliseconds after the first kill; and as `joined`
  * whether a read after the kill listed a process, alive or a zombie, that `listed`, every process
  * the read just before the kill listed, did not hold; and as `unread` why a read after the kill
- * failed, where one did, since the kill of the group may then have ended a process no read listed. A look that finds every member
- * still alive answering `EPERM` to signal 0, asked of each by its pid, settles at once, because no
- * kill can reach any of them. The wait is on those conditions, looked at after each pause, so
+ * failed, where one did, since the kill of the group may then have ended a process no read listed;
+ * and as `unlisted` why, where every read after the kill failed, so none showed any member's state;
+ * and as `unconfirmed`, where a read after the kill succeeded and the last read failed, the pids the
+ * last read that succeeded found alive, as `alive`, and why a read after it failed, as `why`.
+ * A look that finds every member still alive answering `EPERM` to signal 0, asked of each by its
+ * pid, settles at once, because no kill can reach any of them. The wait is on those conditions, looked at after each pause, so
  * nothing else in Rigger stops meanwhile, and it takes no cap on its rounds: a cap that stopped
  * killing while a member lived would leave it alive (ruling 14).
  *
@@ -381,30 +386,39 @@ async function ended(group, { ps, readTimeout, kill }, bound, listed) {
   const refused = new Set();
   let unreapedSince;
   let joined = false;
-  // Why a read after the kill failed, where one did.
+  // Why a read after the kill failed, where one did, and whether one after the kill succeeded.
   let unread;
+  let read = false;
+  // The pids the last read that succeeded found alive, and why a read after it failed, where one did.
+  let shown = [];
+  let lastFailure;
+  const settled = (stuck) => ({ stuck, joined, unread, unlisted: read ? undefined : unread, unconfirmed: read && lastFailure !== undefined ? { alive: new Set(shown), why: lastFailure } : undefined });
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL', kill);
-    if (!occupied(group, kill)) return { stuck: [], joined, unread };
+    if (!occupied(group, kill)) return settled([]);
     if (wait === 0) continue;
     const looked = Date.now();
     let rows;
     try {
       rows = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], readTimeout, readTimeout));
+      read = true;
+      lastFailure = undefined;
     } catch (error) {
       unread ??= error.message;
+      lastFailure ??= error.message;
       rows = new Map();
     }
     if (listed !== undefined && [...rows.keys()].some((pid) => !listed.has(pid))) joined = true;
     const living = [...rows].filter(([, state]) => live(state)).map(([pid]) => pid);
+    if (lastFailure === undefined) shown = living;
     if (living.length > 0) {
       unreapedSince = undefined;
       const stuck = unended(living, kill, Date.now() - since >= bound, bound, refused);
-      if (stuck !== undefined) return { stuck, joined, unread };
+      if (stuck !== undefined) return settled(stuck);
     } else {
       unreapedSince ??= looked;
-      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return { stuck: [], joined, unread };
+      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return settled([]);
     }
   }
 }
@@ -922,6 +936,10 @@ function runOnce(ps, args, remaining, timeout) {
  *   signal 0 reaches both, and once its parent has reaped it, the table holds only the zombies both
  *   leave behind. Recording the kill of the group whenever that could have happened would record it
  *   for every group left holding only zombies.
+ * - Where every read after the kill fails, each member the read before the kill found alive that
+ *   signal 0 still reaches is recorded as not shown to have ended, though it may be a zombie the
+ *   kill ended; and where the last read after the kill fails, so is each the last read that
+ *   succeeded found alive, though a later kill may have ended it (`reachedUnread`).
  */
 async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   if (!occupied(group, kill)) return [];
@@ -940,11 +958,45 @@ async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
-  const { stuck, joined, unread } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
+  const { stuck, joined, unread, unlisted, unconfirmed } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
   if (joined && unnamed === undefined) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
   if (unread !== undefined && unnamed === undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${unread}`;
-  const unended = await reading(described(stuck, named), ps, readTimeout).catch(() => stuck);
+  const unshown = [...stuck, ...reachedUnread(named, stuck, { unlisted, unconfirmed }, kill)];
+  const unended = await reading(described(unshown, named), ps, readTimeout).catch(() => unshown);
   return killsOf(group, { named, unnamed, left, unended }, killed);
+}
+
+/**
+ * Each of `named`, the members the read before the kill found alive, that `stuck` does not hold and
+ * that signal 0, sent through `kill` to its pid, still reaches once `ended` has settled, by pid and
+ * why: `EPERM` where L0 may not signal it, and otherwise that it was not shown to have ended. It
+ * takes each such member where `unlisted` says every read of the group after its kill failed, and
+ * only those `unconfirmed` says the last read that succeeded found alive, where a read after the
+ * kill succeeded and the last read failed. No read listed it ended after the kill, so nothing shows
+ * the kill ended it, and it is not recorded as killed (`R-STATE-19`). Where the last read after the
+ * kill succeeded, this adds none: what the reads listed decides.
+ *
+ * Where this can be wrong (`D16` rule 3):
+ * - Signal 0 reaches a zombie as it reaches a live process, and a process given the pid of a member
+ *   the kill ended, so where every read after the kill failed, either is recorded here as not shown
+ *   to have ended though the kill may have ended it. Only a read of the table tells a zombie from a
+ *   live process, and no read after the kill could be made.
+ * - Where a read after the kill succeeded and every later one failed, a member the last read that
+ *   succeeded showed alive, that signal 0 still reaches, is recorded as not shown to have ended,
+ *   though a kill sent after that read may have ended it and left it a zombie, or its pid may have
+ *   been given to another process: no later read could tell.
+ * - Where a read after the kill succeeded and every later one failed, a member the last read that
+ *   succeeded showed a zombie, or did not list, is recorded as killed: a zombie has ended, and a
+ *   later failure does not undo what that read showed.
+ * - One answer of `EPERM` is taken as refused here, unlike in `unended`, because it is asked once
+ *   `ended` has settled, after the kill was sent on more than one look, and not while a member is
+ *   being killed: that this is long enough is a judgment, not a measurement.
+ */
+function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
+  const held = new Set(stuck.map(({ pid }) => pid));
+  const unshown = unlisted !== undefined ? named : named.filter(({ pid }) => unconfirmed?.alive.has(pid));
+  const why = unlisted !== undefined ? `signal 0 still reaches it, alive or a zombie, and the reads of the group after its kill failed: ${unlisted}` : `the last read of the group that answered after its kill showed it alive, and later reads failed: ${unconfirmed?.why}`;
+  return unshown.filter(({ pid }) => !held.has(pid) && answers(pid, kill)).map(({ pid }) => ({ pid, reason: forbidden(pid, kill) ? 'EPERM' : `not shown to have ended: ${why}` }));
 }
 
 /**
@@ -1254,14 +1306,24 @@ function sent(pid, name, kill) {
  * What `sweeping` `found`, once each process it killed has ended: each still alive `bound`
  * milliseconds after its kill is taken out of the kills and the unnamed, resumed, since the census
  * stopped it, and handed back in `unended` with why, as is each process Rigger may not signal,
- * which `found` holds as `refused`, with its name and command line where they can be read. It yields
- * each read and each pause, as `census` does.
+ * which `found` holds as `refused`, with its name and command line where they can be read. Each
+ * process `found` holds as `unnamed`, which the census killed before it could read its name, is read
+ * by name and command line before the wait, within the wait's own bound, so one the kill does not
+ * end is recorded by them (#579). It yields each read and each pause, as `census` does.
  *
  * The census lists only processes whose real uid is Rigger's, and macOS lets a process signal
  * those, so a process it may not signal is not one this host has shown it (`D16` rule 3): the
  * branch is proven through a stand-in for the signal call alone (#545's engineer judge, N2).
  */
 function* settled(found, kill, bound) {
+  // Each process killed unnamed is read by name and command line at once, while one the kill does
+  // not end is still stopped, so its name is that of the process the census listed.
+  let unnamed = (found.unnamed ?? []).map((pid) => ({ pid }));
+  try {
+    unnamed = yield* described(unnamed);
+  } catch {
+    // The process table cannot be read, so each is recorded by its pid alone.
+  }
   const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound));
   const stuck = new Set(why.keys());
   for (const pid of stuck) sent(pid, 'SIGCONT', kill);
@@ -1275,7 +1337,7 @@ function* settled(found, kill, bound) {
     ...found,
     kills: found.kills.filter(({ pid }) => !stuck.has(pid)),
     unnamed: (found.unnamed ?? []).filter((pid) => !stuck.has(pid)),
-    unended: [...found.kills.filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason: why.get(each.pid) })), ...(found.unnamed ?? []).filter((pid) => stuck.has(pid)).map((pid) => ({ pid, reason: why.get(pid) })), ...refused],
+    unended: [...[...found.kills, ...unnamed].filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason: why.get(each.pid) })), ...refused],
   };
 }
 
@@ -1319,7 +1381,8 @@ function* reaped(pids, kill, bound) {
  * census could not be read, it hands back why as `unread`, and as `unnamed` the pid of each process
  * it had found working there and stopped, which it then killed unnamed. It yields each read and each
  * pause, as `census` does, so the call and the exit cleanup both take it. Each process Rigger may not
- * signal is handed back as `refused`, by pid, for `settled` to record as one it could not end.
+ * signal is handed back as `refused`, by pid, for `settled` to record as one it could not end, and
+ * when it first sent a process the kill as `killedAt`, where it sent one.
  *
  * Each round lists the directory's processes and stops them, because a stopped process can neither
  * exec, nor fork, nor leave the directory. It lists them again, stopped, and resumes any no longer
@@ -1351,6 +1414,8 @@ function* sweeping(directory, lsof, kill) {
   // Sent the kill, and listed again only while it is still ending, or where it outlives the kill,
   // which `settled` waits on: it is not stopped or killed again.
   const killed = new Set();
+  // When it first sent a process the kill.
+  let killedAt;
   const list = function* (pids) {
     return workingIn(yield { tool: lsof, args: listing(pids) }, directory);
   };
@@ -1376,7 +1441,7 @@ function* sweeping(directory, lsof, kill) {
         if (stop === 'EPERM') forbidden.add(pid);
       }
       const pids = [...held, ...ours];
-      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden] };
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt };
       if (pids.length === 0) continue;
       const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
@@ -1394,11 +1459,14 @@ function* sweeping(directory, lsof, kill) {
         ours.delete(pid);
         if (!sent(pid, 'SIGKILL', kill)) continue;
         killed.add(pid);
+        killedAt ??= Date.now();
         kills.push({ pid, name: names.get(pid), cmd: commands.get(pid) });
       }
     }
   } catch (error) {
-    return { kills, unread: error.message, unnamed: [...ours].filter((pid) => sent(pid, 'SIGKILL', kill)) };
+    const unnamed = [...ours].filter((pid) => sent(pid, 'SIGKILL', kill));
+    if (unnamed.length > 0) killedAt ??= Date.now();
+    return { kills, unread: error.message, unnamed, killedAt };
   } finally {
     resume([...held]);
   }
@@ -1419,18 +1487,24 @@ async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed
 }
 
 /**
- * `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own: the
- * census lists, kills and waits within one read timeout, as every step of the cleanup's does.
+ * `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own, one
+ * read timeout: the census lists and kills within it from its first read, and waits on what it
+ * killed within it from its first kill, so it reads nothing past its own bound of that kill. Reads
+ * before the kill that take the rest of the first bound so still leave the wait its reads of what
+ * the kill left, and a process the kill does not end is read alive after it rather than recorded as
+ * one the table could not be read for. Where it killed nothing, it waits within the first bound.
  */
 function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  return sweptEvents(directory, readingNow(sweptWithin(directory, lsof, kill, readTimeout), ps, readTimeout), killed);
-}
-
-/** `sweeping` and then `settled`, as one step, so the exit cleanup's census reads within one bound, `bound`. */
-function* sweptWithin(directory, lsof, kill, bound) {
-  return yield* settled(yield* sweeping(directory, lsof, kill), kill, bound);
+  const began = Date.now();
+  const answered = !unanswered.has(ps);
+  const found = readingNow(sweeping(directory, lsof, kill), ps, readTimeout, began + readTimeout);
+  // A read of `ps` this census gave up on at its own bound, before its kill, is made again in the
+  // wait on what it killed, which has a bound of its own; a table that does not answer that either
+  // is given up on again.
+  if (answered && found.killedAt !== undefined) unanswered.delete(ps);
+  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout), ps, readTimeout, (found.killedAt ?? began) + readTimeout), killed);
 }
 
 /** The events `swept` hands back, from what `sweeping` found in `directory`: each process it could not end among them, as such. */
