@@ -478,8 +478,11 @@ test('given loop built with a read bound, a role\'s dispatch reaches L1 with it:
   assert.ok(took < READ_TIMEOUT, `the pull took ${took} ms, as long as L0's own bound of ${READ_TIMEOUT} ms`);
 });
 
-test('a recording `ps` stand-in, once made, has recorded no call', () => {
-  assert.deepEqual(recordingPs().calls(), []);
+test('a recording `ps` stand-in, once made, has recorded no call, and its directory holds only itself', () => {
+  const ps = recordingPs();
+
+  assert.deepEqual(ps.calls(), []);
+  assert.deepEqual(readdirSync(dirname(ps.path)), ['ps']);
 });
 
 test('a `ps` stand-in whose start-time reads never answer, once made, has left nothing beside itself and no process running it', () => {
