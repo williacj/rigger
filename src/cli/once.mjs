@@ -1,19 +1,20 @@
 // ABOUTME: The `once` verb: fires one pull through L3's dispatching entry point, which claims one card,
-// has L1 make and provision its workspace and dispatches its maker, and says what the maker did. It reads the
+// has L1 make and provision its workspace and dispatches its maker and then the judges L2 names, and says
+// what the maker and each judge did. It reads the
 // board through L0, moves the card through L2, and records through L5. `run` is the same verb with
 // no claim limit, so what the two share is one function here.
 
 import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
-import { validate, worktreeTopic } from '../config/validate.mjs';
+import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
 import { judgeDirectoryHandle, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { factsCall } from '../workflow/facts.mjs';
-import { nextAction } from '../workflow/next-action.mjs';
+import { failed, nextAction } from '../workflow/next-action.mjs';
 import { REVIEW_WITHHELD, columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, gitAnswer, real, sameTree, settled, within } from './doctor.mjs';
@@ -49,6 +50,27 @@ function makerOutcome({ outcome, settled: settle }) {
   if (open.length === 0) return { said: `its maker exited 0 and opened no pull request from ${line}`, review: false };
   return { said: `its maker exited 0, and the forge holds more than one open pull request from ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, review: false };
 }
+
+/**
+ * What a judge's `outcome`, L1's as `Promise.allSettled` records it, says on the judge's line, for
+ * a judge whose time is `timeout` milliseconds, and `passed`, whether the judge exited 0 in its time.
+ */
+function judgeOutcome(outcome, timeout) {
+  if (outcome.status === 'rejected') {
+    const said = outcome.reason?.code === NOT_STARTED ? 'did not start' : 'was dispatched, and its dispatch failed';
+    return { said: `${said}: ${outcome.reason?.message}`, passed: false };
+  }
+  const { exit, timedOut } = outcome.value;
+  if (timedOut) return { said: `ran past its time, ${timeout} ms, and was ended`, passed: false };
+  return { said: `exited ${exit}`, passed: exit === 0 };
+}
+
+/** How a step failed, as L2's `failed` answers it, in the words a judge's line says it in. */
+const stepFailure = ({ reason, timeout, exit }) => {
+  if (reason !== undefined) return `it did not start: ${reason}`;
+  if (timeout !== undefined) return `it ran past its time, ${timeout} ms`;
+  return `it exited ${exit}`;
+};
 
 /**
  * The absolute worktree root for the config `config` in the repository whose top level is `top`:
@@ -159,29 +181,79 @@ async function claiming(verb, limit, opened, {
   const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
   const reads = repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
   const l2 = columnChanges({ config, sink, send, reads });
-  // L3 answers the cards that reached the maker and nothing about the rest, so every card L2
-  // refuses is seen here, through the next action this verb hands L3 (the reviewer's ruling on
-  // #312), the refusals from what the forge holds among them. Within an attempt L2 answers from
-  // the provisioning steps as well (ruling 6, Q-A), and answers the maker as a role.
+  // L3 answers, as `trigger` says, a card whose maker ran, with its maker's outcome, L2's settle
+  // and the judges L2 then named; a card pulled for its judges alone, with those judges; and,
+  // where any card failed, a failure carrying both kinds of card as `reached`, a card whose maker
+  // ran and whose judges then failed among them with its maker's result alone, the judges' failure
+  // in the failure's errors. It answers nothing about a card that failed before its maker, nor
+  // about one L2 refused, so every card L2 refuses is seen here, through the next action this verb
+  // hands L3 (the reviewer's ruling on #312), the refusals from what the forge holds among them.
+  // Nor does it answer why a judge L2 stopped naming was not dispatched, which is seen here too.
+  // Within an attempt L2 answers from the provisioning steps as well (ruling 6, Q-A), and answers
+  // the maker as a role.
   const refusals = [];
+  // What L2 last answered of each card's judges, by card: its kind, each judge it named, by role,
+  // and why each judge it stopped naming was not dispatched, which L3 does not answer.
+  const panels = new Map();
   const decide = (card, outcomes, { attempt, workspace: unmade, forge: settledFacts, judged, directories } = {}) => {
     const next = nextAction(card, config.kinds, config.epicLabel, {
       roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, forge: settledFacts, judged, directories,
     });
     if (next.action === 'refuse') refusals.push(next);
+    if (next.action === 'judge') judging(card.number, next, judged ?? {}, directories ?? {});
     return next;
+  };
+  /**
+   * Keeps L2's judge answer `next` for card `number`, and, for each judge L3 handed outcomes of in
+   * `judged` or a directory outcome of in `directories` that the answer no longer names, why it was
+   * not dispatched: the required step in its `head` that failed and how, its newest outcome, since
+   * L3 asks after each step; or why L1 could not make its directory.
+   */
+  const judging = (number, next, judged, directories) => {
+    const panel = panels.get(number) ?? { kind: next.kind, named: new Map(), withheld: new Map() };
+    panels.set(number, panel);
+    for (const judge of next.judges) panel.named.set(judge.role, judge);
+    const absent = (role) => !next.judges.some((judge) => judge.role === role);
+    for (const [role, outcomes] of Object.entries(judged).filter(([role]) => absent(role))) {
+      const { name } = panel.named.get(role).steps[outcomes.length - 1];
+      const how = failed(outcomes.at(-1), config.provisioning[name], { number }, name);
+      panel.withheld.set(role, `was not dispatched, because its required step \`${name}\` failed in its head: ${stepFailure(how)}`);
+    }
+    for (const [role, outcome] of Object.entries(directories).filter(([role]) => absent(role))) {
+      panel.withheld.set(role, `was not dispatched, because its directory could not be made: ${outcome.reason?.message}`);
+    }
   };
   const facts = factsCall({ config, reads, decide });
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
   const { project } = config.board;
-  // One line for each card that reached its maker, then one for each failure of L2's settle that
-  // was not the card left in coding for what the forge holds.
-  // A card pulled for its judges alone has no maker outcome, and #490 adds what the verb says of
-  // its judges.
-  const outcomes = (reached) => reached.filter((each) => each.outcome !== undefined).map((each) => ({ ...each, ...makerOutcome(each) }));
+  // One line for each card that reached its maker, or that was pulled for its judges alone, each
+  // followed by a line for each of its judges, then one for each failure of L2's settle that was
+  // not the card left in coding for what the forge holds.
+  const outcomes = (reached) => reached.map((each) => ({ ...each, ...(each.outcome === undefined ? { said: undefined, review: true } : makerOutcome(each)), ...judgesOf(each) }));
+  /**
+   * What card `reached`'s judges did, as the verb says it: `judgeLines`, a line for each judge L3
+   * dispatched, then each L2 stopped naming, then, where the card's kind names the owner beside
+   * them, that the owner judges last; and `judgesPassed`, whether every judge dispatched exited 0
+   * in its time and none was withheld.
+   */
+  const judgesOf = ({ card, judges = [] }) => {
+    const panel = panels.get(card);
+    if (panel === undefined) return { judgeLines: [], judgesPassed: true };
+    const dispatched = judges.map(({ role, outcome }) => ({ role, ...judgeOutcome(outcome, panel.named.get(role)?.timeout) }));
+    const owner = config.kinds[panel.kind].judges.includes(OWNER) && panel.named.size > 0;
+    const judgeLines = [
+      ...dispatched.map(({ role, said: what }) => `rigger ${verb}: card #${card}'s judge \`${role}\` ${what}`),
+      ...[...panel.withheld].map(([role, why]) => `rigger ${verb}: card #${card}'s judge \`${role}\` ${why}`),
+      ...(owner ? [`rigger ${verb}: card #${card}'s judge \`${OWNER}\` judges last, once every agent judge is satisfied, and Rigger never dispatches it`] : []),
+    ];
+    return { judgeLines, judgesPassed: dispatched.every(({ passed }) => passed) && panel.withheld.size === 0 };
+  };
   const said = (worked) => [
-    ...worked.map(({ card, workspace: path, said: what }) => `rigger ${verb}: claimed #${card} from board ${project}; ${what}, in its workspace, ${path}`),
+    ...worked.flatMap(({ card, workspace: path, said: what, judgeLines }) => [
+      what === undefined ? `rigger ${verb}: claimed #${card} from board ${project} for its judges alone` : `rigger ${verb}: claimed #${card} from board ${project}; ${what}, in its workspace, ${path}`,
+      ...judgeLines,
+    ]),
     ...worked.filter(({ failure }) => failure !== undefined).map(({ failure }) => `rigger ${verb}: ${failure.message}`),
   ];
   let reached;
@@ -210,7 +282,7 @@ async function claiming(verb, limit, opened, {
   // of what the README promises of this verb, and a zero exit would read to whoever called it as
   // work that was done (the owner's O8 on #423).
   const worked = outcomes(reached);
-  return { text: [...said(worked), ...refused].join('\n'), code: worked.every(({ review, failure }) => review && failure === undefined) ? 0 : 1 };
+  return { text: [...said(worked), ...refused].join('\n'), code: worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed) ? 0 : 1 };
 }
 
 /**

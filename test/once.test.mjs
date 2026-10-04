@@ -502,3 +502,253 @@ test('no source file under src/ prints that no maker runs before M4', () => {
 
   assert.deepEqual(saying, []);
 });
+
+// The judges, dispatched through L1 to the stand-in agent under the card's one claim (#490).
+
+/** The line `once` prints for card `number`'s judge `role`, saying `outcome`. */
+const judgeLine = (number, role, outcome) => `rigger once: card #${number}'s judge \`${role}\` ${outcome}`;
+
+/** The comments on the fake forge's pull request `number`, and the SHA of its head. */
+function pullComments(fake, number) {
+  const view = spawnSync(fake.gh, ['pr', 'view', String(number), '--json', 'comments,headRefOid'], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(view.status, 0, view.stderr);
+  const { comments, headRefOid } = JSON.parse(view.stdout);
+  return { head: headRefOid, bodies: comments.map((comment) => comment.body) };
+}
+
+test('given once where the maker opens a pull request and the card\'s kind names one agent judge, once prints the judge\'s role and outcome after the card\'s line, and the judge stand-in posts its findings comment on the fake forge', SETTLES_WITHIN, async (t) => {
+  // The template's `change` kind names `reviewer` as its one judge.
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { findings: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.deepEqual([...out.split('\n'), ...err.split('\n')].filter((line) => /#10\b/.test(line)), [
+    makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'),
+    judgeLine(10, 'reviewer', 'exited 0'),
+  ], `${code}\n${err}`);
+  const { head, bodies } = pullComments(fake, 11);
+  assert.deepEqual(bodies.map((body) => body.split('\n')[0]), [`Findings at ${head} by reviewer`]);
+});
+
+test('given once where every agent judge exits 0, once exits 0', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { findings: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, err } = await ran;
+
+  assert.equal(code, 0, err);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+});
+
+test('given once where a judge exits non-zero, once prints that judge\'s role and exit code, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { exit: 3 } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  assert.ok(err.split('\n').includes(judgeLine(10, 'reviewer', 'exited 3')), err);
+});
+
+test('given once where a judge runs past its time, once prints that judge\'s role and that its time ran out, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // The reviewer's time is one second, and its stand-in never exits, so the time ends it.
+  const settings = { ...config(), roles: { ...template.roles, reviewer: { ...template.roles.reviewer, timeout: 1000 } } };
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { forever: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  assert.ok(err.split('\n').includes(judgeLine(10, 'reviewer', 'ran past its time, 1000 ms, and was ended')), err);
+});
+
+test('given once where a judge is not dispatched because a required step failed in its head, once prints the judge\'s role, the step and the failure, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // The step fails only where the newest commit is the stand-in maker's: in the judge's `head`,
+  // and never in the maker's workspace, which is made before the maker commits.
+  const settings = {
+    ...config(),
+    kinds: { ...KINDS, change: { ...KINDS.change, provisioning: ['check'] } },
+    provisioning: { check: { run: '! git log -1 --format=%s | grep -q "stand-in"', required: true } },
+  };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  assert.ok(err.split('\n').includes(judgeLine(10, 'reviewer', 'was not dispatched, because its required step `check` failed in its head: it exited 1')), err);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+/**
+ * A module the bin's Node process loads first, through `NODE_OPTIONS`, under which the consumer's
+ * event stream refuses the appends alone of each event `condition`, JavaScript over `event`, holds
+ * for, saying it refuses `what`. It changes `node:fs` itself, and `syncBuiltinESMExports` carries
+ * the change to the sink, which imports `appendFileSync` by name, so the sink refuses those appends
+ * without knowing it is under test.
+ */
+function refusingAppend(condition, what) {
+  const path = join(temporaryDirectory('rigger-once-refuse-append-'), 'refuse-append.mjs');
+  writeFileSync(path, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const { appendFileSync } = fs;',
+    'fs.appendFileSync = (path, data, ...rest) => {',
+    "  const event = String(path).endsWith('/.rigger/events.jsonl') ? JSON.parse(String(data)) : {};",
+    `  if (${condition}) {`,
+    `    throw Object.assign(new Error(\`EACCES: the test refuses \${${JSON.stringify(what)}} on \${path}\`), { code: 'EACCES' });`,
+    '  }',
+    '  return appendFileSync(path, data, ...rest);',
+    '};',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return path;
+}
+
+/** `refusingAppend` for L3's `dispatch` event, its start, of the judge `role` alone. */
+const refusingJudgeStart = (role) => refusingAppend(`event.layer === 'L3' && event.event === 'dispatch' && event.role === ${JSON.stringify(role)}`, `L3's dispatch of ${role}`);
+
+test('given once where a judge\'s start event is refused, once prints the judge\'s role and the refused event, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { env: { NODE_OPTIONS: `--import ${refusingJudgeStart('reviewer')}` } });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const lines = err.split('\n');
+  assert.ok(lines.includes(makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')), err);
+  assert.ok(lines.includes(judgeLine(10, 'reviewer', 'handed back no outcome: card #10\'s role `reviewer` was not started, because the event sink refused to record its start: EACCES: the test refuses L3\'s dispatch of reviewer on '
+    + `${join(realpathSync(consumer), '.rigger', 'events.jsonl')}`)), err);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+test('given once over a Review card whose every agent judge has findings at the head, once dispatches nothing for it, and prints nothing for it but that no card was pullable', SETTLES_WITHIN, async (t) => {
+  // The first `once` leaves #10 in Review with the reviewer's findings at its head; the second
+  // runs over the same repository and the same fake forge, as the first left them.
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { findings: true } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+  const first = await ran;
+  assert.equal(first.code, 0, first.err);
+  const { head, bodies } = pullComments(fake, 11);
+  assert.deepEqual(bodies.map((body) => body.split('\n')[0]), [`Findings at ${head} by reviewer`], 'the first once left no findings at the head, so the test proves nothing');
+  const before = eventsOf({ consumer }).length;
+
+  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+
+  assert.equal(again.status, 0, again.stderr);
+  assert.deepEqual([...again.stdout.split('\n'), ...again.stderr.split('\n')].filter(Boolean), [`rigger once: from board ${PROJECT}, no card was pullable`]);
+  const later = eventsOf({ consumer }).slice(before);
+  assert.ok(later.some((event) => event.layer === 'L3' && event.event === 'trigger'), 'the second once recorded nothing, so the test proves nothing');
+  assert.deepEqual(later.filter((event) => (event.layer === 'L3' && event.event === 'dispatch') || (event.layer === 'L1' && event.event === 'dispatch.start')), []);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+});
+
+/** The roles of every L3 `dispatch` event in `events` that names one, in order. */
+const rolesDispatched = (events) => events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role !== undefined).map((event) => event.role);
+
+test('given once over a board holding one ready type:spike card, the maker dispatched is spikeEngineer\'s agent file and its judge reviewer\'s, as the stand-in\'s recorded prompt and arguments show', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { 'spike-engineer': { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready', { labels: ['type:spike'] })] });
+
+  const { code, err } = await ran;
+
+  assert.equal(code, 0, err);
+  const runs = agent.runs().map(({ args, input, cwd }) => ({ agentFile: args[args.indexOf('--append-system-prompt-file') + 1], input, cwd }));
+  assert.equal(runs.length, 2, JSON.stringify(runs));
+  const [maker, judge] = runs;
+  assert.equal(maker.agentFile, join(maker.cwd, '.claude', 'agents', 'spike-engineer.md'));
+  assert.match(maker.input, /^Rigger dispatched this session, unattended, as the maker for card #10\./);
+  assert.equal(judge.agentFile, join(judge.cwd, '.claude', 'agents', 'reviewer.md'));
+  assert.match(judge.input, /^Rigger dispatched this session, unattended, as the judge `reviewer` of pull request #11, /);
+});
+
+// proves R-LOOP-11
+test('given once over a type:spec card whose kind names owner beside its agent judges, no L3 dispatch event and no L1 dispatch.start names the role owner, and once prints that the owner judges last', SETTLES_WITHIN, async (t) => {
+  // The template's `spec` kind names `reviewer`, `engineer` and `architect`, then `owner`.
+  const agent = standInAgent({ 10: { pm: { pr: true } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready', { labels: ['type:spec'] })] });
+
+  const { code, out, err } = await ran;
+
+  assert.equal(code, 0, err);
+  const events = eventsOf({ consumer });
+  assert.deepEqual(rolesDispatched(events).sort(), ['architect', 'engineer', 'pm', 'reviewer']);
+  const starts = events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start');
+  assert.equal(starts.length, 4, JSON.stringify(starts));
+  assert.deepEqual(starts.filter((event) => /\bowner\b/.test(JSON.stringify(event))), []);
+  assert.ok(out.split('\n').includes(judgeLine(10, 'owner', 'judges last, once every agent judge is satisfied, and Rigger never dispatches it')), out);
+});
+
+test('given once over a Review card whose agent judge has no findings at the head, once pulls it for its judges alone, prints that and the judge\'s line, and exits 0 once the judge exits 0', SETTLES_WITHIN, async (t) => {
+  // The first `once` leaves #10 in Review with a reviewer that exited 3 and wrote no findings; the
+  // second runs over the same repository and the same fake forge, its reviewer writing them.
+  const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { exit: 3 } } });
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+  const first = await ran;
+  assert.ok(first.err.split('\n').includes(judgeLine(10, 'reviewer', 'exited 3')), first.err);
+  agent.plan(10, 'reviewer', { findings: true });
+
+  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+
+  assert.equal(again.status, 0, again.stderr);
+  assert.deepEqual(again.stdout.split('\n').filter((line) => /#10\b/.test(line)), [
+    `rigger once: claimed #10 from board ${PROJECT} for its judges alone`,
+    judgeLine(10, 'reviewer', 'exited 0'),
+  ]);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer', 'reviewer']);
+});
+
+test('given once where a judge does not start, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // A Bash rule for a compound command line admits nothing, and the Claude Code adapter refuses it
+  // only for a role that reaches a directory, as a judge reaches its `head` and the maker reaches none.
+  const files = { '.claude/settings.json': JSON.stringify({ permissions: { allow: ['Bash(npm ci && npm test)'] } }) };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { files });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'did not start: the role\'s dispatch did not start: the claude adapter answered no invocation for role reviewer: ')), line);
+  assert.match(line, /Bash\(npm ci && npm test\), a rule for a compound command line/, line);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+test('given once where a judge is dispatched and its dispatch then fails, once prints the judge\'s role and the failure, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // L1's start of the judge's dispatch is refused: of the role dispatches, only a judge's carries the facts of the head it rules on.
+  const preload = refusingAppend("event.layer === 'L1' && event.event === 'dispatch.start' && event.facts !== undefined", 'L1\'s start of a judge\'s dispatch');
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { env: { NODE_OPTIONS: `--import ${preload}` } });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was dispatched, and its dispatch failed: ')), line);
+  // L1's failure names the refused event on the lines after its first.
+  assert.match(line, /the sink refused 1 L1 event\(s\) of dispatch d-[0-9a-f-]+, card #10, so they went unrecorded:$/, line);
+  assert.match(err, /EACCES: the test refuses L1's start of a judge's dispatch on /, err);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});
+
+test('given once where a judge\'s directory cannot be made, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // A plain file where the judges' directories go, beside the workspaces under the default root.
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+  const root = join(dirname(consumer), 'widgets-worktrees');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'judges'), 'not a directory');
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
+  assert.ok(line, err);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was not dispatched, because its directory could not be made: ')), line);
+  assert.match(line, /judges\/rigger-10\/reviewer/, line);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
+});

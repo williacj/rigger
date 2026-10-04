@@ -465,3 +465,54 @@ test('given run where the maker does not start, run exits non-zero, and prints t
   assert.match(lines[0], /^rigger run: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
 });
+
+// The judges, dispatched through L1 to the stand-in agent under each card's one claim (#490).
+
+/** The line `run` prints for card `number`'s judge `role`, saying `outcome`. */
+const judgeLine = (number, role, outcome) => `rigger run: card #${number}'s judge \`${role}\` ${outcome}`;
+
+/** The line `run` prints for card `number` whose maker opened a pull request, which put it in review, whatever that pull request's number. */
+const reviewLine = (consumer, number) => new RegExp(`^rigger run: claimed #${number} from board ${PROJECT}; its maker exited 0 and pull request #\\d+ is open from rigger-${number}, so the card is in review, in its workspace, ${join(dirname(realpathSync(consumer)), 'widgets-worktrees', `rigger-${number}`).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+
+/** A stand-in plan under which each of `cards`' makers opens a pull request and its reviewer writes its findings. */
+const reviewed = (cards) => Object.fromEntries(cards.map((number) => [number, { engineer: { pr: true }, reviewer: { findings: true } }]));
+
+test('given run over three cards where one card\'s required step fails twice, run prints each other card\'s maker and judge lines beside the failing card\'s lines', SETTLES_WITHIN, () => {
+  // Only #20 carries the label selecting the step, which always fails, so its two attempts fail
+  // before its maker, while #10 and #30 reach their makers and their judges.
+  const settings = {
+    ...config(3),
+    kinds: { ...KINDS, change: { ...KINDS.change, provisioning: ['broken'] } },
+    provisioning: { broken: { run: 'exit 1', required: true, select: { labels: ['area:broken'] } } },
+  };
+  const board = { items: [card(10, 'Ready'), card(20, 'Ready', { labels: ['type:change', 'area:broken'] }), card(30, 'Ready')] };
+  const ran = runWithAgent(standInAgent(reviewed([10, 30])), board, { settings });
+
+  assert.notEqual(ran.code, 0, ran.out);
+  const lines = ran.err.split('\n');
+  for (const number of [10, 30]) {
+    assert.ok(lines.some((line) => reviewLine(ran.consumer, number).test(line)), ran.err);
+    assert.ok(lines.includes(judgeLine(number, 'reviewer', 'exited 0')), ran.err);
+  }
+  assert.ok(lines.some((line) => line.startsWith('rigger run: card #20 was stopped after 2 attempts, each failing before the maker:')), ran.err);
+});
+
+test('run claims no more than N cards, and dispatches roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {
+  const board = { items: [card(10, 'Ready'), card(20, 'Ready'), card(30, 'Ready')] };
+  const ran = runWithAgent(standInAgent(reviewed([10, 20, 30])), board, { settings: config(2) });
+
+  assert.equal(ran.code, 0, ran.err);
+  const events = eventsOf(ran);
+  assert.equal(events.filter((event) => event.layer === 'L3' && event.event === 'pull').length, 2, JSON.stringify(events));
+  assert.equal(mostHeld(events), 2);
+  assert.deepEqual(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => event.role).sort(), ['engineer', 'engineer', 'reviewer', 'reviewer'], 'no judge was dispatched, so the test proves nothing of the judges');
+  // Each L1 dispatch.start opens a dispatch for its card and each dispatch.end closes it, in the
+  // order recorded; the cards with a dispatch open at once never number more than N.
+  const open = new Map();
+  let most = 0;
+  for (const event of events.filter((each) => each.layer === 'L1' && ['dispatch.start', 'dispatch.end'].includes(each.event))) {
+    open.set(event.card, (open.get(event.card) ?? 0) + (event.event === 'dispatch.start' ? 1 : -1));
+    most = Math.max(most, [...open.values()].filter((count) => count > 0).length);
+  }
+  assert.ok(most >= 1 && most <= 2, `${most} cards had a role dispatched at once`);
+});
