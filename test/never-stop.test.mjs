@@ -556,6 +556,34 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
   assert.ok(ended - killed < KILL_BOUND, `the caller ended ${ended - killed} ms after the census's kill of the outside process`);
 });
 
+/**
+ * A `ps` stand-in that, until `$here/hang` exists, holds the census's read of the outside process's
+ * name, `-p <pid> -o ucomm=`, marking `$here/held`, until the census's own bound gives it up, and
+ * answers every other read as `ps` does. So the census's bound runs out after it has stopped the
+ * process and listed it again, and before it has read its name (#579).
+ */
+const holdingName = (directory) => warmed(fixture(directory, 'ps', [
+  'if [ ! -f "$here/hang" ] && [ "$*" = "-p $(/bin/cat "$here/outside.pid") -o ucomm=" ]; then : > "$here/held"; exec /usr/bin/tail -f "$here/hold"; fi',
+  'exec /bin/ps "$@"',
+].join('\n')));
+
+// proves R-STATE-19, R-STATE-9
+test('given a census of a dispatch\'s directory whose bound runs out after it has stopped and listed again a process the kill does not end, and before it has read that process\'s name, the exit cleanup still records it by name and command line as alive at the cleanup\'s own bound of its kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  holdingName(directory);
+  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+
+  const { status, events, pairs } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+
+  assert.equal(status, 0);
+  assert.ok(existsSync(join(directory, 'held')), 'the census never read the outside process\'s name before its kill, so the test proves nothing');
+  assert.ok(events.some(({ event }) => event === 'directory.unread'), 'the census\'s reads before its kill answered within its bound, so the test proves nothing');
+  assert.ok(killedIn(pairs, pidIn(directory, 'outside')) !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
+  assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+});
+
 // proves R-STATE-18, R-STATE-19
 test('given a dispatch\'s directory holding a process the kill does not end, and a process table that cannot be read once the census has sent that kill, the census resumes the process and records it as a process it could not end, not as killed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
