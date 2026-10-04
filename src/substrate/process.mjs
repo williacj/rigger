@@ -152,7 +152,9 @@ const reads = new Set();
 /**
  * Each `ps` a read of which the exit cleanup gave up on as it ran, by the timeout it waited out.
  * The cleanup reads it no more, so a process table that never answers holds the process's ending
- * back by one read timeout, and not by one for each read of each group it holds (`runNow`).
+ * back by one read timeout, and not by one for each read of each group it holds (`runNow`). One
+ * exception: a census of a dispatch's directory that gave up on it at its own bound before it sent
+ * its kill reads it again in its wait on what it killed, which has a bound of its own (`sweptNow`).
  */
 const unanswered = new Map();
 
@@ -1302,14 +1304,24 @@ function sent(pid, name, kill) {
  * What `sweeping` `found`, once each process it killed has ended: each still alive `bound`
  * milliseconds after its kill is taken out of the kills and the unnamed, resumed, since the census
  * stopped it, and handed back in `unended` with why, as is each process Rigger may not signal,
- * which `found` holds as `refused`, with its name and command line where they can be read. It yields
- * each read and each pause, as `census` does.
+ * which `found` holds as `refused`, with its name and command line where they can be read. Each
+ * process `found` holds as `unnamed`, which the census killed before it could read its name, is read
+ * by name and command line before the wait, within the wait's own bound, so one the kill does not
+ * end is recorded by them (#579). It yields each read and each pause, as `census` does.
  *
  * The census lists only processes whose real uid is Rigger's, and macOS lets a process signal
  * those, so a process it may not signal is not one this host has shown it (`D16` rule 3): the
  * branch is proven through a stand-in for the signal call alone (#545's engineer judge, N2).
  */
 function* settled(found, kill, bound) {
+  // Each process killed unnamed is read by name and command line at once, while one the kill does
+  // not end is still stopped, so its name is that of the process the census listed.
+  let unnamed = (found.unnamed ?? []).map((pid) => ({ pid }));
+  try {
+    unnamed = yield* described(unnamed);
+  } catch {
+    // The process table cannot be read, so each is recorded by its pid alone.
+  }
   const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound));
   const stuck = new Set(why.keys());
   for (const pid of stuck) sent(pid, 'SIGCONT', kill);
@@ -1323,7 +1335,7 @@ function* settled(found, kill, bound) {
     ...found,
     kills: found.kills.filter(({ pid }) => !stuck.has(pid)),
     unnamed: (found.unnamed ?? []).filter((pid) => !stuck.has(pid)),
-    unended: [...found.kills.filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason: why.get(each.pid) })), ...(found.unnamed ?? []).filter((pid) => stuck.has(pid)).map((pid) => ({ pid, reason: why.get(pid) })), ...refused],
+    unended: [...[...found.kills, ...unnamed].filter(({ pid }) => stuck.has(pid)).map((each) => ({ ...each, reason: why.get(each.pid) })), ...refused],
   };
 }
 
@@ -1484,7 +1496,12 @@ function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
   const began = Date.now();
+  const answered = !unanswered.has(ps);
   const found = readingNow(sweeping(directory, lsof, kill), ps, readTimeout, began + readTimeout);
+  // A read of `ps` this census gave up on at its own bound, before its kill, is made again in the
+  // wait on what it killed, which has a bound of its own; a table that does not answer that either
+  // is given up on again.
+  if (answered && found.killedAt !== undefined) unanswered.delete(ps);
   return sweptEvents(directory, readingNow(settled(found, kill, readTimeout), ps, readTimeout, (found.killedAt ?? began) + readTimeout), killed);
 }
 
