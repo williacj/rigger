@@ -364,9 +364,15 @@ kill on every look until a bound passes, then records the kill of the group and 
 without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
 for a second, longer bound, L0 records it by name and command line as a process it could not end,
 and settles. A process the kill ended that no read before it found is recorded as the kill of the
-group, as when L0 cannot read the table, wherever a later read finds it. No read finds one that
-joined the group after the last read before the kill, and that a parent outside the group reaped at
-once. Nothing records such a process, and the code records that limit under `D16` rule 3.
+group, as when L0 cannot read the table, wherever a later read finds it. L0 records only what its
+reads of the table show, for a group as for a directory. Before the kill, reads of a group that list
+none of its processes while signal 0 still reaches it show nothing. So does a census read that
+leaves out the leader while signal 0 still reaches the leader's pid. For either, L0 records the kill
+of the group, as for a read that fails. After the kill, a read shows what it lists, because a killed
+process still answers signal 0 while it exits. A process that no read finds, while the reads show
+the group, is recorded nowhere. One that joined the group after the last read before the kill, and
+that a parent outside the group reaped at once, is such a process, and the code records that case
+under `D16` rule 3.
 
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge runs
