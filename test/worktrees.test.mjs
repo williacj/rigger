@@ -636,7 +636,7 @@ test('only src/execution/ imports the workspace adapter: an import from any othe
     const found = boundaryMessages({ [file]: `import { workspaces } from '${up}substrate/worktrees.mjs';\nexport const peek = workspaces;` });
     assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
   }
-  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function makeScratch() {}" }), []);
+  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function makeScratch() {}\nexport function judgeDirectoryHandle() {}" }), []);
 });
 
 test('rule 10 follows a namespace import, an import binding no name, a dynamic import, and a re-export relayed through src/execution/', () => {

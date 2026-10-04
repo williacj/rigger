@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
-import { workspaceHandle } from '../execution/workspace.mjs';
+import { judgeDirectoryHandle, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
@@ -116,7 +116,8 @@ async function rootInsideTree(verb, root, top, options) {
  * and runs it before it records or reads anything, and the state directory, where L1 records each
  * step's group (ruling 10). L3 is handed L1's workspace handle, built over the root the verb
  * resolved, the topic, and the guard's top level as the repository, before `loop` is built (ruling
- * 5, P4; ruling 6, Q-B). `ps` and `readTimeout` stand in for L0's own process-table read and its
+ * 5, P4; ruling 6, Q-B), and L1's make of a judge's directory over the same three, as
+ * `judgeDirectory` (the architect's ruling 4's addendum on #467). `ps` and `readTimeout` stand in for L0's own process-table read and its
  * bound where a test gives them.
  */
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
@@ -152,19 +153,20 @@ async function claiming(verb, limit, opened, {
   } catch (failure) {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
+  const judgeDirectory = judgeDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
 
   const forge = { ...config.board, repo: config.repo };
   const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
   const reads = repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink, send, pullRequests: reads.readPullRequests });
+  const l2 = columnChanges({ config, sink, send, reads });
   // L3 answers the cards that reached the maker and nothing about the rest, so every card L2
   // refuses is seen here, through the next action this verb hands L3 (the reviewer's ruling on
   // #312), the refusals from what the forge holds among them. Within an attempt L2 answers from
   // the provisioning steps as well (ruling 6, Q-A), and answers the maker as a role.
   const refusals = [];
-  const decide = (card, outcomes, { attempt, workspace: unmade } = {}) => {
+  const decide = (card, outcomes, { attempt, workspace: unmade, forge: settledFacts, judged, directories } = {}) => {
     const next = nextAction(card, config.kinds, config.epicLabel, {
-      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade,
+      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, forge: settledFacts, judged, directories,
     });
     if (next.action === 'refuse') refusals.push(next);
     return next;
@@ -175,7 +177,9 @@ async function claiming(verb, limit, opened, {
   const { project } = config.board;
   // One line for each card that reached its maker, then one for each failure of L2's settle that
   // was not the card left in coding for what the forge holds.
-  const outcomes = (reached) => reached.map((each) => ({ ...each, ...makerOutcome(each) }));
+  // A card pulled for its judges alone has no maker outcome, and #490 adds what the verb says of
+  // its judges.
+  const outcomes = (reached) => reached.filter((each) => each.outcome !== undefined).map((each) => ({ ...each, ...makerOutcome(each) }));
   const said = (worked) => [
     ...worked.map(({ card, workspace: path, said: what }) => `rigger ${verb}: claimed #${card} from board ${project}; ${what}, in its workspace, ${path}`),
     ...worked.filter(({ failure }) => failure !== undefined).map(({ failure }) => `rigger ${verb}: ${failure.message}`),
@@ -184,7 +188,7 @@ async function claiming(verb, limit, opened, {
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, state, environment: process.env }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, state, environment: process.env }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start

@@ -12,6 +12,7 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readsWith } from './loop-world.mjs';
 
 const { columns } = config.board;
 
@@ -37,7 +38,7 @@ async function world({ column = columns.coding, seed = {}, fail = false } = {}) 
   };
   const directory = temporaryDirectory('rigger-settle-');
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
-  const l2 = columnChanges({ config, sink, items: fake.operations, pullRequests });
+  const l2 = columnChanges({ config, sink, items: fake.operations, reads: readsWith(pullRequests) });
   const [card] = await fake.operations.readItems();
   const l2Events = () => readEventsOr(directory).filter((event) => event.layer === 'L2');
   return { fake, l2, card, reads, l2Events, held: () => repository.held() };
@@ -69,6 +70,18 @@ test('given a maker outcome of exit 0 and an open pull request from the card\'s 
   assert.deepEqual(w.l2Events().map(({ event, from, to, cause }) => ({ event, from, to, cause })), [{ event: 'transition', from: 'coding', to: 'review', cause: 'returned' }]);
 });
 
+/**
+ * The review reads L2's settle answers beside the pull requests for card 12's one open pull request,
+ * #120, as `world`'s reads answer them: each pull request read from a repository holding none, and
+ * the card's body never edited.
+ */
+const UNREAD = {
+  pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readMergeBase has nothing to read') },
+  diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readDiff has nothing to read') },
+  comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readComments has nothing to read') },
+  editedAt: { status: 'fulfilled', value: null },
+};
+
 // proves R-WORK-18
 test('L2\'s settle makes one read of the forge for that card and answers the facts it read', async () => {
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
@@ -76,7 +89,7 @@ test('L2\'s settle makes one read of the forge for that card and answers the fac
   const facts = await w.l2.settled(w.card, exited(0));
 
   assert.deepEqual(w.reads, ['rigger-12']);
-  assert.deepEqual(facts, { line: 'rigger-12', open: [{ number: 120, head: pullFrom(12, 120).sha, base: 'main' }], merged: [] });
+  assert.deepEqual(facts, { line: 'rigger-12', open: [{ number: 120, head: pullFrom(12, 120).sha, base: 'main' }], merged: [], ...UNREAD });
 });
 
 // proves R-WORK-18
@@ -165,4 +178,31 @@ test('a Coding card L3 claims is not moved, and no transition is recorded for it
 
   assert.deepEqual(w.fake.writes(), []);
   assert.deepEqual(w.l2Events(), []);
+});
+
+test('L2\'s settle reads, in its one read for the card it settles, its one open pull request, that pull request\'s diff and comments and the acceptance\'s revision, and answers them', async () => {
+  const fake = createFakeBoard({ columns: Object.values(columns), items: [{ type: 'issue', repository: config.repo, number: 13, title: 'Card 13', column: columns.coding }] });
+  const base = 'e'.repeat(40);
+  const comments = [{ body: 'A person\'s note.', createdAt: '2026-10-03T09:00:00Z' }];
+  const repository = createFakeRepository({ pullRequests: [{ ...pullFrom(13, 130), diff: 'diff --git a/x b/x\n', mergeBase: base, comments }], edited: { 13: '2026-10-02T08:00:00Z' } });
+  const made = [];
+  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, (what) => {
+    made.push([operation, what]);
+    return read(what);
+  }]));
+  const l2 = columnChanges({ config, sink: openSink({ directory: temporaryDirectory('rigger-settle-'), run: 'r-test', now: () => 0 }), items: fake.operations, reads });
+  const [card] = await fake.operations.readItems();
+
+  const facts = await l2.settled(card, exited(0));
+
+  assert.deepEqual(made.sort(), [['readComments', 130], ['readDiff', 130], ['readEditedAt', 13], ['readMergeBase', 130], ['readPullRequests', 'rigger-13']]);
+  assert.deepEqual(facts, {
+    line: 'rigger-13',
+    open: [{ number: 130, head: pullFrom(13, 130).sha, base: 'main' }],
+    merged: [],
+    pull: { status: 'fulfilled', value: { number: 130, base, head: pullFrom(13, 130).sha } },
+    diff: { status: 'fulfilled', value: 'diff --git a/x b/x\n' },
+    comments: { status: 'fulfilled', value: comments },
+    editedAt: { status: 'fulfilled', value: '2026-10-02T08:00:00Z' },
+  });
 });

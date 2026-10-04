@@ -418,14 +418,15 @@ test('given a recorded group whose start-time read never answers, the call kills
  * Stand-ins for `ps`, by how the start-time read fails, each the body of a script whose arguments
  * are the read's: the group's id is the third. Beside each, what the failure says of that read,
  * which a read that never answered does not say. The first is how `ps` reports that no process
- * matched, whatever it is asked. The partial table is the real read's first row alone. Each is
+ * matched, whatever it is asked. The partial table is the leader's row alone, as `startGroup`
+ * wrote its pid to `$here/group.pids`, with a start no read here gets as far as parsing. Each is
  * `warmed`, because the start-time read is its first exec, which must reach its body within
  * `readTimeout`.
  */
 const FAILING_READS = {
   'exits 1 and prints nothing': ['exit 1', /listed no process of the group/],
   'exits 2 and prints nothing': ['exit 2', /ended with 2\b/],
-  'prints part of the table and exits 1': ['/bin/ps "$@" | /usr/bin/head -n 1; exit 1', /ended with 1\b/],
+  'prints part of the table and exits 1': ['read leader member < "$here/group.pids"; echo "$leader S   Mon Sep 28 12:00:00 2026"; exit 1', /ended with 1\b/],
   'prints a start time that cannot be parsed': ['echo "$3 Ss  the day before yesterday"', /a start time L0 cannot read: "the day before yesterday"/],
 };
 
@@ -448,8 +449,9 @@ for (const [how, [body, cause]] of Object.entries(FAILING_READS)) {
 }
 
 /**
- * A stand-in for `ps` in `directory` whose start-time read lists every member of the group, the
- * read's third argument, with the start `lstart`, and which passes every other read through to
+ * A stand-in for `ps` in `directory` whose start-time read lists every member of the group, its
+ * leader and member as `startGroup` wrote them to `$here/group.pids`, each with the start `lstart`,
+ * running no `ps` for it, and which passes every other read through to
  * `ps`, so a group the start-time read admitted would be killed. `lstart` is shell text inside
  * double quotes, so a command substitution in it runs under the read's environment. It is
  * `warmed`, because the start-time read is its first exec, which must reach its body within
@@ -457,7 +459,7 @@ for (const [how, [body, cause]] of Object.entries(FAILING_READS)) {
  */
 const startsAs = (directory, lstart) => warmed(fixture(directory, 'ps', [
   'case "$*" in',
-  `  *lstart*) /bin/ps -g "$3" -o pid=,stat= | /usr/bin/sed "s/\\$/ ${lstart}/" ;;`,
+  `  *lstart*) read leader member < "$here/group.pids"; printf "%s S %s\\n" "$leader" "${lstart}" "$member" "${lstart}" ;;`,
   '  *) exec /bin/ps "$@" ;;',
   'esac',
 ].join('\n')));
