@@ -1765,7 +1765,7 @@ async function startsIn(ps, group, timeout) {
       throw new Error(`${failure().message}, and the read running at that point was given up: ${error.message}`);
     }
     if (rows.size === 0 && occupied(group)) short = 'listed no process of the group while signal 0 still reached it';
-    else if (!rows.has(group) && answers(group)) short = 'answered short';
+    else if (!rows.has(group) && answers(group)) short = `left out its leader, pid ${group}, while signal 0 still reached that pid`;
     else short = undefined;
     if (short !== undefined) continue;
     const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
