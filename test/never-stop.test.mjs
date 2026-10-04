@@ -751,6 +751,9 @@ test('given a leader that answers signal 0 with EPERM until the next kill reache
   const ending = JSON.parse(read(directory, 'ending'));
   assert.equal('exit' in ending, false, JSON.stringify(ending));
   assert.match(ending.unread ?? '', /the command was not shown to have ended/, JSON.stringify(ending));
+});
+
+/**
  * Stand-ins for `lsof` and `ps` that answer the census's reads of the outside process in `directory`
  * at once, so that no read it makes waits on the host. Each answer is what the real tool printed for
  * that process before the cleanup began: its listing as working in the dispatch's directory, its
@@ -1052,6 +1055,9 @@ test('on the exit cleanup, a member no read before the kill listed, which outliv
   assert.deepEqual(recordOf(events, two), [
     { event: 'survivor.unended', name: undefined, cmd: undefined, reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` },
   ]);
+});
+
+/**
  * Asserts that `events` record `stuck`, a member L0 could not end under a table that fails every
  * read after the kill, by its name and command line as a process not shown to have ended, under
  * `unended`, with a reason matching `reason`, and never as killed; and that they record `ended`,
