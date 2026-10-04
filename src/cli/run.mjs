@@ -1,6 +1,7 @@
 // ABOUTME: The `run` verb: fires one pull through L3's dispatching entry point, which claims cards until
 // the slots are full or nothing is left to pull, has L1 make and provision each one's workspace,
-// dispatches each one's maker, and says what each maker did. It is `once` with no claim limit.
+// dispatches each one's maker and then the judges L2 names, and says what each maker and judge did.
+// It is `once` with no claim limit.
 
 import { claimVerb } from './once.mjs';
 

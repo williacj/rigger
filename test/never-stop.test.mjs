@@ -262,7 +262,7 @@ function markingKill(directory, signals) {
   };
 }
 
-// proves R-STATE-12, R-STATE-7, R-STATE-20
+// proves R-STATE-12, R-STATE-7
 test('on the call\'s containment, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const signals = standIn(directory, { outlasts: 'two' });
@@ -275,7 +275,7 @@ test('on the call\'s containment, a member no read before the kill found, which 
   assert.deepEqual([one, two].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-10, R-STATE-20
+// proves R-STATE-12, R-STATE-10
 test('on a start\'s kill of a recorded group, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -289,7 +289,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill f
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-9, R-STATE-20
+// proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   holdingTwo(directory);
@@ -911,7 +911,7 @@ function assertJoinerRecorded(events) {
   assert.match(kills[0].census, /a read after the kill found/);
 }
 
-// proves R-STATE-12, R-STATE-7, R-STATE-20
+// proves R-STATE-12, R-STATE-7
 test('on the call\'s containment, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
@@ -925,7 +925,7 @@ test('on the call\'s containment, a member no read before the kill listed, which
   assertJoinerRecorded(events);
 });
 
-// proves R-STATE-12, R-STATE-10, R-STATE-20
+// proves R-STATE-12, R-STATE-10
 test('on a start\'s kill of a recorded group, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -941,7 +941,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill l
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
-// proves R-STATE-12, R-STATE-9, R-STATE-20
+// proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
@@ -966,7 +966,7 @@ function assertUnreadAfterKill(events) {
   assert.match(kills[0].census, /ps: failing on purpose/);
 }
 
-// proves R-STATE-19, R-STATE-12, R-STATE-20
+// proves R-STATE-19, R-STATE-12
 test('on the call\'s containment, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
@@ -978,7 +978,7 @@ test('on the call\'s containment, where every read after the kill fails, the kil
   assertUnreadAfterKill(events);
 });
 
-// proves R-STATE-19, R-STATE-10, R-STATE-20
+// proves R-STATE-19, R-STATE-10
 test('on a start\'s kill of a recorded group, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const started = await startGroup(t, directory, 'group');
@@ -992,7 +992,7 @@ test('on a start\'s kill of a recorded group, where every read after the kill fa
   assertUnreadAfterKill(events);
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-20
+// proves R-STATE-19, R-STATE-9
 test('on the exit cleanup, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
