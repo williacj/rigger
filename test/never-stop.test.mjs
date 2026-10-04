@@ -624,7 +624,11 @@ test('given a process table that stops answering once the exit cleanup\'s census
  * name and its command line. Its state is read as stopped, `T`: the census reads states only of
  * processes it has stopped, and this one stays stopped until the census resumes it after its wait,
  * since its kill is not sent. `lsof` answers so until `$here/hang` exists, and from then on never
- * answers. `ps` passes every other read, those of the command's group, to `/bin/ps`.
+ * answers. `ps` answers the exit cleanup's reads of the command's group as well, which come before
+ * the census, so that no real read of the group can run out its bound and leave the census's reads
+ * refused. The group holds one process, the command, whose pid is the group's: read live, `S`, until
+ * the caller has sent the group its kill, and from then on a zombie, `Z`, with `SIGKILL`'s wait
+ * status, `9`, since the caller, exiting, does not reap it. Any other read fails, naming itself.
  */
 function answeringAtOnce(directory) {
   const pid = read(directory, 'outside.pid');
@@ -636,10 +640,19 @@ function answeringAtOnce(directory) {
   warmed(fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
     'case "$*" in',
-    '  "-p $pid -o pid=,stat=") echo "$pid T" ;;',
+    '  "-p $pid -o pid=,stat=") echo "$pid T"; exit 0 ;;',
     '  "-p $pid -o ucomm=") exec /bin/cat "$here/ucomm" ;;',
     '  "-ww -p $pid -o pid=,command=") exec /bin/cat "$here/cmdline" ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    'esac',
+    'for each; do case $last in -g|-p) group=$each ;; esac; last=$each; done',
+    'state=S; status=0',
+    '/usr/bin/grep -q "^\\[-$group,\\"SIGKILL\\"" "$here/pairs" 2>/dev/null && state=Z && status=9',
+    'case $last in',
+    '  pid=,stat=) echo "$group $state" ;;',
+    '  pid=,stat=,xstat=) echo "$group $state $status" ;;',
+    '  pid=,command=) echo "$group /bin/sh $here/command" ;;',
+    '  ucomm=) echo sh ;;',
+    '  *) echo "the ps stand-in has no answer for $*" >&2; exit 2 ;;',
     'esac',
   ].join('\n')));
 }
