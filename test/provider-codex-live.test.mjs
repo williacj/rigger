@@ -336,9 +336,19 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   assert.ok((context.sandbox_policy.writable_roots ?? []).map((root) => realpathSync.native(root)).includes(realpathSync.native(head)), JSON.stringify(context.sandbox_policy));
   assert.equal(realpathSync.native(world.agents_md.directory), realpathSync.native(main));
   assert.ok(!JSON.stringify(world.host_skills ?? {}).includes(head), 'a skill under head is in the session\'s skill list');
-  const whole = JSON.stringify(rollout.lines);
-  for (const marker of Object.values(HEAD)) assert.ok(!whole.includes(marker), `${marker} from head reached the session's rollout`);
-  assert.ok(whole.includes('OSPREY-c489-main-agentsmd'), 'main\'s AGENTS.md never reached the session');
+  // What the session loaded as instructions: its session metadata, turn context and world state,
+  // and every message Codex put before the model other than its own, which is where an AGENTS.md,
+  // a skill list and developer instructions land. The prompt carries the pull request's diff, which
+  // holds head's markers (`R-EVIDENCE-1`), so that one diff is cut out. What the judge reads or
+  // writes with its own tools afterwards is not an instruction source.
+  const sources = rollout.lines
+    .filter((line) => ['session_meta', 'turn_context', 'world_state'].includes(line.type) || (line.type === 'response_item' && line.payload?.type === 'message' && line.payload.role !== 'assistant'))
+    .map((line) => JSON.stringify(line.payload)).join('\n');
+  const given = JSON.stringify(diff.trimEnd()).slice(1, -1);
+  assert.ok(sources.includes(given), 'the pull request\'s diff never reached the session in its prompt');
+  const loaded = sources.split(given).join('');
+  for (const marker of Object.values(HEAD)) assert.ok(!loaded.includes(marker), `${marker} from head reached the session's instruction sources`);
+  assert.ok(loaded.includes('OSPREY-c489-main-agentsmd'), 'main\'s AGENTS.md never reached the session\'s instruction sources');
   const listing = readdirSync(head);
   quote('head after the run', listing);
   assert.ok(listing.includes('written-by-judge.txt'), 'the judge wrote nothing in head');
