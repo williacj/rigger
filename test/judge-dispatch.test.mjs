@@ -11,7 +11,7 @@ import config from '../rigger.config.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { WORKSPACE_NOT_MADE } from '../src/execution/workspace.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
-import { BASE, HEAD, alive, cardIn, judgeDispatch, judgeWorld, pullFor, recorded } from './judge-world.mjs';
+import { BASE, DIFF, HEAD, alive, cardIn, judgeDispatch, judgeWorld, pullFor, recorded } from './judge-world.mjs';
 import { COLUMNS, makingJudgeDirectories, waitFor } from './loop-world.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -98,6 +98,35 @@ test('in that case, the fake forge records no read of that card between the sett
   assert.deepEqual(between.map((entry) => entry.read).sort(), [['readComments', 1003], ['readDiff', 1003], ['readEditedAt', 3], ['readMergeBase', 1003]]);
   const dispatched = at(built, (entry) => appended(entry, 'L3', 'dispatch', (each) => each.fields.role === 'engineer'));
   assert.ok(built.log.slice(dispatched, settle).some((entry) => appended(entry, 'L1', 'dispatch.end')), 'the settle read came before the maker ended');
+});
+
+test('in that case, the ask after the settle carries exactly the facts the settle answered, its review reads fulfilled, and the judges are dispatched at the head and base the forge served', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)] });
+  const settles = [];
+  const asks = [];
+  const { handed } = built;
+  const watched = loop({
+    ...handed,
+    l2: { ...handed.l2, settled: async (card, outcome) => { const facts = await handed.l2.settled(card, outcome); settles.push(facts); return facts; } },
+    decide: (card, outcomes, options) => { asks.push({ settled: settles.length, options }); return handed.decide(card, outcomes, options); },
+  });
+
+  await watched.pull();
+
+  assert.equal(settles.length, 1);
+  const [settled] = settles;
+  // The settle's review reads are fulfilled with what the forge served, each value written by hand.
+  assert.deepEqual(settled.pull, { status: 'fulfilled', value: { number: 1003, base: BASE, head: HEAD } });
+  assert.deepEqual(settled.diff, { status: 'fulfilled', value: DIFF });
+  assert.equal(settled.comments.status, 'fulfilled');
+  assert.equal(settled.editedAt.status, 'fulfilled');
+  const asked = asks.filter((each) => each.settled === 1);
+  assert.ok(asked.length > 0, 'L3 asked L2 nothing after the settle, so the test proves nothing');
+  for (const { options } of asked) assert.deepEqual(options.forge, settled);
+  for (const role of ['reviewer', 'architect']) {
+    const start = judgeDispatch(built, 3, role).l1.find((each) => each.event === 'dispatch.start');
+    assert.deepEqual({ base: start.facts.base, head: start.facts.head }, { base: BASE, head: HEAD }, role);
+  }
 });
 
 test('no judge\'s stand-in reads on its standard input any text of the maker stand-in\'s output', SETTLES_WITHIN, async () => {
