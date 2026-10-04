@@ -709,7 +709,8 @@ test('given a leader that answers signal 0 with EPERM until the next kill reache
   const group = pidIn(directory, 'group');
   assert.equal(status, 0, stderr);
   assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
-  assert.match(read(directory, 'looks'), /E/, 'the leader never answered EPERM, so the test proves nothing');
+  const looks = existsSync(join(directory, 'looks')) ? read(directory, 'looks') : '';
+  assert.match(looks, /E/, 'the cleanup never asked signal 0 of the leader, or it never answered EPERM, so the test proves nothing');
   const recorded = events.filter(({ pid }) => pid === group);
   assert.deepEqual(recorded.map(({ event }) => event), ['survivor.unended'], JSON.stringify(recorded));
   assert.match(recorded[0].reason, /^not shown to have ended: /);
