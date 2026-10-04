@@ -8,6 +8,7 @@ import { roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from
 import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
+import { judgeAnswer } from './judges.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
@@ -34,8 +35,14 @@ const selecting = (card, kinds) =>
  *
  * A card L2's facts call handed on with its `forge` facts is answered from them, as `fromTheForge`
  * says, once a kind selects it and before the form check: refused for what the forge holds of its
- * line of work, ignored, or left to be dispatched. A card handed on with none is answered as if the
- * forge held nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
+ * line of work, ignored, left to be dispatched, or, for a Review card with one open pull request
+ * from its line of work, answered with its judges, as `judgeAnswer` answers it under `roles`,
+ * `provisioning` and `sink`, handed `judged`, the outcomes of each judge's steps by role, and
+ * `directories`, the outcome of L1's make of each judge's directory by role, where L1 could not
+ * make it. `forge`, where given, is the facts L2's settle answered for a card it moved to review,
+ * which L3 hands back unread, and L2 answers the card from them as from the facts call's (the
+ * architect's ruling 3, AQ4, on #467). A card handed on with none is answered as if the forge held
+ * nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
  * labels select two tiers for its kind's maker (`R-LOOP-13`), naming the role and each label, and
  * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
  * both, the one refusal names each of those reasons too.
@@ -57,13 +64,16 @@ const selecting = (card, kinds) =>
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
-export function nextAction(card, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace } = {}) {
+export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, forge, judged, directories } = {}) {
   if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
-  if (fresh && [columns.coding, columns.review].includes(card.column) && fresh(card)) return { action: 'ignore' };
+  if (fresh && [columns.coding, columns.review].includes(given.column) && fresh(given)) return { action: 'ignore' };
+  // The facts L2's settle answered are of a card it moved to review.
+  const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore') return held;
+  if (held?.action === 'judge') return judgeAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
   const form = checkAcceptanceForm(card);
   const maker = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, maker, roles[maker]);
@@ -101,8 +111,8 @@ const numbered = (pulls) => pulls.map((pull) => `#${pull.number}`).join(', ');
  * A merged pull request from the line of work refuses the card, whatever its column, naming the
  * pull request, and so does the line of work itself on a Ready or Coding card, naming it: its work
  * would start again from the beginning over what was pushed (`R-WORK-19`; the owner's O6 on #467).
- * A Review card with one open pull request is ignored, until L3 dispatches its judges (#488), and
- * one with more is refused, naming each. A Review card whose line of work is on the forge with no
+ * A Review card with one open pull request is answered `{ action: 'judge' }`, which `nextAction`
+ * answers with its judges, and one with more is refused, naming each. A Review card whose line of work is on the forge with no
  * pull request from it is refused, naming the line of work. A Review card the forge holds nothing
  * for is done again from the beginning (`R-WORK-24`).
  */
@@ -111,7 +121,7 @@ function fromTheForge(card) {
   const refuse = (reason) => ({ action: 'refuse', card: card.number, reason });
   if (merged.length > 0) return refuse(`the forge holds pull request ${numbered(merged)}, merged from its line of work ${line}`);
   if (stage === 'review') {
-    if (open.length === 1) return { action: 'ignore' };
+    if (open.length === 1) return { action: 'judge' };
     if (open.length > 1) return refuse(`the forge holds more than one open pull request from its line of work ${line}: ${numbered(open)}`);
   }
   if (branch || open.length > 0) return refuse(`the forge holds its line of work, ${line}, so its work would not start from the beginning`);

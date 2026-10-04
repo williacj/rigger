@@ -20,7 +20,9 @@ const rankOf = (card, declared) => {
  *
  * A card in the `ready` column is a Ready card. A card in the `coding` or `review` column is a
  * redo: L2 dispatches one only when no fresh verdict covers it. No card in any other column is
- * offered to L2. Returns `pulls`, each `{ card, kind, redo }`, first pulled first, and `refusals`,
+ * offered to L2. A card L2 answers with its judges is pulled too, for them. Returns `pulls`, each
+ * `{ card, kind, redo }`, with `judges`, the roles L2 named, for a card pulled for its judges, first
+ * pulled first, and `refusals`,
  * each `{ card, reason }` as L2 gave it. A card L2 ignores is in neither.
  */
 export function pullOrder({ items, columns, declared }, decide) {
@@ -32,10 +34,11 @@ export function pullOrder({ items, columns, declared }, decide) {
     if (!redo && card.column !== columns.ready) continue;
     const next = decide(card);
     if (next.action === 'dispatch') pulls.push({ card, kind: next.kind, redo });
+    if (next.action === 'judge') pulls.push({ card, kind: next.kind, redo, judges: next.judges.map((judge) => judge.role) });
     if (next.action === 'refuse') refusals.push({ card: next.card, reason: next.reason });
   }
   pulls.sort((a, b) => Number(b.redo) - Number(a.redo)
     || rankOf(a.card, declared) - rankOf(b.card, declared)
     || a.card.number - b.card.number);
-  return { pulls: pulls.map(({ card, kind, redo }) => ({ card: card.number, kind, redo })), refusals };
+  return { pulls: pulls.map(({ card, ...pull }) => ({ card: card.number, ...pull })), refusals };
 }

@@ -10,8 +10,20 @@ import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
-/** One line per card: what the run does with it, its number, and the kind or the reason. */
-const pullLine = ({ card, kind, redo }) => `  pull    #${card}  ${kind}${redo ? '  (redo)' : ''}`;
+/**
+ * One line per card: what the run does with it, its number, and the kind or the reason, and for a
+ * card pulled for its judges, the judges it would dispatch.
+ */
+const pullLine = ({ card, kind, redo, judges }) => {
+  if (judges !== undefined) return `  pull    #${card}  ${kind}  judges ${judges.join(', ')}`;
+  return `  pull    #${card}  ${kind}${redo ? '  (redo)' : ''}`;
+};
+
+/**
+ * The sink `plan` hands L2's next action, which records nothing: a judge answer records a diff the
+ * forge would not serve, and `plan` writes nothing but what L0 records of a process it kills.
+ */
+const UNRECORDED = { emitter: () => ({ emit: () => {} }) };
 /** Exported because `once` names the cards it refuses in this verb's words. */
 export const refusalLine = ({ card, reason }) => `  refuse  #${card}  ${reason}`;
 
@@ -41,8 +53,9 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
     return { text: `rigger plan: board ${project} could not be read: ${threw.message}`, code: 1 };
   }
   // The same facts call and next action the claiming verbs hand L3, so `plan` refuses each card
-  // they would: for what the forge holds of its line of work, and for its maker's tier.
-  const decide = (card) => nextAction(card, config.kinds, config.epicLabel, { roles: config.roles });
+  // they would: for what the forge holds of its line of work, and for its maker's or a judge's
+  // tier; and names the judges they would dispatch for a Review card.
+  const decide = (card) => nextAction(card, config.kinds, config.epicLabel, { roles: config.roles, provisioning: config.provisioning ?? {}, sink: UNRECORDED });
   let decided;
   try {
     decided = await factsCall({ config, reads: repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) }), decide })(read.items);
