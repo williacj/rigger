@@ -155,6 +155,12 @@ function under(path, directory) {
  */
 const toml = (text) => JSON.stringify(text).replaceAll('\u007f', '\\u007f');
 
+/** The line that opens the probe's list of skills. */
+const AVAILABLE = '### Available skills';
+
+/** One skill in that list, as codex-cli 0.159.2 printed it, capturing its `SKILL.md` file. */
+const SKILL_LINE = /^- .*\(file: (.+)\)$/;
+
 /**
  * The skill list in `answer`, what `codex debug prompt-input` printed, as absolute `SKILL.md`
  * paths, or a thrown error saying why it holds none this can read.
@@ -162,12 +168,17 @@ const toml = (text) => JSON.stringify(text).replaceAll('\u007f', '\\u007f');
  * The format, measured with codex-cli 0.159.2 on 2026-10-03 and recorded at
  * `test/fixtures/codex-prompt-input-0.159.2.json` (`D16` rule 3): a JSON array of model-visible
  * messages, one of which holds a `<skills_instructions>` block. In it, a `### Skill roots` table
- * gives each root as a line `` - `rN` = `<absolute path>` ``, and each skill under
- * `### Available skills` is one line ending `(file: rN/<name>/SKILL.md)`. Each `rN` is expanded to
- * its root's path. A file given as an absolute path is taken as it is. Any other form, a root the
- * table does not hold, or no block at all is refused, because a list read short would leave a
- * skill from outside the directory loaded: every home holds the bundled skills, so a block with
- * no skill is not an answer Codex gives.
+ * gives each root as a line `` - `rN` = `<absolute path>` ``. A line `### Available skills`
+ * follows, and every line after it, up to `</skills_instructions>`, is one skill: a line starting
+ * `- ` and ending `(file: rN/<name>/SKILL.md)`. Each `rN` is expanded to its root's path. A file
+ * given as an absolute path is taken as it is. A blank line is passed over.
+ *
+ * Anything else is refused, naming what was refused: no block, no `### Available skills` line, a
+ * line after it in any other shape, and a root the table does not hold. A list read short would
+ * leave a skill from outside the directory loaded (`R-SAFE-6`), so a line this cannot read is
+ * never passed over. An `### Available skills` line with no skill after it is read as no skill.
+ * Codex was not measured giving that answer, since every home holds the bundled skills, and it
+ * leaves nothing loaded that a refusal would have withheld.
  */
 function skillsIn(answer) {
   let messages;
@@ -180,7 +191,16 @@ function skillsIn(answer) {
   const block = texts.find((text) => text.includes('<skills_instructions>'));
   if (block === undefined) throw new Error('its answer holds no skill list');
   const roots = new Map([...block.matchAll(/^- `(r\d+)` = `(.+)`$/gm)].map(([, key, path]) => [key, path]));
-  return [...block.matchAll(/^- .*\(file: (.+)\)$/gm)].map(([, file]) => {
+  const lines = block.split('\n');
+  const heading = lines.indexOf(AVAILABLE);
+  if (heading === -1) throw new Error(`its skill list holds no line \`${AVAILABLE}\``);
+  const end = lines.findIndex((line, at) => at > heading && line.startsWith('</skills_instructions>'));
+  const files = lines.slice(heading + 1, end === -1 ? undefined : end).filter((line) => line !== '').map((line) => {
+    const file = line.match(SKILL_LINE)?.[1];
+    if (file === undefined) throw new Error(`its skill list holds the line ${JSON.stringify(line)}, which is in no shape this adapter reads`);
+    return file;
+  });
+  return files.map((file) => {
     if (isAbsolute(file)) return file;
     const [key, ...rest] = file.split('/');
     if (!roots.has(key) || rest.length === 0) throw new Error(`it names the skill file ${file}, under no root its table holds`);

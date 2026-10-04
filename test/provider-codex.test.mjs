@@ -206,6 +206,52 @@ test('given a probe that fails, or one whose answer holds no skill list, the inv
   await assert.rejects(codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: other, emitter: keeping() }), (failure) => /prompt-input/.test(failure.message) && /skill list/.test(failure.message));
 });
 
+/**
+ * A probe answer in the shape codex-cli 0.159.2 printed (`test/fixtures/codex-prompt-input-0.159.2.json`),
+ * written by hand: one developer message whose skills block holds `sections`, by default one root
+ * and the Available skills heading, followed by the skill lines given.
+ */
+function probeAnswer(lines, { sections = ['### Skill roots', '- `r0` = `/owner/home/.agents/skills`', '### Available skills'] } = {}) {
+  const text = ['<skills_instructions>', '## Skills', 'A skill is a set of local instructions.', ...sections, ...lines, '</skills_instructions>'].join('\n');
+  return `${JSON.stringify([{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }])}\n`;
+}
+
+test('given a probe whose skill list holds a line in any other shape, the invocation rejects naming the probe and the line, rather than leave that skill enabled', async (t) => {
+  // `R-SAFE-6`: a skill line the reader passed over would leave the owner's skill loaded. Each
+  // shape below is the measured line `- mine: Mine. (file: r0/mine/SKILL.md)` changed one way a
+  // later Codex could change it.
+  const { directory, agent, root } = layout(t);
+  const shapes = {
+    'a trailing space': ['- mine: Mine. (file: r0/mine/SKILL.md) '],
+    'a line wrapped onto two': ['- mine: Mine, described', 'at length. (file: r0/mine/SKILL.md)'],
+    'another key in place of file': ['- mine: Mine. (path: r0/mine/SKILL.md)'],
+  };
+  for (const [shape, lines] of Object.entries(shapes)) {
+    const made = join(root, 'scratch', shape.replaceAll(' ', '-'));
+    mkdirSync(made, { recursive: true });
+    onPath({ answer: probeAnswer(lines) });
+    await assert.rejects(
+      codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() }),
+      (failure) => /prompt-input/.test(failure.message) && failure.message.includes(JSON.stringify(lines[0])),
+      shape,
+    );
+  }
+
+  // The measured shape still reads, so the refusal is of the shape and not of every list.
+  const made = join(root, 'scratch', 'measured');
+  mkdirSync(made, { recursive: true });
+  onPath({ answer: probeAnswer(['- mine: Mine. (file: r0/mine/SKILL.md)']) });
+  const { args } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+  assert.deepEqual(disabled(args), ['/owner/home/.agents/skills/mine/SKILL.md']);
+});
+
+test('given a probe whose skills block holds no Available skills heading, the invocation rejects naming the probe and the heading', async (t) => {
+  const { directory, scratch: made, agent } = layout(t);
+  onPath({ answer: probeAnswer(['- mine: Mine. (file: r0/mine/SKILL.md)'], { sections: ['### Skill roots', '- `r0` = `/owner/home/.agents/skills`'] }) });
+
+  await assert.rejects(codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() }), (failure) => /prompt-input/.test(failure.message) && /Available skills/.test(failure.message));
+});
+
 test('given a probe that outlives its bound, the invocation rejects naming the probe and its bound, and records the kill through the emitter it is handed', async (t) => {
   const { directory, scratch: made, agent } = layout(t);
   onPath({ hang: true });
@@ -295,6 +341,19 @@ test('given a role dispatch through L1 naming provider codex, the stand-in codex
   assert.equal(session.home, probe.home);
   assert.ok(session.home.startsWith(`${realpathSync.native(join(base, 'engineer'))}/`), session.home);
   assert.deepEqual(disabled(session.args).sort(), [...outside].sort());
+});
+
+test('given a probe whose skill list holds a line in another shape through L1, roleDispatch rejects with NOT_STARTED naming the line, and no session starts', async (t) => {
+  const { directory, base, repository, state, sink } = dispatchLayout(t);
+  const line = '- mine: Mine. (path: r0/mine/SKILL.md)';
+  const stand = onPath({ answer: probeAnswer([line]) });
+
+  await assert.rejects(
+    throughL1({ answer: answerOf(), cwd: directory, directory, scratch: base, repository, reach: [], env: { PATH: stand.first() }, sink, state }),
+    (failure) => failure.code === NOT_STARTED && failure.message.includes(JSON.stringify(line)),
+  );
+  assert.equal(stand.sessions().length, 0);
+  assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
 });
 
 test('given a probe that fails through L1, roleDispatch rejects with NOT_STARTED naming the probe, no session starts, and L1 records no dispatch.start', async (t) => {
