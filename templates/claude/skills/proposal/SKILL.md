@@ -76,8 +76,8 @@ mean. Read it there. What the proposal owes beyond it:
   holds the rule and the words it bars. A row is read the same way an acceptance item is, by
   someone who cannot ask you, and it fails the same way.
 - **State its limit.** Each row you propose states the edge past which it does not hold, or rests
-  on a table of the dimensions it depends on, each combination marked in or out of scope. `.claude/skills/acceptance/`, under "Systems outside Rigger's code", holds that table's
-  form.
+  on a table of the dimensions it depends on, each combination marked in or out of scope.
+  `.claude/skills/acceptance/`, under "Systems outside Rigger's code", holds that table's form.
 
 **A proposal never lands in either register.** Every row in `docs/spec/requirements.md` and every
 entry in `docs/spec/decisions.md` binds, so yours waits in the pull request until the owner

@@ -159,7 +159,7 @@ about such a system only where that table bounds it, or where the item states th
 the absolute does not hold.
 
 A sampled item leaves the cells it never named to its judges, who find them one round at a time.
-#586 asked that a member L0 could not end, on the call's containment and on a start's kill, was
+#586 asked that a member L0 could not end, on the call's containment and on a start's kill,
 never be recorded as killed. It named one sequence of reads after the kill: every read fails. The
 table it needed, with the exit cleanup out of scope:
 
@@ -167,6 +167,8 @@ table it needed, with the exit cleanup out of scope:
 |---|---|---|
 | Every read fails | in: #586 | in: #586 |
 | One read answers and lists the member alive, then every read fails | in: missed, became #599 | in: missed, became #599 |
+| One read answers and shows the member a zombie, then every read fails | out: #599, and the `D16` note beside `reachedUnread` | out: #599, and the `D16` note beside `reachedUnread` |
+| The first read fails, then every read answers | in: the sequence #589's `failingOnceAfterKill` forces | in: the sequence #589's `failingOnceAfterKill` forces |
 | Every read answers | in | in |
 
 All three of #589's judges found the missed row. Named before filing, it would have been one more
