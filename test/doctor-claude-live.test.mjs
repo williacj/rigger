@@ -24,7 +24,7 @@ test('the agent CLI check answers the `loggedIn` the installed claude states', {
   // value is parsed in this test rather than taken from the check's own reader, which would
   // agree with it by construction.
   //
-  // The command comes out of `AGENT_CLI`, so the source does not name it and cannot rule out a
+  // The command comes out of `claudeAdapter.auth`, so the source does not name it and cannot rule out a
   // git. It is asked under `gitEnvironment()` because the check it is compared against asks it
   // that way, and a relation measured under a different environment from the one production uses
   // is a relation between two different questions.

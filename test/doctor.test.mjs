@@ -14,7 +14,7 @@ import { validate } from '../src/config/validate.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
-import { AGENT_CLI, agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
+import { agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { cloneInto, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
@@ -441,7 +441,7 @@ test('every provider Rigger forks assets for has a CLI this check knows how to a
   // that provider's CLI is signed in. The defect this catches is the second adapter added to one
   // table and not the other: its assets land, its roles are dispatched, and the check that would
   // have said its CLI was never signed in passes over it in silence.
-  assert.deepEqual(Object.keys(AGENT_CLI).sort(), Object.keys(ADAPTERS).sort());
+  assert.deepEqual(Object.keys(ADAPTERS).filter((provider) => ADAPTERS[provider].auth?.length > 0).sort(), Object.keys(ADAPTERS).sort());
 });
 
 /** A directory holding one config file, written as the text given. */
@@ -1183,7 +1183,7 @@ test('doctor asks each provider\'s CLI whether it is signed in with the argv tha
   // defect this catches is a second copy of the question in `doctor`, which goes on asking the old
   // one once the adapter's changes.
   for (const [provider, adapter] of Object.entries(ADAPTERS)) {
-    assert.deepEqual(AGENT_CLI[provider], adapter.auth, provider);
+    assert.deepEqual(ADAPTERS[provider].auth, adapter.auth, provider);
   }
   const asked = [];
   await agentAuth({ ask: async (command, args) => { asked.push([command, ...args]); return RECORDED.agentIn; } });

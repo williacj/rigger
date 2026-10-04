@@ -285,13 +285,6 @@ export async function ghAuth({ ask, emitter } = {}) {
   return { name, ok: said.status === 0, detail: `\`gh auth status\` exited ${said.status}: ${firstLine(said)}` };
 }
 
-/**
- * How each provider's CLI is asked whether it is authenticated, one argv per provider, as each
- * provider's adapter names it in `auth` (ruling 1 Q1 on #467), so that every provider the
- * adapter map holds can be asked.
- */
-export const AGENT_CLI = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.auth]));
-
 /** The verdict a set of them folds to: unknown if any is, failed if any is, passed otherwise. */
 const folded = (verdicts) => {
   if (verdicts.length === 0 || verdicts.includes(null)) return null;
