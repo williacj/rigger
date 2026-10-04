@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -263,19 +263,25 @@ test('given four pullable cards and N 2, the installed run killed outright while
   for (const number of CARDS) world.agent.plan(number, 'engineer', { hold: true });
   const before = makersAfter(world).length;
   const restarted = startRun(world, { first: true });
+
+  // Item 10: none of the four is alive at the restart's first board read, a zombie counting as not.
+  // Read as soon as the recording `gh` has written it, before anything else the restart does.
+  const recording = join(world.directory, 'first', 'first-call');
+  await until(() => existsSync(recording) || restarted.exitCode !== null, t);
+  assert.ok(existsSync(recording), `the restart exited before its first forge call: ${restarted.said}`);
+  const first = read(join(world.directory, 'first'), 'first-call').split('\n');
+  assert.match(first.at(-1), /^call api graphql /, 'the first call is not a board read');
+  const states = first.slice(0, -1).map((line) => line.trim().split(/\s+/));
+  assert.deepEqual(states.map(([name, pid]) => `${name} ${pid}`), watched.map(([name, pid]) => `${name} ${pid}`));
+  assert.deepEqual(states.filter(([, , state]) => state !== undefined && !state.startsWith('Z')), [], first.join('\n'));
+  for (const [name, pid] of watched) assert.equal(living(pid), false, `the killed run's ${name} ${pid} is alive`);
+
+  // Item 12's kill, once the restarted run's first maker's stand-in holds.
   await killedOnce(t, restarted, () => {
     const now = makersAfter(world, before);
     for (const run of now) world.recorded.set(run.pid, `card #${run.card}'s restarted stand-in`);
     return now.length >= 1 && held(world, now[0]);
   }, 'its first maker\'s stand-in held');
-
-  // Item 10: none of the four is alive at the restart's first board read, a zombie counting as not.
-  const first = read(join(world.directory, 'first'), 'first-call').split('\n');
-  assert.match(first.at(-1), /^call api graphql /, 'the first call is not a board read');
-  const states = first.slice(0, -1).map((line) => line.split(' '));
-  assert.deepEqual(states.map(([name, pid]) => `${name} ${pid}`), watched.map(([name, pid]) => `${name} ${pid}`));
-  assert.deepEqual(states.filter(([, , state]) => state !== undefined && state !== '' && !state.startsWith('Z')), [], first.join('\n'));
-  for (const [name, pid] of watched) assert.equal(living(pid), false, `the killed run's ${name} ${pid} is alive`);
 
   // Item 11: a kill for each of the four, under the killed dispatch's id and card.
   const restartRecord = runRecord(world, 1);

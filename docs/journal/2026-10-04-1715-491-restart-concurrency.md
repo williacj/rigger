@@ -11,9 +11,18 @@ id, and the restart the second.
 **The dispatch's directory census also reaches the stand-in.** The stand-in works in its card's
 workspace root, which is the dispatch's recorded directory. So the restart's sweep of that directory
 would end the stand-in even if the group kill did not. A mutation that removes only the group kill
-therefore says nothing about item 10. The mutations that discriminate are listed in the pull request:
-skipping the restart's kill of recorded groups altogether, narrowing "works in" to the directory
-alone, and dropping the kill events.
+survives these tests, and the pull request shows it surviving. The mutations that discriminate are
+listed there: skipping the restart's kill of recorded groups altogether, narrowing "works in" to the
+directory alone, dropping the kill events, raising N by one, and raising the default.
+
+**Raising the cap inside `take` alone is masked.** `trigger` hands the pull a claim limit of N when
+the verb gives none, and `take` claims the smaller of that limit and the free slots. So a mutation of
+the free slots alone changes nothing. Raising N where L3 reads it is the fault these tests catch.
+
+**Item 10 is read before the restart goes on.** The first draft asserted item 10 only after the
+restarted maker held. Under a mutation that skipped the restart's kill, the restarted maker failed to
+start, so the test failed on the wait and never reached item 10's assertion. The test now asserts
+item 10 as soon as the recording `gh` has written its first call.
 
 **The grandchild chain needed a stand-in mode.** The existing `leaveIn` mode starts its process
 straight from the stand-in, so its parent is still alive. The new `orphanIn` mode puts an intermediate
