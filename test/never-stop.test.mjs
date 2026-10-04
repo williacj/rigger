@@ -835,3 +835,46 @@ test('on a start\'s kill of a recorded group, where every read after the kill fa
   assert.equal(alive(started.member), true, 'the member L0 may not signal was ended, so the test proves nothing');
   assertUnendedUnread(events, { stuck: started.member, ended: started.leader, unended: 'recorded.unended', directory, reason: /^EPERM$/ });
 });
+
+/**
+ * A `ps` stand-in that answers every read as `ps` does but the first read of the group's states
+ * once `$here/hang` exists, which it fails as `ps` fails, marking `$here/failed`.
+ */
+const failingOnceAfterKill = (directory) => warmed(fixture(directory, 'ps', [
+  'case "$*" in *stat=*)',
+  '  if [ -f "$here/hang" ] && [ ! -f "$here/failed" ]; then : > "$here/failed"; echo "ps: failing once on purpose" >&2; exit 2; fi ;;',
+  'esac',
+  'exec /bin/ps "$@"',
+].join('\n')));
+
+/** Asserts that `events` record `two`, a member the kill left a zombie that later reads listed, as `killed` and as nothing else. */
+function assertZombieKilled(events, directory, killed) {
+  const two = pidIn(directory, 'two');
+  assert.ok(existsSync(join(directory, 'failed')), 'no read after the kill failed, so the test proves nothing');
+  assert.ok(processState(two).startsWith('Z'), `the member is not a zombie, so the test proves nothing: ${processState(two)}`);
+  assert.deepEqual(events.filter(({ pid }) => pid === two).map(({ event }) => event), [killed], JSON.stringify(events));
+}
+
+// proves R-STATE-19, R-STATE-12
+test('on the call\'s containment, where only the first read after the kill fails, a member the kill left a zombie, which later reads list, is recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
+  const signals = standIn(directory);
+
+  const { events } = await called(directory, { command, ps: failingOnceAfterKill(directory), kill: markingKill(directory, signals) });
+
+  assertZombieKilled(events, directory, 'survivor.killed');
+});
+
+// proves R-STATE-19, R-STATE-12
+test('on a start\'s kill of a recorded group, where only the first read after the kill fails, a member the kill left a zombie, which later reads list, is recorded as killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const started = await startGroup(t, directory, 'group');
+  spawn('/usr/bin/perl', [zombieJoiner(directory), directory, String(started.group)], { stdio: 'ignore' });
+  await until(() => existsSync(join(directory, 'two.pid')), t);
+  const signals = standIn(directory);
+
+  const { events } = await startKilled(started, { ps: failingOnceAfterKill(directory), kill: markingKill(directory, signals) });
+
+  assertZombieKilled(events, directory, 'recorded.killed');
+});
