@@ -1,7 +1,7 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
 // before any await, has L2 move each claimed card, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker through L1, or attempts the card again as L2
-// says, under the one claim and slot; the run that fires that trigger
+// says, and then the judges L2 names, under the one claim and slot; the run that fires that trigger
 // again each time a slot frees; the drain trigger; and L3's events.
 
 import { randomUUID } from 'node:crypto';
@@ -143,9 +143,6 @@ function refuseLimit(limit) {
   }
 }
 
-/** The reasons of every rejected result among `settled`, as `Promise.allSettled` answered them. */
-const rejections = (settled) => settled.filter((result) => result.status === 'rejected').map((result) => result.reason);
-
 /**
  * Releases `claim`'s slot through `release` once `failure`, or nothing, ended its work, and
  * answers what its caller reports: `failure` as it is, the release's own refusal where there
@@ -171,24 +168,28 @@ function released(release, claim, failure) {
  * for a card, which L3 asks within each attempt as `decide(card, outcomes, { attempt, workspace })`: with the attempt's outcomes after each step, with none once a later
  * attempt's workspace is made, and with L1's failure as `workspace` where it could not be made,
  * `attempt` numbering the attempt from 1. It alone names the steps L3 dispatches, and whether the
- * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). `l2`
- * is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the maker's
- * outcome alone, and answers what it read of the forge, which L3 reads nothing of. The maker is
- * always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says (the
- * architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
- * every dispatch it makes, each step's and the maker's (ruling 2, AQ1). `ps` and `readTimeout`
- * stand in for L0's own process-table reader and read bound, and L3 hands both to L1 unread for
- * every dispatch it makes, each step's and the maker's, where neither is given L0 using its own
+ * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). After
+ * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
+ * the judges it names are made and run, with `directories` and `judged`, as `attempt` and `judged`
+ * say. `l2` is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the
+ * maker's outcome alone, and answers what it read of the forge, which L3 reads nothing of. The
+ * maker is always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says
+ * (the architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
+ * every dispatch it makes, each step's, the maker's and each judge's (ruling 2, AQ1). `ps` and
+ * `readTimeout` stand in for L0's own process-table reader and read bound, and L3 hands both to L1
+ * unread for every dispatch it makes, where neither is given L0 using its own
  * (ruling 3, AQ7). `workspace(card)` is L1's
  * workspace handle, injected, and
  * answers the attempt's workspace as `{ path }`, with the card's scratch base as `scratch` and the
  * repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and 21 on
- * #467). `state` is the state directory L1 records each step's process group in, which L3 hands
- * L1's `dispatch` unread (ruling 10).
+ * #467). `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
+ * `judged` says (the architect's ruling 4's addendum on #467). `state` is the state directory L1
+ * records each dispatch's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
- * is built where the facts call or the workspace handle is not a function, `state` not a
- * non-empty string, or `environment` not an object, each checked after the kill.
+ * is built where `kill` or the facts call is not a function, checked in that order, and then, each
+ * after those, where the workspace handle or `judgeDirectory` is not a function, `state` not a
+ * non-empty string, or `environment` not an object.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -199,10 +200,17 @@ function released(release, claim, failure) {
  *   waiting, and `inFlight`, the cards in flight with this one. It follows the card's claim and
  *   comes before L2 moves the card, as `ARCHITECTURE.md`, "Failure model", orders a start.
  * - `slot.release`, under the card, as its slot is released, however its work ended.
- * - `dispatch`, under a step's dispatch id and the card, with the `step`'s name and the `attempt`
- *   number, before L1 acts on the step (ruling 1, A8); and for the maker, under its dispatch id and
- *   the card, with its `role`, its `tier` and the `attempt` number, and no `step`, before the
- *   provider adapter or L1 acts on it (ruling 1, Q10, and ruling 5, on #467).
+ * - `dispatch`, under its own dispatch id and the card, before anything acts on what it starts, in
+ *   one of three kinds:
+ *   - a step's, with the `step`'s name and either the `attempt` number, for a step in an attempt's
+ *     workspace, or the judge's `role`, for a step in a judge's `head`, before L1 acts on the step
+ *     (ruling 1, A8);
+ *   - the maker's, with its `role`, its `tier` and the `attempt` number, and no `step`, before the
+ *     provider adapter or L1 acts on it (ruling 1, Q10, and ruling 5, on #467);
+ *   - a judge's, with its `role` and its `tier`, and neither a `step` nor an `attempt`, before the
+ *     provider adapter or L1 acts on it.
+ *
+ *   One the sink refuses starts nothing, and the failure names the card and the step or the role.
  *
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
  * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
@@ -287,12 +295,17 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * An answer that dispatches no step is the maker: the role the answer's `maker` names,
    * dispatched through L1 as `dispatchRole` says. That outcome is handed to
    * L2's `settled` unread, and the attempt answers the card, its workspace, the maker's `outcome`
-   * and L2's `settled`, each as `Promise.allSettled` records it, neither read here. An answer naming the
+   * and L2's `settled`, each as `Promise.allSettled` records it, neither read here. Where the settle
+   * answered facts and L2, asked again with them, names judges, they are dispatched under the same
+   * claim, as `judges` says, and the answer also carries them as `judges`. The maker's result is
+   * handed to `kept` as soon as the settle answers, before L2 is asked about judges, so a judge's
+   * failure, or L2's judge answer throwing, still leaves its caller the maker's result while the
+   * attempt rejects with that failure. An answer naming the
    * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
    * attempt's failure, in order. Any other answer stops the attempts, naming the card and what L2
    * answered.
    */
-  const attempt = async (card, next) => {
+  const attempt = async (card, next, kept) => {
     const failures = [];
     let answer = next;
     for (let number = 1; ; number += 1) {
@@ -321,6 +334,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
       const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
       const reached = { card: card.number, workspace: path, outcome, settled };
+      kept(reached);
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
@@ -395,10 +409,13 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * was not made: a claim the board refused to move, or whose pull event the sink refused, waits
    * for the next trigger rather than starting another pull at once, by the owner's ruling on
    * #228, so a board refusing every claim, or a sink refusing every event, cannot keep a run
-   * pulling. A failure of the work and a refused release event are both reported, as `released`
-   * says. L2's report of a refused transition event passes through unchanged as the work's failure
-   * where it comes from the claim; from the maker's settle it comes back in the card's `settled`,
-   * as `attempt` says.
+   * pulling. Settles on `{ reached, failure }`: `reached`, what the card answers as `trigger` says,
+   * or nothing for a card whose maker never ran and whose work failed; and `failure`, the work's
+   * failure and a refused release event, both reported as `released` says, or null where there was
+   * neither. A card whose maker ran keeps its maker's result in `reached` though its judges then
+   * failed, as `attempt` says. L2's report of a refused transition event passes through unchanged
+   * as the work's failure where it comes from the claim; from the maker's settle it comes back in
+   * the card's `settled`, as `attempt` says.
    */
   const work = async (claim, freed) => {
     const { card, next, decide: atPull } = claim;
@@ -411,14 +428,13 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       claimed = true;
       reached = next.action === 'judge'
         ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options)) }
-        : await attempt(card, next);
+        : await attempt(card, next, (made) => { reached = made; });
     } catch (thrown) {
       failure = thrown;
     }
     failure = released(release, claim, failure);
     if (claimed) await freed();
-    if (failure !== null) throw failure;
-    return reached;
+    return { reached, failure };
   };
 
   /**
@@ -427,13 +443,24 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * card's work is not over until it settles.
    *
    * It claims no more than `limit` cards, N where none is given. Settles once every card it
-   * claimed has been worked, on the cards among them that reached the maker,
-   * each `{ card, workspace, outcome, settled }`, naming its number, its workspace's path, the
-   * maker's outcome and L2's settle of it, as `attempt` answers them. A read that fails
+   * claimed has been worked, on what each card it claimed answers, in one of these shapes:
+   *
+   * - a card whose maker ran: `{ card, workspace, outcome, settled }`, naming its number, its
+   *   workspace's path, the maker's outcome and L2's settle of it, as `attempt` answers them, and
+   *   `judges` beside them, each `{ role, outcome }`, where L2 named judges after the settle and
+   *   every one dispatched handed back;
+   * - a card pulled for its judges alone: `{ card, judges }`, the judges as `judges` answers them,
+   *   with no workspace made and no maker dispatched.
+   *
+   * A card that failed before its maker ran, and a card pulled for its judges alone whose judges
+   * failed, answer nothing. A read that fails
    * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
    * sink refused, are reported in one AggregateError naming how many failed, each failure
-   * unchanged in its `errors`, and carrying as `reached` the cards that did reach the maker, as
-   * the pull would have settled on them, so no card's outcome is dropped for another's failure.
+   * unchanged in its `errors`, and carrying as `reached` what every card answered, as the pull
+   * would have settled on them, so no card's outcome is dropped for another's failure. A card whose
+   * maker ran and whose judges then failed, or for which L2's judge answer threw, is in `reached`
+   * with its maker's result and no `judges`, and its failure, carrying the judges that did hand
+   * back where there were any, is in `errors`.
    */
   const trigger = async (freed = () => {}, limit = concurrency) => {
     const { claims: claimed, failures } = await take(limit);
@@ -447,8 +474,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
     }
     const worked = await Promise.allSettled(claimed.map((claim) => work(claim, freed)));
-    failures.push(...rejections(worked));
-    const reached = worked.map((result) => result.value).filter((each) => each !== undefined);
+    const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
+    failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
+    const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
     if (failures.length > 0) {
       throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
@@ -473,8 +501,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * once every pull it fired has settled, which is once a pull fired on a freed slot claims
      * nothing and no card it claimed is still being worked.
      *
-     * Settles on every card its pulls answered as reaching the maker, as
-     * `trigger` says. A pull that fails stops no other. Once the run has ended, every failed pull is reported in
+     * Settles on what every card its pulls answered, in the shapes `trigger` says. A pull that
+     * fails stops no other, and its cards are carried in its own failure's `reached`. Once the run has ended, every failed pull is reported in
      * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */

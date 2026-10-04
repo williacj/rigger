@@ -358,7 +358,9 @@ function answers(target, kill = SIGNAL) {
  * whether a read after the kill listed a process, alive or a zombie, that `listed`, every process
  * the read just before the kill listed, did not hold; and as `unread` why a read after the kill
  * failed, where one did, since the kill of the group may then have ended a process no read listed;
- * and as `unlisted` why, where every read after the kill failed, so none showed any member's state.
+ * and as `unlisted` why, where every read after the kill failed, so none showed any member's state;
+ * and as `unconfirmed`, where a read after the kill succeeded and the last read failed, the pids the
+ * last read that succeeded found alive, as `alive`, and why a read after it failed, as `why`.
  * A look that finds every member still alive answering `EPERM` to signal 0, asked of each by its
  * pid, settles at once, because no kill can reach any of them. The wait is on those conditions, looked at after each pause, so
  * nothing else in Rigger stops meanwhile, and it takes no cap on its rounds: a cap that stopped
@@ -387,7 +389,10 @@ async function ended(group, { ps, readTimeout, kill }, bound, listed) {
   // Why a read after the kill failed, where one did, and whether one after the kill succeeded.
   let unread;
   let read = false;
-  const settled = (stuck) => ({ stuck, joined, unread, unlisted: read ? undefined : unread });
+  // The pids the last read that succeeded found alive, and why a read after it failed, where one did.
+  let shown = [];
+  let lastFailure;
+  const settled = (stuck) => ({ stuck, joined, unread, unlisted: read ? undefined : unread, unconfirmed: read && lastFailure !== undefined ? { alive: new Set(shown), why: lastFailure } : undefined });
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) await pause(wait);
     signal(group, 'SIGKILL', kill);
@@ -398,12 +403,15 @@ async function ended(group, { ps, readTimeout, kill }, bound, listed) {
     try {
       rows = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], readTimeout, readTimeout));
       read = true;
+      lastFailure = undefined;
     } catch (error) {
       unread ??= error.message;
+      lastFailure ??= error.message;
       rows = new Map();
     }
     if (listed !== undefined && [...rows.keys()].some((pid) => !listed.has(pid))) joined = true;
     const living = [...rows].filter(([, state]) => live(state)).map(([pid]) => pid);
+    if (lastFailure === undefined) shown = living;
     if (living.length > 0) {
       unreapedSince = undefined;
       const stuck = unended(living, kill, Date.now() - since >= bound, bound, refused);
@@ -938,7 +946,8 @@ function runOnce(ps, args, remaining, timeout) {
  *   for every group left holding only zombies.
  * - Where every read after the kill fails, each member the read before the kill found alive that
  *   signal 0 still reaches is recorded as not shown to have ended, though it may be a zombie the
- *   kill ended (`reachedUnread`).
+ *   kill ended; and where the last read after the kill fails, so is each the last read that
+ *   succeeded found alive, though a later kill may have ended it (`reachedUnread`).
  */
 async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   if (!occupied(group, kill)) return [];
@@ -957,38 +966,45 @@ async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   } catch (error) {
     unnamed = error.message;
   }
-  const { stuck, joined, unread, unlisted } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
+  const { stuck, joined, unread, unlisted, unconfirmed } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
   if (joined && unnamed === undefined) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
   if (unread !== undefined && unnamed === undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${unread}`;
-  const unshown = [...stuck, ...reachedUnread(named, stuck, unlisted, kill)];
+  const unshown = [...stuck, ...reachedUnread(named, stuck, { unlisted, unconfirmed }, kill)];
   const unended = await reading(described(unshown, named), ps, readTimeout).catch(() => unshown);
   return killsOf(group, { named, unnamed, left, unended }, killed);
 }
 
 /**
  * Each of `named`, the members the read before the kill found alive, that `stuck` does not hold and
- * that signal 0, sent through `kill` to its pid, still reaches once `ended` has settled, where
- * `unlisted` says every read of the group after its kill failed, by pid and why: `EPERM` where L0
- * may not signal it, and otherwise that it was not shown to have ended. No read listed it after the
- * kill, so nothing shows the kill ended it, and it is not recorded as killed (`R-STATE-19`). Where
- * any read after the kill succeeded, this adds none: what the reads listed decides.
+ * that signal 0, sent through `kill` to its pid, still reaches once `ended` has settled, by pid and
+ * why: `EPERM` where L0 may not signal it, and otherwise that it was not shown to have ended. It
+ * takes each such member where `unlisted` says every read of the group after its kill failed, and
+ * only those `unconfirmed` says the last read that succeeded found alive, where a read after the
+ * kill succeeded and the last read failed. No read listed it ended after the kill, so nothing shows
+ * the kill ended it, and it is not recorded as killed (`R-STATE-19`). Where the last read after the
+ * kill succeeded, this adds none: what the reads listed decides.
  *
  * Where this can be wrong (`D16` rule 3):
  * - Signal 0 reaches a zombie as it reaches a live process, and a process given the pid of a member
- *   the kill ended, so either is recorded here as not shown to have ended though the kill may have
- *   ended it. Only a read of the table tells a zombie from a live process, and no read after the
- *   kill could be made.
- * - Where a read after the kill succeeded and every later one failed, a member the kill left alive
- *   that no later read could list is recorded as killed, as before any read failed. A read that
- *   succeeded can show a member a zombie, and a later failure does not undo that.
+ *   the kill ended, so where every read after the kill failed, either is recorded here as not shown
+ *   to have ended though the kill may have ended it. Only a read of the table tells a zombie from a
+ *   live process, and no read after the kill could be made.
+ * - Where a read after the kill succeeded and every later one failed, a member the last read that
+ *   succeeded showed alive, that signal 0 still reaches, is recorded as not shown to have ended,
+ *   though a kill sent after that read may have ended it and left it a zombie, or its pid may have
+ *   been given to another process: no later read could tell.
+ * - Where a read after the kill succeeded and every later one failed, a member the last read that
+ *   succeeded showed a zombie, or did not list, is recorded as killed: a zombie has ended, and a
+ *   later failure does not undo what that read showed.
  * - One answer of `EPERM` is taken as refused here, unlike in `unended`, because it is asked once
  *   `ended` has settled, after the kill was sent on more than one look, and not while a member is
  *   being killed: that this is long enough is a judgment, not a measurement.
  */
-function reachedUnread(named = [], stuck, unlisted, kill) {
-  if (unlisted === undefined) return [];
+function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
   const held = new Set(stuck.map(({ pid }) => pid));
-  return named.filter(({ pid }) => !held.has(pid) && answers(pid, kill)).map(({ pid }) => ({ pid, reason: forbidden(pid, kill) ? 'EPERM' : `not shown to have ended: signal 0 still reaches it, alive or a zombie, and the reads of the group after its kill failed: ${unlisted}` }));
+  const unshown = unlisted !== undefined ? named : named.filter(({ pid }) => unconfirmed?.alive.has(pid));
+  const why = unlisted !== undefined ? `signal 0 still reaches it, alive or a zombie, and the reads of the group after its kill failed: ${unlisted}` : `the last read of the group that answered after its kill showed it alive, and later reads failed: ${unconfirmed?.why}`;
+  return unshown.filter(({ pid }) => !held.has(pid) && answers(pid, kill)).map(({ pid }) => ({ pid, reason: forbidden(pid, kill) ? 'EPERM' : `not shown to have ended: ${why}` }));
 }
 
 /**
