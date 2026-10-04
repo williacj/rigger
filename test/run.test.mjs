@@ -516,3 +516,62 @@ test('run claims no more than N cards, and dispatches roles for no more cards at
   }
   assert.ok(most >= 1 && most <= 2, `${most} cards had a role dispatched at once`);
 });
+
+// Cards whose judges are mixed, one handing back beside one whose start event is refused (#612).
+
+/**
+ * A module the bin's Node process loads first, through `NODE_OPTIONS`, under which the consumer's
+ * event stream refuses the appends alone of L3's `dispatch` events naming judge `role`. It changes
+ * `node:fs` itself, and `syncBuiltinESMExports` carries the change to the sink, which imports
+ * `appendFileSync` by name, so the sink refuses those appends without knowing it is under test.
+ */
+function refusingJudgeStart(role) {
+  const path = join(temporaryDirectory('rigger-run-refuse-append-'), 'refuse-append.mjs');
+  writeFileSync(path, [
+    "import fs from 'node:fs';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const { appendFileSync } = fs;',
+    'fs.appendFileSync = (path, data, ...rest) => {',
+    "  const event = String(path).endsWith('/.rigger/events.jsonl') ? JSON.parse(String(data)) : {};",
+    `  if (event.layer === 'L3' && event.event === 'dispatch' && event.role === ${JSON.stringify(role)}) {`,
+    `    throw Object.assign(new Error(\`EACCES: the test refuses L3's dispatch of ${role} on \${path}\`), { code: 'EACCES' });`,
+    '  }',
+    '  return appendFileSync(path, data, ...rest);',
+    '};',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return path;
+}
+
+/**
+ * Runs the real bin's `run` as `runWithAgent` does, its `change` kind naming `reviewer` then
+ * `architect` as judges at N of `concurrency`, with every L3 start of the architect refused.
+ */
+function runRefusingArchitect(agent, board, concurrency) {
+  const settings = { ...config(concurrency), kinds: { ...KINDS, change: { ...KINDS.change, judges: ['reviewer', 'architect'] } } };
+  const directory = temporaryDirectory('rigger-run-mixed-');
+  const consumer = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n` });
+  gitIn(consumer, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  withOrigin(consumer, origin);
+  const dir = temporaryDirectory('rigger-run-mixed-gh-');
+  installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
+  const ran = spawnRun(consumer, { ...process.env, NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}`, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
+  return { ...ran, consumer };
+}
+
+test('given run at N of 2 over two cards whose reviewer exits 0 and whose architect\'s start event is refused, run prints each card\'s judge lines under that card, and exits non-zero', SETTLES_WITHIN, () => {
+  const agent = standInAgent({ 10: { engineer: { pr: true } }, 20: { engineer: { pr: true } } });
+  const ran = runRefusingArchitect(agent, { items: [card(10, 'Ready'), card(20, 'Ready')] }, 2);
+
+  assert.notEqual(ran.code, 0, ran.out);
+  const lines = ran.err.split('\n');
+  const refused = (number) => judgeLine(number, 'architect', `handed back no outcome: card #${number}'s role \`architect\` was not started, because the event sink refused to record its start: EACCES: the test refuses L3's dispatch of architect on ${join(realpathSync(ran.consumer), '.rigger', 'events.jsonl')}`);
+  for (const number of [10, 20]) {
+    const claimed = lines.findIndex((line) => reviewLine(ran.consumer, number).test(line));
+    assert.ok(claimed >= 0, ran.err);
+    assert.deepEqual(lines.slice(claimed + 1, claimed + 3), [judgeLine(number, 'reviewer', 'exited 0'), refused(number)], ran.err);
+    assert.equal(lines.filter((line) => line.includes(`card #${number}'s judge`)).length, 2, ran.err);
+  }
+});
