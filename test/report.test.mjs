@@ -24,6 +24,8 @@ import { standInAgent } from './stub-claude.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
+import { readsWith } from './loop-world.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -32,7 +34,7 @@ const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8
 const streamIn = (consumer) => join(consumer, '.rigger', 'events.jsonl');
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
-const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
+const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['owner'] } };
 
 /** A ready issue numbered `number` that L2 would dispatch: one kind selects it and its acceptance passes. */
 const readyCard = (number) => ({
@@ -57,7 +59,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   const sink = openSink({ directory, run, now: () => START + minute * 60_000 });
   const fake = createFakeBoard({ columns: Object.values(config.board.columns), items: cards.map(readyCard) });
   const settings = { ...config, concurrency };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: oneOpenFromEveryLine });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) });
   const board = {
     readColumns: async () => {
       await fake.operations.readColumns();
@@ -92,7 +94,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
     mkdirSync(path, { recursive: true });
     return { path, scratch: join(outside, 'scratch', `rigger-${card}`), repository };
   };
-  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
+  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
   // Positive: until every start the loop can make is held.
   await positive(everyStartMade);
   for (const [at, numbers] of releases) {

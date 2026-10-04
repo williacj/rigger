@@ -13,6 +13,8 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
+import { judgeDirectoryHandle } from '../src/execution/workspace.mjs';
+import { worktreeTopic } from '../src/config/validate.mjs';
 
 /**
  * Fires one pull of L3's loop over the board the config in `repository` names, recording to that
@@ -33,5 +35,5 @@ export async function engine({ directory, repository, command }) {
   const provisioning = { hold: { run: command, required: true } };
   const decide = (card, outcomes) => nextAction(card, kinds, config.epicLabel, { provisioning, outcomes, sink });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), state, environment: process.env }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), state, environment: process.env }).pull();
 }
