@@ -12,6 +12,7 @@ import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readsWith } from './loop-world.mjs';
 
 /**
  * A fake board holding the columns `columns` names, in its key order, or the display names in
@@ -28,7 +29,7 @@ function world({ columns = config.board.columns, cards = [12], held = Object.val
   const { readPullRequests: pullRequests } = createFakeRepository({ pullRequests: cards.map((number) => ({ number: 100 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') })) }).operations;
   const directory = temporaryDirectory('rigger-transitions-');
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
-  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations, pullRequests });
+  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items: fake.operations, reads: readsWith(pullRequests) });
   return { fake, l2, sink, directory, pullRequests, events: () => readEvents(directory) };
 }
 
@@ -170,7 +171,7 @@ test('a move the board takes and the sink will not record is reported, naming th
 // reported loudly as the one before it was.
 for (const [name, settler] of [
   ['the same L2 instance', ({ l2 }) => l2],
-  ['a second L2 instance over the same board and sink', ({ fake, sink, pullRequests }) => columnChanges({ config, sink, items: fake.operations, pullRequests })],
+  ['a second L2 instance over the same board and sink', ({ fake, sink, pullRequests }) => columnChanges({ config, sink, items: fake.operations, reads: readsWith(pullRequests) })],
 ]) {
   test(`while the sink still refuses, a card whose claim went unrecorded moves to review on a zero exit, settled by ${name}`, async () => {
     const w = world();
