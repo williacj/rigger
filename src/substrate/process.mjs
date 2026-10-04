@@ -1320,7 +1320,8 @@ function* reaped(pids, kill, bound) {
  * census could not be read, it hands back why as `unread`, and as `unnamed` the pid of each process
  * it had found working there and stopped, which it then killed unnamed. It yields each read and each
  * pause, as `census` does, so the call and the exit cleanup both take it. Each process Rigger may not
- * signal is handed back as `refused`, by pid, for `settled` to record as one it could not end.
+ * signal is handed back as `refused`, by pid, for `settled` to record as one it could not end, and
+ * when it first sent a process the kill as `killedAt`, where it sent one.
  *
  * Each round lists the directory's processes and stops them, because a stopped process can neither
  * exec, nor fork, nor leave the directory. It lists them again, stopped, and resumes any no longer
@@ -1352,6 +1353,8 @@ function* sweeping(directory, lsof, kill) {
   // Sent the kill, and listed again only while it is still ending, or where it outlives the kill,
   // which `settled` waits on: it is not stopped or killed again.
   const killed = new Set();
+  // When it first sent a process the kill.
+  let killedAt;
   const list = function* (pids) {
     return workingIn(yield { tool: lsof, args: listing(pids) }, directory);
   };
@@ -1377,7 +1380,7 @@ function* sweeping(directory, lsof, kill) {
         if (stop === 'EPERM') forbidden.add(pid);
       }
       const pids = [...held, ...ours];
-      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden] };
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt };
       if (pids.length === 0) continue;
       const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
@@ -1395,11 +1398,14 @@ function* sweeping(directory, lsof, kill) {
         ours.delete(pid);
         if (!sent(pid, 'SIGKILL', kill)) continue;
         killed.add(pid);
+        killedAt ??= Date.now();
         kills.push({ pid, name: names.get(pid), cmd: commands.get(pid) });
       }
     }
   } catch (error) {
-    return { kills, unread: error.message, unnamed: [...ours].filter((pid) => sent(pid, 'SIGKILL', kill)) };
+    const unnamed = [...ours].filter((pid) => sent(pid, 'SIGKILL', kill));
+    if (unnamed.length > 0) killedAt ??= Date.now();
+    return { kills, unread: error.message, unnamed, killedAt };
   } finally {
     resume([...held]);
   }
@@ -1420,18 +1426,19 @@ async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed
 }
 
 /**
- * `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own: the
- * census lists, kills and waits within one read timeout, as every step of the cleanup's does.
+ * `swept`, synchronously, for the exit cleanup, which waits on no bound longer than its own, one
+ * read timeout: the census lists and kills within it from its first read, and waits on what it
+ * killed within it from its first kill, so it reads nothing past its own bound of that kill. Reads
+ * before the kill that take the rest of the first bound so still leave the wait its reads of what
+ * the kill left, and a process the kill does not end is read alive after it rather than recorded as
+ * one the table could not be read for. Where it killed nothing, it waits within the first bound.
  */
 function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  return sweptEvents(directory, readingNow(sweptWithin(directory, lsof, kill, readTimeout), ps, readTimeout), killed);
-}
-
-/** `sweeping` and then `settled`, as one step, so the exit cleanup's census reads within one bound, `bound`. */
-function* sweptWithin(directory, lsof, kill, bound) {
-  return yield* settled(yield* sweeping(directory, lsof, kill), kill, bound);
+  const began = Date.now();
+  const found = readingNow(sweeping(directory, lsof, kill), ps, readTimeout, began + readTimeout);
+  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout), ps, readTimeout, (found.killedAt ?? began) + readTimeout), killed);
 }
 
 /** The events `swept` hands back, from what `sweeping` found in `directory`: each process it could not end among them, as such. */
