@@ -10,7 +10,10 @@ import { stubGh } from './stub-gh.mjs';
 import { standInAgent, stubClaude } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
+import { WARMING } from './fake-gh.mjs';
 import { fixture, running, scratch } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
+import { spawnSync } from 'node:child_process';
 
 /** The names in `dir`, sorted. */
 const listing = (dir) => readdirSync(dir).sort();
@@ -59,6 +62,40 @@ test('a gh wrapping a fake gh to refuse the stream after a move, once installed,
   const stream = join(temporaryDirectory('rigger-warming-stream-'), 'events.jsonl');
 
   installGhRefusingStreamAfterMove(dir, fake.gh, stream);
+
+  assert.deepEqual(fake.sent(), []);
+  assert.equal(existsSync(stream), false);
+  assert.deepEqual(listing(dir), ['gh']);
+});
+
+test('a fake gh as installed, run as `installFakeGh` warms it, with no environment and its warming argument alone, exits 0, has been sent no command, and leaves its directory as it was', () => {
+  const dir = temporaryDirectory('rigger-warming-fake-gh-');
+  const fake = installFakeGh(dir, { repo: 'octo/repo', project: 3, board: { columns: ['Ready'] } });
+
+  warmed(fake.gh, [WARMING]);
+
+  assert.deepEqual(fake.sent(), []);
+  assert.deepEqual(listing(dir), ['board.json', 'gh']);
+});
+
+test('a fake gh as installed, run with no argument, records that command and fails, as it does any command it does not model', () => {
+  const fake = installFakeGh(temporaryDirectory('rigger-warming-fake-gh-'), { repo: 'octo/repo', project: 3, board: { columns: ['Ready'] } });
+
+  // The suite's own environment, which puts `git` on the fake's PATH as every forge call does.
+  const run = spawnSync(fake.gh, [], { env: process.env, encoding: 'utf8' });
+
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /the fake gh does not model `gh`/);
+  assert.deepEqual(fake.sent(), [[]]);
+});
+
+test('a gh wrapping a fake gh, as installed, run as `warmed` runs it, exits 0, has sent the fake nothing, and leaves the stream as it was', () => {
+  const fake = installFakeGh(temporaryDirectory('rigger-warming-fake-gh-'), { repo: 'octo/repo', project: 3, board: { columns: ['Ready'] } });
+  const dir = temporaryDirectory('rigger-warming-wrap-');
+  const stream = join(temporaryDirectory('rigger-warming-stream-'), 'events.jsonl');
+  const gh = installGhRefusingStreamAfterMove(dir, fake.gh, stream);
+
+  warmed(gh);
 
   assert.deepEqual(fake.sent(), []);
   assert.equal(existsSync(stream), false);

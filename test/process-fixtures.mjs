@@ -100,9 +100,10 @@ export function fixture(directory, name, body) {
  * 3 ms after. Beside whole suites, at a load average of about 33, 1 of 150 first execs took 1,058 ms,
  * while 150 second execs took at most 20 ms. So a fixture that must be ready within `OUTLIVED` of
  * its spawn is warmed first, and the assessment is paid outside that window.
+ * The run is given `args`, for a stand-in that tells the warming run apart by its arguments.
  */
-export function warmed(path) {
-  const run = spawnSync(path, [], { env: { RIGGER_FIXTURE_WARMING: '1' }, encoding: 'utf8' });
+export function warmed(path, args = []) {
+  const run = spawnSync(path, args, { env: { RIGGER_FIXTURE_WARMING: '1' }, encoding: 'utf8' });
   assert.equal(run.status, 0, `warming ${path} failed: ${run.error?.message ?? run.stderr}`);
   return path;
 }
