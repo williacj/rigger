@@ -5,6 +5,8 @@
 
 import { renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { watch } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
@@ -43,7 +45,7 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * under `TMPDIR`, which a test puts first on the `PATH` it hands the engine. Each run reads its
  * standard input to its end, takes its role from the agent file it is handed, the file
  * `--append-system-prompt-file` names, by that file's name less `.md`, and its card from the
- * prompt's first `card #<n>`, records itself, and acts as the test set for that card and role,
+ * prompt's first `card #<n>`, in either letter case, records itself, and acts as the test set for that card and role,
  * where `plan` holds `{ [card]: { [role]: act } }`. A run given no act exits 0.
  *
  * An act holds, in the order the run does them:
@@ -52,9 +54,16 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *   it with `SIGUSR1`, removing the file once it hears it. It adds the listener before it writes
  *   the file, so a release sent at any moment after the file appears is heard. A wait on a change
  *   to its directory missed one sent in the moment after (the engineer's review on #556);
+ * - `print`: writes that text to its standard output;
  * - `write`: writes `wrote-<card>-<role>` beside itself;
+ * - `await`: waits until `wrote-<card>-<await>` is beside itself, the file the run for the same card
+ *   in the role `await` names writes, watching its directory and reading it once the watch is set,
+ *   so a file written at any moment is seen;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
+ * - `leaveIn`: as `leave`, but on `left-<card>-<role>` and working in `leaveIn`, a path relative
+ *   to its working directory, writing the process's pid to `left-pid-<card>-<role>` beside itself;
+ * - `leaveInGroup`: as `leaveIn`, but in the run's own process group, with no output held open;
  * - `forever`: never exits, until it is killed;
  * - `leave`: starts `/usr/bin/tail -f` on `left-<card>` beside itself, in a process group of its
  *   own and holding the run's output open, and leaves it running when it exits. L0 then reads the
@@ -193,6 +202,38 @@ function inWorktree() {
   }
 }
 
+/**
+ * Starts `/usr/bin/tail -f` on `left-<card>-<role>` in `dir`, working in `cwd`, a path relative to
+ * the run's working directory, spawned with `options`, leaves it running when the run exits, and
+ * writes its pid to `left-pid-<card>-<role>` in `dir`.
+ */
+function leaveTail(dir, card, role, cwd, options) {
+  const left = marker(dir, 'left', card, role);
+  writeFileSync(left, '');
+  const tail = spawn('/usr/bin/tail', ['-f', left], { cwd: resolve(cwd), ...options });
+  tail.unref();
+  writeFileSync(marker(dir, 'left-pid', card, role), String(tail.pid));
+}
+
+/**
+ * Settles once a file is at `path`, watching its directory first and then reading whether it is
+ * there, so a file written before the watch was set or after is seen, and nothing sleeps.
+ */
+function written(path) {
+  return new Promise((resolved) => {
+    const watcher = watch(dirname(path), () => {
+      if (existsSync(path)) {
+        watcher.close();
+        resolved();
+      }
+    });
+    if (existsSync(path)) {
+      watcher.close();
+      resolved();
+    }
+  });
+}
+
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
 export async function standInMain() {
   const dir = dirname(process.argv[1]);
@@ -200,14 +241,16 @@ export async function standInMain() {
   const input = readFileSync(0, 'utf8');
   const agent = following(args, '--append-system-prompt-file');
   const role = agent === undefined ? undefined : basename(agent, '.md');
-  const card = Number(/card #(\d+)/.exec(input)?.[1]);
+  const card = Number(/card #(\d+)/i.exec(input)?.[1]);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(RECORDED)));
   appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
   const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
   if (act.hold) {
     await holding(marker(dir, 'held', card, role));
   }
+  if (act.print !== undefined) process.stdout.write(act.print);
   if (act.write) writeFileSync(marker(dir, 'wrote', card, role), '');
+  if (act.await !== undefined) await written(marker(dir, 'wrote', card, act.await));
   if (act.pr && inWorktree()) {
     const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
@@ -218,6 +261,8 @@ export async function standInMain() {
     writeFileSync(join(dir, `left-${card}`), '');
     spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
   }
+  if (act.leaveIn !== undefined) leaveTail(dir, card, role, act.leaveIn, { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+  if (act.leaveInGroup !== undefined) leaveTail(dir, card, role, act.leaveInGroup, { detached: false, stdio: 'ignore' });
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;
 }

@@ -25,6 +25,8 @@ import { standInAgent } from './stub-claude.mjs';
 import { makerRuns, positive } from './loop-world.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
+import { readsWith } from './loop-world.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH each loop is handed. */
 const agent = standInAgent();
@@ -86,7 +88,7 @@ function attemptWorld({
     const opened = agent.act(number, 'engineer')?.pr || makerCalls.some(({ start }) => start.card.number === number);
     return { open: opened ? [{ number: 900 + number, head: String(number).padStart(40, 'e'), base: 'main' }] : [], merged: [] };
   };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations, pullRequests: forgeOfAgent });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(forgeOfAgent) });
   const l2 = {
     claimed: changes.claimed,
     settled: (card, outcome) => {
@@ -100,7 +102,7 @@ function attemptWorld({
   const l2Answer = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: settings.roles, provisioning: declared, outcomes, sink, ...attempt });
   const decide = (card, outcomes, attempt) => {
     asks[card.number] = (asks[card.number] ?? 0) + 1;
-    return standIn ? standIn(card, outcomes, l2Answer) : l2Answer(card, outcomes, attempt);
+    return standIn ? standIn(card, outcomes, l2Answer, attempt) : l2Answer(card, outcomes, attempt);
   };
   const making = workspace ?? makingWorkspaces(join(directory, 'workspaces'));
   // `maker` names what the stand-in does as each card's maker; `makerCalls` is a live view of the
@@ -114,7 +116,7 @@ function attemptWorld({
     readColumns: () => { requests += 1; return handle.readColumns(); },
     readPriority: () => { requests += 1; return handle.readPriority(); },
   };
-  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: making, state: directory, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: making, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } });
   return { directory, fake, loop: built, events, asks, made: making.made, makerCalls, settled: settledCards, requests: () => requests };
 }
 
@@ -138,6 +140,7 @@ const handed = () => ({
   sink: { emitter: () => ({ emit: () => {} }) },
   kill: async () => {},
   workspace: async () => ({ path: '/nowhere' }),
+  judgeDirectory: async () => ({ path: '/nowhere', main: '/nowhere/main', head: '/nowhere/head' }),
   state: '/nowhere/.rigger',
   environment: {},
 });
@@ -348,28 +351,45 @@ test('settled is called once for a card whose maker the stand-in ran', async () 
   assert.deepEqual(built.settled, [3]);
 });
 
-test('for a card selecting no step, L3 asks decide once, at the pull, and the answer carries action dispatch', async () => {
+/**
+ * What L2's settle answers for card 1 in `attemptWorld` once its maker ran: the one open pull
+ * request the world's forge holds from `rigger-1`, and the review reads of it from a repository
+ * holding none, the card's body never edited.
+ */
+const SETTLED_ONE = {
+  line: 'rigger-1',
+  open: [{ number: 901, head: `${'e'.repeat(39)}1`, base: 'main' }],
+  merged: [],
+  pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeBase has nothing to read') },
+  diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readDiff has nothing to read') },
+  comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readComments has nothing to read') },
+  editedAt: { status: 'fulfilled', value: null },
+};
+
+test('for a card selecting no step, L3 asks decide once at the pull, where the answer carries action dispatch, and once more after L2 settles the maker, handing it the facts that settle answered', async () => {
   const answers = [];
+  const asked = [];
   const built = attemptWorld({
-    cards: [1], maker: { exit: 0 }, decide: (card, outcomes, answer) => { const given = answer(card, outcomes); answers.push(given); return given; },
+    cards: [1], maker: { exit: 0 }, decide: (card, outcomes, answer, options) => { asked.push({ options, settled: [...built.settled] }); const given = answer(card, outcomes); answers.push(given); return given; },
   });
 
   await built.loop.pull();
 
-  assert.deepEqual(built.asks, { 1: 1 });
+  assert.deepEqual(built.asks, { 1: 2 });
   assert.equal(answers[0].action, 'dispatch');
   assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
+  assert.deepEqual(asked.at(-1), { options: { forge: SETTLED_ONE }, settled: [1] }, 'the last ask carries exactly the facts L2\'s settle answered, after that settle ran');
 });
 
-test('for a card selecting two steps, L3 asks decide once at the pull and once after each step\'s outcome', async () => {
+test('for a card selecting two steps, L3 asks decide once at the pull, once after each step\'s outcome, and once after L2 settles the maker, with the facts that settle answered', async () => {
   const built = attemptWorld({ cards: [1], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
-  assert.deepEqual(built.asks, { 1: 3 });
+  assert.deepEqual(built.asks, { 1: 4 });
 });
 
-test('the steps loop dispatches, and whether it dispatches another after an outcome, come only from the next action decide answers', async () => {
+test('the steps loop dispatches, and whether it dispatches another after an outcome, come only from the next action decide answers, and the ask after L2 settles the maker carries the facts that settle answered', async () => {
   // L2's real answer selects no step here; this decide names one at the pull, and another after its outcome.
   const script = [
     { action: 'dispatch', kind: 'change', step: { name: 'first', run: 'true' } },
@@ -377,17 +397,25 @@ test('the steps loop dispatches, and whether it dispatches another after an outc
     { action: 'dispatch', kind: 'change', maker: { role: 'engineer', agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard', timeout: 14_400_000, instruction: 'Make the change.\n', evidence: 'Card #1: Add a verb\n' } },
   ];
   const handedOutcomes = [];
+  const asked = [];
   const built = attemptWorld({
     cards: [1],
     maker: { exit: 0 },
-    decide: (card, outcomes = []) => { handedOutcomes.push(outcomes.map((outcome) => outcome.value.exit)); return script[outcomes.length]; },
+    decide: (card, outcomes = [], answer, options) => {
+      handedOutcomes.push(outcomes.map((outcome) => outcome.value.exit));
+      asked.push({ options, settled: [...built.settled] });
+      // The ask after the settle is answered as L2 answers a card whose kind's only judge is the owner.
+      return options?.forge === undefined ? script[outcomes.length] : { action: 'ignore' };
+    },
   });
 
   await built.loop.pull();
 
   assert.deepEqual(named(built.events(), 'L3', 'dispatch').filter((each) => each.step !== undefined).map((each) => each.step), ['first', 'second']);
   assert.equal(named(built.events(), 'L3', 'dispatch').at(-1).role, 'engineer', 'the maker\'s event follows the steps\'');
-  assert.deepEqual(handedOutcomes, [[], [0], [0, 5]], 'each outcome was handed back unread, a non-zero exit included');
+  assert.deepEqual(handedOutcomes, [[], [0], [0, 5], []], 'each outcome was handed back unread, a non-zero exit included, and the ask after the settle carries none');
+  assert.deepEqual(built.asks, { 1: 4 });
+  assert.deepEqual(asked.at(-1), { options: { forge: SETTLED_ONE }, settled: [1] }, 'the last ask carries exactly the facts L2\'s settle answered, after that settle ran');
   assert.equal(built.makerCalls.length, 1, 'the maker stand-in started once, because decide answered it, whatever the second step exited');
 });
 
@@ -415,7 +443,7 @@ test('columnChanges reads neither kinds nor provisioning', async () => {
     },
   });
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)] });
-  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations, pullRequests: oneOpenFromEveryLine });
+  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) });
   const [card] = (await fake.operations.readPriority()).items;
 
   await changes.claimed(card);

@@ -1,6 +1,7 @@
 // ABOUTME: Tests L3's pull over L2's facts call, driven through the loop world: L3 awaits the call
 // before it claims, a card the forge's facts refuse is never claimed, moved or given a workspace,
-// a Review card with one open pull request is ignored, and a Review card with none is done again.
+// a Review card with one open pull request answers its agent judges, and is ignored where its kind's
+// only judge is `owner`, and a Review card with none is done again.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +21,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { positive } from './loop-world.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH a loop is handed. */
 const agent = standInAgent();
@@ -54,6 +56,7 @@ test('loop throws when built, naming the facts call, where the facts call it is 
     sink: { emitter: () => ({ emit: () => {} }) },
     kill: async () => {},
     workspace: async () => ({ path: '/nowhere' }),
+    judgeDirectory: async () => ({ path: '/nowhere', main: '/nowhere/main', head: '/nowhere/head' }),
     state: '/nowhere/.rigger',
   };
   for (const facts of [undefined, null, {}, 'facts']) {
@@ -73,7 +76,7 @@ test('L3 awaits L2\'s facts call between its board read and its claims: while th
     return (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} });
   };
   built.agent.plan(1, 'engineer', { hold: true });
-  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} }), facts, l2: built.l2, sink: built.sink, kill: async () => {}, workspace: makingWorkspaces(temporaryDirectory('rigger-facts-held-')), state: built.directory, environment: { ...process.env, PATH: built.agent.first() } });
+  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} }), facts, l2: built.l2, sink: built.sink, kill: async () => {}, workspace: makingWorkspaces(temporaryDirectory('rigger-facts-held-')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: built.directory, environment: { ...process.env, PATH: built.agent.first() } });
 
   const pulled = l3.pull();
   // Positive: until the facts call is held.
@@ -147,7 +150,7 @@ test('given a Review card with two open pull requests from its line of work, L2 
 // proves R-WORK-19
 test('given a Review card with no pull request and its line of work on the forge, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
 
-test('until L3 dispatches judges, a Review card with one open pull request is ignored', async () => {
+test('a Review card with one open pull request whose kind\'s only judge is `owner` is ignored', async () => {
   const workspace = recordingWorkspaces();
   const built = world({ cards: [cardIn(7, COLUMNS.review)], concurrency: 1, forge: { pullRequests: [pullFrom(7, 71)] }, workspace });
 
@@ -211,7 +214,7 @@ async function pullWithRoles(cards, roles) {
   const settings = { ...config, concurrency: 3 };
   const decide = (card, outcomes, attempt) => nextAction(card, KINDS, undefined, { columns: COLUMNS, roles, provisioning: {}, outcomes, sink, ...attempt });
   const workspace = recordingWorkspaces();
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } });
   const reached = await built.pull();
   return { fake, reached, events: () => readEvents(directory), asked: workspace.asked };
 }

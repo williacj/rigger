@@ -23,9 +23,10 @@ import { mkdirSync, realpathSync } from 'node:fs';
 import { installStandInAgent, standInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { after } from 'node:test';
+import { spawnSync } from 'node:child_process';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
-export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
+export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['owner'] } };
 
 /** The columns this repository's config declares, by key, as the read side's column read answers them. */
 export const COLUMNS = config.board.columns;
@@ -98,15 +99,34 @@ export function settledOf(promise) {
 }
 
 /**
+ * Runs the stand-in agent `agent` installed once, to its exit, before any maker: Node ends the run
+ * in a preload, before the stand-in's own code, so it records no run, takes no plan step and writes
+ * nothing. The system holds the first exec of a file just written until it has assessed it, as
+ * `warmed` (`test/process-fixtures.mjs`) records. Measured with Node 26.5.0 on macOS 27.0 on this
+ * 12-CPU host on 2026-10-04 (#593), across 42 runs of `test/loop.test.mjs:87` alone at one-minute
+ * loads of 9.92 to 20.65, a world's first exec of its stand-in reached the stand-in's first line
+ * 664 to 3,373 ms after L1's `dispatch.start`, and every later exec 20 to 63 ms after. In one
+ * whole suite, begun at a load of 12.18, the first execs took 5,061 to 5,556 ms, past
+ * `WAIT_WITHIN`, and the settling wait over those makers ran out before they held. Paid here,
+ * the assessment falls outside every wait that bounds a maker's start.
+ */
+function warmedAgent(agent) {
+  const run = spawnSync(join(agent.dir, 'claude'), [], { env: { NODE_OPTIONS: '--import=data:text/javascript,process.exit()' }, encoding: 'utf8' });
+  if (run.status !== 0) throw new Error(`warming the stand-in agent in ${agent.dir} failed: ${run.error?.message ?? run.stderr}`);
+}
+
+/**
  * The held makers of a world whose stand-in agent is `agent`, run as `role`, over `attempts`, the
  * world's record of every append L3, L2, L1 and L0 tried. Each maker is a stand-in process L1
  * started, which records a started marker and holds until the test releases it. `started` holds
  * each card's number at its maker's L3 `dispatch` event the sink accepted, so a card whose maker
  * never starts still counts there; the markers, not `started`, say that a maker process ran.
  * `most()` is the most makers L1 had running at once, from their `dispatch.start` and
- * `dispatch.end` attempts.
+ * `dispatch.end` attempts. The stand-in is run once here, before any maker, as `warmedAgent` says,
+ * so no maker's start pays the system's assessment of a file just written.
  */
 export function heldStandIns(agent, role, attempts) {
+  warmedAgent(agent);
   const started = [];
   // The pids of the stand-ins the test has released, whose markers may outlive the release a moment.
   const released = new Set();
@@ -267,7 +287,10 @@ export function readingLater(fake) {
  * unless a test lists one. `workspace` is L1's workspace handle L3 is handed, and where none is
  * given a stand-in makes and answers `workspaces/rigger-<card>` under `scratch`, and records
  * nothing. `state` is the state directory L3 hands L1's dispatch, which is `directory`, as in
- * production the stream and L1's record of process groups share one directory.
+ * production the stream and L1's record of process groups share one directory. `judgeDirectory`
+ * is L1's make of a judge's directory L3 is handed, and where none is given a stand-in makes `main`
+ * and `head` as plain directories under `scratch`, as `makingJudgeDirectories` does, and answers
+ * them with the card's scratch base and the repository beside them, as L1's make answers them.
  *
  * `handed` records, at each maker's L3 `dispatch` event the sink accepted, `{ card }`, the board
  * item as L3 read it at the pull that claimed it, and `decisions` every next action L2 gave L3, as
@@ -299,7 +322,7 @@ export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer = () => ({ exit: 0, output: '' }), run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
-  workspace,
+  workspace, judgeDirectory,
 } = {}) {
   // Whether the test that made this world has ended. From then on the sink refuses every append
   // and no workspace is answered, so a run the test left going starts nothing and records
@@ -376,7 +399,7 @@ export function world({
     },
   };
   const repository = createFakeRepository(forge);
-  const l2 = columnChanges({ config: settings, sink, items: moving, pullRequests: repository.operations.readPullRequests });
+  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations });
   const returned = new Set();
   const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
@@ -493,7 +516,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, state: directory, environment: { ...process.env, PATH: agent.first() } }),
+    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), state: directory, environment: { ...process.env, PATH: agent.first() } }),
   };
 }
 
@@ -503,6 +526,13 @@ export function world({
  * for any card. It answers from memory, with no process or file read.
  */
 export const factsOverNothing = (config, decide) => factsCall({ config, reads: createFakeRepository().operations, decide });
+
+/**
+ * The forge adapter's repository reads, standing in for `repositoryReads`, over a fake repository
+ * holding nothing, with `read` as their read of the pull requests from a line of work. Each answers
+ * from memory, with no process or file read.
+ */
+export const readsWith = (read) => ({ ...createFakeRepository().operations, readPullRequests: read });
 
 /** The SHA the pull request `oneOpenFromEveryLine` answers is at. */
 const OPEN_HEAD = '0'.repeat(40);
@@ -529,6 +559,29 @@ export function makingWorkspaces(under) {
     if (!existsSync(repository)) repositoryAt(repository);
     made.push({ card, path });
     return { path, scratch: join(under, 'scratch', `rigger-${card}`), repository };
+  };
+  return Object.assign(handle, { made });
+}
+
+/**
+ * A stand-in for L1's make of a judge's directory, `judgeDirectory(card, role, head)`, that makes
+ * `judges/rigger-<card>/<role>` under `under` and `main` and `head` in it as plain directories, and
+ * answers them as L1's make does: the judge's directory as `path`, `main` and `head`, the card's
+ * scratch base `scratch/rigger-<card>` under `under` as `scratch`, which it does not make, and as
+ * `repository` an empty git repository, `repository/` under `under`, which it makes once. It records
+ * in its `made` each card, role, head and path it made. It proves L3's ordering of the make before
+ * a judge's dispatches, and nothing of L1's replace rule.
+ */
+export function makingJudgeDirectories(under) {
+  const made = [];
+  const repository = join(under, 'repository');
+  const handle = async (card, role, head) => {
+    const path = join(under, 'judges', `rigger-${card}`, role);
+    await mkdir(join(path, 'main'), { recursive: true });
+    await mkdir(join(path, 'head'), { recursive: true });
+    if (!existsSync(repository)) repositoryAt(repository);
+    made.push({ card, role, head, path });
+    return { path, main: join(path, 'main'), head: join(path, 'head'), scratch: join(under, 'scratch', `rigger-${card}`), repository };
   };
   return Object.assign(handle, { made });
 }
