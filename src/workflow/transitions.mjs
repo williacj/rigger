@@ -29,13 +29,13 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  * L2's column changes on the board `config` names, each recorded through `sink`. `items` is the
  * forge adapter's item-write side for that board, whose move L2 hands an `L0` emitter it opens
  * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
- * the runners' spawn. `pullRequests` is the read side's read of the pull requests from a branch,
- * by which L2 settles a maker's outcome, and is the read side's own over `config`'s repository
- * where none is given.
+ * the runners' spawn. `reads` is the forge adapter's repository reads (`repositoryReads`), by which
+ * L2 settles a maker's outcome, and is the read side's own over `config`'s repository where none is
+ * given.
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
-  pullRequests = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }).readPullRequests,
+  reads = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
@@ -95,13 +95,14 @@ export function columnChanges({
 
   return {
     /**
-     * L3 has claimed `card`, a board item as the forge adapter read it. A card claimed from coding
-     * is there already, and is not moved. One claimed from review is done again from the
-     * beginning, and moves to coding, where it shows while it is (`R-WORK-24`). Any other claim is
-     * of a ready card, which moves to coding.
+     * L3 has claimed `card`, a board item as the forge adapter read it, on `next`, L2's answer for
+     * it at the pull, which L3 hands over unread. A card claimed from coding is there already, and
+     * is not moved, and so is one claimed for its judges, which stays in review. One otherwise
+     * claimed from review is done again from the beginning, and moves to coding, where it shows
+     * while it is (`R-WORK-24`). Any other claim is of a ready card, which moves to coding.
      */
-    claimed: async (card) => {
-      if (card.column === columns.coding) return;
+    claimed: async (card, next) => {
+      if (card.column === columns.coding || next?.action === 'judge') return;
       await change(card, card.column === columns.review ? 'redone' : 'claimed');
     },
 
@@ -119,9 +120,11 @@ export function columnChanges({
      * For a fulfilled outcome, the exit code and the forge alone decide, never the output (the
      * owner's ruling on #220, refined by O5 on #467). Anything but zero leaves the card in coding,
      * and the forge is not read. Zero has L2 read once the pull requests from the card's line of
-     * work: with exactly one open, the card moves to review (`R-WORK-18`), and L2 answers the
-     * facts it read, `{ line, open, merged }`, to its caller; L3's handing them on unread is
-     * #488's (the architect's ruling 3, AQ4). With none open, or more than one, the card stays in coding, and L2 records why and
+     * work, and, where exactly one is open, what L2's judge answer reads of it, as
+     * `pullRequestsFrom` reads them: with exactly one open, the card moves to review (`R-WORK-18`),
+     * and L2 answers the facts it read, `{ line, open, merged }` with those beside them, to its
+     * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
+     * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
@@ -135,7 +138,7 @@ export function columnChanges({
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
       if (exit !== 0) return undefined;
-      const facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), pullRequests);
+      const facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
       const { line, open } = facts;
       if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts);
       if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts);

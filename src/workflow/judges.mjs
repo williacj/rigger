@@ -3,6 +3,7 @@
 // judge writes its findings in and L2 reads them back by.
 
 import { OWNER, roleTimeout, workRequires } from '../config/validate.mjs';
+import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { failed, kindOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
 
@@ -85,6 +86,10 @@ function record(sink, card, name, fields, what) {
  * what changed (Codex 5 on #467). It records a `diff.refused` event under the card through `sink`,
  * naming the pull request and the forge's reason, and answers `ignore`.
  *
+ * `directories` holds, by role, the outcome of L1's make of a judge's directory where L1 could not
+ * make it, which L3 hands L2 unread. A judge whose directory was not made is not named, as `unmade`
+ * says (the architect's ruling 4's addendum).
+ *
  * `outcomes` holds, by role, the outcomes L3 has handed L2 of a judge's steps in its `head`. A judge
  * whose required step failed is not named, and L2 records a `judge.withheld` event under the card
  * naming the role, the step and the failure, classed as the environment's. Nothing retries it
@@ -92,7 +97,7 @@ function record(sink, card, name, fields, what) {
  * (the architect's ruling 2, P3). L2 keeps no memory, so it records the failure each time it is
  * handed it, and L3 hands a judge's outcomes to it once.
  */
-export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning = {}, sink, outcomes = {} } = {}) {
+export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning = {}, sink, outcomes = {}, directories = {} } = {}) {
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
@@ -118,9 +123,25 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   const facts = { card: card.number, revision, pull: pull.number, base: pull.base, head: pull.head };
   const steps = selectedSteps(card, declared, provisioning);
   const judges = owed
+    .filter((role) => directories[role] === undefined || !unmade(card, role, directories[role], sink))
     .filter((role) => !withheld(card, role, steps, outcomes[role] ?? [], provisioning, sink))
     .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, pull, evidence, facts), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   return { action: 'judge', kind, judges };
+}
+
+/**
+ * Whether judge `role` of `card` is withheld for its directory: whether `outcome`, of L1's make of
+ * it, is L1's failure to make it, which L2 records through `sink` as a `judge.withheld` event naming
+ * the role, the directory and why, classed as the environment's. Any other outcome is no such
+ * failure, so L2 answers no action for it, naming the card and the role.
+ */
+function unmade(card, role, outcome, sink) {
+  if (outcome?.status !== 'rejected' || outcome.reason?.code !== WORKSPACE_NOT_MADE) {
+    const read = outcome?.status === 'rejected' ? outcome.reason?.message : JSON.stringify(outcome);
+    throw new Error(`card #${card.number}'s judge ${role} has a directory outcome that is not L1's failure to make it, so L2 answers no action for it: ${read}`, { cause: outcome?.reason });
+  }
+  record(sink, card, 'judge.withheld', { role, directory: outcome.reason.path, reason: outcome.reason.message, class: 'environment' }, `judge ${role}'s directory was not made`);
+  return true;
 }
 
 /**
