@@ -1113,14 +1113,14 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
     assert.match(ends[0].unread, why);
   });
 
-  test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries the killed command's non-zero exit code`, ENDS_WITHIN, async (t) => {
+  test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries no exit code and says the command was not shown to have ended, since no read after the kill shows it ended`, ENDS_WITHIN, async (t) => {
     const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], ps }, { signal: 'SIGTERM' });
 
     assert.equal(signal, 'SIGTERM', stderr);
     await assertNoneAlive(directory);
     assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
     const ends = endsOf(streamOf(directory), 'd-1');
-    assert.deepEqual(ends.map(({ exit, unread }) => ({ exit, unread })), [{ exit: 128 + constants.signals.SIGKILL, unread: undefined }]);
+    assert.deepEqual(ends.map(({ exit, unread = '' }) => ({ exit, unshown: /not shown to have ended/.test(unread), why: why.test(unread) })), [{ exit: undefined, unshown: true, why: true }], JSON.stringify(ends));
   });
 }
 

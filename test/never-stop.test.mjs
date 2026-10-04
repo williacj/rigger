@@ -618,22 +618,39 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
 });
 
-// proves R-STATE-19, R-STATE-9
-test('given a leader L0 may not signal, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as a process it could not end because of EPERM, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+/**
+ * Has the exit cleanup end a group whose leader is `kept`, as `CALLER` names its options, under a
+ * process table that stops answering once the cleanup has sent its first kill of the group, and
+ * asserts it records the leader not as killed but as a process it could not end, for `reason`, and
+ * hands its step no exit code but an `unread` that matches `why`.
+ */
+async function assertLeaderNotKilled(t, kept, reason, why) {
   const directory = holding(t);
   holdingTwo(directory);
   hanging(directory);
 
-  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', refused: 'group' });
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', [kept]: 'group' });
 
   const group = pidIn(directory, 'group');
   assert.equal(status, 0);
   assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
   assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
-  assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event, reason }) => ({ event, reason })), [{ event: 'survivor.unended', reason: 'EPERM' }]);
+  const recorded = events.filter(({ pid }) => pid === group);
+  assert.deepEqual(recorded.map(({ event }) => event), ['survivor.unended']);
+  assert.match(recorded[0].reason, reason);
   const ending = JSON.parse(read(directory, 'ending'));
   assert.equal('exit' in ending, false, JSON.stringify(ending));
-  assert.match(ending.unread ?? '', /could not end the command: EPERM/, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', why, JSON.stringify(ending));
+}
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader L0 may not signal, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as a process it could not end because of EPERM, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  await assertLeaderNotKilled(t, 'refused', /^EPERM$/, /could not end the command: EPERM/);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader the kill does not end, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as not shown to have ended, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  await assertLeaderNotKilled(t, 'unkept', /^not shown to have ended: the process table could not be read/, /the command was not shown to have ended: the process table could not be read/);
 });
 
 // proves R-STATE-12, R-STATE-19
