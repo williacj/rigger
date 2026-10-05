@@ -590,8 +590,9 @@ function signal(group, name, kill = SIGNAL) {
  * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
  * pauses and reads again. A round whose first read of states finds a process caught mid-exec cannot
  * agree, so once a round is held to keep, such a round stops at that read: re-reading then costs
- * one read for each pause, however many reads a whole round makes (#574). A zombie is left out,
- * because it is already dead. Where `deadline` passes first, it keeps what the last whole round
+ * one read for each pause, however many reads a whole round makes (#574). Where the time left would
+ * hold another round as long as the last, a pause is cut to leave it, so the census reads again
+ * before `deadline`. A zombie is left out, because it is already dead. Where `deadline` passes first, it keeps what the last whole round
  * held, each live process that round's last state read found, by the name and the command line read
  * in that round, and leaves out one a read in that round missed.
  *
@@ -682,19 +683,30 @@ function* census(group, kill, deadline) {
   const column = function* (name) {
     return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   };
+  // How long the last round took, one that stopped at its first read included.
+  let took = 0;
   for (let wait = 0; ; wait = longer(wait)) {
-    if (wait > 0) yield wait;
+    // Where the time left would hold another round as long as the last, the pause is cut to leave
+    // it, so the census reads again before `deadline`.
+    const left = deadline - Date.now();
+    const until = left >= took ? Math.min(wait, left - took) : wait;
+    if (until > 0) yield until;
     if (last !== undefined && Date.now() >= deadline) return last;
+    const began = Date.now();
     let round;
     try {
       const before = yield* column('stat');
       // A round that cannot agree reads no further once there is a round to keep.
-      if (last !== undefined && [...before.values()].some((state) => state.startsWith('?'))) continue;
+      if (last !== undefined && [...before.values()].some((state) => state.startsWith('?'))) {
+        took = Date.now() - began;
+        continue;
+      }
       const lines = yield* column('command');
       const names = yield* namesOf([...before].filter(([, state]) => live(state)).map(([pid]) => pid), read);
       const commands = yield* column('command');
       const after = yield* column('stat');
       round = { before, lines, names, commands, after };
+      took = Date.now() - began;
     } catch (error) {
       // A read given up on at `deadline` leaves the last round to keep, where there is one.
       if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return last;
