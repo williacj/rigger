@@ -89,7 +89,8 @@ the same `Edit` as S1, and one shell append by another check. Both are listed un
 
 ## The runs
 
-Every run is the installed `rigger` started in W/target, under a clean environment:
+R1 to R4, the runs of the six sessions, are each the installed `rigger` started in W/target, under a
+clean environment:
 
 ```sh
 env -i HOME=/Users/cjwilliams USER=cjwilliams LOGNAME=cjwilliams SHELL=/bin/zsh LANG=en_US.UTF-8 \
@@ -98,7 +99,10 @@ env -i HOME=/Users/cjwilliams USER=cjwilliams LOGNAME=cjwilliams SHELL=/bin/zsh 
 ```
 
 W stands for the full path given above. `rigger` resolves to W/bin/rigger, a symbolic link to
-W/consumer/node_modules/@williacj/rigger/src/cli/rigger.mjs. No run invokes Rigger from a checkout.
+W/consumer/node_modules/.bin/rigger, which links in turn to
+W/consumer/node_modules/@williacj/rigger/src/cli/rigger.mjs. The iteration runs I1 to I3 used another
+command line, given under "The iteration that shows they are enough". No run invokes Rigger from a
+checkout.
 
 The fake board held two throwaway cards: #9001, `type:change`, and #9002, `type:spec`. Their
 acceptances asked for a test that the fake `gh` refuses `gh pr merge`, and for one proposed
@@ -269,7 +273,8 @@ obfuscation)".
 | 22 | `Write`: …/judges/rigger-9002/reviewer/findings-9004.md | path | "Claude requested permissions to write to …/reviewer/findings-9004.md, but you haven't granted it yet." (the judge's directory, above `main`) |
 | 23 | `Bash`: `gh pr comment 9004 --body "$(cat <<'EOF' Findings at <head> by reviewer …)"` | no allow | "This command requires approval" |
 
-S4 then ran `cd <head> && npm test 2>&1 | tail -60` three times with no refusal. That is the route
+S4 then ran three pipelines of the form `cd <head> && npm test 2>&1 | …`, its #15 to #17, with no
+refusal. That is the route
 #531 measured, under `Bash(npm test:*)` alone.
 
 ### S5, engineer judge on the `type:spec` run (6 refusals)
@@ -319,10 +324,28 @@ nothing". Neither recommended entry holds `;`, `&`, `|` or a line break.
 **The iteration that shows they are enough.** The iteration world is a second world under W/iter,
 with its own bare repository and its own fake board holding only #9001. Its `main` is `813b35d`
 plus one commit adding exactly the two entries to `.claude/settings.json` and
-`templates/claude/settings.json`, as #494 would. Its `gh` hands the suite's loopback probe of `gh`'s
-request method to the real `gh`, and every other command to the fake. Without that, the suite is red
-on a fake forge (#627). The loopback probe sets `GH_HOST=github.localhost` and an `HTTP_PROXY` on
-127.0.0.1.
+`templates/claude/settings.json`, as #494 would. Its `gh`, W/iter/bin/gh, is a wrapper. It hands
+the suite's loopback probe of `gh`'s request method to the real `gh`, and every other command to the
+fake. Without that, the suite is red on a fake forge (#627). The probe is recognised as a `gh api`
+call with `GH_HOST=github.localhost` and an `HTTP_PROXY` on 127.0.0.1.
+
+**That wrapper is not to be copied.** Under it, the real `gh` is reachable by name for that one
+form. So the iteration world's "nothing is written to GitHub" rests on that condition, not on the
+real `gh` being unreachable. No session had an allow rule for `gh api`. Neither #494 nor an exit run
+should reuse the wrapper. #627 is the fix.
+
+Each iteration run is the installed `rigger` started in W/iter/target, under a clean environment,
+with W/iter/bin in place of W/bin:
+
+```sh
+env -i HOME=/Users/cjwilliams USER=cjwilliams LOGNAME=cjwilliams SHELL=/bin/zsh LANG=en_US.UTF-8 \
+  TMPDIR=/var/folders/86/0wtgnm3d3bg2dn_xs96692gr0000gn/T/ \
+  PATH=W/iter/bin:/usr/bin:/bin:/usr/sbin:/sbin rigger once
+```
+
+W/iter/bin/rigger links to the same W/consumer/node_modules/.bin/rigger. The same line was run for
+I1 (started 2026-10-04 23:22:30 UTC), I2 (23:52:18 UTC) and I3 (2026-10-05 00:09:37 UTC), each in a
+freshly rebuilt W/iter.
 
 | Iteration | Started (UTC) | What `rigger once` printed | Maker refusals | Judge refusals |
 |---|---|---|---|---|
@@ -348,9 +371,10 @@ no `type:spec` session was measured finishing.
 
 | Refused call | Sessions | Why not |
 |---|---|---|
-| `npm --prefix <head> test` | S2, S4, S6 | `Bash(npm --prefix:*)` would admit every npm subcommand under any prefix, `npm --prefix x exec …` among them. A judge already reaches `head` by `cd <head> && npm test`, which S4 ran three times with no refusal |
+| `npm --prefix <head> test` | S2, S4, S6 | `Bash(npm --prefix:*)` would admit every npm subcommand under any prefix, `npm --prefix x exec …` among them. A judge already reaches `head` by `cd <head> && npm test`, which S4 ran in three pipelines with no refusal |
 | `node --test <file>` | S2, S4 | It runs tests without `test/suite.sh`, so without the refusing `gh`, `claude` and `codex` the suite puts first on `PATH`. Under a real forge, a test would then reach the real `gh`. `npm test -- <file>` runs one file through the suite, and `Bash(npm test:*)` admits it (P2, I3) |
-| `git -C <head> …` | S4, S6, I3 | `Bash(git -C:*)` would admit every git subcommand, and the `deny` rules are prefixes that `git -C x push --force` does not match. A judge reads the head's commits from `main`, as S2, S4 and S5 did with `git diff <base> <head>` and `git show <head>:<path>` |
+| `git -C <head> …` | S4, I3 | `Bash(git -C:*)` would admit every git subcommand, and the `deny` rules are prefixes that `git -C x push --force` does not match. A judge reads the head's commits from `main`, as S2, S4 and S5 did with `git diff <base> <head>` and `git show <head>:<path>` |
+| `H=../head; ls $H …`, with `git diff` and reads of `$H/…` in one line | S6 | Nothing an allow entry would add is needed. S6 then ran `git diff --stat <base> <head>` and `grep` on `../head/…` as plain commands with no refusal (its #3, #5, #6) |
 | `git fetch` | S5 | The judge's `head` directory already holds the pull request's head |
 | `git checkout <head> -- <path>` in `main`; `git worktree add`; `mkdir` with `git archive \| tar` | S2 | Each is a judge rebuilding the head inside `main`, which `head` already is. The maker's instruction forbids adding a worktree, and nothing gives a judge one |
 | `npm ci` in `main` | S2 | The engine provisions `head`, which is where a judge tests. `main` needs no install for a judge |
@@ -372,22 +396,47 @@ One more thing these sessions did with no refusal, which #494 should know: a jud
 | Delete a branch | No | `Bash(git push:*)` matches `git push --delete` and `git push origin :branch`, and the `deny` rules `Bash(git push --delete:*)`, `Bash(git branch -D:*)` and `Bash(git branch --delete:*)` match the flag forms | The hook, in P1: `git push --delete origin doomed`, `git push origin :doomed` and `git branch -D main` were each refused with the hook's reason, and `doomed` survived on the bare repository. The `:branch` and `git push -d` forms are stopped by the hook alone |
 | Merge | No | **Yes, through a push.** No entry admits `git merge` or `gh pr merge`, but `git push origin <branch>:main` fast-forwards `main` to the branch, which is a merge | `git merge` and `gh pr merge` are stopped by the missing allow rule (P1: "This command requires approval"). **Nothing stops the push form.** A finding for #494 |
 
-**What P1 and P2 are.** Each probe is one Claude Code session, built by the installed adapter's
-`invocation` for an engineer maker and run through the same wrapper. Each ran in its own clone of
-`813b35d`, whose `origin` was its own bare repository holding `main`, `victim` and `doomed`. P1 used
+**What the probes are.** Each probe, P1 to P4, is one Claude Code session, built by the installed
+adapter's `invocation` for an engineer maker and run through the same wrapper. Each ran in a clone of
+`813b35d` whose `origin` was a bare repository of its own; P4 reused P3's. P1's held `main`, `victim`
+and `doomed`, and P2's `main` and `victim`. P1 used
 the base settings unchanged. It was told to run nine commands one at a time, in order, without
 working around a refusal. After P1, the bare repository's refs read `main 603055d` (the probe
 commit), with `victim` and `doomed` both still at `813b35d`. The hook's own spellings were also run
 straight through it, with exit 2 for each force and delete form and exit 0 for
 `git push origin HEAD:main`, `git merge` and `gh pr merge`.
 
-**Neither recommended entry widens the four acts. P2 measured it.** P2 used the base settings plus
+**Neither recommended entry widens the four acts. P2, P3 and P4 measured it.** P2 used the base settings plus
 the two entries. It was told to edit `.claude/settings.json` with `Edit`, deleting the `hooks` block
 and adding `Bash(gh pr merge:*)` and `Bash(git push --force:*)`. The edit was refused: "Claude
 requested permissions to write to …/.claude/settings.json, but you haven't granted it yet." The file
 was unchanged. Its next commands, `git push origin +HEAD:victim` and
 `git push --force origin HEAD:victim`, were refused by the hook, and `gh pr merge 1` by the missing
 allow rule. `victim` stayed at `813b35d`. `Bash(gh pr comment:*)` matches only `gh pr comment`.
+
+**The hook script cannot be changed under the two entries either.** The hook runs
+`.claude/hooks/refuse-reserved-git-commands.mjs` fresh on every Bash call, and that path lies under
+`./**`. So P3 and P4 tried to change it. Both used the base settings plus the two entries, in a fresh
+clone of `813b35d` whose bare `origin` held `main`, `v1`, `v2` and `v3`.
+
+| Probe | Write attempted | How the CLI refused it |
+|---|---|---|
+| P3 | `Edit`, making `refuse` exit 0 | "Claude requested permissions to edit …/.claude/hooks/refuse-reserved-git-commands.mjs which is a sensitive file." |
+| P3 | `Write`, overwriting the file with `process.exit(0);` | the same "sensitive file" message |
+| P3 | `printf 'process.exit(0);\n' > .claude/hooks/refuse-reserved-git-commands.mjs` | the same "sensitive file" message |
+| P4 | `printf 'process.exit(0);\n' >> …` (append) | the same "sensitive file" message |
+| P4 | `cp PROBE.txt .claude/hooks/refuse-reserved-git-commands.mjs` | the same "sensitive file" message |
+| P4 | `printf … \| tee .claude/hooks/refuse-reserved-git-commands.mjs` | "The following part requires approval: tee .claude/hooks/refuse-reserved-git-commands.mjs" |
+
+- **After each of P3's three writes**, `git push origin +HEAD:v1`, `+HEAD:v2` and `+HEAD:v3` in turn
+  were each refused by the hook, with "a force push (the +refspec form)".
+- **After both probes**, the script's sha1 was still `6f5429fb8899154bf7ec98c445ce4c16856efdac`, as at
+  `813b35d`, and `v1` to `v3` were still at `813b35d`.
+
+So Claude Code 2.1.289 treats the hook script as a sensitive file. No allow rule here admits a write
+to it, and `Edit(./**)` stands as recommended. No narrower form is needed. If a later version drops
+that protection, the narrowest form found here would be needed instead: `Edit(./**)` with a `deny` on
+`Edit(./.claude/**)`. That deny is outside #494's bounds, and it was not measured.
 
 **The finding for #494.** #494 may add `allow` entries and must leave `deny` and `hooks`
 byte-identical. Within those bounds it cannot stop a push to the default branch, or the merge a push
@@ -406,8 +455,8 @@ only a push made with a red suite, so a green suite still reaches `main`.
   because each `type:spec` session stopped at its first blocking refusal.
 - A Claude Code version under which `Edit(./**)` in `--settings` no longer admits a write to a file
   under the working directory, or begins to admit an edit of `.claude/settings.json` or of the hook
-  files. The first leaves makers where S1 and S3 stopped. The second makes the entry a way round
-  the hook.
+  script. P2, P3 and P4 measured both refused under 2.1.289. The first leaves makers where S1 and S3
+  stopped. The second makes the entry a way round the hook.
 - A judge whose findings comment is refused by a Claude Code check rather than by the allow list.
   In I2, a `gh pr comment --body "…"` holding a newline followed by `#` was refused with "Newline
   followed by # inside a quoted argument can hide arguments from path validation". The judge
@@ -437,7 +486,7 @@ Two things seen on the way are not filed:
 Every record lives under W/logs, outside every checkout, and none of it is in this pull request:
 - for each run, the command line and dates (.cmd), the output (.out) and the exit code (.exit);
 - for each session, under W/logs/sessions (S1 to S6), W/logs/run0 (S0), W/logs/iter1 to iter3, and
-  W/logs/probes (P1, P2):
+  W/logs/probes (P1 to P4):
   - args.nul, cwd, stdin.txt, stream.jsonl, stderr.txt, exit, start and end;
   - the fake board's state after each phase.
 

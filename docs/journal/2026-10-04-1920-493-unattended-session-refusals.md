@@ -17,6 +17,13 @@ probe session did it. Since a fast-forward push is a merge, that is also the one
 #494 may change only the allow list, so it cannot close this. The report hands it to #494 as a
 finding.
 
+**What round 1 of review caught.** The report first said `Edit(./**)` could not widen the four acts,
+on the strength of one refused edit of `.claude/settings.json`. The hook script lies under `./**` too,
+and that was unmeasured. Measured on review, Claude Code refuses every write to the script tried.
+`Edit`, `Write`, redirection and `cp` were refused as "a sensitive file", and `tee` as needing
+approval. So the entry stands, but the
+first claim had outrun its evidence.
+
 **What the judges did instead.** Refused one route, a judge tried the next. They tried
 `npm --prefix`, `git -C`, `git worktree add`, `git checkout` in `main` and `git archive | tar`, each
 an attempt to reach or rebuild `head`. Only `cd <head> && npm test`, which #531 measured, got
