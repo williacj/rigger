@@ -34,3 +34,9 @@ names the stand-in's directory, so that directory's sweep ends it.
 **A zombie is told by `ps` state.** `process-fixtures.mjs`'s `alive` uses signal 0, and a zombie
 answers that. So the test reads `ps -o stat=` for every point that asks whether a process is alive,
 and the restart's recording `gh` does the same at its first call.
+
+**npm writes a debug log outside `TMPDIR` by default.** The reviewer found that `npm pack` and
+`npm install`, run by `installFromTarball`, each wrote a debug log to `~/.npm/_logs`. Both now take
+`--logs-dir` under the install's directory. Other sessions on the host write to `~/.npm/_logs` too,
+so a before-and-after listing of it cannot show this on its own. The evidence is that no log there
+names the run's `TMPDIR`: before the fix two did, and after it none did.
