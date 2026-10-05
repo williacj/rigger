@@ -4,8 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import config from '../rigger.config.mjs';
@@ -20,6 +22,7 @@ import { waitFor } from './loop-world.mjs';
 import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { positive } from './loop-world.mjs';
+import { settledOf } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
@@ -69,10 +72,11 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
   };
   const agent = standInAgent(Object.fromEntries(cards.map((number) => [number, { engineer: { hold: true } }])));
   const returned = new Set();
+  let stopping = false;
   // The cards whose maker stand-in has started and is unreleased, by its started marker.
   const held = () => cards.filter((number) => !returned.has(number) && agent.held(number));
   // A card whose maker the test released has nothing more for L2 to do in this run.
-  const decide = (card, outcomes, attempt) => (returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...attempt }));
+  const decide = (card, outcomes, attempt) => (stopping || returned.has(card.number) ? { action: 'ignore' } : nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...attempt }));
   /** How many slot releases this run has recorded so far. */
   const releasesRecorded = () => (existsSync(streamPath(directory)) ? readEvents(directory) : [])
     .filter((event) => event.run === run && event.layer === 'L3' && event.event === 'slot.release').length;
@@ -95,20 +99,38 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
     return { path, scratch: join(outside, 'scratch', `rigger-${card}`), repository };
   };
   const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
-  // Positive: until every start the loop can make is held.
-  await positive(everyStartMade);
-  for (const [at, numbers] of releases) {
-    minute = at;
-    for (const number of numbers) {
-      assert.ok(held().includes(number), `card #${number}'s maker is not held at minute ${at}`);
-      returned.add(number);
-      agent.release(number);
-    }
+  try {
     // Positive: until every start the loop can make is held.
     await positive(everyStartMade);
+    for (const [at, numbers] of releases) {
+      minute = at;
+      for (const number of numbers) {
+        assert.ok(held().includes(number), `card #${number}'s maker is not held at minute ${at}`);
+        returned.add(number);
+        agent.release(number);
+      }
+      // Positive: until every start the loop can make is held.
+      await positive(everyStartMade);
+    }
+    await running;
+    assert.deepEqual(cards.filter((number) => agent.held(number)), [], 'a maker stand-in was still held when the run ended');
+  } catch (failure) {
+    stopping = true;
+    const settled = settledOf(running);
+    const released = new Set();
+    while (!settled()) {
+      for (const number of cards) {
+        const pid = agent.holder(number);
+        if (pid !== undefined && !released.has(pid)) {
+          released.add(pid);
+          agent.release(number);
+        }
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await running.catch(() => {});
+    throw failure;
   }
-  await running;
-  assert.deepEqual(cards.filter((number) => agent.held(number)), [], 'a maker stand-in was still held when the run ended');
 }
 
 /**
@@ -119,6 +141,89 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
  * and 90 (60 to 150) minutes, 360 minutes or 6 h, so utilization is 6 / (3 x 2.5) = 0.8.
  */
 const FIVE_CARDS = { cards: [1, 2, 3, 4, 5], releases: [[30, [1]], [60, [2]], [90, [3]], [120, [4]], [150, [5]]] };
+
+/** Every maker stand-in pid recorded for workspaces belonging to this run's state directory. */
+function makerPidsIn(directory) {
+  const workspaces = `${realpathSync.native(directory)}/workspaces/`;
+  return readdirSync(tmpdir()).filter((name) => name.startsWith('rigger-stand-in-')).flatMap((name) => {
+    const path = join(tmpdir(), name, 'runs.jsonl');
+    try {
+      return readFileSync(path, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+        .filter((run) => existsSync(run.cwd) && realpathSync.native(run.cwd).startsWith(workspaces))
+        .map((run) => run.pid);
+    } catch (failure) {
+      if (failure.code === 'ENOENT') return [];
+      throw failure;
+    }
+  });
+}
+
+/** A failed recordRun has ended every L3 claim and every stand-in it started. */
+function assertRecordRunEnded(directory) {
+  const events = readEvents(directory).filter((event) => event.run === 'r-237' && event.layer === 'L3');
+  const cardsAt = (name) => events.filter((event) => event.event === name).map((event) => event.card).sort((a, b) => a - b);
+  assert.ok(cardsAt('pull').length > 0, 'the loop recorded no pull');
+  assert.deepEqual(cardsAt('slot.release'), cardsAt('pull'), 'an L3 pull kept its slot after recordRun rejected');
+  const pids = makerPidsIn(directory);
+  assert.ok(pids.length > 0, 'the stand-in recorded no maker process');
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 0);
+      assert.fail(`maker stand-in ${pid} is alive after recordRun rejected`);
+    } catch (failure) {
+      if (failure.code !== 'ESRCH') throw failure;
+    }
+  }
+}
+
+/** Forces a failed wait or held check, then reads the failure and everything the loop left behind. */
+async function failedRecordRun({ entry, cards, concurrency, releases, inflate = false }, expectedFailure) {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+  const directory = join(consumer, '.rigger');
+  const recording = recordRun(directory, { cards, concurrency, releases, entry });
+  if (inflate) cards.length += 1;
+
+  await assert.rejects(recording, expectedFailure);
+  assertRecordRunEnded(directory);
+}
+
+/** The unchanged error thrown by `positive(everyStartMade)`. */
+function waitFailure(failure) {
+  assert.equal(failure.constructor, Error);
+  assert.match(failure.message, /^the condition .* did not hold within 5000 ms$/s);
+  return true;
+}
+
+test('recordRun run ends its loop and makers when the first positive wait fails', { timeout: 10_000 }, async () => {
+  // The board and stand-ins are made for two cards; the first wait expects an impossible third.
+  await failedRecordRun({ entry: 'run', cards: [1, 2], concurrency: 3, releases: [], inflate: true }, waitFailure);
+});
+
+test('recordRun pull ends its loop and makers when the first positive wait fails', { timeout: 10_000 }, async () => {
+  await failedRecordRun({ entry: 'pull', cards: [1, 2], concurrency: 3, releases: [], inflate: true }, waitFailure);
+});
+
+test('recordRun run ends its loop and makers when a released card is not held', { timeout: 10_000 }, async () => {
+  // Only card 1 is on the board; the release check names card 2.
+  await failedRecordRun({ entry: 'run', cards: [1], concurrency: 1, releases: [[30, [2]]] }, (failure) => {
+    assert.equal(failure.code, 'ERR_ASSERTION');
+    assert.equal(failure.message, "card #2's maker is not held at minute 30");
+    return true;
+  });
+});
+
+test('recordRun pull ends its loop and makers when a released card is not held', { timeout: 10_000 }, async () => {
+  await failedRecordRun({ entry: 'pull', cards: [1], concurrency: 1, releases: [[30, [2]]] }, (failure) => {
+    assert.equal(failure.code, 'ERR_ASSERTION');
+    assert.equal(failure.message, "card #2's maker is not held at minute 30");
+    return true;
+  });
+});
+
+test('recordRun run ends its loop and makers when a later positive wait fails', { timeout: 10_000 }, async () => {
+  // Both makers first hold; after card 1 returns, the next wait expects two still held.
+  await failedRecordRun({ entry: 'run', cards: [1, 2], concurrency: 2, releases: [[30, [1]]], inflate: true }, waitFailure);
+});
 
 /** The value a report prints for `signal`, one of L3's, as a number, or undefined where it prints none. */
 const printed = (text, signal) => {
