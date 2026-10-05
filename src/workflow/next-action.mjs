@@ -48,8 +48,9 @@ const selecting = (card, kinds) =>
  * both, the one refusal names each of those reasons too.
  *
  * A card in the `coding` or `review` column of `columns`, the declared columns by key, is a redo,
- * and one `fresh(card)` answers true for is `{ action: 'ignore' }`: a fresh verdict covers it, so
- * L2 has nothing to do for it. Freshness is an injected input until M5 reads the markers (the
+ * and one `fresh(card)` answers true on attempt 1 is `{ action: 'ignore' }`: a fresh verdict covers it, so
+ * L2 has nothing to do for it. Freshness does not interrupt a maker failure or its later attempt.
+ * Freshness is an injected input until M5 reads the markers (the
  * architect's ruling 1, U10), and with none injected no card is fresh. Freshness injected without
  * `columns` is refused, since no card could be told a redo.
  *
@@ -59,14 +60,18 @@ const selecting = (card, kinds) =>
  * and an attempt's failure with what follows it. `attempt` is the attempt's number, 1 by default,
  * which L3 hands L2 with each outcome, so L2 keeps no count of its own (the architect's ruling 1,
  * A1). `workspace` is the outcome of L1's making the attempt's workspace, where L1 could not make it.
- * Without `provisioning`, L2 answers as above, whatever `outcomes`, `sink`, `attempt` and
- * `workspace` are (the architect's ruling 6, Q-D, on #423). Its maker answer is the role
+ * `maker` is L1's maker outcome, handed unread by L3 after L2's settle. Where its dispatch never
+ * started, L2 records an environment attempt failure and answers another attempt or stop. For
+ * any other outcome, L2 answers `settled`, ending the attempt as L2's column changes settled it.
+ * Without `provisioning` and without a maker outcome, L2 answers as above, whatever `outcomes`,
+ * `sink`, `attempt` and `workspace` are (the architect's ruling 6, Q-D, on #423). A maker outcome
+ * is classified even without `provisioning`. Its maker answer is the role
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
-export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, forge, judged, directories } = {}) {
+export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, maker, forge, judged, directories } = {}) {
   if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
-  if (fresh && [columns.coding, columns.review].includes(given.column) && fresh(given)) return { action: 'ignore' };
+  if (fresh && maker === undefined && attempt === 1 && [columns.coding, columns.review].includes(given.column) && fresh(given)) return { action: 'ignore' };
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
@@ -75,8 +80,8 @@ export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, top
   if (held?.action === 'ignore') return held;
   if (held?.action === 'judge') return judgeAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
   const form = checkAcceptanceForm(card);
-  const maker = kinds[kind].maker;
-  const tier = roles === undefined ? undefined : tierOf(card, maker, roles[maker]);
+  const makerRole = kinds[kind].maker;
+  const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
   // Without a tier conflict, what the forge holds is refused before the acceptance's form, as at
   // the base. With one, no reason replaces another, so the one refusal names every reason that
   // applies (`R-LOOP-13`, `R-WORK-19`; the amended acceptance of #484).
@@ -85,8 +90,8 @@ export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, top
     : [tier.conflict, held?.reason, form.admitted ? undefined : form.reason];
   const named = reasons.filter((reason) => reason !== undefined);
   if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and ') };
-  if (provisioning === undefined) return { action: 'dispatch', kind };
-  return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning, outcomes, sink, attempt, workspace });
+  if (provisioning === undefined && maker === undefined) return { action: 'dispatch', kind };
+  return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker });
 }
 
 /**
@@ -133,15 +138,22 @@ function fromTheForge(card) {
  * outcomes of the attempt's steps so far, in order: `{ step }`, the next step it selected, with
  * its name and what L1 runs; `{ maker }`, the kind's maker as a role answer, running at `tier`,
  * once every selected step has an outcome and no required one failed; or, for a required step that failed, or a `workspace` L1
- * could not make, the card attempted again or stopped, as `failedAttempt` says.
+ * could not make, or a maker outcome rejected with `NOT_STARTED`, the card attempted again or
+ * stopped, as `failedAttempt` says. Any other maker outcome is answered `settled` to end the attempt.
  *
  * An optional step's failure is recorded through `sink` as an L2 `step.failed` event under the card,
  * and the attempt goes on (`R-PROV-2`). L3 asks again after each outcome, so only the newest
  * outcome's failure is recorded, and each is recorded once. A sink that refuses it has L2 answer
  * no action, naming the card, the step and the refusal.
  */
-function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace }) {
+function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace, maker }) {
   if (workspace !== undefined) return failedAttempt(card, attempt, unmade(workspace, card), sink);
+  if (maker !== undefined) {
+    if (maker?.status === 'rejected' && maker.reason?.code === NOT_STARTED) {
+      return failedAttempt(card, attempt, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
+    }
+    return { action: 'settled' };
+  }
   const steps = selectedSteps(card, declared, provisioning);
   if (outcomes.length > steps.length) {
     throw new Error(`card #${card.number} has ${outcomes.length} outcome(s) and L2 selected ${steps.length} step(s) for it, so L2 answers no action`);
@@ -173,7 +185,7 @@ export function stepAnswer(name, provisioning) {
 const ATTEMPTS = 2;
 
 /**
- * What L2 answers for `card`'s attempt numbered `attempt`, which failed before the maker as `what`
+ * What L2 answers for `card`'s attempt numbered `attempt`, which failed before its maker ran as `what`
  * says, once it has recorded the failure and its decision through `sink`. Every such failure is
  * the environment's (`ARCHITECTURE.md`, "Failure model"). An attempt before the last is followed
  * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next; the last is

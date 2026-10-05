@@ -226,7 +226,7 @@ function fullRunIn(repository, { home, temporary, scratch }) {
     `const directory = ${JSON.stringify(state)};`,
     `const scratch = ${JSON.stringify(scratch)};`,
     'const fake = await stoppedRun({ directory, scratch });',
-    "await drive(world({ fake, concurrency: 2, directory, run: 'r-restart', scratch }));",
+    "await drive(world({ fake, concurrency: 2, directory, run: 'r-restart', scratch: scratch + '/restart' }));",
     `const { running } = await import(${JSON.stringify(fixtures)});`,
     'endStandIns();',
     'console.log(JSON.stringify({ alive: running(scratch) }));',

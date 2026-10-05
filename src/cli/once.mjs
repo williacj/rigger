@@ -144,7 +144,11 @@ async function rootInsideTree(verb, root, top, options) {
  */
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
 
-/** `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
+/**
+ * `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state
+ * directory. It presents a stopped card from L3's failure, using the last attempt's failure to
+ * choose the wording shared by `once` and `run`.
+ */
 async function claiming(verb, limit, opened, {
   target = process.cwd(), packageRoot = PACKAGE, ask, send, ps, readTimeout,
 } = {}) {
@@ -185,19 +189,21 @@ async function claiming(verb, limit, opened, {
   // and the judges L2 then named; a card pulled for its judges alone, with those judges; and,
   // where any card failed, a failure carrying both kinds of card as `reached`, a card one of whose
   // judges failed to hand back among them with every judge L2 named, the judges' failure in the
-  // failure's errors. It answers nothing about a card that failed before its maker, nor
+  // failure's errors. A stopped card is in the failure alone. It answers nothing about a card
+  // that failed before its maker, nor
   // about one L2 refused, so every card L2 refuses is seen here, through the next action this verb
   // hands L3 (the reviewer's ruling on #312), the refusals from what the forge holds among them.
   // Nor does it answer why a judge L2 stopped naming was not dispatched, which is seen here too.
   // Within an attempt L2 answers from the provisioning steps as well (ruling 6, Q-A), and answers
-  // the maker as a role.
+  // the maker as a role. A maker that never started is handed back to L2 for its retry decision.
   const refusals = [];
   // What L2 last answered of each card's judges, by card: its kind, each judge it named, by role,
   // and why each judge it stopped naming was not dispatched, which L3 does not answer.
   const panels = new Map();
-  const decide = (card, outcomes, { attempt, workspace: unmade, forge: settledFacts, judged, directories } = {}) => {
+  /** L2's next action, recording refusals and judge wording while forwarding each attempt's outcomes. */
+  const decide = (card, outcomes, { attempt, workspace: unmade, maker, forge: settledFacts, judged, directories } = {}) => {
     const next = nextAction(card, config.kinds, config.epicLabel, {
-      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, forge: settledFacts, judged, directories,
+      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, maker, forge: settledFacts, judged, directories,
     });
     if (next.action === 'refuse') refusals.push(next);
     if (next.action === 'judge') judging(card.number, next, judged ?? {}, directories ?? {});
@@ -268,6 +274,13 @@ async function claiming(verb, limit, opened, {
     ]),
     ...worked.filter(({ failure }) => failure !== undefined).map(({ failure }) => `rigger ${verb}: ${failure.message}`),
   ];
+  /** Presents L3's failure, choosing the stopped-card wording from its last attempt failure. */
+  const failureLine = (held) => {
+    const attempts = held.attemptFailures;
+    if (!Array.isArray(attempts) || attempts.at(-1)?.maker === undefined) return `rigger ${verb}: ${held.message}`;
+    const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was stopped after ${attempts.length} attempts:`;
+    return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
+  };
   let reached;
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
@@ -279,14 +292,16 @@ async function claiming(verb, limit, opened, {
     // it did not make, and so does a start's kill that failed, naming each unrecorded kill,
     // unconfirmed group or unreadable record. A card stopped after its second attempt names each
     // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
-    // model"). The record is not used to say so, because the record is what failed. The cards the
+    // model"). The record is not used to say so, because the record is what failed. A stopped
+    // card is named only from its failure. When its last failure was a maker that never started,
+    // the shared presenter puts that reason first; other stops keep L3's wording. The cards the
     // same pull left at their workspaces are named first, as they would be had none failed, a card
     // whose maker ran and whose judges then failed among them. A judge that failed to hand back is
     // said among its card's judge lines, where L3 carried it, and not again after them.
     const reachedCards = failure.reached ?? [];
     const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
     return {
-      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map((held) => `rigger ${verb}: ${held.message}`), ...refusals.map(refusalLine)].join('\n'),
+      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...refusals.map(refusalLine)].join('\n'),
       code: 1,
     };
   }

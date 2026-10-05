@@ -2,7 +2,7 @@
 // before any await, has L2 move each claimed card, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker through L1, or attempts the card again as L2
 // says, and then the judges L2 names, under the one claim and slot; the run that fires that trigger
-// again each time a slot frees; the drain trigger; and L3's events.
+// again each time a slot frees, excluding stopped cards and withheld judges for that run; the drain trigger; and L3's events.
 
 import { randomUUID } from 'node:crypto';
 
@@ -70,9 +70,10 @@ function claiming({ config, board, facts, l2, sink, kill }) {
      * nothing: each start still tries its own event, which is what names the cards not started,
      * and the refusal is reported beside theirs. A read that fails, the facts call's included,
      * rejects with the read's own error, and no card is claimed. It first awaits the start's kill,
-     * as `killed` says.
+     * as `killed` says. `excluded` omits cards stopped or withheld in this run, and is empty for a
+     * single pull.
      */
-    take: async (limit) => {
+    take: async (limit, excluded = new Set()) => {
       await killed();
       const failures = [];
       try {
@@ -82,10 +83,12 @@ function claiming({ config, board, facts, l2, sink, kill }) {
       }
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
-      const decide = await facts(items.filter((item) => !claims.has(item.number)));
+      /** A board item neither claimed nor withheld from another pull in this run. */
+      const available = (item) => !claims.has(item.number) && !excluded.has(item.number);
+      const decide = await facts(items.filter(available));
       // Another trigger may have claimed a card while the facts were read, so the cards no claim
       // holds are read again here, in the synchronous step that takes the claims.
-      const unclaimed = items.filter((item) => !claims.has(item.number));
+      const unclaimed = items.filter(available);
       // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
       const answers = new Map();
       const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {
@@ -165,9 +168,11 @@ function released(release, claim, failure) {
  * declared order, which is what L0 hands L3 for the pull order. `facts` is L2's facts call, which
  * L3 awaits over the cards it read, between its board read and its claims, and which answers the
  * next action L3 asks once for each card at the pull, as `take` says. `decide` is L2's next action
- * for a card, which L3 asks within each attempt as `decide(card, outcomes, { attempt, workspace })`: with the attempt's outcomes after each step, with none once a later
- * attempt's workspace is made, and with L1's failure as `workspace` where it could not be made,
- * `attempt` numbering the attempt from 1. It alone names the steps L3 dispatches, and whether the
+ * for a card, which L3 asks within each attempt as `decide(card, outcomes, options)`: with the
+ * attempt's outcomes after each step, with none once a later attempt's workspace is made, and
+ * with L1's failure as `workspace` where it could not be made. After each maker dispatch,
+ * L3 hands its outcome back unread as `maker`; `attempt` numbers each attempt from 1. L2 alone
+ * names the steps L3 dispatches, and whether the
  * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). After
  * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
  * the judges it names are made and run, with `directories` and `judged`, as `attempt` and `judged`
@@ -213,7 +218,8 @@ function released(release, claim, failure) {
  *   One the sink refuses starts nothing, and the failure names the card and the step or the role.
  *
  * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
- * longer (the architect's ruling 4, §4): nothing here remembers a card once its slot is free.
+ * longer (the architect's ruling 4, §4). One run also remembers stopped cards and cards whose
+ * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, state, environment, ps, readTimeout }) {
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
@@ -293,9 +299,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * names no step. A later attempt asks L2 for its first step once its workspace is made.
    *
    * An answer that dispatches no step is the maker: the role the answer's `maker` names,
-   * dispatched through L1 as `dispatchRole` says. That outcome is handed to
-   * L2's `settled` unread, and the attempt answers the card, its workspace, the maker's `outcome`
-   * and L2's `settled`, each as `Promise.allSettled` records it, neither read here. Where the settle
+   * dispatched through L1 as `dispatchRole` says. L3 hands L2 each maker outcome unread, first
+   * to `settled` and, where the settle succeeded, to `decide` with the attempt number. L3 follows
+   * L2's `again` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
+   * answers the card, its
+   * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
+   * Where the settle
    * answered facts and L2, asked again with them, names judges, they are dispatched under the same
    * claim, as `judges` says, and the answer also carries them as `judges`. The maker's result is
    * handed to `kept` as soon as the settle answers, before L2 is asked about judges, so a judge's
@@ -304,11 +313,25 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * handed to `kept` again with every judge L2 named beside it as `judges`, as `judges` hands them
    * to its `keep`. An answer naming the
    * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
-   * attempt's failure, in order. Any other answer stops the attempts, naming the card and what L2
-   * answered.
+   * attempt's failure, in order, both in the message and as fields `card` and `attemptFailures`.
+   * A stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
+   * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
-  const attempt = async (card, next, kept) => {
+  const attempt = async (card, next, kept, remember) => {
     const failures = [];
+    /** Follows L2's retry or stop answer, retaining each failure for the final report. */
+    const advance = (answer, number) => {
+      if (answer.action === 'again' && answer.attempt === number + 1) {
+        failures.push(answer.failure);
+        return true;
+      }
+      if (answer.action === 'stop') {
+        const attemptFailures = [...failures, answer.failure];
+        const each = attemptFailures.map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
+        throw Object.assign(new Error(`card #${card.number} was stopped after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures });
+      }
+      return false;
+    };
     let answer = next;
     for (let number = 1; ; number += 1) {
       const { path, scratch, repository, answer: unmade } = await made(card, number);
@@ -322,25 +345,22 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           answer = decide(card, [...outcomes], { attempt: number });
         }
       }
-      if (answer.action === 'again' && answer.attempt === number + 1) {
-        failures.push(answer.failure);
-        continue;
-      }
-      if (answer.action === 'stop') {
-        const each = [...failures, answer.failure].map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
-        throw new Error(`card #${card.number} was stopped after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`);
-      }
+      if (advance(answer, number)) continue;
       if (answer.action !== 'dispatch') {
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
       const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
+      if (settled.status === 'fulfilled') {
+        answer = decide(card, [], { attempt: number, maker: outcome });
+        if (advance(answer, number)) continue;
+      }
       const reached = { card: card.number, workspace: path, outcome, settled };
       kept(reached);
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
-      const ask = (options) => decide(card, [], { ...options, forge: settled.value });
+      const ask = (options) => remember(decide(card, [], { ...options, forge: settled.value }));
       const judging = ask({});
       if (judging.action !== 'judge') return reached;
       return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended })) };
@@ -433,10 +453,17 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * every judge L2 named beside its number, as `judges` hands them to its `keep`, whichever way it
    * was claimed, and whether or not its release event was refused. L2's report of a refused
    * transition event passes through unchanged as the work's failure where it comes from the claim;
-   * from the maker's settle it comes back in the card's `settled`, as `attempt` says.
+   * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `excluded`
+   * receives a stopped card or a card whose judges L2 withheld before `freed` fires another
+   * trigger, and lives for this run alone.
    */
-  const work = async (claim, freed) => {
+  const work = async (claim, freed, excluded) => {
     const { card, next, decide: atPull } = claim;
+    /** Keeps a card whose judges L2 withheld out of later pulls in this run. */
+    const remember = (answer) => {
+      if (answer.withheld?.length > 0) excluded?.add(card.number);
+      return answer;
+    };
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
     let claimed = false;
     let failure = null;
@@ -446,10 +473,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       claimed = true;
       const kept = (made) => { reached = made; };
       reached = next.action === 'judge'
-        ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options), (ended) => kept({ card: card.number, judges: ended })) }
-        : await attempt(card, next, kept);
+        ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
+        : await attempt(card, next, kept, remember);
     } catch (thrown) {
       failure = thrown;
+      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
     }
     failure = released(release, claim, failure);
     if (claimed) await freed();
@@ -459,7 +487,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   /**
    * Fires the pull trigger once: claims as many cards as there are free slots, as `take` says, and
    * works each. `freed` runs as each claimed card's slot is released, as `work` says, and that
-   * card's work is not over until it settles.
+   * card's work is not over until it settles. `excluded` is this run's cards omitted from later
+   * pulls; without it, a single pull keeps no admission memory.
    *
    * It claims no more than `limit` cards, N where none is given. Settles once every card it
    * claimed has been worked, on what each card it claimed answers, in one of these shapes:
@@ -484,8 +513,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = concurrency) => {
-    const { claims: claimed, failures } = await take(limit);
+  const trigger = async (freed = () => {}, limit = concurrency, excluded) => {
+    const { claims: claimed, failures } = await take(limit, excluded);
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
@@ -495,7 +524,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
       }
     }
-    const worked = await Promise.allSettled(claimed.map((claim) => work(claim, freed)));
+    const worked = await Promise.allSettled(claimed.map((claim) => work(claim, freed, excluded)));
     const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
@@ -521,7 +550,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * a card freeing its slot lets the next pullable card start while the others still run. A slot
      * freed by a claim move the board refused fires nothing, as `work` says. Ends
      * once every pull it fired has settled, which is once a pull fired on a freed slot claims
-     * nothing and no card it claimed is still being worked.
+     * nothing and no card it claimed is still being worked. A stopped card or one whose judges L2
+     * withheld stays out of later pulls in this run; the next invocation starts without that memory.
      *
      * Settles on what every card its pulls answered, in the shapes `trigger` says. A pull that
      * fails stops no other, and its cards are carried in its own failure's `reached`. Once the run has ended, every failed pull is reported in
@@ -536,7 +566,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       idle = false;
       const failures = [];
       const reached = [];
-      const fire = () => trigger(fire).then((each) => {
+      const excluded = new Set();
+      const fire = () => trigger(fire, concurrency, excluded).then((each) => {
         reached.push(...each);
       }, (failure) => {
         failures.push(failure);

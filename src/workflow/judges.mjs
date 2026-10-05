@@ -92,7 +92,8 @@ function record(sink, card, name, fields, what) {
  *
  * `outcomes` holds, by role, the outcomes L3 has handed L2 of a judge's steps in its `head`. A judge
  * whose required step failed is not named, and L2 records a `judge.withheld` event under the card
- * naming the role, the step and the failure, classed as the environment's. Nothing retries it
+ * naming the role, the step and the failure, classed as the environment's. The answer also names
+ * each withheld role so L3 can leave the card out of later pulls in this invocation. Nothing retries it
  * within the claim: the next invocation names it again, since it still has no findings at the head
  * (the architect's ruling 2, P3). L2 keeps no memory, so it records the failure each time it is
  * handed it, and L3 hands a judge's outcomes to it once.
@@ -122,11 +123,16 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   const evidence = evidenceOf(card, pull, revision, card.forge.diff.value, earlier);
   const facts = { card: card.number, revision, pull: pull.number, base: pull.base, head: pull.head };
   const steps = selectedSteps(card, declared, provisioning);
+  const withheldRoles = [];
   const judges = owed
-    .filter((role) => directories[role] === undefined || !unmade(card, role, directories[role], sink))
-    .filter((role) => !withheld(card, role, steps, outcomes[role] ?? [], provisioning, sink))
+    .filter((role) => {
+      const missing = (directories[role] !== undefined && unmade(card, role, directories[role], sink))
+        || withheld(card, role, steps, outcomes[role] ?? [], provisioning, sink);
+      if (missing) withheldRoles.push(role);
+      return !missing;
+    })
     .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, pull, evidence, facts), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
-  return { action: 'judge', kind, judges };
+  return { action: 'judge', kind, judges, ...(withheldRoles.length > 0 ? { withheld: withheldRoles } : {}) };
 }
 
 /**

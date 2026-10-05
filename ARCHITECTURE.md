@@ -310,7 +310,9 @@ verb, which exits non-zero naming it.
 L3 then reads the board, and L2 computes each card's next action from its stage and observable
 facts. Those facts are the card's column, its pull request, that request's head SHA, the SHA and
 acceptance revision each verdict names, and the last transition the board shows. L2 derives them on
-every read, so no card state is kept.
+every read, so no card state is kept. The one exception is L3's memory of the cards it does not
+pull again in one invocation, set out below, after the rule that an environment failure retries
+the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more
@@ -329,6 +331,12 @@ what was missing. L2 classifies a failure as the work's or as its environment's.
 failure retries the card once; a second of the same kind, with no success between, has L3 close
 admission.
 
+Until the hold that closes admission exists, L3 does not pull a card again in the invocation that
+stopped it after its second attempt. Nor does L3 pull a card again for its judges in the invocation
+in which L2 withheld them for an environment failure. L3 keeps those cards in memory for that
+invocation alone, so the next invocation pulls them as it would any other. M6's hold
+(`docs/v0-build-plan.md`, M6) replaces this memory.
+
 An attempt at a card runs in this order, under the card's one claim and slot:
 
 1. L3 has L1 make the workspace the attempt runs in.
@@ -341,12 +349,13 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 A card L3 pulls from Review starts at step 4.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
-dispatch, so L1 records its group as it records any dispatch's. L2 classifies three failures as
+dispatch, so L1 records its group as it records any dispatch's. L2 classifies four failures as
 the environment's:
 
 - a workspace L1 could not make;
 - a step that never started;
-- a required step that failed.
+- a required step that failed;
+- a maker whose dispatch never started.
 
 L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 

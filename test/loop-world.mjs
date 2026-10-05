@@ -31,6 +31,9 @@ export const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'en
 /** The columns this repository's config declares, by key, as the read side's column read answers them. */
 export const COLUMNS = config.board.columns;
 
+/** A workspace stand-in's failed make, in the shape L1 hands L2. */
+const failedWorkspace = (path, cause) => Object.assign(new Error(`L1 could not make workspace at ${path}: ${cause.message}`, { cause }), { code: 'WORKSPACE_NOT_MADE', path });
+
 /** A body whose acceptance passes L2's form check under the title `Add a verb`. */
 export const PASSING = '## Acceptance\n\n- The verb prints its help.\n';
 
@@ -346,7 +349,11 @@ export function world({
   const [role] = makers;
   const making = workspace ?? (async (card) => {
     const path = join(under, 'workspaces', `rigger-${card}`);
-    mkdirSync(path, { recursive: true });
+    try {
+      mkdirSync(path, { recursive: true });
+    } catch (cause) {
+      throw failedWorkspace(path, cause);
+    }
     const repository = join(under, 'workspaces', 'repository');
     if (!existsSync(repository)) repositoryAt(repository);
     return { path, scratch: join(under, 'workspaces', 'scratch', `rigger-${card}`), repository };
@@ -404,8 +411,8 @@ export function world({
   const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
-  const decide = (card, outcomes) => {
-    const action = nextAction(card, kinds, undefined, { columns, fresh: freshness, roles: settings.roles, provisioning, outcomes, sink });
+  const decide = (card, outcomes, options = {}) => {
+    const action = nextAction(card, kinds, undefined, { columns, fresh: freshness, roles: settings.roles, provisioning, outcomes, sink, ...options });
     decisions.push({ card: card.number, action, pull: pulls() });
     return action;
   };
@@ -555,7 +562,9 @@ export function makingWorkspaces(under) {
   const repository = join(under, 'repository');
   const handle = async (card) => {
     const path = join(under, `rigger-${card}`);
-    await mkdir(path, { recursive: true });
+    await mkdir(path, { recursive: true }).catch((cause) => {
+      throw failedWorkspace(path, cause);
+    });
     if (!existsSync(repository)) repositoryAt(repository);
     made.push({ card, path });
     return { path, scratch: join(under, 'scratch', `rigger-${card}`), repository };

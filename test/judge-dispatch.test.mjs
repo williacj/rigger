@@ -121,7 +121,7 @@ test('in that case, the ask after the settle carries exactly the facts the settl
   assert.deepEqual(settled.diff, { status: 'fulfilled', value: DIFF });
   assert.equal(settled.comments.status, 'fulfilled');
   assert.equal(settled.editedAt.status, 'fulfilled');
-  const asked = asks.filter((each) => each.settled === 1);
+  const asked = asks.filter((each) => each.settled === 1 && each.options?.forge !== undefined);
   assert.ok(asked.length > 0, 'L3 asked L2 nothing after the settle, so the test proves nothing');
   for (const { options } of asked) assert.deepEqual(options.forge, settled);
   for (const role of ['reviewer', 'architect']) {

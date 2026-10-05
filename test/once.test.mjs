@@ -405,6 +405,9 @@ test('given once where the maker does not start, once exits non-zero, and prints
   assert.equal(lines.length, 1, err);
   assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
+  const attempts = err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.deepEqual(attempts.map((line) => /^attempt (\d+): /.exec(line)?.[1]), ['1', '2']);
+  assert.ok(attempts.every((line) => /settings\.json is no JSON/.test(line)), err);
 });
 
 /**

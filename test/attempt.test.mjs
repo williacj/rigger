@@ -366,30 +366,31 @@ const SETTLED_ONE = {
   editedAt: { status: 'fulfilled', value: null },
 };
 
-test('for a card selecting no step, L3 asks decide once at the pull, where the answer carries action dispatch, and once more after L2 settles the maker, handing it the facts that settle answered', async () => {
+test('for a card selecting no step, L3 asks decide at the pull, after the maker outcome, and with the facts L2 settled', async () => {
   const answers = [];
   const asked = [];
   const built = attemptWorld({
-    cards: [1], maker: { exit: 0 }, decide: (card, outcomes, answer, options) => { asked.push({ options, settled: [...built.settled] }); const given = answer(card, outcomes); answers.push(given); return given; },
+    cards: [1], maker: { exit: 0 }, decide: (card, outcomes, answer, options) => { asked.push({ options, settled: [...built.settled] }); const given = answer(card, outcomes, options); answers.push(given); return given; },
   });
 
   await built.loop.pull();
 
-  assert.deepEqual(built.asks, { 1: 2 });
+  assert.deepEqual(built.asks, { 1: 3 });
   assert.equal(answers[0].action, 'dispatch');
+  assert.equal(answers[1].action, 'settled');
   assert.equal(built.makerCalls.length, 1, 'the stand-in started once');
   assert.deepEqual(asked.at(-1), { options: { forge: SETTLED_ONE }, settled: [1] }, 'the last ask carries exactly the facts L2\'s settle answered, after that settle ran');
 });
 
-test('for a card selecting two steps, L3 asks decide once at the pull, once after each step\'s outcome, and once after L2 settles the maker, with the facts that settle answered', async () => {
+test('for a card selecting two steps, L3 asks decide at the pull, after each step, after the maker, and with L2\'s settle facts', async () => {
   const built = attemptWorld({ cards: [1], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') }, maker: { exit: 0 } });
 
   await built.loop.pull();
 
-  assert.deepEqual(built.asks, { 1: 4 });
+  assert.deepEqual(built.asks, { 1: 5 });
 });
 
-test('the steps loop dispatches, and whether it dispatches another after an outcome, come only from the next action decide answers, and the ask after L2 settles the maker carries the facts that settle answered', async () => {
+test('decide selects each step, then receives the maker outcome and L2\'s settle facts after the dispatch', async () => {
   // L2's real answer selects no step here; this decide names one at the pull, and another after its outcome.
   const script = [
     { action: 'dispatch', kind: 'change', step: { name: 'first', run: 'true' } },
@@ -404,7 +405,8 @@ test('the steps loop dispatches, and whether it dispatches another after an outc
     decide: (card, outcomes = [], answer, options) => {
       handedOutcomes.push(outcomes.map((outcome) => outcome.value.exit));
       asked.push({ options, settled: [...built.settled] });
-      // The ask after the settle is answered as L2 answers a card whose kind's only judge is the owner.
+      // A settled maker ends the attempt; the forge ask follows L2's owner-only judge answer.
+      if (options?.maker !== undefined) return { action: 'settled' };
       return options?.forge === undefined ? script[outcomes.length] : { action: 'ignore' };
     },
   });
@@ -413,8 +415,9 @@ test('the steps loop dispatches, and whether it dispatches another after an outc
 
   assert.deepEqual(named(built.events(), 'L3', 'dispatch').filter((each) => each.step !== undefined).map((each) => each.step), ['first', 'second']);
   assert.equal(named(built.events(), 'L3', 'dispatch').at(-1).role, 'engineer', 'the maker\'s event follows the steps\'');
-  assert.deepEqual(handedOutcomes, [[], [0], [0, 5], []], 'each outcome was handed back unread, a non-zero exit included, and the ask after the settle carries none');
-  assert.deepEqual(built.asks, { 1: 4 });
+  assert.deepEqual(handedOutcomes, [[], [0], [0, 5], [], []], 'each step outcome was handed back unread, a non-zero exit included, and the maker and forge asks carry none');
+  assert.deepEqual(built.asks, { 1: 5 });
+  assert.equal(asked.at(-2).options.maker.status, 'fulfilled', 'the maker outcome reached L2 after settle');
   assert.deepEqual(asked.at(-1), { options: { forge: SETTLED_ONE }, settled: [1] }, 'the last ask carries exactly the facts L2\'s settle answered, after that settle ran');
   assert.equal(built.makerCalls.length, 1, 'the maker stand-in started once, because decide answered it, whatever the second step exited');
 });
