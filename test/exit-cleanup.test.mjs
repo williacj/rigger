@@ -185,6 +185,8 @@ function fixtures(directory) {
   fixture(directory, 'ps-status-hangs', statusRead('exec /usr/bin/tail -f "$here/ps-hold"'));
   // `ps-status-exits` exits 2 at that read and writes nothing to either stream.
   fixture(directory, 'ps-status-exits', statusRead('exit 2'));
+  // `ps-status-empty` answers that read as `ps` does where no process matches: it exits 1 and prints nothing.
+  fixture(directory, 'ps-status-empty', statusRead('exit 1'));
   fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec /bin/ps "$@"');
   // `ps-start-hangs` answers every read as `ps` does, but never the read of a leader's start time.
   // `unready` records its group and runs until killed, and never starts the child that would put
@@ -1099,7 +1101,7 @@ test('given a dispatch whose command has exited 3 and is not yet reaped when the
 // Each call reads the process table under L0's own bound. A call's bound holds every read it makes,
 // the read of its leader's start time among them, and one shorter than a loaded host needs has L0
 // end the dispatch before its command is up (#397).
-for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses this read/], ['ps-status-hangs', 'does not answer', /timed out/]]) {
+for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses this read/], ['ps-status-hangs', 'does not answer', /timed out/], ['ps-status-empty', 'exits 1 and prints nothing', /did not list its leader/]]) {
   test(`given a dispatch whose command has exited 3 and is not yet reaped when the caller calls process.exit(0), where the cleanup's read of its status ${how}, its one dispatch end carries no exit code and says why`, ENDS_WITHIN, async (t) => {
     const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], commands: { 1: 'exiting' }, ps, after: EXIT_UNREAPED });
 
@@ -1113,14 +1115,14 @@ for (const [ps, how, why] of [['ps-status-fails', 'fails', /the test refuses thi
     assert.match(ends[0].unread, why);
   });
 
-  test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries the killed command's non-zero exit code`, ENDS_WITHIN, async (t) => {
+  test(`given a dispatch whose command is still running when the caller receives SIGTERM, where the cleanup's last read of its status ${how}, its one dispatch end carries no exit code and says the command was not shown to have ended, since no read after the kill shows it ended`, ENDS_WITHIN, async (t) => {
     const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], ps }, { signal: 'SIGTERM' });
 
     assert.equal(signal, 'SIGTERM', stderr);
     await assertNoneAlive(directory);
     assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
     const ends = endsOf(streamOf(directory), 'd-1');
-    assert.deepEqual(ends.map(({ exit, unread }) => ({ exit, unread })), [{ exit: 128 + constants.signals.SIGKILL, unread: undefined }]);
+    assert.deepEqual(ends.map(({ exit, unread = '' }) => ({ exit, unshown: /not shown to have ended/.test(unread), why: why.test(unread) })), [{ exit: undefined, unshown: true, why: true }], JSON.stringify(ends));
   });
 }
 

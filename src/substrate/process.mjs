@@ -263,17 +263,16 @@ function cleanup() {
  * `{ unread }`, why its status could not be read. Where Node has reaped the command, Node says how
  * it ended. Otherwise the command is a zombie, since Node reaps no child while the cleanup runs,
  * and `leader` is the wait status `ps` read for it as `xstat` on the kill's last look: its own
- * exit where it had exited, or the cleanup's kill. Where that read failed or did not answer, a
- * leader the read just before the kill found `alive` was ended by the cleanup's kill, unless it
- * exited on its own between that read and the kill (`contain`). Otherwise `unread`
+ * exit where it had exited, or the cleanup's kill. Only a read shows how it ended: where the reads
+ * after the kill failed, or answered without listing the leader, a leader signal 0 still reaches is
+ * not shown to have ended (`containNow`), and `unread` says so and why. Otherwise `unread`
  * says why, and nothing tells the command's own exit from the kill: the command may have exited
  * before the cleanup ran, and where the census's reads failed too, even a command the cleanup
  * killed cannot be told from one that exited.
  */
-function endingOf(child, { leader, unread, alive }) {
+function endingOf(child, { leader, unread }) {
   if (child.exitCode !== null) return { exit: child.exitCode };
   if (child.signalCode !== null) return { exit: signalled(child.signalCode) };
-  if (leader === undefined && alive) return { exit: signalled('SIGKILL') };
   if (leader === undefined) return { unread: `the exit cleanup could not read the command's status: ${unread}` };
   // `ps` prints the wait status in hexadecimal. Its low seven bits are the signal that ended the
   // process, where one did, and the byte above them its exit code (wait(2): WTERMSIG, WEXITSTATUS).
@@ -446,6 +445,28 @@ function unended(live, kill, late, bound, refused) {
   for (const pid of now) refused.add(pid);
   if (!lasting && !late) return undefined;
   return live.map((pid) => ({ pid, reason: now.has(pid) ? 'EPERM' : `still alive ${bound} ms after L0's first kill` }));
+}
+
+/**
+ * The failure for a read of the group after the exit cleanup's kill that answered but left out its
+ * leader while signal 0 still reached the leader's pid. Node reaps no child while the cleanup runs,
+ * so a leader killed there stays in the group as a zombie, and a read that tells the truth lists it:
+ * such a read could not say what the group held (`emptied`).
+ */
+const leaderUnlisted = (group) => new Error(`the read of the group after its kill did not list its leader, ${group}, while signal 0 still reached its pid`);
+
+/** Why the exit cleanup records a process no read after its kill showed had ended, before why the reads failed. */
+const NOT_SHOWN = 'not shown to have ended';
+
+/**
+ * Whether the leader of `group`, whose pid is the group's id, answers `EPERM` to signal 0 through
+ * `kill` on two looks in a row with L0's kill of the group sent between them, as `unended` takes a
+ * member L0 may not signal.
+ */
+function refusedAcross(group, kill) {
+  if (!forbidden(group, kill)) return false;
+  signal(group, 'SIGKILL', kill);
+  return forbidden(group, kill);
 }
 
 /** Whether signal 0 sent through `kill` to `pid` answers `EPERM`: L0 may not signal it. */
@@ -1019,7 +1040,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     unnamed = error.message;
   }
   // Where the group is already recorded as killed whole, the confirmation kills before it reads.
-  const seen = { live: false, first: unnamed === undefined && left === undefined, listed: listed ?? new Set((named ?? []).map(({ pid }) => pid)) };
+  const seen = { live: false, first: unnamed === undefined && left === undefined, listed: listed ?? new Set((named ?? []).map(({ pid }) => pid)), named: new Map(), asked: new Set() };
   let leader;
   let unread;
   let stuck = [];
@@ -1032,25 +1053,28 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     if (!seen.sent) signal(group, 'SIGKILL', kill);
     unread = error.message;
     // No read after the kill showed the members ended, so each the read before it found alive that
-    // signal 0 still reaches is not shown to have ended, but the leader, whose zombie Node reaps only
-    // once this process exits (`D16` rule 3: another member's zombie, not yet reaped, is counted too).
-    stuck = (named ?? []).filter(({ pid }) => pid !== group && answers(pid, kill)).map(({ pid }) => ({ pid, reason: `not shown to have ended: the process table could not be read within the exit cleanup's read bound of ${readTimeout} ms` }));
+    // signal 0 still reaches is not shown to have ended, the leader among them. Where this can be
+    // wrong (`D16` rule 3): a zombie answers signal 0 as a live process does, and Node reaps the
+    // leader's only once this process exits, so a leader or member the kill did end is counted too.
+    // A leader that answers `EPERM` is not that zombie, so it is one L0 may not signal.
+    const why = `the process table could not be read after the kill: ${error.message}`;
+    stuck = (named ?? []).filter(({ pid }) => answers(pid, kill)).map(({ pid }) => ({ pid, reason: pid === group && refusedAcross(group, kill) ? 'EPERM' : `${NOT_SHOWN}: ${why}` }));
   }
   // Every member the census named was read alive or gone just before the kill, so a live one the
   // confirmation finds that no read before it named joined the group after that read.
   if (unnamed === undefined && seen.unread !== undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${seen.unread}`;
   if (unnamed === undefined && seen.live) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
-  // A member the census named is recorded by its name and command line, and one it did not by its
-  // pid alone: the cleanup reads nothing past its own bound.
-  const known = new Map((named ?? []).map((member) => [member.pid, member]));
+  // A member the census named is recorded by its name and command line, and so is one that joined
+  // after the read before the kill, where the confirmation read both while it lived (`emptied`).
+  // Otherwise it is recorded by its pid alone, since the cleanup reads nothing past its own bound
+  // (`D16` rule 3): those reads can fail, and the bound can run out before them.
+  const known = new Map([...(named ?? []).map((member) => [member.pid, member]), ...[...seen.named.values()].map((member) => [member.pid, member])]);
   const unended = stuck.map(({ pid, reason }) => ({ ...known.get(pid), pid, reason }));
-  // A leader the read before the kill found alive was ended by the cleanup's kill, where no later
-  // read could tell, unless it exited on its own between that read and the kill (`contain`), or the
-  // kill could not end it, which the cleanup hands the caller's step as why its ending is unread.
+  // A leader the kill could not end, or that no read after it showed ended, is handed to the caller's
+  // step as why its ending is unread.
   const leaderUnended = stuck.find(({ pid }) => pid === group);
-  if (leaderUnended !== undefined) unread = `the exit cleanup could not end the command: ${leaderUnended.reason}`;
-  const alive = leaderUnended === undefined && (named?.some(({ pid }) => pid === group) ?? false);
-  return { kills: killsOf(group, { named, unnamed, left, unended }, 'survivor.killed'), leader, unread, alive };
+  if (leaderUnended !== undefined) unread = leaderUnended.reason.startsWith(NOT_SHOWN) ? `the command was ${leaderUnended.reason}` : `the exit cleanup could not end the command: ${leaderUnended.reason}`;
+  return { kills: killsOf(group, { named, unnamed, left, unended }, 'survivor.killed'), leader, unread };
 }
 
 /**
@@ -1075,7 +1099,10 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  * among `seen.listed`, every process the read before the kill listed, it sets `seen.live`, even
  * where a later read fails, because the kill of the group may then have ended a process that no
  * read before it had named. Where a read after a kill fails, it keeps why in `seen.unread`, since the
- * kill of the group may then have ended a process no read listed.
+ * kill of the group may then have ended a process no read listed. A read after a kill that answers
+ * but leaves out a leader signal 0 still reaches fails so too (`leaderUnlisted`). It names in `seen.named`, once,
+ * each live process a read after a kill finds that no read before it listed (`namedNow`), and keeps
+ * in `seen.asked` each it has tried to name.
  */
 function* emptied(group, seen, kill, bound) {
   // What the last read after a kill found: the leader's wait status, and each member alive.
@@ -1090,6 +1117,7 @@ function* emptied(group, seen, kill, bound) {
     let states;
     try {
       states = rowsOf(yield ['-g', String(group), '-o', 'pid=,stat=,xstat=']);
+      if (sent && !states.has(group) && answers(group, kill)) throw leaderUnlisted(group);
     } catch (error) {
       if (sent) seen.unread ??= error.message;
       // A read the bound cut short leaves each member the last read found alive not ended.
@@ -1104,6 +1132,11 @@ function* emptied(group, seen, kill, bound) {
     if (living.length === 0 && sent) return { leader, stuck: [] };
     if (!sent) continue;
     last = { leader, living };
+    // A live process no read before the kill listed is named once, as the census names one, within
+    // the cleanup's own bound, so one the kill cannot end is recorded by name and command line.
+    const unlisted = living.filter((pid) => !seen.listed.has(pid) && !seen.asked.has(pid));
+    for (const pid of unlisted) seen.asked.add(pid);
+    if (unlisted.length > 0) for (const member of yield* namedNow(unlisted)) seen.named.set(member.pid, member);
     const stuck = unended(living, kill, false, bound, refused);
     if (stuck !== undefined) return { leader, stuck };
   }
