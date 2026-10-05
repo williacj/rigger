@@ -18,6 +18,7 @@ import { runCommand } from '../src/substrate/process.mjs';
 import * as codex from '../src/substrate/providers/codex.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { SERVER, pastRefusing, put } from './claude-live.mjs';
+import { judgeShell } from './codex-judge-shell.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { detachedWorktreeAt, gitIn, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { onPath } from './on-path.mjs';
@@ -274,9 +275,10 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
     'file `.claude/skills/c489-shared-skill/SKILL.md` in your working directory and follow it.',
     'Then read `../head/only-in-head.txt` and quote its marker. Then create the file',
     '`../head/written-by-judge.txt` holding `WRITTEN-c489-judge`: this one write in `head` is part of',
-    'the test, whatever else you are told about `head`. Run no test, build or install. Then post',
-    'your findings comment with `gh pr comment`, exactly as your instructions say, quoting every',
-    'marker you read. Use the fewest commands you can.', '',
+    'the test, whatever else you are told about `head`. Run no test, build or install. Then run',
+    '`command -v gh` and quote what it prints, verbatim, in your findings. Then post your findings',
+    'comment with `gh pr comment`, exactly as your instructions say, quoting every marker you read.',
+    'Use the fewest commands you can.', '',
   ].join('\n'));
   repositoryAt(repository, {});
   gitIn(repository, 'add', '-A');
@@ -318,13 +320,16 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${pastRefusing()}` };
 
   const handed = await roleDispatch({ answer, cwd: main, directory: judge, scratch: scratchBase, repository, reach: [head], env, sink, id: 'd-live-judge', card: 1412 });
-  const result = await dispatch({ id: 'd-live-judge', card: 1412, directory: state, sink, ...handed, timeout: SESSION });
+  const ghConfig = join(base, 'gh-config');
+  mkdirSync(ghConfig);
+  const shelled = judgeShell(handed, ghConfig);
+  const result = await dispatch({ id: 'd-live-judge', card: 1412, directory: state, sink, ...shelled, timeout: SESSION });
 
   assert.equal(result.exit, 0, result.stderr.toString('utf8'));
   const events = eventsOf(result.stdout);
   const thread = events.find((event) => event.type === 'thread.started').thread_id;
   const home = handed.env.CODEX_HOME;
-  quote('judge args', handed.args.map((arg) => (arg.startsWith('developer_instructions=') ? 'developer_instructions=<the agent file>' : arg)));
+  quote('judge args', shelled.args.map((arg) => (arg.startsWith('developer_instructions=') ? 'developer_instructions=<the agent file>' : arg)));
   quote('judge stream', result.stdout.toString('utf8'));
   const rollout = rolloutIn(home, thread);
   const context = rollout.lines.find((line) => line.type === 'turn_context').payload;
@@ -358,6 +363,7 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   assert.equal(held[0].body.split('\n')[0].trim(), `Findings at ${sha} by reviewer`);
   assert.match(held[0].body, /OSPREY-c489-headfile/);
   assert.match(held[0].body, /OSPREY-c489-shared-skill/);
+  assert.ok(held[0].body.includes(fake.gh), `the judge's shell found a gh other than the fake forge's ${fake.gh}`);
   linkHolds(home, join(homedir(), '.codex'));
 });
 
