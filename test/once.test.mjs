@@ -755,3 +755,78 @@ test('given once where a judge\'s directory cannot be made, once prints the judg
   assert.match(line, /judges\/rigger-10\/reviewer/, line);
   assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
 });
+
+// A card whose judges are mixed, one handing back beside one whose start event is refused (#612).
+
+/** The config with the `change` kind naming `judges`, in that order, each run with no provisioning step unless `provisioning` names one. */
+const judgedBy = (judges, { provisioning, roles } = {}) => ({
+  ...config(),
+  ...(roles === undefined ? {} : { roles: { ...template.roles, ...roles } }),
+  ...(provisioning === undefined ? {} : { provisioning }),
+  kinds: { ...KINDS, change: { ...KINDS.change, judges, provisioning: provisioning === undefined ? [] : Object.keys(provisioning) } },
+});
+
+/** The start of the line `once` prints for card #10's judge `role` whose start event the preload refused. */
+const refusedLine = (role) => judgeLine(10, role, `handed back no outcome: card #10's role \`${role}\` was not started, because the event sink refused to record its start: EACCES: the test refuses L3's dispatch of ${role} on `);
+
+/**
+ * Every line `once` printed naming card #10, each line that starts as `starts` holds being read as
+ * that start, so a line naming the consumer's own path is compared without it.
+ */
+const linesOf10 = (out, err, starts = []) => [...out.split('\n'), ...err.split('\n')]
+  .filter((line) => /#10\b/.test(line))
+  .map((line) => starts.find((start) => line.startsWith(start)) ?? line);
+
+for (const [judges, first, second] of [[['reviewer', 'architect'], 'handed back', 'refused'], [['architect', 'reviewer'], 'refused', 'handed back']]) {
+  test(`given once over a card whose judges are ${judges.join(' then ')}, the reviewer exiting 0 and the architect's start event refused, once prints a line for each judge in the order L2 named them, the ${first} one first and the ${second} one second, and exits non-zero`, SETTLES_WITHIN, async (t) => {
+    const agent = standInAgent({ 10: { engineer: { pr: true } } });
+    const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings: judgedBy(judges), env: { NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}` } });
+
+    const { code, out, err } = await ran;
+
+    assert.notEqual(code, 0, out);
+    const judgeLines = { reviewer: judgeLine(10, 'reviewer', 'exited 0'), architect: refusedLine('architect') };
+    assert.deepEqual(linesOf10(out, err, [refusedLine('architect')]), [
+      makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'),
+      ...judges.map((role) => judgeLines[role]),
+    ], err);
+  });
+}
+
+test('given once over a card whose judges are reviewer, architect and pm, the reviewer exiting 0, the architect\'s start event refused and the pm withheld for a required step failing in its head, once prints each judge\'s line in that order, the failure and the withholding each with why, and exits non-zero', SETTLES_WITHIN, async (t) => {
+  // The step fails only in the head of the judge directory named `pm`: `<root>/judges/rigger-10/pm/head`.
+  const provisioning = { check: { run: 'test "$(basename "$(dirname "$PWD")")" != pm', required: true } };
+  const agent = standInAgent({ 10: { engineer: { pr: true } } });
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings: judgedBy(['reviewer', 'architect', 'pm'], { provisioning }), env: { NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}` } });
+
+  const { code, out, err } = await ran;
+
+  assert.notEqual(code, 0, out);
+  // The preload refuses every L3 dispatch naming the architect, so the step in its head is the start refused.
+  const architect = judgeLine(10, 'architect', 'handed back no outcome: card #10\'s step `check` was not started, because the event sink refused to record its start: EACCES: the test refuses L3\'s dispatch of architect on ');
+  assert.deepEqual(linesOf10(out, err, [architect]), [
+    makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'),
+    judgeLine(10, 'reviewer', 'exited 0'),
+    architect,
+    judgeLine(10, 'pm', 'was not dispatched, because its required step `check` failed in its head: it exited 1'),
+  ], err);
+});
+
+for (const [plan, roles, said] of [
+  [{ exit: 3 }, undefined, 'exited 3'],
+  [{ forever: true }, { reviewer: { ...template.roles.reviewer, timeout: 1000 } }, 'ran past its time, 1000 ms, and was ended'],
+]) {
+  test(`given once over a card whose reviewer hands back, ${said}, beside an architect whose start event is refused, once prints the reviewer's line as it says that outcome, and exits non-zero`, SETTLES_WITHIN, async (t) => {
+    const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: plan } });
+    const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { settings: judgedBy(['reviewer', 'architect'], { roles }), env: { NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}` } });
+
+    const { code, out, err } = await ran;
+
+    assert.notEqual(code, 0, out);
+    assert.deepEqual(linesOf10(out, err, [refusedLine('architect')]), [
+      makerLine(consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'),
+      judgeLine(10, 'reviewer', said),
+      refusedLine('architect'),
+    ], err);
+  });
+}

@@ -187,10 +187,10 @@ async function claiming(verb, limit, opened, {
   const l2 = columnChanges({ config, sink, send, reads });
   // L3 answers, as `trigger` says, a card whose maker ran, with its maker's outcome, L2's settle
   // and the judges L2 then named; a card pulled for its judges alone, with those judges; and,
-  // where any card failed, a failure carrying both kinds of card as `reached`, a card whose maker
-  // ran and whose judges then failed among them with its maker's result alone, the judges' failure
-  // in the failure's errors. A stopped card is in the failure alone. It answers nothing about a
-  // card that failed before its maker, nor
+  // where any card failed, a failure carrying both kinds of card as `reached`, a card one of whose
+  // judges failed to hand back among them with every judge L2 named, the judges' failure in the
+  // failure's errors. A stopped card is in the failure alone. It answers nothing about a card
+  // that failed before its maker, nor
   // about one L2 refused, so every card L2 refuses is seen here, through the next action this verb
   // hands L3 (the reviewer's ruling on #312), the refusals from what the forge holds among them.
   // Nor does it answer why a judge L2 stopped naming was not dispatched, which is seen here too.
@@ -239,21 +239,33 @@ async function claiming(verb, limit, opened, {
   const outcomes = (reached) => reached.map((each) => ({ ...each, ...(each.outcome === undefined ? { said: undefined, review: true } : makerOutcome(each)), ...judgesOf(each) }));
   /**
    * What card `reached`'s judges did, as the verb says it: `judgeLines`, a line for each judge L3
-   * dispatched, then each L2 stopped naming, then, where the card's kind names the owner beside
-   * them, that the owner judges last; and `judgesPassed`, whether every judge dispatched exited 0
-   * in its time and none was withheld.
+   * carried, in the order L3 carried them, then each other judge L2 stopped naming, then, where the
+   * card's kind names the owner beside them, that the owner judges last; and `judgesPassed`, whether
+   * every judge dispatched exited 0 in its time and none failed to hand back or was withheld. L3
+   * carries the judges it dispatched where every one handed back, and every judge L2 named, in the
+   * order L2 named them, where one failed to: one that failed is said as L3's failure names it, and
+   * one L2 withheld as this verb kept why.
    */
   const judgesOf = ({ card, judges = [] }) => {
     const panel = panels.get(card);
     if (panel === undefined) return { judgeLines: [], judgesPassed: true };
-    const dispatched = judges.map(({ role, outcome }) => ({ role, ...judgeOutcome(outcome, panel.named.get(role)?.timeout) }));
+    const line = (role, what) => `rigger ${verb}: card #${card}'s judge \`${role}\` ${what}`;
+    const carried = judges.map(({ role, outcome, failure }) => {
+      if (outcome !== undefined) {
+        const { said: what, passed } = judgeOutcome(outcome, panel.named.get(role)?.timeout);
+        return { text: line(role, what), passed };
+      }
+      if (failure !== undefined) return { text: `rigger ${verb}: ${failure.message}`, passed: false };
+      return { text: line(role, panel.withheld.get(role)), passed: false };
+    });
+    const withheld = [...panel.withheld].filter(([role]) => !judges.some((judge) => judge.role === role));
     const owner = config.kinds[panel.kind].judges.includes(OWNER) && panel.named.size > 0;
     const judgeLines = [
-      ...dispatched.map(({ role, said: what }) => `rigger ${verb}: card #${card}'s judge \`${role}\` ${what}`),
-      ...[...panel.withheld].map(([role, why]) => `rigger ${verb}: card #${card}'s judge \`${role}\` ${why}`),
+      ...carried.map(({ text }) => text),
+      ...withheld.map(([role, why]) => line(role, why)),
       ...(owner ? [`rigger ${verb}: card #${card}'s judge \`${OWNER}\` judges last, once every agent judge is satisfied, and Rigger never dispatches it`] : []),
     ];
-    return { judgeLines, judgesPassed: dispatched.every(({ passed }) => passed) && panel.withheld.size === 0 };
+    return { judgeLines, judgesPassed: carried.every(({ passed }) => passed) && withheld.length === 0 };
   };
   const said = (worked) => [
     ...worked.flatMap(({ card, workspace: path, said: what, judgeLines }) => [
@@ -284,9 +296,12 @@ async function claiming(verb, limit, opened, {
     // card is named only from its failure. When its last failure was a maker that never started,
     // the shared presenter puts that reason first; other stops keep L3's wording. The cards the
     // same pull left at their workspaces are named first, as they would be had none failed, a card
-    // whose maker ran and whose judges then failed among them, its judges' failure said after.
+    // whose maker ran and whose judges then failed among them. A judge that failed to hand back is
+    // said among its card's judge lines, where L3 carried it, and not again after them.
+    const reachedCards = failure.reached ?? [];
+    const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
     return {
-      text: [...said(outcomes(failure.reached ?? [])), ...failuresIn(failure).map(failureLine), ...refusals.map(refusalLine)].join('\n'),
+      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...refusals.map(refusalLine)].join('\n'),
       code: 1,
     };
   }

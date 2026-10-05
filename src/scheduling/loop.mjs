@@ -309,7 +309,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * claim, as `judges` says, and the answer also carries them as `judges`. The maker's result is
    * handed to `kept` as soon as the settle answers, before L2 is asked about judges, so a judge's
    * failure, or L2's judge answer throwing, still leaves its caller the maker's result while the
-   * attempt rejects with that failure. An answer naming the
+   * attempt rejects with that failure. Where a judge failed to hand back, the maker's result is
+   * handed to `kept` again with every judge L2 named beside it as `judges`, as `judges` hands them
+   * to its `keep`. An answer naming the
    * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
    * attempt's failure, in order, both in the message and as fields `card` and `attemptFailures`.
    * A stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
@@ -362,7 +364,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const ask = (options) => remember(decide(card, [], { ...options, forge: settled.value }));
       const judging = ask({});
       if (judging.action !== 'judge') return reached;
-      return { ...reached, judges: await judges(card, judging, ask) };
+      return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended })) };
     }
   };
 
@@ -383,22 +385,26 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * dispatched with `main` as its working directory, its judge directory as the dispatch's, and
    * `head` as the directory it may reach, each as L1's make answered it, never from L2's answer (the
    * architect's ruling 3, P8, and ruling 4's addendum). Answers `{ role, outcome }`, the judge's
-   * outcome as `Promise.allSettled` records it, or nothing for a judge not dispatched.
+   * outcome as `Promise.allSettled` records it, or, for a judge L2 withheld, `{ role, withheld }`,
+   * `withheld` holding what L3 handed L2 that L2 withheld it for: `{ directory }`, L1's failure to
+   * make its directory, or `{ step, outcome }`, the step in its `head` whose outcome L2 was handed
+   * last, by name, and that outcome, since L3 asks after each step.
    */
   const judged = async (card, judge, ask) => {
     const { role } = judge;
     const [made] = await Promise.allSettled([new Promise((resolve) => resolve(judgeDirectory(card.number, role, judge.facts.head)))]);
     if (made.status === 'rejected') {
       ask({ directories: { [role]: made } });
-      return undefined;
+      return { role, withheld: { directory: made } };
     }
     const { path, main, head, scratch, repository } = made.value;
     const outcomes = [];
     let current = judge;
     while (outcomes.length < current.steps.length) {
-      outcomes.push(await dispatchStep(card, current.steps[outcomes.length], head, { role }));
+      const step = current.steps[outcomes.length];
+      outcomes.push(await dispatchStep(card, step, head, { role }));
       current = named(ask({ judged: { [role]: [...outcomes] } }), role);
-      if (current === undefined) return undefined;
+      if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) } };
     }
     return { role, outcome: await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}) };
   };
@@ -407,19 +413,29 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * Dispatches every judge L2's judge answer `answer` names for `card`, at once, under the card's
    * one claim, as `judged` says, asking L2 again through `ask`, and settles once every one of them
    * has handed back its outcome. Answers the judges dispatched, each `{ role, outcome }`, in the
-   * order L2 named them. Where one failed to hand back an outcome, its start refused or L2 answering
-   * no action for it, it rejects once every other has, with an AggregateError naming the card and
-   * each such judge, carrying the judges dispatched as `judges`, so no judge's outcome is dropped
-   * for another's failure.
+   * order L2 named them, a judge L2 withheld among none of them.
+   *
+   * Where one failed to hand back an outcome, its start refused or L2 answering no action for it,
+   * it waits for every other, then hands `keep` every judge L2 named, in the order it named them,
+   * each in one of three shapes:
+   *
+   * - `{ role, outcome }`, for a judge that handed back;
+   * - `{ role, failure }`, for one that failed to, `failure` being the error that names it in the
+   *   rejection;
+   * - `{ role, withheld }`, for one L2 withheld, as `judged` answers it.
+   *
+   * Then it rejects with an AggregateError naming the card and each judge that failed, and why, in
+   * its `errors`, so no judge's outcome is dropped for another's failure.
    */
-  const judges = async (card, answer, ask) => {
+  const judges = async (card, answer, ask, keep) => {
     const settled = await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask)));
-    const dispatched = settled.filter((each) => each.status === 'fulfilled' && each.value !== undefined).map((each) => each.value);
-    const failed = settled.flatMap((each, at) => (each.status === 'rejected'
-      ? [new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason })]
-      : []));
-    if (failed.length > 0) throw Object.assign(new AggregateError(failed, `card #${card.number}'s judges did not all hand back an outcome`), { judges: dispatched });
-    return dispatched;
+    const ended = settled.map((each, at) => (each.status === 'fulfilled'
+      ? each.value
+      : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason }) }));
+    const failed = ended.filter((each) => each.failure !== undefined).map((each) => each.failure);
+    if (failed.length === 0) return ended.filter((each) => each.outcome !== undefined);
+    keep(ended);
+    throw new AggregateError(failed, `card #${card.number}'s judges did not all hand back an outcome`);
   };
 
   /**
@@ -434,10 +450,13 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * or nothing for a card whose maker never ran and whose work failed; and `failure`, the work's
    * failure and a refused release event, both reported as `released` says, or null where there was
    * neither. A card whose maker ran keeps its maker's result in `reached` though its judges then
-   * failed, as `attempt` says. L2's report of a refused transition event passes through unchanged
-   * as the work's failure where it comes from the claim; from the maker's settle it comes back in
-   * the card's `settled`, as `attempt` says. `excluded` receives a stopped card or a card whose
-   * judges L2 withheld before `freed` fires another trigger, and lives for this run alone.
+   * failed, as `attempt` says. A card one of whose judges failed to hand back carries in `reached`
+   * every judge L2 named beside its number, as `judges` hands them to its `keep`, whichever way it
+   * was claimed, and whether or not its release event was refused. L2's report of a refused
+   * transition event passes through unchanged as the work's failure where it comes from the claim;
+   * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `excluded`
+   * receives a stopped card or a card whose judges L2 withheld before `freed` fires another
+   * trigger, and lives for this run alone.
    */
   const work = async (claim, freed, excluded) => {
     const { card, next, decide: atPull } = claim;
@@ -453,9 +472,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     try {
       await start(claim);
       claimed = true;
+      const kept = (made) => { reached = made; };
       reached = next.action === 'judge'
-        ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options))) }
-        : await attempt(card, next, (made) => { reached = made; }, remember);
+        ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
+        : await attempt(card, next, kept, remember);
     } catch (thrown) {
       failure = thrown;
       if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
@@ -481,15 +501,18 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * - a card pulled for its judges alone: `{ card, judges }`, the judges as `judges` answers them,
    *   with no workspace made and no maker dispatched.
    *
-   * A card that failed before its maker ran, and a card pulled for its judges alone whose judges
-   * failed, answer nothing. A read that fails
+   * A card that failed before its maker ran answers nothing. A read that fails
    * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
    * sink refused, are reported in one AggregateError naming how many failed, each failure
    * unchanged in its `errors`, and carrying as `reached` what every card answered, as the pull
-   * would have settled on them, so no card's outcome is dropped for another's failure. A card whose
-   * maker ran and whose judges then failed, or for which L2's judge answer threw, is in `reached`
-   * with its maker's result and no `judges`, and its failure, carrying the judges that did hand
-   * back where there were any, is in `errors`.
+   * would have settled on them, so no card's outcome is dropped for another's failure. A card for
+   * which L2's judge answer threw is in `reached` with its maker's result and no `judges`. A card
+   * one of whose judges failed to hand back is in `reached` under its number, in the shape its
+   * claim gives it above, its `judges` holding every judge L2 named, in the order L2 named them,
+   * each `{ role, outcome }`, `{ role, failure }` or `{ role, withheld }`, as `judges` hands them to
+   * its `keep`. Its failure, naming the card and each judge that failed to hand back, and why, is
+   * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
+   * as `released` says.
    */
   const trigger = async (freed = () => {}, limit = concurrency, excluded) => {
     const { claims: claimed, failures } = await take(limit, excluded);
@@ -533,7 +556,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      *
      * Settles on what every card its pulls answered, in the shapes `trigger` says. A pull that
      * fails stops no other, and its cards are carried in its own failure's `reached`. Once the run has ended, every failed pull is reported in
-     * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`.
+     * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`,
+     * and carrying as `reached` what every pull that settled answered, so no card's outcome is
+     * dropped for another pull's failure.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
     run: async () => {
@@ -550,7 +575,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       });
       await fire();
       if (failures.length > 0) {
-        throw new AggregateError(failures, `${failures.length} of the pulls this run fired failed`);
+        throw Object.assign(new AggregateError(failures, `${failures.length} of the pulls this run fired failed`), { reached });
       }
       return reached;
     },
