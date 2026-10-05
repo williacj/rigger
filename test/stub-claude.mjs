@@ -62,6 +62,8 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *   so a file written at any moment is seen;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
+ * - `findings`: comments on the pull request its prompt names, with the `gh` first on its `PATH`,
+ *   a comment whose first line is the findings line its prompt says to write, as a judge does;
  * - `leaveIn`: as `leave`, but on `left-<card>-<role>` and working in `leaveIn`, a path relative
  *   to its working directory, writing the process's pid to `left-pid-<card>-<role>` beside itself;
  * - `leaveInGroup`: as `leaveIn`, but in the run's own process group, with no output held open;
@@ -260,6 +262,12 @@ export async function standInMain() {
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
     ran('git', ['push', '-q', 'origin', branch]);
     ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
+  }
+  if (act.findings) {
+    const pull = /pull request #(\d+), at head/.exec(input)?.[1];
+    const line = /whose first line is exactly `([^`]+)`/.exec(input)?.[1];
+    if (pull === undefined || line === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no findings line to write`);
+    ran('gh', ['pr', 'comment', pull, '--body', `${line}\n\nThe stand-in's findings.`]);
   }
   if (act.leave) {
     writeFileSync(join(dir, `left-${card}`), '');

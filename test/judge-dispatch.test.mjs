@@ -400,8 +400,8 @@ test('given one judge\'s dispatch refused at its start event, the other judges\'
   assert.match(messages, /\breviewer\b/);
   const { l1 } = judgeDispatch(built, 7, 'architect');
   assert.equal(l1.find((each) => each.event === 'dispatch.end')?.exit, 0);
-  const [card] = failure.errors;
-  assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+  const [card] = failure.reached.filter((each) => each.card === 7);
+  assert.deepEqual(card.judges.filter(({ outcome }) => outcome !== undefined).map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
 });
 
 /** What `failure`, a pull's rejection, holds as messages, every AggregateError in it opened, however deep. */
@@ -418,8 +418,8 @@ test('given a claim in which the maker exits 0 and opens a pull request, and a j
   assert.deepEqual(built.fake.writes().map(({ args: [, column] }) => column), [COLUMNS.coding, COLUMNS.review], 'the maker did not move the card to Review, so the test proves nothing');
   assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
   assert.ok(messagesIn(failure).some((message) => /card #3/.test(message) && /\breviewer\b/.test(message) && /refused/.test(message)), JSON.stringify(messagesIn(failure)));
-  const [card] = failure.errors;
-  assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+  const [card] = failure.reached.filter((each) => each.card === 3);
+  assert.deepEqual(card.judges.filter(({ outcome }) => outcome !== undefined).map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
 });
 
 test('given that claim where the settle\'s read of the acceptance\'s revision is rejected, so L2\'s judge answer throws, the pull rejects, its failure\'s reached holds the card with the maker\'s result, and its failure carries L2\'s failure naming the card and the read', SETTLES_WITHIN, async () => {
@@ -449,8 +449,8 @@ test('given that claim where L2\'s judge answer throws for one judge, on a direc
 
   assert.deepEqual(makerOf(failure.reached, 3), [{ workspace: join(built.scratch, 'workspaces', 'rigger-3'), exit: 0, settled: 'fulfilled' }]);
   assert.ok(messagesIn(failure).some((message) => /card #3's judge `reviewer`/.test(message) && /not L1's failure to make it/.test(message)), JSON.stringify(messagesIn(failure)));
-  const [card] = failure.errors;
-  assert.deepEqual(card.judges.map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
+  const [card] = failure.reached.filter((each) => each.card === 3);
+  assert.deepEqual(card.judges.filter(({ outcome }) => outcome !== undefined).map(({ role, outcome }) => ({ role, exit: outcome.value?.exit })), [{ role: 'architect', exit: 0 }]);
 });
 
 test('given a pull claiming two cards whose makers both run, one with a judge whose L3 dispatch event is refused and one whose judges all hand back, the pull rejects, and its failure\'s reached holds both cards, the second with its judges', SETTLES_WITHIN, async () => {

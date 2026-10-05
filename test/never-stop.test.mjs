@@ -1,7 +1,8 @@
 // ABOUTME: Tests that L0 contains a group without ever stopping it, on the call's containment, a
 // start's kill of a recorded group and the exit cleanup: what it records by name and as the group's
-// kill, and how it settles where it cannot read the table, may not signal a process, or cannot end
-// one, in a group and in a dispatch's directory alike.
+// kill, how it settles where it cannot read the table, may not signal a process, or cannot end
+// one, in a group and in a dispatch's directory alike, and what the exit cleanup hands the caller's
+// step where it cannot end the command.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,13 +52,16 @@ const holdingTwo = (directory) => fixture(directory, 'command', [
 /** A command that marks `$here/up` and runs until the test writes `release`, or until killed. */
 const holdingNone = (directory) => fixture(directory, 'command', ': > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
 
+/** The line of a `ps` stand-in that answers a read as `ps` does, with the process `$here/two.pid` names cut out. */
+const CUT_TWO = '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "';
+
 /**
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read of the census,
  * which begin `-ww -g`, and answers every other read as `ps` does.
  */
 const cuttingTwo = (directory) => fixture(directory, 'ps', [
   'case "$*" in "-ww -g "*)',
-  '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+  `  ${CUT_TWO}`,
   '  exit 0 ;;',
   'esac',
   'exec /bin/ps "$@"',
@@ -243,7 +247,7 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
  */
 const hidingTwoUntilKilled = (directory) => fixture(directory, 'ps', [
   '[ -f "$here/hang" ] && exec /bin/ps "$@"',
-  '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+  CUT_TWO,
   'exit 0',
 ].join('\n'));
 
@@ -556,6 +560,34 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
   assert.ok(ended - killed < KILL_BOUND, `the caller ended ${ended - killed} ms after the census's kill of the outside process`);
 });
 
+/**
+ * A `ps` stand-in that, until `$here/hang` exists, holds the census's read of the outside process's
+ * name, `-p <pid> -o ucomm=`, marking `$here/held`, until the census's own bound gives it up, and
+ * answers every other read as `ps` does. So the census's bound runs out after it has stopped the
+ * process and listed it again, and before it has read its name (#579).
+ */
+const holdingName = (directory) => fixture(directory, 'ps', [
+  'if [ ! -f "$here/hang" ] && [ "$*" = "-p $(/bin/cat "$here/outside.pid") -o ucomm=" ]; then : > "$here/held"; exec /usr/bin/tail -f "$here/hold"; fi',
+  'exec /bin/ps "$@"',
+].join('\n'));
+
+// proves R-STATE-19, R-STATE-9
+test('given a census of a dispatch\'s directory whose bound runs out after it has stopped and listed again a process the kill does not end, and before it has read that process\'s name, the exit cleanup still records it by name and command line as alive at the cleanup\'s own bound of its kill', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  holdingName(directory);
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+
+  const { status, events, pairs } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+
+  assert.equal(status, 0);
+  assert.ok(existsSync(join(directory, 'held')), 'the census never read the outside process\'s name before its kill, so the test proves nothing');
+  assert.ok(events.some(({ event }) => event === 'directory.unread'), 'the census\'s reads before its kill answered within its bound, so the test proves nothing');
+  assert.ok(killedIn(pairs, pidIn(directory, 'outside')) !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
+  assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+});
+
 // proves R-STATE-18, R-STATE-19
 test('given a dispatch\'s directory holding a process the kill does not end, and a process table that cannot be read once the census has sent that kill, the census resumes the process and records it as a process it could not end, not as killed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -618,6 +650,107 @@ test('given a process table that stops answering once the exit cleanup\'s census
   assert.ok(!processState(outside).startsWith('T'), `the census left the outside process stopped: ${processState(outside)}`);
   const killed = killedIn(pairs, outside);
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
+});
+
+/**
+ * Has the exit cleanup end a group under `table`, a stand-in for `ps` that changes how it answers
+ * once the cleanup has sent its first kill of the group, with `options` added to `CALLER`'s, and
+ * asserts it records the leader not as killed but as a process it could not end, for `reason`, and
+ * hands its step no exit code but an `unread` that matches `why`. It hands back the leader's pid and
+ * the scratch directory.
+ */
+async function assertLeaderNotKilled(t, { table = hanging, options = {}, reason, why }) {
+  const directory = holding(t);
+  holdingTwo(directory);
+  table(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', ...options });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0);
+  assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
+  const recorded = events.filter(({ pid }) => pid === group);
+  assert.deepEqual(recorded.map(({ event }) => event), ['survivor.unended']);
+  assert.match(recorded[0].reason, reason);
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', why, JSON.stringify(ending));
+  return { group, directory };
+}
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader L0 may not signal, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as a process it could not end because of EPERM, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const { group } = await assertLeaderNotKilled(t, { options: { refused: 'group' }, reason: /^EPERM$/, why: /could not end the command: EPERM/ });
+  assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+});
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader the kill does not end, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as not shown to have ended, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const { group } = await assertLeaderNotKilled(t, { options: { unkept: 'group' }, reason: /^not shown to have ended: the process table could not be read/, why: /the command was not shown to have ended: the process table could not be read/ });
+  assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+});
+
+/**
+ * A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on
+ * answers each as `ps` does where no process matches: it exits 1 and prints nothing.
+ */
+const emptyAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exit 1\nexec /bin/ps "$@"');
+
+// proves R-STATE-19, R-STATE-9
+test('given a read after the exit cleanup\'s kill that exits 1 and prints nothing while the leader\'s zombie is still in the group, the cleanup records the leader as not shown to have ended, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const { group } = await assertLeaderNotKilled(t, { table: emptyAfterKill, reason: /^not shown to have ended: .*did not list its leader/, why: /the command was not shown to have ended: .*did not list its leader/ });
+  assert.ok(processState(group).startsWith('Z') || !alive(group), `the leader outlived the kill, so the test proves nothing: ${processState(group)}`);
+});
+
+/** Where `CALLER` defines its signal call: the line the settling variant below extends. */
+const KILL_ANCHOR = 'const kill = (target, name) => { ';
+
+/**
+ * `CALLER`, but with a leader that answers signal 0 with `EPERM` on every look but one that follows a
+ * kill sent to it or to its group since the look before: a process still exiting, as the kernel
+ * answers for one for a moment (`unended` in `src/substrate/process.mjs`), until L0's next kill
+ * reaches it. Every signal still reaches the leader as `CALLER`'s own signal call sends it. It
+ * appends each look at the leader to `$here/looks`: `E` where it answered `EPERM`, `A` otherwise.
+ */
+const SETTLING = (() => {
+  assert.equal(CALLER.split(KILL_ANCHOR).length, 2, 'CALLER no longer defines its signal call where the settling variant extends it');
+  return CALLER.replace(KILL_ANCHOR, [
+    'let killedSinceLook = false;',
+    "const settling = (target, name) => { const leader = pidIn('group'); if (name === 'SIGKILL' && (target === leader || target === -leader)) killedSinceLook = true; if (name !== 0 || target !== leader) return; const killed = killedSinceLook; killedSinceLook = false; appendFileSync(join(here, 'looks'), killed ? 'A' : 'E'); if (!killed) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM', errno: -1, syscall: 'kill' }); };",
+    `${KILL_ANCHOR}settling(target, name); `,
+  ].join('\n'));
+})();
+
+/** `cleanedUp`, run with `caller`'s source in place of `CALLER`'s. */
+async function cleanedUpBy(caller, directory, options) {
+  const path = join(directory, 'caller.mjs');
+  writeFileSync(path, caller);
+  const run = spawn(process.execPath, [path, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  run.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(run, 'exit');
+  return { status, stderr, events: linesOf(directory, 'events') };
+}
+
+// proves R-STATE-19, R-STATE-9
+test('given a leader that answers signal 0 with EPERM until the next kill reaches it, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup does not record the leader as one it may not signal, nor as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+  hanging(directory);
+
+  const { status, stderr, events } = await cleanedUpBy(SETTLING, directory, { ps: 'ps', hangAfter: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0, stderr);
+  assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
+  const looks = existsSync(join(directory, 'looks')) ? read(directory, 'looks') : '';
+  assert.match(looks, /E/, 'the cleanup never asked signal 0 of the leader, or it never answered EPERM, so the test proves nothing');
+  const recorded = events.filter(({ pid }) => pid === group);
+  assert.deepEqual(recorded.map(({ event }) => event), ['survivor.unended'], JSON.stringify(recorded));
+  assert.match(recorded[0].reason, /^not shown to have ended: /);
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', /the command was not shown to have ended/, JSON.stringify(ending));
 });
 
 /**
@@ -710,6 +843,37 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
   assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
   assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
   assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+});
+
+/**
+ * Has the exit cleanup end a group whose leader is `kept`, as `CALLER` names its options, and
+ * asserts the cleanup hands its step no exit code, but that it could not end the command, for
+ * `why`, and records the leader as a process it could not end.
+ */
+async function assertLeaderUnended(t, kept, why) {
+  const directory = holding(t);
+  holdingTwo(directory);
+
+  const { status, events } = await cleanedUp(directory, { [kept]: 'group' });
+
+  const group = pidIn(directory, 'group');
+  assert.equal(status, 0);
+  assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+  const ending = JSON.parse(read(directory, 'ending'));
+  assert.equal('exit' in ending, false, JSON.stringify(ending));
+  assert.match(ending.unread ?? '', /could not end the command/, JSON.stringify(ending));
+  assert.match(ending.unread, why, JSON.stringify(ending));
+  assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event }) => event), ['survivor.unended']);
+}
+
+// proves R-STATE-9, R-STATE-19
+test('given a command whose leader the kill does not end, the exit cleanup hands its step no exit code, but that it could not end the command', SETTLES_WITHIN, async (t) => {
+  await assertLeaderUnended(t, 'unkept', /still alive when the exit cleanup's read bound/);
+});
+
+// proves R-STATE-9, R-STATE-19
+test('given a command whose leader L0 may not signal, the exit cleanup hands its step no exit code, but that it could not end the command because of EPERM', SETTLES_WITHIN, async (t) => {
+  await assertLeaderUnended(t, 'refused', /EPERM/);
 });
 
 /**
@@ -838,6 +1002,59 @@ test('on the exit cleanup, where every read after the kill fails, the kill of th
 
   assert.equal(status, 0);
   assertUnreadAfterKill(events);
+});
+
+/**
+ * A command that writes its pid, its group's id, to `$here/group.pid`, leaves a `tail` in its group,
+ * `one`, starts `zombieJoiner`'s program for its group, whose child joins it as `two`, marks
+ * `$here/up`, and runs until the test writes `release`, or until killed.
+ */
+const joinedLate = (directory) => fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
+
+/** Each event in `events` for the process `pid`, by its name, name and command line, and reason. */
+const recordOf = (events, pid) => events.filter((event) => event.pid === pid).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason }));
+
+// proves R-STATE-19, R-STATE-9
+test('on the exit cleanup, a member no read before the kill listed, which outlives the kill, is recorded as a process it could not end by name and command line', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  joinedLate(directory);
+  hidingTwoUntilKilled(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', unkept: 'two' });
+
+  const two = pidIn(directory, 'two');
+  assert.equal(status, 0);
+  assert.equal(alive(two), true, 'the kill ended the member, so the test proves nothing');
+  assert.deepEqual(recordOf(events, two), [
+    { event: 'survivor.unended', ...tailOf(directory), reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` },
+  ]);
+});
+
+/**
+ * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
+ * marks that L0 has sent its group the kill, and from then on fails each read of a name, as `ps`
+ * fails, and answers every other read as `ps` does.
+ */
+const hidingTwoUnnamed = (directory) => fixture(directory, 'ps', [
+  `[ -f "$here/hang" ] || { ${CUT_TWO}; exit 0; }`,
+  'case "$*" in *"-o ucomm="*) echo "ps: failing on purpose" >&2; exit 2 ;; esac',
+  'exec /bin/ps "$@"',
+].join('\n'));
+
+// proves R-STATE-19, R-STATE-9
+test('on the exit cleanup, a member no read before the kill listed, which outlives the kill, and whose name no read after it can read, is recorded as a process it could not end by pid and why', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  joinedLate(directory);
+  hidingTwoUnnamed(directory);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', hangAfter: 'group', unkept: 'two' });
+
+  const two = pidIn(directory, 'two');
+  assert.equal(status, 0);
+  assert.equal(alive(two), true, 'the kill ended the member, so the test proves nothing');
+  assert.deepEqual(recordOf(events, two), [
+    { event: 'survivor.unended', name: undefined, cmd: undefined, reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` },
+  ]);
 });
 
 /**
