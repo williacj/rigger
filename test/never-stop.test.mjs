@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until, warmed } from './process-fixtures.mjs';
+import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
@@ -59,16 +59,16 @@ const CUT_TWO = '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid")
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read of the census,
  * which begin `-ww -g`, and answers every other read as `ps` does.
  */
-const cuttingTwo = (directory) => warmed(fixture(directory, 'ps', [
+const cuttingTwo = (directory) => fixture(directory, 'ps', [
   'case "$*" in "-ww -g "*)',
   `  ${CUT_TWO}`,
   '  exit 0 ;;',
   'esac',
   'exec /bin/ps "$@"',
-].join('\n')));
+].join('\n'));
 
 /** A `ps` stand-in that fails every read as `ps` fails given what it cannot read, but a read of a start time. */
-const failing = (directory) => warmed(fixture(directory, 'ps', 'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\necho "ps: failing on purpose" >&2\nexit 2'));
+const failing = (directory) => fixture(directory, 'ps', 'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\necho "ps: failing on purpose" >&2\nexit 2');
 
 /**
  * A signal call for a test in `directory`: `signalStandIn`'s, with the pid `$here/<refused>.pid`
@@ -245,11 +245,11 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
  * marks that L0 has sent its group the kill, and answers every read as `ps` does from then on.
  */
-const hidingTwoUntilKilled = (directory) => warmed(fixture(directory, 'ps', [
+const hidingTwoUntilKilled = (directory) => fixture(directory, 'ps', [
   '[ -f "$here/hang" ] && exec /bin/ps "$@"',
   CUT_TWO,
   'exit 0',
-].join('\n')));
+].join('\n'));
 
 /**
  * The signal call `standIn` hands back, which also marks `$here/hang` as it first sends the group
@@ -534,7 +534,7 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
-  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   const { status, events, exiting, ended } = await cleanedUp(directory, { directory: work, lsof: 'lsof', refused: 'outside' });
 
   assert.equal(status, 0);
@@ -566,10 +566,10 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
  * answers every other read as `ps` does. So the census's bound runs out after it has stopped the
  * process and listed it again, and before it has read its name (#579).
  */
-const holdingName = (directory) => warmed(fixture(directory, 'ps', [
+const holdingName = (directory) => fixture(directory, 'ps', [
   'if [ ! -f "$here/hang" ] && [ "$*" = "-p $(/bin/cat "$here/outside.pid") -o ucomm=" ]; then : > "$here/held"; exec /usr/bin/tail -f "$here/hold"; fi',
   'exec /bin/ps "$@"',
-].join('\n')));
+].join('\n'));
 
 // proves R-STATE-19, R-STATE-9
 test('given a census of a dispatch\'s directory whose bound runs out after it has stopped and listed again a process the kill does not end, and before it has read that process\'s name, the exit cleanup still records it by name and command line as alive at the cleanup\'s own bound of its kill', SETTLES_WITHIN, async (t) => {
@@ -577,7 +577,7 @@ test('given a census of a dispatch\'s directory whose bound runs out after it ha
   const work = await workedIn(t, directory);
   holdingNone(directory);
   holdingName(directory);
-  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
 
   const { status, events, pairs } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
 
@@ -600,7 +600,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
     if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'killed'), '');
     return signals.kill(target, name);
   };
-  const ps = warmed(fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+  const ps = fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
 
   const { events } = await called(directory, { command: '/usr/bin/true', directory: work, kill, ps });
 
@@ -613,7 +613,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on never answers. */
-const hanging = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"'));
+const hanging = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"');
 
 // proves R-STATE-19, R-STATE-9
 test('given a process table that stops answering once the exit cleanup has sent its first kill of a group, the caller ends within the cleanup\'s own bound of that kill, and the group\'s members are not alive', SETTLES_WITHIN, async (t) => {
@@ -639,7 +639,7 @@ test('given a process table that stops answering once the exit cleanup\'s census
   holdingNone(directory);
   hanging(directory);
 
-  warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub')))));
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', directory: work, lsof: 'lsof', hangAfter: 'outside', unkept: 'outside' });
 
   const outside = pidIn(directory, 'outside');
@@ -694,7 +694,7 @@ test('given a leader the kill does not end, and a process table that stops answe
  * A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on
  * answers each as `ps` does where no process matches: it exits 1 and prints nothing.
  */
-const emptyAfterKill = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && exit 1\nexec /bin/ps "$@"'));
+const emptyAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exit 1\nexec /bin/ps "$@"');
 
 // proves R-STATE-19, R-STATE-9
 test('given a read after the exit cleanup\'s kill that exits 1 and prints nothing while the leader\'s zombie is still in the group, the cleanup records the leader as not shown to have ended, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
@@ -772,8 +772,8 @@ function answeringAtOnce(directory) {
   writeFileSync(join(directory, 'listed'), tool('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-p', pid, '-F', 'pun']));
   writeFileSync(join(directory, 'ucomm'), tool('/bin/ps', ['-p', pid, '-o', 'ucomm=']));
   writeFileSync(join(directory, 'cmdline'), tool('/bin/ps', ['-ww', '-p', pid, '-o', 'pid=,command=']));
-  warmed(fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/cat "$here/listed"'));
-  warmed(fixture(directory, 'ps', [
+  fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/cat "$here/listed"');
+  fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
     'case "$*" in',
     '  "-p $pid -o pid=,stat=") echo "$pid T"; exit 0 ;;',
@@ -790,7 +790,7 @@ function answeringAtOnce(directory) {
     '  ucomm=) echo sh ;;',
     '  *) echo "the ps stand-in has no answer for $*" >&2; exit 2 ;;',
     'esac',
-  ].join('\n')));
+  ].join('\n'));
 }
 
 // proves R-STATE-19, R-STATE-9
@@ -956,7 +956,7 @@ test('on the exit cleanup, a member no read before the kill listed, which the ki
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on fails each as `ps` fails. */
-const failingAfterKill = (directory) => warmed(fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"'));
+const failingAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
 
 /** Asserts `events` record the kill of the group in place of what reads after the kill could not list. */
 function assertUnreadAfterKill(events) {
@@ -1035,11 +1035,11 @@ test('on the exit cleanup, a member no read before the kill listed, which outliv
  * marks that L0 has sent its group the kill, and from then on fails each read of a name, as `ps`
  * fails, and answers every other read as `ps` does.
  */
-const hidingTwoUnnamed = (directory) => warmed(fixture(directory, 'ps', [
+const hidingTwoUnnamed = (directory) => fixture(directory, 'ps', [
   `[ -f "$here/hang" ] || { ${CUT_TWO}; exit 0; }`,
   'case "$*" in *"-o ucomm="*) echo "ps: failing on purpose" >&2; exit 2 ;; esac',
   'exec /bin/ps "$@"',
-].join('\n')));
+].join('\n'));
 
 // proves R-STATE-19, R-STATE-9
 test('on the exit cleanup, a member no read before the kill listed, which outlives the kill, and whose name no read after it can read, is recorded as a process it could not end by pid and why', SETTLES_WITHIN, async (t) => {
@@ -1126,12 +1126,12 @@ test('on a start\'s kill of a recorded group, where every read after the kill fa
  * A `ps` stand-in that answers every read as `ps` does but the first read of the group's states
  * once `$here/hang` exists, which it fails as `ps` fails, marking `$here/failed`.
  */
-const failingOnceAfterKill = (directory) => warmed(fixture(directory, 'ps', [
+const failingOnceAfterKill = (directory) => fixture(directory, 'ps', [
   'case "$*" in *stat=*)',
   '  if [ -f "$here/hang" ] && [ ! -f "$here/failed" ]; then : > "$here/failed"; echo "ps: failing once on purpose" >&2; exit 2; fi ;;',
   'esac',
   'exec /bin/ps "$@"',
-].join('\n')));
+].join('\n'));
 
 /** Asserts that `events` record `two`, a member the kill left a zombie that later reads listed, as `killed` and as nothing else. */
 function assertZombieKilled(events, directory, killed) {
@@ -1176,7 +1176,7 @@ function answeringOnceAfterKill(directory, name, shown) {
     alive: '$1 == pid && $2 !~ /^Z/ { found = 1 } END { exit !found }',
     zombie: '$1 == pid && $2 ~ /^Z/ { found = 1 } $2 !~ /^Z/ { live = 1 } END { exit !(found && !live) }',
   }[shown];
-  return warmed(fixture(directory, 'ps', [
+  return fixture(directory, 'ps', [
     '[ -f "$here/answered" ] && { : > "$here/failed"; echo "ps: failing on purpose" >&2; exit 2; }',
     '[ -f "$here/hang" ] || exec /bin/ps "$@"',
     'case "$*" in *stat=*) ;; *) exec /bin/ps "$@" ;; esac',
@@ -1184,7 +1184,7 @@ function answeringOnceAfterKill(directory, name, shown) {
     'printf "%s\\n" "$rows"',
     `printf "%s\\n" "$rows" | /usr/bin/awk -v pid="$(/bin/cat "$here/${name}.pid")" '${lists}' && printf "%s\\n" "$rows" > "$here/answered"`,
     'exit 0',
-  ].join('\n')));
+  ].join('\n'));
 }
 
 /** Asserts that the read after the kill that answered listed `pid` alive, and that a read after it failed. */

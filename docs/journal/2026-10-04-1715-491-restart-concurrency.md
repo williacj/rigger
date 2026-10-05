@@ -1,0 +1,48 @@
+ABOUTME: Journal for #491 (M4-10b): concurrency holds across a restart of the installed `run`, with
+makers that never exit and grandchildren left outside their groups.
+
+# #491 — concurrency across a restart
+
+**`run` records no `run.start`.** The verb fires one pull through `trigger`, so L3's `run.start`
+event, which only the loop's `run` entry records, never appears in the verb's stream. The test reads
+each run's record by its `run` id, in the order each id first appears. The killed run is the first
+id, and the restart the second.
+
+**The dispatch's directory census also reaches the stand-in.** The stand-in works in its card's
+workspace root, which is the dispatch's recorded directory. So the restart's sweep of that directory
+would end the stand-in even if the group kill did not. A mutation that removes only the group kill
+survives these tests, and the pull request shows it surviving. The mutations that discriminate are
+listed there: skipping the restart's kill of recorded groups altogether, narrowing "works in" to the
+directory alone, dropping the kill events, raising N by one, and raising the default.
+
+**Raising the cap inside `take` alone is masked.** `trigger` hands the pull a claim limit of N when
+the verb gives none, and `take` claims the smaller of that limit and the free slots. So a mutation of
+the free slots alone changes nothing. Raising N where L3 reads it is the fault these tests catch.
+
+**Item 10 is read before the restart goes on.** The first draft asserted item 10 only after the
+restarted maker held. Under a mutation that skipped the restart's kill, the restarted maker failed to
+start, so the test failed on the wait and never reached item 10's assertion. The test now asserts
+item 10 as soon as the recording `gh` has written its first call.
+
+**The grandchild chain needed a stand-in mode.** The existing `leaveIn` mode starts its process
+straight from the stand-in, so its parent is still alive. The new `orphanIn` mode puts an intermediate
+`node -e` between them. The intermediate stays in the stand-in's group, starts `tail` detached (a new
+session, so a new group), writes the grandchild's pid, and exits. The stand-in, a Node process waiting
+in its hold, reaps it, so the intermediate does not linger as a zombie. The grandchild's command line
+names the stand-in's directory, so that directory's sweep ends it.
+
+**A zombie is told by `ps` state.** `process-fixtures.mjs`'s `alive` uses signal 0, and a zombie
+answers that. So the test reads `ps -o stat=` for every point that asks whether a process is alive,
+and the restart's recording `gh` does the same at its first call.
+
+**npm writes a debug log outside `TMPDIR` by default.** The reviewer found that `npm pack` and
+`npm install`, run by `installFromTarball`, each wrote a debug log to `~/.npm/_logs`. Both now take
+`--logs-dir` under the install's directory. Other sessions on the host write to `~/.npm/_logs` too,
+so a before-and-after listing of it cannot show this on its own. The evidence is that no log there
+names the run's `TMPDIR`: before the fix two did, and after it none did.
+
+**`--offline` still writes to npm's cache.** The reviewer's second round found that installing the
+local tarball writes a `pacote:tarball:file:` index entry, naming the tarball's path under `TMPDIR`,
+to `~/.npm/_cacache/index-v5`. Both npm calls now also take `--cache` under the install's directory.
+The install still works offline with that empty cache, because the package has no runtime
+dependencies. Before this change one run of the file left one such entry; after it, none.

@@ -23,6 +23,10 @@ import { READ_TIMEOUT } from '../src/substrate/process.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
+import { dirname } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { running } from './process-fixtures.mjs';
 import { readsWith } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
@@ -381,11 +385,14 @@ test('given a maker\'s second attempt at one card, L1 makes the scratch director
 /**
  * A `ps` stand-in in a directory of its own: it records each call's arguments to `ps-calls`
  * beside itself, then runs the real `ps` on them. Answers its path and a read of its record.
+ * It is run once before this returns (`warmed`), exiting before its body, so its first exec is not
+ * held inside a run.
  */
 function recordingPs() {
   const directory = temporaryDirectory('rigger-maker-ps-');
   const path = join(directory, 'ps');
-  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${join(directory, 'ps-calls')}'\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  writeFileSync(path, `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> '${join(directory, 'ps-calls')}'\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  warmed(path);
   const calls = () => (existsSync(join(directory, 'ps-calls')) ? readFileSync(join(directory, 'ps-calls'), 'utf8').split('\n').filter(Boolean) : []);
   return { path, calls };
 }
@@ -444,12 +451,15 @@ test('given loop built with neither `ps` nor a read bound, a role\'s dispatch st
 /**
  * A `ps` stand-in whose reads of a start time never answer: it follows a file nothing writes to,
  * by `exec`, so the read L0 gives up on ends with it. Every other read is `ps`'s own.
+ * It is run once before this returns (`warmed`), exiting before its body, so its first exec is not
+ * held inside a run.
  */
 function hangingStartPs() {
   const directory = temporaryDirectory('rigger-maker-ps-hangs-', { beforeRemoval: () => sweep(directory) });
   writeFileSync(join(directory, 'hold'), '');
   const path = join(directory, 'ps');
-  writeFileSync(path, `#!/bin/sh\ncase "$*" in *lstart=*) exec /usr/bin/tail -f '${join(directory, 'hold')}' ;; esac\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  writeFileSync(path, `#!/bin/sh\n${EXIT_IF_WARMING}\ncase "$*" in *lstart=*) exec /usr/bin/tail -f '${join(directory, 'hold')}' ;; esac\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+  warmed(path);
   return path;
 }
 
@@ -467,4 +477,18 @@ test('given loop built with a read bound, a role\'s dispatch reaches L1 with it:
   assert.equal(reached.outcome.status, 'rejected', JSON.stringify(reached.outcome));
   assert.match(reached.outcome.reason.message, /could not read when the leader of group \d+ started/);
   assert.ok(took < READ_TIMEOUT, `the pull took ${took} ms, as long as L0's own bound of ${READ_TIMEOUT} ms`);
+});
+
+test('a recording `ps` stand-in, once made, has recorded no call, and its directory holds only itself', () => {
+  const ps = recordingPs();
+
+  assert.deepEqual(ps.calls(), []);
+  assert.deepEqual(readdirSync(dirname(ps.path)), ['ps']);
+});
+
+test('a `ps` stand-in whose start-time reads never answer, once made, has left nothing beside itself and no process running it', () => {
+  const path = hangingStartPs();
+
+  assert.deepEqual(readdirSync(dirname(path)).sort(), ['hold', 'ps']);
+  assert.deepEqual(running(path), []);
 });

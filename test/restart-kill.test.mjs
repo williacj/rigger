@@ -20,7 +20,6 @@ import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup,
 import { leaveWorking } from './process-fixtures.mjs';
 import { assertUntouched, tailIn } from './process-fixtures.mjs';
 import { chmodSync, rmSync, statSync } from 'node:fs';
-import { warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 
@@ -483,13 +482,13 @@ test('given the engine SIGKILLed while a dispatched command and its child run, a
  */
 function heldStartRead(directory) {
   spawnSync('/usr/bin/mkfifo', [join(directory, 'release')]);
-  return warmed(fixture(directory, 'ps', [
+  return fixture(directory, 'ps', [
     'case "$*" in *lstart=*)',
     '  : > "$here/reading"',
     '  read line < "$here/release" ;;',
     'esac',
     'exec /bin/ps "$@"',
-  ].join('\n')));
+  ].join('\n'));
 }
 
 // proves R-STATE-10
@@ -628,7 +627,7 @@ test('given a recorded group with a live member whose start-time read exits 1 an
   const started = await withoutLeader(t, await startGroup(t, world.directory, 'group'));
   writeGroups(world.state, [entryFor(started)]);
 
-  const ran = await onceWithPs(world, warmed(fixture(world.directory, 'ps', 'exit 1')));
+  const ran = await onceWithPs(world, fixture(world.directory, 'ps', 'exit 1'));
 
   assert.notEqual(ran.code, 0, ran.text);
   assertNamesEntry(ran.text, started);

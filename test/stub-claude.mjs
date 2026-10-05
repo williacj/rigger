@@ -12,8 +12,10 @@ import { stubGh } from './stub-gh.mjs';
 import { execFileSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
@@ -50,6 +52,12 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *
  * An act holds, in the order the run does them:
  *
+ * - `orphanIn`: starts an intermediate process in the run's own process group, working in
+ *   `orphanIn`, a path relative to its working directory, which it makes. The intermediate starts
+ *   `/usr/bin/tail -f` on `orphan-<card>-<role>` beside the stand-in, in a process group of its
+ *   own, so it works where the intermediate does, writes that grandchild's pid to
+ *   `orphan-pid-<card>-<role>` beside the stand-in, and exits. The run writes the intermediate's
+ *   pid to `intermediate-pid-<card>-<role>`, and goes on to its next act without waiting;
  * - `hold`: writes its pid to `held-<card>-<role>` beside itself, and waits until the test releases
  *   it with `SIGUSR1`, removing the file once it hears it. It adds the listener before it writes
  *   the file, so a release sent at any moment after the file appears is heard. A wait on a change
@@ -91,16 +99,19 @@ export function standInAgent(plan = {}) {
 /**
  * The stand-in agent `standInAgent` describes, installed in `dir`, a directory the caller made and
  * ends, beside whatever else it holds: for a world whose one directory is the whole `PATH`.
+ * It is run once before this returns (`warmed`), exiting before it reads its plan or records a
+ * run, so the system's hold on its first exec is paid here.
  */
 export function installStandInAgent(dir, plan = {}) {
   writePlan(dir, plan);
-  const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
+  const entry = `process.env.RIGGER_FIXTURE_WARMING || import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
   writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
   // A plan to exec a command under every card installs a shell in its place, which `exec`s the
   // command: Node 20, the floor the README sets, has no `process.execve` for the stand-in to call.
   const exec = Object.values(plan['*'] ?? {}).find((act) => act.exec !== undefined)?.exec;
-  if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\nexec ${exec.map(quoted).join(' ')}\n`);
+  if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nexec ${exec.map(quoted).join(' ')}\n`);
   chmodSync(join(dir, 'claude'), 0o755);
+  warmed(join(dir, 'claude'));
   const read = () => JSON.parse(readFileSync(join(dir, PLAN), 'utf8'));
   return {
     dir,
@@ -131,6 +142,10 @@ export function installStandInAgent(dir, plan = {}) {
     release: (card, role = 'engineer') => process.kill(heldPid(dir, card, role), 'SIGUSR1'),
     /** Whether a run for `card` in `role` wrote its file. */
     wrote: (card, role = 'engineer') => existsSync(marker(dir, 'wrote', card, role)),
+    /** The pid of the grandchild `orphanIn` left for `card` in `role`, or undefined until its pid is written. */
+    orphan: (card, role = 'engineer') => writtenPid(marker(dir, 'orphan-pid', card, role)),
+    /** The pid of the intermediate `orphanIn` started for `card` in `role`, or undefined until its pid is written. */
+    intermediate: (card, role = 'engineer') => writtenPid(marker(dir, 'intermediate-pid', card, role)),
     /** The pid of the run for `card` in `role` that holds now, or undefined where none holds. */
     holder: (card, role = 'engineer') => {
       try {
@@ -164,6 +179,38 @@ function heldPid(dir, card, role) {
   const pid = Number(readFileSync(marker(dir, 'held', card, role), 'utf8'));
   if (!Number.isInteger(pid) || pid <= 1) throw new Error(`the stand-in's hold for card ${card} names no pid it could signal`);
   return pid;
+}
+
+/** The pid written whole at `path`, or undefined where nothing is written there yet. */
+const writtenPid = (path) => (existsSync(path) ? Number(readFileSync(path, 'utf8')) : undefined);
+
+/** Writes `text` to `path` whole, then renames it into place, so no reader sees it half written. */
+function writeWhole(path, text) {
+  writeFileSync(`${path}.partial`, text);
+  renameSync(`${path}.partial`, path);
+}
+
+/**
+ * Starts the intermediate `orphanIn` describes, for `card` in `role`, working in `where`, a path
+ * relative to the run's working directory, with its pid and its grandchild's written in `dir`. The
+ * grandchild's command line names `dir`, so the sweep that ends every run of the stand-in ends it.
+ */
+function orphanIn(dir, card, role, where) {
+  const cwd = resolve(where);
+  mkdirSync(cwd, { recursive: true });
+  const followed = marker(dir, 'orphan', card, role);
+  writeFileSync(followed, '');
+  const written = marker(dir, 'orphan-pid', card, role);
+  const code = [
+    "const { spawn } = require('node:child_process');",
+    "const { renameSync, writeFileSync } = require('node:fs');",
+    `const tail = spawn('/usr/bin/tail', ['-f', ${JSON.stringify(followed)}], { detached: true, stdio: 'ignore' });`,
+    `writeFileSync(${JSON.stringify(`${written}.partial`)}, String(tail.pid));`,
+    `renameSync(${JSON.stringify(`${written}.partial`)}, ${JSON.stringify(written)});`,
+    'tail.unref();',
+  ].join('\n');
+  const intermediate = spawn(process.execPath, ['-e', code], { cwd, stdio: 'ignore' });
+  writeWhole(marker(dir, 'intermediate-pid', card, role), String(intermediate.pid));
 }
 
 /** The value following `flag` among `args`, or undefined where `flag` is not there. */
@@ -247,6 +294,7 @@ export async function standInMain() {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(RECORDED)));
   appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
   const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
+  if (act.orphanIn !== undefined) orphanIn(dir, card, role, act.orphanIn);
   if (act.hold) {
     await holding(marker(dir, 'held', card, role));
   }
