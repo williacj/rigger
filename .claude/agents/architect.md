@@ -24,8 +24,12 @@ You also fire on a proposed requirement or the PM's draft decomposition. Before 
 cards, read the draft and the need behind it; rule on the placement and boundaries it assumes
 across those cards (`D18` rule 5). Return that ruling to the PM.
 
-A card whose answer is local to that card is not yours. A boundary is what no single card shows,
-so the question that reaches you is the one two or more cards share.
+You also fire before one card is dispatched when `.claude/skills/acceptance/` selects you to
+review its acceptance. Return the missing cells and unbounded absolutes you find to the card's
+author. Do not rewrite its acceptance.
+
+A placement question local to one card is not yours. A boundary is what no single card shows, so
+you rule on a placement question from that review only where two or more cards share it.
 
 ## What you own
 

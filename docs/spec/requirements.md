@@ -18,6 +18,11 @@ would reverse it. `docs/spec/decisions.md` holds those. Where a requirement foll
 decision it cites it, and the decision is where the reasoning lives. A requirement citing nothing
 originates here.
 
+A row may bound its scope with a dimensions table. Put that table under the row's group, directly
+after the group's row table. Give it a level-three heading beginning with the row's id, for
+example `### R-STATE-21 — Read and member states`; the row cites its id and that heading. The
+table binds as its row does.
+
 **Scope.** These bind a Rigger deployment: the engine, the gate, the roles and configuration a
 consumer supplies, and the machine they run on. Some conditions Rigger checks; others it can only
 instruct a role to honour. Rules that bind work in this repository, rather than the product, are
@@ -70,6 +75,10 @@ A withdrawn requirement leaves this document, and only the owner withdraws one. 
 `docs/spec/requirements-retired.md`, which binds nothing and exists so that a citation to a
 withdrawn id still resolves and so that the id is never allocated again. The duplicate-id check
 reads both files. A group with no requirements yet is not written until it has one.
+
+A withdrawn row's dimensions table moves with it to `docs/spec/requirements-retired.md`. Editing
+the table to move any cell in or out of scope changes what must be true, so the row takes a new id
+under the test above.
 
 ## R-CARD — what a card states
 

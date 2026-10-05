@@ -78,6 +78,9 @@ mean. Read it there. What the proposal owes beyond it:
 - **State its limit.** Each row you propose states the edge past which it does not hold, or rests
   on a table of the dimensions it depends on, each combination marked in or out of scope.
   `.claude/skills/acceptance/`, under "Systems outside Rigger's code", holds that table's form.
+  A ratified row's table lives in `docs/spec/requirements.md`, under its group, directly after
+  that group's row table. Head it with the row's id, for example
+  `### R-STATE-21 — Read and member states`. The row cites its own id and that heading.
 
 **A proposal never lands in either register.** Every row in `docs/spec/requirements.md` and every
 entry in `docs/spec/decisions.md` binds, so yours waits in the pull request until the owner
@@ -167,4 +170,6 @@ mode 1 in `.claude/agents/pm.md`.
 11. Does out of scope name what a reader would expect and not find, each with its reason?
 12. Does the draft say what ratifying it costs?
 13. Does anything in the draft change what a ratified decision means?
-14. Does every row state its limit, or rest on a table of the dimensions it depends on?
+14. Does every row state its limit, or rest on a table of the dimensions it depends on? If it has
+    a table, does that table live under its group directly after the row table in
+    `docs/spec/requirements.md`?
