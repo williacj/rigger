@@ -1,4 +1,4 @@
-ABOUTME: Journal for #489 (M4-09): why every Codex session now gets a writable temporary directory
+ABOUTME: Journal for #489 (M4-14): why every Codex session now gets a writable temporary directory
 in its scratch directory, and the architecture exception that allows it (O93).
 
 # #489: a temporary directory for every Codex session

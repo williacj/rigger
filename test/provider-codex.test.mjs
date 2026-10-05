@@ -140,7 +140,7 @@ test('the invocation passes --disable plugins and --disable apps, and disables e
   for (const feature of ['plugins', 'apps', ...HOST_FEATURES]) assert.ok(off.includes(feature), `${feature} is not disabled: ${args.join(' ')}`);
 });
 
-test('the invocation sets CODEX_HOME, and nothing else, to a directory in the dispatch\'s scratch directory holding the directory\'s declaration as its config.toml and a link to the owner\'s auth.json', async (t) => {
+test('the invocation sets CODEX_HOME to a directory in the dispatch\'s scratch directory holding the directory\'s declaration as its config.toml and a link to the owner\'s auth.json, and TMPDIR and TMPPREFIX to its temporary directory', async (t) => {
   const { directory, scratch: made, agent, owner } = layout(t);
   onPath({ skills: [] });
 

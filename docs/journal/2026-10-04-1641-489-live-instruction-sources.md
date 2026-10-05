@@ -1,4 +1,4 @@
-ABOUTME: Journal for #489 (M4-09): why the live judge test checks head's markers in the session's
+ABOUTME: Journal for #489 (M4-14): why the live judge test checks head's markers in the session's
 instruction sources rather than anywhere in its rollout.
 
 # #489: what the live judge test means by "loads nothing of head's"
