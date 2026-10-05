@@ -42,7 +42,7 @@ async function until(condition, within, t) {
   return condition();
 }
 
-async function runEnding(t, ending, kind) {
+async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
   const directory = scratch(t);
   const tmp = join(directory, 'tmp');
   mkdirSync(tmp);
@@ -99,6 +99,10 @@ async function runEnding(t, ending, kind) {
       "  process.kill(fixturePid, 0);",
     ]),
     `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, String(fixturePid));`,
+    ...(holdPidPublication ? [
+      `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, '');`,
+      `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
+    ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
     ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : '  await new Promise(() => {});',
     '});',
@@ -124,8 +128,16 @@ async function runEnding(t, ending, kind) {
   }
   if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
   if (ending === 'E6') {
-    assert.equal(await until(() => existsSync(join(directory, 'file-pid')), 10_000, t), true, `the test file wrote no pid: ${readFileSync(output, 'utf8')}`);
-    const filePid = Number(readFileSync(join(directory, 'file-pid'), 'utf8'));
+    if (holdPidPublication) setImmediate(() => {
+      if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
+    });
+    const pidFile = join(directory, 'file-pid');
+    let filePid = 0;
+    assert.equal(await until(() => {
+      if (!existsSync(pidFile)) return false;
+      filePid = Number(readFileSync(pidFile, 'utf8'));
+      return Number.isSafeInteger(filePid) && filePid > 0;
+    }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
     assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
     const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
     assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
@@ -136,6 +148,8 @@ async function runEnding(t, ending, kind) {
   assert.deepEqual(left, [], `processes from ${tmp} survived: ${left.join('\n')}\n${readFileSync(output, 'utf8')}`);
   assert.equal(removed, true, `the suite left ${join(tmp, runName)}: ${readFileSync(output, 'utf8')}`);
 }
+
+test('E6 waits for a complete positive file pid before signaling', { timeout: 30_000 }, (t) => runEnding(t, 'E6', 'F1', { holdPidPublication: true }));
 
 for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
   test(`${ending} ends an F1 busy fixture by ten seconds after the run ends`, { timeout: 30_000 }, (t) => runEnding(t, ending, 'F1'));
