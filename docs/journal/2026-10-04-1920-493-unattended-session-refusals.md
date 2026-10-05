@@ -21,8 +21,9 @@ finding.
 on the strength of one refused edit of `.claude/settings.json`. The hook script lies under `./**` too,
 and that was unmeasured. Measured on review, Claude Code refuses every write to the script tried.
 `Edit`, `Write`, redirection and `cp` were refused as "a sensitive file", and `tee` as needing
-approval. So the entry stands, but the
-first claim had outrun its evidence.
+approval. Round 2 asked the same of
+`.claude/settings.json` by shell. `>`, `>>` and `cp` were refused as not granted, and `tee` as
+needing approval. So the entry stands, but the first claim had outrun its evidence.
 
 **What the judges did instead.** Refused one route, a judge tried the next. They tried
 `npm --prefix`, `git -C`, `git worktree add`, `git checkout` in `main` and `git archive | tar`, each
