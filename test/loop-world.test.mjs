@@ -105,11 +105,11 @@ test('given an answer that is an Error, that card\'s maker dispatch rejects with
     return settled(card, outcome);
   };
 
-  await drive(built);
+  await assert.rejects(drive(built));
 
-  assert.deepEqual(received.map((outcome) => [outcome.status, outcome.reason?.code]), [['rejected', NOT_STARTED]]);
+  assert.deepEqual(received.map((outcome) => [outcome.status, outcome.reason?.code]), [['rejected', NOT_STARTED], ['rejected', NOT_STARTED]]);
   assert.deepEqual(built.agent.runs(), []);
-  assert.deepEqual(built.dispatches.started, [1], 'a card whose maker never starts still counts as started');
+  assert.deepEqual(built.dispatches.started, [1, 1], 'each attempt whose maker never starts still counts as started');
 });
 
 test('given a held stand-in released while its group is still being contained, drive does not release the next round until that card\'s slot.release is recorded', SETTLES_WITHIN, async () => {

@@ -464,6 +464,9 @@ test('given run where the maker does not start, run exits non-zero, and prints t
   assert.equal(lines.length, 1, ran.err);
   assert.match(lines[0], /^rigger run: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
+  const attempts = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.deepEqual(attempts.map((line) => /^attempt (\d+): /.exec(line)?.[1]), ['1', '2']);
+  assert.ok(attempts.every((line) => /settings\.json is no JSON/.test(line)), ran.err);
 });
 
 // The judges, dispatched through L1 to the stand-in agent under each card's one claim (#490).

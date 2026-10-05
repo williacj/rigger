@@ -203,17 +203,18 @@ test('given roleDispatch rejecting with NOT_STARTED, L3 hands that outcome to L2
   const roles = { ...config.roles, engineer: { ...config.roles.engineer, provider: 'nowhere' } };
   const built = makerWorld({ roles });
 
-  const [reached] = await built.loop.pull();
+  const failure = await built.loop.pull().then(() => assert.fail('the stopped pull fulfilled'), (thrown) => thrown);
+  const stop = failure.errors.find((each) => each.card === 1 && each.attemptFailures);
 
-  assert.equal(reached.outcome.status, 'rejected');
-  assert.equal(reached.outcome.reason.code, NOT_STARTED);
+  assert.deepEqual(stop.attemptFailures.map(({ status }) => status), ['rejected', 'rejected']);
+  assert.deepEqual(stop.attemptFailures.map(({ code }) => code), [NOT_STARTED, NOT_STARTED]);
   const events = built.events();
   const [start] = named(events, 'L3', 'dispatch');
   assert.equal(start.role, 'engineer');
   assert.deepEqual(events.filter((each) => each.layer === 'L1' && each.dispatch === start.dispatch), []);
   const failed = named(events, 'L2', 'maker.failed');
-  assert.deepEqual(failed.map(({ card, class: classed }) => ({ card, class: classed })), [{ card: 1, class: 'environment' }]);
-  assert.equal(failed[0].reason, reached.outcome.reason.message);
+  assert.deepEqual(failed.map(({ card, class: classed }) => ({ card, class: classed })), [{ card: 1, class: 'environment' }, { card: 1, class: 'environment' }]);
+  assert.deepEqual(failed.map(({ reason }) => reason), stop.attemptFailures.map(({ reason }) => reason));
   assert.deepEqual(built.agent.runs(), []);
 });
 

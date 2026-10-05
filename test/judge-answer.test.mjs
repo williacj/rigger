@@ -205,7 +205,7 @@ test('given a judge\'s required step that failed, L2 answers no retry of that ju
   const before = answer(card());
   const next = answer(card(), { outcomes: { reviewer: [exited(3)] } });
 
-  assert.deepEqual(Object.keys(next).sort(), ['action', 'judges', 'kind']);
+  assert.deepEqual(Object.keys(next).sort(), ['action', 'judges', 'kind', 'withheld']);
   assert.deepEqual(next.judges, before.judges.filter((each) => each.role !== 'reviewer'));
 });
 

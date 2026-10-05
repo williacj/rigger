@@ -215,7 +215,7 @@ async function pullWithRoles(cards, roles) {
   const decide = (card, outcomes, attempt) => nextAction(card, KINDS, undefined, { columns: COLUMNS, roles, provisioning: {}, outcomes, sink, ...attempt });
   const workspace = recordingWorkspaces();
   const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } });
-  const reached = await built.pull();
+  const reached = await built.pull().then(() => assert.fail('the stopped pull fulfilled'), (failure) => failure.errors.filter((each) => each.attemptFailures));
   return { fake, reached, events: () => readEvents(directory), asked: workspace.asked };
 }
 
@@ -226,9 +226,11 @@ test('given a card carrying two labels the maker role\'s labels maps to two diff
 
   const { fake, reached, events, asked } = await pullWithRoles([conflicted, readyCard(22)], roles);
 
-  assert.deepEqual(reached.map(({ card, outcome }) => ({ card, status: outcome.status, code: outcome.reason?.code })), [{ card: 22, status: 'rejected', code: NOT_STARTED }]);
+  assert.deepEqual(reached.map(({ card, attemptFailures }) => ({ card, attempts: attemptFailures.map(({ status, code }) => ({ status, code })) })), [
+    { card: 22, attempts: [{ status: 'rejected', code: NOT_STARTED }, { status: 'rejected', code: NOT_STARTED }] },
+  ]);
   const moved = fake.writes().map(({ args: [id] }) => id);
   assert.ok(!moved.includes((await fake.operations.readItems()).find((item) => item.number === 21).id), JSON.stringify(fake.writes()));
   assert.deepEqual(events().filter((event) => event.layer === 'L3' && event.event === 'pull').map((event) => event.card), [22]);
-  assert.deepEqual(asked, [22]);
+  assert.deepEqual(asked, [22, 22]);
 });
