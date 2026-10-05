@@ -135,6 +135,29 @@ function failingWorld(kind, { other = true } = {}) {
   return { ...built, loop: loop({ ...built.handed, board: guarded }), made: making.made, reads: () => reads };
 }
 
+// proves R-FAIL-2
+test('a rejected maker settle does not record an attempt retry that L3 will not make', SETTLES_WITHIN, async () => {
+  const built = failingWorld('maker', { other: false });
+  const refusal = new Error('the second maker settle was refused');
+  let settles = 0;
+  const l2 = { ...built.handed.l2, settled: async (card, outcome) => {
+    settles += 1;
+    if (settles === 2) throw refusal;
+    return built.handed.l2.settled(card, outcome);
+  } };
+
+  const [reached] = await loop({ ...built.handed, l2 }).pull(1);
+
+  assert.equal(settles, 2);
+  assert.equal(reached.outcome.status, 'rejected');
+  assert.equal(reached.outcome.reason.code, NOT_STARTED);
+  assert.equal(reached.settled.status, 'rejected');
+  assert.equal(reached.settled.reason, refusal);
+  assert.equal(built.made.length, 2);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.failed').map(({ attempt }) => attempt), [1]);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again']]);
+});
+
 /** Runs card 1's failure while card 2 holds a slot, then releases card 2 and captures the run. */
 async function runFailure(kind) {
   const built = failingWorld(kind);

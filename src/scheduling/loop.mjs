@@ -170,8 +170,8 @@ function released(release, claim, failure) {
  * next action L3 asks once for each card at the pull, as `take` says. `decide` is L2's next action
  * for a card, which L3 asks within each attempt as `decide(card, outcomes, options)`: with the
  * attempt's outcomes after each step, with none once a later attempt's workspace is made, and
- * with L1's failure as `workspace` where it could not be made. After a maker dispatch never
- * started, L3 hands its outcome back as `maker`; `attempt` numbers either failure from 1. L2 alone
+ * with L1's failure as `workspace` where it could not be made. After each maker dispatch,
+ * L3 hands its outcome back unread as `maker`; `attempt` numbers each attempt from 1. L2 alone
  * names the steps L3 dispatches, and whether the
  * card is attempted again (the architect's ruling 6, Q-A and Q-D, and ruling 1, A1, on #423). After
  * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
@@ -300,8 +300,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    *
    * An answer that dispatches no step is the maker: the role the answer's `maker` names,
    * dispatched through L1 as `dispatchRole` says. L3 hands L2 each maker outcome unread, first
-   * to `settled` and then to `decide` with the attempt number. L3 follows L2's `again` or `stop`
-   * answer where the settle recorded it; a retry makes a fresh workspace. Otherwise the attempt
+   * to `settled` and, where the settle succeeded, to `decide` with the attempt number. L3 follows
+   * L2's `again` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
    * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
    * Where the settle
@@ -351,8 +351,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
       const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
-      answer = decide(card, [], { attempt: number, maker: outcome });
-      if (settled.status === 'fulfilled' && advance(answer, number)) continue;
+      if (settled.status === 'fulfilled') {
+        answer = decide(card, [], { attempt: number, maker: outcome });
+        if (advance(answer, number)) continue;
+      }
       const reached = { card: card.number, workspace: path, outcome, settled };
       kept(reached);
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
