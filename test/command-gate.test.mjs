@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const gate = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -21,9 +23,10 @@ const gate = join(
  * What the gate promises is an exit code and a decision, and nothing short of running it as a
  * process observes either. `exit 2` is the blocking code Claude Code reads; `exit 0` steps aside.
  */
-function rule(command) {
+function rule(command, cwd) {
   const result = spawnSync(process.execPath, [gate], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+    input: JSON.stringify({ tool_name: 'Bash', cwd, tool_input: { command } }),
+    cwd,
     encoding: 'utf8',
   });
   return { code: result.status, reason: result.stderr.trim(), decision: result.stdout };
@@ -39,6 +42,22 @@ const refuses = (command, why) => {
   assert.equal(code, 2, `the gate permitted a command it should have refused: ${why}`);
   assert.match(decision, /"permissionDecision":"deny"/, 'the decision was not a deny');
 };
+
+for (const defaultBranch of ['main', 'trunk']) {
+  test(`a literal refspec to ${defaultBranch} is denied before Bash runs`, () => {
+    const directory = temporaryDirectory('rigger-command-gate-push-');
+    const source = repositoryAt(join(directory, 'source'), { README: 'first\n' });
+    gitIn(source, 'branch', '-M', defaultBranch);
+    const remote = bareCloneInto(source, join(directory, 'remote.git'));
+    const clone = cloneInto(remote, join(directory, 'clone'));
+
+    const { code, decision, reason } = rule(`git push origin HEAD:${defaultBranch}`, clone);
+    assert.equal(code, 2, reason);
+    assert.match(decision, /"permissionDecision":"deny"/);
+    assert.ok(reason.includes(defaultBranch), reason);
+    assert.equal(rule('git push origin HEAD:topic', clone).code, 0);
+  });
+}
 
 /** A command written over several lines. Joined here so the source has no literal line breaks,
  * which a checkout on a machine that rewrites them would otherwise turn into `\r\n`. */

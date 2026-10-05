@@ -56,6 +56,13 @@ test('every hook reaches the shared suite check rather than restating it', () =>
   // a hook checked out with CRLF fails on its own shebang, which is what `.gitattributes` pins
   // `.githooks/*` to LF for, so a line ending that arrived here is a finding too.
   const restated = readdirSync(hooks)
-    .filter((name) => name !== SHARED && body(name) !== DELEGATION);
+    .filter((name) => name !== SHARED && name !== 'pre-push' && body(name) !== DELEGATION);
   assert.deepEqual(restated, []);
+});
+
+test('pre-push reaches the shared suite check after its own refusal', () => {
+  const lines = body('pre-push').split('\n');
+  assert.equal(lines.at(-1), DELEGATION);
+  assert.equal(lines.filter((line) => line === DELEGATION).length, 1);
+  assert.doesNotMatch(body('pre-push'), /npm test/);
 });

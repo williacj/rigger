@@ -1,7 +1,8 @@
-// ABOUTME: Claude Code's PreToolUse gate on the Bash tool. Refuses the git spellings AGENTS.md
-// reserves to the owner — --no-verify, a force push, a branch delete — wherever the flag is written.
+// ABOUTME: Claude Code's PreToolUse gate on Bash. Refuses reserved git spellings and literal
+// pushes to the default branch, whose name it reads from the local remote HEAD.
 // Reads the hook payload on stdin; prints a deny decision, or nothing when it has no objection.
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const EVENT = 'PreToolUse';
@@ -487,6 +488,40 @@ const PUSH_RESERVED_OPERAND = (word) =>
       ? 'deleting a remote branch (the :branch form)'
       : null;
 
+/** Refuse a refspec that spells the local remote's default branch as its destination. */
+function literalDefaultPush(words, cwd) {
+  let remote = null;
+  const operands = [];
+  walkArguments(
+    words,
+    'push',
+    (option, raw) => {
+      if (option === '--repo' && raw.startsWith('--repo=')) remote = raw.slice('--repo='.length);
+    },
+    (operand) => operands.push(operand),
+  );
+  remote ??= operands.shift();
+  if (!remote) return null;
+
+  const named = spawnSync('git', ['symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], {
+    cwd, encoding: 'utf8',
+  });
+  const prefix = `refs/remotes/${remote}/`;
+  const answer = named.stdout?.trim();
+  if (named.status !== 0 || !answer?.startsWith(prefix)) return null;
+  const branch = answer.slice(prefix.length);
+  if (!branch) return null;
+
+  for (const refspec of operands) {
+    const colon = refspec.lastIndexOf(':');
+    const destination = colon === -1 ? refspec : refspec.slice(colon + 1);
+    if (destination === branch || destination === `refs/heads/${branch}`) {
+      return `a push to the default branch ${branch}`;
+    }
+  }
+  return null;
+}
+
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -722,7 +757,7 @@ function commandsCarriedInAWord(words, option) {
 }
 
 /** Inspect one command. Returns the reason to refuse, or null. */
-function objectionTo(given, depth) {
+function objectionTo(given, depth, cwd) {
   // A command may carry environment assignments and shell keywords before the program it runs:
   // `GIT_AUTHOR_DATE=… git commit …` and `{ git push --force; }` both run git, and neither has it
   // as word one.
@@ -786,6 +821,7 @@ function objectionTo(given, depth) {
   // Step over git's own options to reach the subcommand, and read the config it sets on the way.
   let i = 1;
   let subcommand = null;
+  let literalCwd = given[0] === words[0] ? cwd : null;
   for (; i < words.length; i++) {
     const word = words[i];
     if (!word.startsWith('-')) {
@@ -793,6 +829,7 @@ function objectionTo(given, depth) {
       i++;
       break;
     }
+    literalCwd = null;
     if (word === '-c' || word === '--config-env') {
       const setting = words[i + 1] ?? '';
       if (/^core\.hooksPath\s*=/i.test(setting)) return 'turning the repository hooks off (core.hooksPath)';
@@ -825,6 +862,9 @@ function objectionTo(given, depth) {
       if (subcommand === 'push') objection ??= PUSH_RESERVED_OPERAND(operand);
     },
   );
+  if (!objection && subcommand === 'push' && literalCwd) {
+    objection = literalDefaultPush(words.slice(i), literalCwd);
+  }
   return objection;
 }
 
@@ -851,7 +891,7 @@ function main() {
   }
 
   for (const words of commands) {
-    const objection = objectionTo(words, 0);
+    const objection = objectionTo(words, 0, commands.length === 1 ? payload.cwd : null);
     if (objection) {
       refuse(
         `AGENTS.md reserves this to the owner: ${objection}. Ask, rather than working around it.`,
