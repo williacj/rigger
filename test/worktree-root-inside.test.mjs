@@ -13,6 +13,7 @@ import { sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin, worktreeAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -57,14 +58,24 @@ function consumerAt(directory, rootFor, name = 'widgets') {
 const listing = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : null);
 
 /**
+ * A stand-in for the agent CLI the template's roles dispatch through, placed in `dir`, which exits
+ * 0 and does nothing else. It is run once before this returns, so its first exec is not held
+ * inside a run (`warmed`), and that run exits before its body.
+ */
+function installAgentCli(dir) {
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nexit 0\n`);
+  chmodSync(join(dir, 'claude'), 0o755);
+  warmed(join(dir, 'claude'));
+}
+
+/**
  * Runs the real bin's `verb` from `cwd`, with a fake `gh` holding the one ready card first on PATH
  * and an agent CLI stand-in beside it. Answers what it printed and exited, and the fake's model.
  */
 function ranFrom(verb, cwd) {
   const dir = temporaryDirectory('rigger-root-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [READY] } });
-  writeFileSync(join(dir, 'claude'), '#!/bin/sh\nexit 0\n');
-  chmodSync(join(dir, 'claude'), 0o755);
+  installAgentCli(dir);
   const env = { ...process.env, PATH: [dir, process.env.PATH].join(delimiter) };
   const ran = spawnSync(process.execPath, [bin, verb], { cwd, encoding: 'utf8', env });
   assert.equal(ran.error, undefined);
@@ -269,4 +280,12 @@ test('the source-tree guard reads a directory inside the package whose name begi
   assert.equal(sameTree(inside, directory), true);
   assert.equal(sameTree(directory, inside), true);
   assert.equal(sameTree(join(dirname(directory), `${basename(directory)}-beside`), directory), false);
+});
+
+test('the agent CLI stand-in, once installed, has left nothing beside itself', () => {
+  const dir = temporaryDirectory('rigger-warming-agent-');
+
+  installAgentCli(dir);
+
+  assert.deepEqual(listing(dir), ['claude']);
 });

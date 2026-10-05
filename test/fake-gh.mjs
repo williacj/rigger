@@ -9,6 +9,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
 import { branchesIn, checkedOut, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -672,6 +673,9 @@ async function answering(statePath) {
   process.stdout.write(`${JSON.stringify({ data })}\n`);
 }
 
+/** The one argument the warming run of the fake `gh` is given, which no `gh` command is. */
+export const WARMING = '--rigger-fixture-warm';
+
 /**
  * Installs a fake `gh` in `dir`, answering as `gh` would for the board numbered `project` among
  * the boards of `owner`, or of `repo`'s owner where no `owner` is given, which holds `board`: the
@@ -683,15 +687,21 @@ async function answering(statePath) {
  *
  * `origin`, where given, is the path of the test's local bare repository, which the fake `gh`
  * reads the branches of, and opens a pull request from with `gh pr create`.
+ *
+ * The executable is run once before this returns (`warmed`), so the system's hold on its first
+ * exec is paid here. The fake `gh` reads no environment variable, so that run is given `WARMING` as
+ * its one argument, and the entry exits before it loads this module or records a command when that
+ * is the only argument it has. Any other command, one with no argument among them, is recorded.
  */
 export function installFakeGh(dir, { repo, owner, project, board = {}, origin }) {
   const statePath = join(dir, 'board.json');
   writeFileSync(statePath, JSON.stringify({ repo, owner, project, model: board, origin, writes: [], sent: [] }));
   const gh = join(dir, 'gh');
   // CommonJS, because nothing beside it says otherwise, and so it loads this module dynamically.
-  const entry = `import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
+  const entry = `(process.argv.length !== 3 || process.argv[2] !== ${JSON.stringify(WARMING)}) && import(${JSON.stringify(import.meta.url)}).then(({ main }) => main(${JSON.stringify(statePath)}));\n`;
   writeFileSync(gh, `#!${process.execPath}\n${entry}`);
   chmodSync(gh, 0o755);
+  warmed(gh, [WARMING]);
   const state = () => JSON.parse(readFileSync(statePath, 'utf8'));
   return { gh, model: () => boardOf(state()), sent: () => state().sent };
 }
@@ -716,6 +726,7 @@ const MOVE = 'updateProjectV2ItemFieldValue';
  * move, replaces the event stream at `stream` with a directory of that name, which no append
  * can open: the board has taken the claim move, and the record then refuses its event. Placed
  * on PATH ahead of the fake, whose own directory must follow it there.
+ * It is run once before this returns (`warmed`), exiting before it runs the fake.
  */
 export function installGhRefusingStreamAfterMove(dir, fake, stream) {
   const gh = join(dir, 'gh');
@@ -724,6 +735,7 @@ export function installGhRefusingStreamAfterMove(dir, fake, stream) {
   }
   writeFileSync(gh, [
     '#!/bin/sh',
+    EXIT_IF_WARMING,
     `'${fake}' "$@"`,
     'status=$?',
     `case "$*" in *${MOVE}*) rm -f '${stream}'; mkdir -p '${stream}' ;; esac`,
@@ -731,5 +743,6 @@ export function installGhRefusingStreamAfterMove(dir, fake, stream) {
     '',
   ].join('\n'));
   chmodSync(gh, 0o755);
+  warmed(gh);
   return gh;
 }

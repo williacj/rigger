@@ -19,6 +19,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn } from './git-repository.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -61,11 +62,14 @@ const consumerRepository = (concurrency) => {
  * A stand-in for the agent CLI every role in the template's config dispatches through, placed in
  * `dir`, which records each run beside itself. A dispatch in M2 and M4 runs the provider's CLI,
  * so a run of it is what a started dispatch would show.
+ * It is run once before this returns (`warmed`), exiting before its body, so its first exec is not
+ * held inside a run.
  */
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
+  warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
 }
 
@@ -574,4 +578,13 @@ test('given run at N of 2 over two cards whose reviewer exits 0 and whose archit
     assert.deepEqual(lines.slice(claimed + 1, claimed + 3), [judgeLine(number, 'reviewer', 'exited 0'), refused(number)], ran.err);
     assert.equal(lines.filter((line) => line.includes(`card #${number}'s judge`)).length, 2, ran.err);
   }
+});
+
+test('the agent CLI stand-in, once installed, has recorded no run, and its directory holds only itself', () => {
+  const dir = temporaryDirectory('rigger-warming-agent-');
+
+  const agent = installAgentCli(dir);
+
+  assert.deepEqual(agent.runs(), []);
+  assert.deepEqual(readdirSync(dir).sort(), ['claude']);
 });

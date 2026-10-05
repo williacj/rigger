@@ -23,6 +23,7 @@ import { positive } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { readsWith } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
@@ -263,6 +264,7 @@ test('report over a stream holding two runs prints each run\'s signals over that
  * command started by name is found here or nowhere, so the record is every command the run issued
  * by name, and one it could not find would have left the run short of the output it is held to.
  * A command started by its absolute path is out of the record's reach.
+ * Each stand-in is run once before this returns (`warmed`), exiting before it records anything.
  */
 function recordingPath() {
   const dir = temporaryDirectory('rigger-report-path-');
@@ -270,8 +272,9 @@ function recordingPath() {
   assert.ok(git && !git.includes("'"), `the suite's path holds no git this stand-in can name: ${git}`);
   const record = 'printf \'%s\\n\' "${0##*/} $*" >> "${0%/*}/calls"';
   for (const [name, then] of [['gh', 'exit 1'], ['git', `exec '${git}' "$@"`]]) {
-    writeFileSync(join(dir, name), ['#!/bin/sh', record, then, ''].join('\n'));
+    writeFileSync(join(dir, name), ['#!/bin/sh', EXIT_IF_WARMING, record, then, ''].join('\n'));
     chmodSync(join(dir, name), 0o755);
+    warmed(join(dir, name));
   }
   const calls = join(dir, 'calls');
   return { dir, calls: () => (existsSync(calls) ? readFileSync(calls, 'utf8').split('\n').filter(Boolean) : []) };
@@ -291,4 +294,8 @@ test('report issues no gh command, by a record of every command it issues', asyn
   // Naming the tree it runs against is git's answer, so git is asked, and nothing else is.
   assert.ok(calls.length > 0, 'the record holds no command, so nothing shows it was being kept');
   assert.deepEqual(calls.filter((call) => !call.startsWith('git ')), [], calls.join('\n'));
+});
+
+test('the recording path, once made, has recorded no command', () => {
+  assert.deepEqual(recordingPath().calls(), []);
 });

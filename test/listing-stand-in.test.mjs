@@ -9,7 +9,7 @@ import { realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { listingOf } from './listing-stand-in.mjs';
-import { alive, fixture, holding, tailIn, until, warmed } from './process-fixtures.mjs';
+import { alive, fixture, holding, tailIn, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a wait which never ends fails here rather than holding the
@@ -42,7 +42,7 @@ test('the listing stand-in prints of the process it names what lsof prints, aske
   const cwd = join(directory, 'work', 'sub');
   const pid = await tailIn(t, directory, cwd);
   writeFileSync(join(directory, 'outside.pid'), String(pid));
-  const lsof = warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(cwd))));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(cwd)));
 
   for (const pids of [undefined, [pid], [process.pid, pid]]) {
     const real = answer(LSOF, asked(pids));
@@ -60,7 +60,7 @@ test('once the process it names has gone, the listing stand-in answers as lsof d
   const cwd = join(directory, 'work');
   const pid = await tailIn(t, directory, cwd);
   writeFileSync(join(directory, 'outside.pid'), String(pid));
-  const lsof = warmed(fixture(directory, 'lsof', listingOf('outside', realpathSync.native(cwd))));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(cwd)));
   process.kill(pid, 'SIGKILL');
   await until(() => !alive(pid), t);
 

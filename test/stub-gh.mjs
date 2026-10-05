@@ -3,6 +3,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, join } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 /**
  * A directory holding an executable named `gh` that records every call it receives and answers
@@ -13,6 +14,9 @@ import { temporaryDirectory } from './temporary-directory.mjs';
  *
  * It answers through `/bin/cat` by its path, because a test can put it on a path too narrow to
  * hold `cat`, as `test/package.test.mjs` does.
+ *
+ * It is run once before this returns (`warmed`), exiting before it records anything, so the
+ * system's hold on its first exec is paid here, outside any bound of the test that runs it.
  */
 export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   const dir = temporaryDirectory('rigger-stub-gh-');
@@ -24,6 +28,7 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   // source, so no character a temporary directory's name can hold breaks its quoting.
   const script = [
     '#!/bin/sh',
+    EXIT_IF_WARMING,
     `printf '%s\\n' "$*" >> "\${0%/*}/${basename(record)}"`,
     `/bin/cat "\${0%/*}/${basename(out)}"`,
     `/bin/cat "\${0%/*}/${basename(err)}" >&2`,
@@ -32,6 +37,7 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
   ].join('\n');
   writeFileSync(join(dir, 'gh'), script);
   chmodSync(join(dir, 'gh'), 0o755);
+  warmed(join(dir, 'gh'));
   return {
     dir,
     /**

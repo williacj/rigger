@@ -24,6 +24,7 @@ import { gitIn } from './git-repository.mjs';
 import { until } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
 
@@ -68,11 +69,14 @@ const consumerRepository = () => {
  * A stand-in for the agent CLI every role in the template's config dispatches through, placed in
  * `dir`, which records each run beside itself. A dispatch in M2 and M4 runs the provider's CLI,
  * so a run of it is what a started dispatch would show.
+ * It is run once before this returns (`warmed`), exiting before its body, so its first exec is not
+ * held inside a run.
  */
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
+  warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
 }
 
@@ -410,6 +414,8 @@ test('given once where the maker does not start, once exits non-zero, and prints
  * stream with a directory of that name, which no append can open: L1 has made the judge's
  * directory, and the record then refuses its event. The consumer is `consumer` beside the root,
  * as `consumerHolding` and the default root place them.
+ * The `git` is run once before this returns (`warmed`), exiting before its body, so its first exec
+ * is not held inside a run.
  */
 function standInRefusingStreamAfterJudgeMake(plan) {
   const dir = temporaryDirectory('rigger-once-judge-git-', { beforeRemoval: () => sweep(dir) });
@@ -417,6 +423,7 @@ function standInRefusingStreamAfterJudgeMake(plan) {
   assert.match(git, /^\//, 'no git was found on PATH');
   writeFileSync(join(dir, 'git'), [
     '#!/bin/sh',
+    EXIT_IF_WARMING,
     `'${git}' "$@"`,
     'status=$?',
     'for arg in "$@"; do',
@@ -426,6 +433,7 @@ function standInRefusingStreamAfterJudgeMake(plan) {
     '',
   ].join('\n'));
   chmodSync(join(dir, 'git'), 0o755);
+  warmed(join(dir, 'git'));
   return installStandInAgent(dir, plan);
 }
 
@@ -827,3 +835,19 @@ for (const [plan, roles, said] of [
     ], err);
   });
 }
+
+test('the agent CLI stand-in, once installed, has recorded no run, and its directory holds only itself', () => {
+  const dir = temporaryDirectory('rigger-warming-agent-');
+
+  const agent = installAgentCli(dir);
+
+  assert.deepEqual(agent.runs(), []);
+  assert.deepEqual(readdirSync(dir).sort(), ['claude']);
+});
+
+test('the stand-in that refuses the stream once a judge\'s directory is made, once made, has recorded no run, and its directory holds only its git, itself and its plan', () => {
+  const agent = standInRefusingStreamAfterJudgeMake({});
+
+  assert.deepEqual(agent.runs(), []);
+  assert.deepEqual(readdirSync(agent.dir).sort(), ['claude', 'git', 'plan.json']);
+});

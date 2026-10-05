@@ -13,7 +13,7 @@ import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until, warmed } from './process-fixtures.mjs';
+import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 
@@ -78,7 +78,7 @@ test('given a dispatch whose command starts a process that leaves its group, wor
 test('given a dispatch that outlives its timeout and has started a process that leaves its group, working under the dispatch\'s directory, that process is not alive when the dispatch settles', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // Warmed, so the first exec's hold does not spend the time the command has to be ready.
-  const command = warmed(holdingInSub(directory));
+  const command = holdingInSub(directory);
 
   const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, timeout: 3_000 });
 
@@ -199,7 +199,7 @@ test('given a second dispatch started in a directory under one a running dispatc
 test('given a census read that never answers, the dispatch\'s call still settles, no process of its group is alive when it does, and the stream records that the directory\'s census could not be read, naming the directory', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   writeFileSync(join(directory, 'lsof-hold'), '');
-  const lsof = warmed(fixture(directory, 'lsof', ': > "$here/lsof-asked"\nexec /usr/bin/tail -f "$here/lsof-hold"'));
+  const lsof = fixture(directory, 'lsof', ': > "$here/lsof-asked"\nexec /usr/bin/tail -f "$here/lsof-hold"');
   const command = fixture(directory, 'command', `${leave(TAIL, 'child')}\nexit 0`);
 
   const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof, readTimeout: 2_000 });
@@ -231,7 +231,7 @@ test('given a sink that refuses every append, every process the census found is 
 test('given a census tool that lists every process as another user\'s, the census leaves alive a process working under the dispatch\'s directory', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // `lsof` itself, asked as the census asks it, with every user id it prints made root's.
-  const lsof = warmed(fixture(directory, 'lsof', ': > "$here/lsof-asked"\n/usr/sbin/lsof "$@" | /usr/bin/sed \'s/^u[0-9]*$/u0/\''));
+  const lsof = fixture(directory, 'lsof', ': > "$here/lsof-asked"\n/usr/sbin/lsof "$@" | /usr/bin/sed \'s/^u[0-9]*$/u0/\'');
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: leavingInSub(directory), lsof });
 
@@ -334,7 +334,7 @@ const hopping = ['/bin/mkdir -p "$here/sub"', `/usr/bin/perl -e '${HOPPER}' "$he
  * having forked Q. Every later call is the real `lsof`. It is warmed, so its first exec is not held
  * past a read's timeout.
  */
-const listingOnce = (directory) => warmed(fixture(directory, 'lsof', [
+const listingOnce = (directory) => fixture(directory, 'lsof', [
   'if [ ! -f "$here/listed" ]; then',
   '  /usr/sbin/lsof "$@" > "$here/first-listing"; status=$?',
   '  : > "$here/listed"; : > "$here/go"',
@@ -343,7 +343,7 @@ const listingOnce = (directory) => warmed(fixture(directory, 'lsof', [
   '  /bin/cat "$here/first-listing"; exit $status',
   'fi',
   'exec /usr/sbin/lsof "$@"',
-].join('\n')));
+].join('\n'));
 
 /**
  * Asserts that the census's first list in `directory` named P and not Q, so Q was forked after it,
@@ -370,7 +370,7 @@ test('given a dispatch exiting 0 whose process outside its group, once the censu
 // proves R-STATE-17, R-STATE-8
 test('given a dispatch outliving its timeout whose process outside its group, once the census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive when the dispatch settles, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  const command = warmed(fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`));
+  const command = fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`);
 
   const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof: listingOnce(directory), timeout: 3_000 });
 
@@ -423,7 +423,7 @@ test('given a census whose read fails after it has stopped a process it listed i
   writeFileSync(join(directory, 'lsof-hold'), '');
   writeFileSync(join(directory, 'under.pid'), String(under));
   // The first list names `under`, working in `sub`, as `lsof` lists it, and every later read never answers.
-  const lsof = warmed(fixture(directory, 'lsof', `if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\n${listingOf('under', realpathSync.native(join(directory, 'sub')))}`));
+  const lsof = fixture(directory, 'lsof', `if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\n${listingOf('under', realpathSync.native(join(directory, 'sub')))}`);
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', lsof, readTimeout: 2_000 });
 

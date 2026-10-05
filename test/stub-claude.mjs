@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
+import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /**
@@ -91,16 +92,19 @@ export function standInAgent(plan = {}) {
 /**
  * The stand-in agent `standInAgent` describes, installed in `dir`, a directory the caller made and
  * ends, beside whatever else it holds: for a world whose one directory is the whole `PATH`.
+ * It is run once before this returns (`warmed`), exiting before it reads its plan or records a
+ * run, so the system's hold on its first exec is paid here.
  */
 export function installStandInAgent(dir, plan = {}) {
   writePlan(dir, plan);
-  const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
+  const entry = `process.env.RIGGER_FIXTURE_WARMING || import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
   writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
   // A plan to exec a command under every card installs a shell in its place, which `exec`s the
   // command: Node 20, the floor the README sets, has no `process.execve` for the stand-in to call.
   const exec = Object.values(plan['*'] ?? {}).find((act) => act.exec !== undefined)?.exec;
-  if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\nexec ${exec.map(quoted).join(' ')}\n`);
+  if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nexec ${exec.map(quoted).join(' ')}\n`);
   chmodSync(join(dir, 'claude'), 0o755);
+  warmed(join(dir, 'claude'));
   const read = () => JSON.parse(readFileSync(join(dir, PLAN), 'utf8'));
   return {
     dir,
