@@ -119,6 +119,22 @@ function probeList(directory, home) {
 /** The skill files a rollout's `world_state` `host_skills` lists. */
 const hostSkills = (rollout) => skillFiles(rollout.lines.find((line) => line.type === 'world_state').payload.state.host_skills?.body ?? '');
 
+/** Every array a rollout holds under a key ending in `tool` or `tools`, where it sits and each entry's name, for the PR to quote. */
+function toolsIn(rollout) {
+  const found = [];
+  const walk = (value, at) => {
+    if (Array.isArray(value)) value.forEach((each, index) => walk(each, `${at}[${index}]`));
+    else if (value !== null && typeof value === 'object') {
+      for (const [key, held] of Object.entries(value)) {
+        if (/tools?$/i.test(key) && Array.isArray(held)) found.push({ at: `${at}.${key}`, names: held.map((each) => each?.name ?? each?.function?.name ?? each?.type ?? each) });
+        walk(held, `${at}.${key}`);
+      }
+    }
+  };
+  rollout.lines.forEach((line, index) => walk(line.payload, `${index}:${line.type}`));
+  return found;
+}
+
 /** The `-c skills.config` entries among `args`, as the paths they disable. */
 const disabledBy = (args) => [...(args.find((arg) => arg.startsWith('skills.config=')) ?? '').matchAll(/path = ("(?:[^"\\]|\\.)*")/g)].map((match) => JSON.parse(match[1])).sort();
 
@@ -223,6 +239,8 @@ test('a session in a directory declaring one MCP server loads exactly that serve
   for (const marker of Object.values(OWNER_SKILLS)) assert.ok(!JSON.stringify(rollout.lines).includes(marker), `${marker} reached the session's rollout`);
   quote('host_skills, the session', hostSkills(rollout));
   quote('disabled by the invocation', disabledBy(ran.args));
+  quote('session args', ran.args.map((arg) => (arg.startsWith('developer_instructions=') ? 'developer_instructions=<the agent file>' : arg)));
+  quote('offered tools', toolsIn(rollout));
   assert.deepEqual(hostSkills(rollout), probed.filter((skill) => !disabledBy(ran.args).includes(skill)));
   quote('answer', ran.answer);
   assert.deepEqual(ran.events.filter((event) => event.item?.type === 'command_execution'), [], 'the session ran a shell command');
