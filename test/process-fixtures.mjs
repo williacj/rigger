@@ -33,6 +33,7 @@ export function scratch(t, find = running) {
  * at most 2 rounds each. A process `find` still lists after this many is one `pkill` cannot kill.
  */
 const SWEEPS = 10;
+export { SWEEPS };
 
 /**
  * Kills every process whose command line holds `text`, as `find` lists them, round after round

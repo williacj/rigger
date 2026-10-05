@@ -15,8 +15,13 @@
 
 set -u
 
-dir=$(mktemp -d "${TMPDIR:-/tmp}/rigger-refusing-gh.XXXXXX") || exit 1
-trap 'rm -rf "$dir"' EXIT
+run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
+run=$(cd "$run" && pwd -P) || exit 1
+TMPDIR=$run
+export TMPDIR
+dir="$run/rigger-refusing-gh"
+mkdir "$dir" || exit 1
+trap 'rm -rf "$run"' EXIT
 
 # PATH holds this directory as one entry, so it is named absolutely: a relative entry finds
 # nothing from a child working elsewhere. PATH splits its entries at `:`, so a name holding one
@@ -70,7 +75,24 @@ RIGGER_REFUSING_AGENT_DIR=$agents
 export RIGGER_REFUSING_AGENT_DIR
 PATH="$agents:$PATH"
 
-PATH="$dir:$PATH" node --test "$@"
+mkfifo "$run/ended" || exit 1
+: > "$run/runner.cjs"
+/usr/bin/perl -e 'setpgrp(0, 0); die "reaper group: $!" if getpgrp != $$; exec @ARGV or die "reaper exec: $!"' node test/suite-reaper "$run" "$run/ended" 3>&- &
+reaper=$!
+exec 3> "$run/ended"
+finish() {
+  result=$?
+  trap - EXIT
+  exec 3>&-
+  wait "$reaper" || result=1
+  exit "$result"
+}
+trap finish EXIT
+PATH="$dir:$PATH" node --require "$run/runner.cjs" --test "$@" 3>&- &
+runner=$!
+trap 'kill -TERM "$runner" 2>/dev/null || :; exit 143' TERM
+trap 'kill -INT "$runner" 2>/dev/null || :; exit 130' INT
+wait "$runner"
 status=$?
 
 if [ -s "$agents/calls" ]; then
