@@ -60,6 +60,8 @@ function removed(directory) {
   rmSync(directory, { recursive: true });
 }
 
+export { removed as removeTemporaryDirectory };
+
 /** Gives the owner read, write and search permission on `directory` and every directory in it. */
 function writable(directory) {
   if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is no longer a directory, so its teardown removes nothing through it`);

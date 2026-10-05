@@ -1,0 +1,98 @@
+// ABOUTME: Ends a test run's processes after its suite shell closes a pipe, even if that shell was killed.
+
+import { spawnSync } from 'node:child_process';
+import { createReadStream } from 'node:fs';
+import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { removeTemporaryDirectory } from './temporary-directory.mjs';
+import { SWEEPS } from './process-fixtures.mjs';
+
+const [directory, pipe] = process.argv.slice(2);
+const run = realpathSync.native(directory);
+const marker = join(run, 'runner.cjs');
+
+function read(command, args) {
+  const result = spawnSync(command, args, { cwd: '/', env: process.env, encoding: 'utf8', maxBuffer: Infinity });
+  if (result.error || (result.status !== 0 && !(result.status === 1 && result.stdout === ''))) {
+    throw new Error(`${command} ${args.join(' ')} failed: ${result.error?.message ?? result.stderr}`);
+  }
+  return result.stdout;
+}
+
+function inside(path) {
+  if (path !== run && !path.startsWith(`${run}/`)) return false;
+  let resolved;
+  try {
+    resolved = realpathSync.native(path);
+  } catch {
+    // A process still working in a removed part of this run must not be treated as gone.
+    return true;
+  }
+  return resolved === run || resolved.startsWith(`${run}/`);
+}
+
+function processes() {
+  const rows = new Map();
+  for (const line of read('/bin/ps', ['-U', String(process.getuid()), '-o', 'pid=,ppid=,stat=,command=']).split('\n')) {
+    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (row && !row[3].startsWith('Z')) rows.set(Number(row[1]), { parent: Number(row[2]), command: row[4] });
+  }
+  const targets = new Set();
+  let runner;
+  for (const [pid, row] of rows) {
+    if (pid === process.pid) continue;
+    if (row.command.includes(run)) targets.add(pid);
+    if (row.command.includes(marker) && row.command.includes('--test')) runner = pid;
+  }
+  if (runner !== undefined) {
+    targets.add(runner);
+    let grew;
+    do {
+      grew = false;
+      for (const [pid, row] of rows) {
+        if (!targets.has(pid) && targets.has(row.parent)) {
+          targets.add(pid);
+          grew = true;
+        }
+      }
+    } while (grew);
+  }
+  let pid;
+  for (const line of read('/usr/sbin/lsof', ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn']).split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    if (line.startsWith('n') && inside(line.slice(1)) && pid !== process.pid && rows.has(pid)) targets.add(pid);
+  }
+  return [...targets].map((pid) => ({ pid, command: rows.get(pid)?.command ?? 'unknown' }));
+}
+
+async function closed() {
+  await new Promise((resolve, reject) => {
+    const input = createReadStream(pipe);
+    input.on('error', reject);
+    input.on('end', resolve);
+    input.resume();
+  });
+}
+
+try {
+  await closed();
+  for (let round = 0; round < SWEEPS; round += 1) {
+    const left = processes();
+    if (left.length === 0) {
+      removeTemporaryDirectory(run);
+      process.exit(0);
+    }
+    for (const { pid } of left) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    }
+  }
+  throw new Error(`${SWEEPS} sweeps left these processes: ${JSON.stringify(processes())}`);
+} catch (error) {
+  console.error(`npm test reaper: ${error.stack ?? error}`);
+  process.exitCode = 1;
+}
