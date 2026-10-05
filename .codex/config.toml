@@ -3,8 +3,9 @@
 # into each dispatch's own Codex home as that home's config.toml, where Codex reads it untrusted.
 
 # A session writes in its working directory and in each directory a judge reaches (`--add-dir`),
-# which Codex ignores under `read-only`. The temporary directories are left out, so nothing outside
-# those roots is writable.
+# which Codex ignores under `read-only`. The temporary directories are left out. In their place the
+# adapter adds one temporary directory in the dispatch's own scratch directory and points `TMPDIR`
+# and `TMPPREFIX` at it (O93), so nothing outside those roots is writable.
 sandbox_mode = "workspace-write"
 
 [sandbox_workspace_write]

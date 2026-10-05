@@ -146,7 +146,7 @@ test('the invocation sets CODEX_HOME, and nothing else, to a directory in the di
 
   const { env } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
 
-  assert.deepEqual(Object.keys(env), ['CODEX_HOME']);
+  assert.deepEqual(Object.keys(env), ['CODEX_HOME', 'TMPDIR', 'TMPPREFIX']);
   const home = env.CODEX_HOME;
   assert.ok(home.startsWith(`${realpathSync.native(made)}/`), `${home} is not in the scratch directory ${made}`);
   assert.equal(readFileSync(join(home, 'config.toml'), 'utf8'), DECLARATION);
@@ -270,7 +270,34 @@ test('given reach naming a directory, the invocation passes it as --add-dir besi
   const { args } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, reach: [head], emitter: keeping() });
 
   assert.deepEqual(following(args, '-C'), [directory]);
-  assert.deepEqual(following(args, '--add-dir'), [head]);
+  assert.deepEqual(following(args, '--add-dir'), [head, join(realpathSync.native(made), 'tmp')]);
+});
+
+test('the invocation gives the session one writable temporary directory in its scratch directory: made, named by --add-dir, by TMPDIR, and holding the prefix TMPPREFIX names (O93)', async (t) => {
+  const { directory, scratch: made, agent } = layout(t);
+  onPath({ skills: [] });
+  const temporary = join(realpathSync.native(made), 'tmp');
+
+  const { args, env } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+
+  assert.ok(lstatSync(temporary).isDirectory(), `${temporary} is no directory`);
+  assert.deepEqual(following(args, '--add-dir'), [temporary]);
+  assert.equal(env.TMPDIR, temporary);
+  assert.equal(env.TMPPREFIX, join(temporary, 'zsh'));
+});
+
+test('given a Codex role dispatch through L1, L1 hands the stand-in codex TMPDIR and TMPPREFIX in the role\'s own scratch directory, and the session\'s --add-dir names that directory', async (t) => {
+  const { directory, base, repository, state, sink } = dispatchLayout(t);
+  const stand = onPath({ skills: [] });
+  const temporary = join(realpathSync.native(base), 'engineer', 'tmp');
+
+  const handed = await roleDispatch({ answer: answerOf(), cwd: directory, directory, scratch: base, repository, reach: [], env: { PATH: stand.first(), TMPDIR: '/handed/tmp' }, sink, id: 'd-codex', card: 1412 });
+  const result = await dispatch({ id: 'd-codex', card: 1412, directory: state, sink, ...handed });
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.deepEqual([handed.env.TMPDIR, handed.env.TMPPREFIX], [temporary, join(temporary, 'zsh')]);
+  const [session] = stand.sessions();
+  assert.deepEqual(following(session.args, '--add-dir'), [temporary]);
 });
 
 test('the invocation hands the session the role\'s agent file whole, frontmatter included, from the path the role names, and refuses one outside the directory', async (t) => {
@@ -401,6 +428,6 @@ test('given a Codex judge dispatch through L1 against the fake forge, the stand-
   assert.equal(result.exit, 0, result.stderr.toString('utf8'));
   const [session] = stand.sessions();
   assert.deepEqual(following(session.args, '-C'), [main]);
-  assert.deepEqual(following(session.args, '--add-dir'), [head]);
+  assert.deepEqual(following(session.args, '--add-dir'), [head, join(realpathSync.native(join(base, 'reviewer')), 'tmp')]);
   assert.equal(realpathSync.native(session.cwd), realpathSync.native(main));
 });

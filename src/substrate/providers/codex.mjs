@@ -118,6 +118,14 @@ const WITHHELD = ['--disable', 'plugins', '--disable', 'apps', ...HOST_FEATURES.
 const HOME = 'codex-home';
 
 /**
+ * The name of the temporary directory a dispatch's scratch directory holds, the one directory
+ * outside the declaration's roots the session may write (O93). The declaration leaves `/tmp` and
+ * `$TMPDIR` out of the sandbox, so without it a session has nowhere to put a temporary file: zsh
+ * writes a here-document under `$TMPPREFIX`, `/tmp/zsh` unless set, and fails (#489).
+ */
+const TEMPORARY = 'tmp';
+
+/**
  * How long L0 lets the skill probe run before it kills the probe's group. A judgment, not a
  * measurement, recorded as `GIT_TIMEOUT` is. Its premise is a measurement: ten runs of the probe
  * as this module runs it, in a probe repository under a fresh home, took 0.45 to 1.07 s each with
@@ -269,16 +277,17 @@ function homeFor(directory, scratch) {
 
 /**
  * The command line that runs the agent file `agent`, at `tier`, on `prompt`, in `directory`, with
- * each directory `reach` names writable beside it: the CLI by its command name, its arguments, the
- * prompt's bytes for its standard input, no variable to unset, and `CODEX_HOME`, the dispatch's own
- * home in `scratch` (ruling 18). It runs the skill probe first, through `emitter`, bounded by
+ * each directory `reach` names writable beside it, and the dispatch's temporary directory in
+ * `scratch` writable too (O93): the CLI by its command name, its arguments, the prompt's bytes for
+ * its standard input, no variable to unset, `CODEX_HOME`, the dispatch's own home in `scratch`
+ * (ruling 18), and `TMPDIR` and `TMPPREFIX`, the temporary directory and a prefix inside it. It runs the skill probe first, through `emitter`, bounded by
  * `probeTimeout`, and disables, by a `skills.config` entry per `SKILL.md` path, every skill the
  * probe reports from outside `directory`.
  *
  * Refused, each naming what it refused: a tier Rigger does not fix, before anything is made or
  * run; an agent file whose real path is not under `directory` (`R-SAFE-6`); an agent file that
- * cannot be read; a home that cannot be made; and a probe that fails, outlives its bound, or
- * answers nothing it can read.
+ * cannot be read; a home or temporary directory that cannot be made; and a probe that fails,
+ * outlives its bound, or answers nothing it can read.
  */
 export async function invocation({ agent, tier, prompt, directory, scratch, reach = [], emitter, probeTimeout = PROBE_TIMEOUT }) {
   if (!Object.hasOwn(tiers, tier)) {
@@ -292,6 +301,8 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
   }
   const instructions = readFileSync(file, 'utf8');
   const home = homeFor(directory, scratch);
+  const temporary = join(realpathSync.native(scratch), TEMPORARY);
+  mkdirSync(temporary);
   const outside = await probed({ directory, home, emitter, timeout: probeTimeout });
   const toggles = `[${outside.map((path) => `{path = ${toml(path)}, enabled = false}`).join(', ')}]`;
   return {
@@ -299,7 +310,7 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
     args: [
       'exec', '--json',
       '-C', directory,
-      ...reach.flatMap((each) => ['--add-dir', each]),
+      ...[...reach, temporary].flatMap((each) => ['--add-dir', each]),
       '-m', tiers[tier],
       '-c', `model_reasoning_effort=${toml(EFFORT[tier])}`,
       ...WITHHELD,
@@ -308,6 +319,6 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
     ],
     input: Buffer.from(prompt, 'utf8'),
     unset: [],
-    env: { CODEX_HOME: home },
+    env: { CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') },
   };
 }
