@@ -40,3 +40,9 @@ and the restart's recording `gh` does the same at its first call.
 `--logs-dir` under the install's directory. Other sessions on the host write to `~/.npm/_logs` too,
 so a before-and-after listing of it cannot show this on its own. The evidence is that no log there
 names the run's `TMPDIR`: before the fix two did, and after it none did.
+
+**`--offline` still writes to npm's cache.** The reviewer's second round found that installing the
+local tarball writes a `pacote:tarball:file:` index entry, naming the tarball's path under `TMPDIR`,
+to `~/.npm/_cacache/index-v5`. Both npm calls now also take `--cache` under the install's directory.
+The install still works offline with that empty cache, because the package has no runtime
+dependencies. Before this change one run of the file left one such entry; after it, none.
