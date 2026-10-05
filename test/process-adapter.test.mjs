@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
-import { LONGEST_PAUSE, READ_TIMEOUT } from '../src/substrate/process.mjs';
+import { READ_TIMEOUT } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -1079,30 +1079,25 @@ function censusCalls(directory) {
   return { census, starts };
 }
 
-test('a census whose reads never agree pauses, from its third round on, at least the longest pause for each read of a round before it reads again', SETTLES_WITHIN, async (t) => {
+test('a census whose every read of states finds a process caught mid-exec makes one read in each round after its first, which it keeps', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const ps = timedPs(directory, { every: true });
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   const { events } = await recorded(directory, { command, ps });
 
-  assert.deepEqual(events.map(({ event }) => event), ['survivor.killed'], 'the census did not keep its last round once its reads never agreed');
-  const { census, starts } = censusCalls(directory);
-  // Each read's pause doubles from 1 ms to `LONGEST_PAUSE`, and the census waits a round's pauses
-  // out together after it, so every read from the eleventh on has reached `LONGEST_PAUSE`: those
-  // are the third round's on, a round here being five reads. The pause after a round runs from the
-  // end of its last read to the start of the next round's first. The census cuts a pause short
-  // only to at most half of what the time left before its deadline holds beyond a round,
-  // `READ_TIMEOUT` after its first read at the latest, so a pause that ends a second or more before
-  // then is whole.
-  const whole = census[0].began + READ_TIMEOUT - 1_000;
-  const pauses = starts.slice(2, -1).map((start, nth) => ({ start, next: starts[nth + 3] })).filter(({ next }) => census[next].began < whole)
-    .map(({ start, next }) => ({ reads: next - start, paused: census[next].began - census[next - 1].ended }));
-  t.diagnostic(`pauses of ${pauses.map(({ reads, paused }) => `${Math.round(paused)} ms after ${reads} reads`).join(', ')}, from the third round on, in ${census.length} reads`);
-  assert.ok(pauses.length > 0, `the census read in ${starts.length} rounds, too few to time a whole pause after its third`);
-  // Node times a pause on a clock it reads in whole milliseconds, so one can end up to a
-  // millisecond short of what was asked on the stand-in's clock.
-  for (const { reads, paused } of pauses) assert.ok(paused > reads * LONGEST_PAUSE - 1, `the census paused ${paused} ms after a round of ${reads} reads, less than ${LONGEST_PAUSE} ms for each`);
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 'tail' }], 'the census did not keep its first round once its reads never agreed');
+  const { census } = censusCalls(directory);
+  const states = ({ args }) => args.startsWith('-ww ') && args.endsWith('stat=');
+  // The first round is whole: states, command lines, the survivor's name, command lines, states.
+  // A round whose first read of states finds a process caught mid-exec cannot agree, so each later
+  // round stops at that read, and the census's re-reading costs one read for each pause, whatever
+  // a whole round holds.
+  const later = census.slice(5);
+  t.diagnostic(`the census made ${census.length} reads: a first round of 5, then ${later.length} reads, ${later.filter(states).length} of them of states`);
+  assert.deepEqual(census.slice(0, 5).map(states), [true, false, false, false, true], 'the census\'s first round was not whole');
+  assert.ok(later.length >= 3, `the census read again ${later.length} times, too few to tell`);
+  assert.deepEqual(later.filter((call) => !states(call)).map(({ args }) => args), [], 'a round after the first read past a read of states that found a process caught mid-exec');
 });
 
 test('a census of 100 survivors whose first read of states disagrees reads again and agrees before its deadline, naming each survivor it kills', SETTLES_WITHIN, async (t) => {
@@ -1118,14 +1113,14 @@ test('a census of 100 survivors whose first read of states disagrees reads again
   // The first round disagreed, so a second that agreed is the census's last: two rounds, of four
   // reads of states between them.
   assert.equal(starts.length, 2, `the census read in ${starts.length} rounds, not a disagreeing first and an agreeing second`);
-  // A second round can run longer than the first, on a loaded host or for a group that grew, so the
-  // census leaves it at least half of what the first round left before the deadline, and not only
-  // room for a round as long as the first.
+  // A second round can run longer than the first, on a loaded host or for a group that grew. After
+  // its first round the census pauses one millisecond, as it always has, so the second round has
+  // nearly all the time the first left, and not a share the first round's reads earned away.
   const deadline = census[0].began + READ_TIMEOUT;
   const leftAfterFirst = deadline - census[starts[1] - 1].ended;
   const leftAtSecond = deadline - census[starts[1]].began;
   t.diagnostic(`the first round took ${Math.round(census[starts[1] - 1].ended - census[0].began)} ms and left ${Math.round(leftAfterFirst)} ms; the second began with ${Math.round(leftAtSecond)} ms left`);
-  assert.ok(leftAtSecond >= leftAfterFirst / 2, `the census began its second round with ${leftAtSecond} ms left of the ${leftAfterFirst} ms its first round left, less than half`);
+  assert.ok(leftAtSecond >= leftAfterFirst * 0.9, `the census began its second round with ${leftAtSecond} ms left of the ${leftAfterFirst} ms its first round left, less than nine tenths`);
   assert.equal(census.filter(({ args }) => args.startsWith('-ww ') && args.endsWith('stat=')).length, 4, 'the census\'s second round did not read its states twice');
   // Its deadline falls `READ_TIMEOUT` after its first read began, at the latest.
   assert.ok(took < READ_TIMEOUT, `the census's reads ran ${took} ms, past its deadline`);

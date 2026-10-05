@@ -70,10 +70,9 @@ export const UNREAPED_BOUND = 1_000;
 /**
  * The longest L0 pauses between two looks at a group it is waiting on. The pause starts at one
  * millisecond and doubles up to this, so a wait costs next to no processor time however long it
- * lasts. A look of several reads, such as a round of the census, earns each read's pause
- * (`census`). A judgment, not a measurement.
+ * lasts. A judgment, not a measurement.
  */
-export const LONGEST_PAUSE = 50;
+const LONGEST_PAUSE = 50;
 
 /**
  * How long after its first kill of a group L0 goes on killing a member that is still alive, and how
@@ -589,16 +588,12 @@ function signal(group, name, kill = SIGNAL) {
  * lines, then each name in a `ps` run of its own, then the command lines and the states again. It
  * keeps a round only where both state reads find the same processes, none caught mid-exec (state
  * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
- * pauses and reads again. Each read of a round earns the pause one look earns (`LONGEST_PAUSE`),
- * and the census waits the round's pauses out together after it, so its reads stay close together
- * and re-reading costs one read's processor time per look's pause however many reads a round
- * holds (#574). No pause runs past `deadline`, and where the time left would hold another round
- * as long as the last, the census reads again before it, however large the group and its earned
- * pause, and leaves that round at least half the time left, because it can run longer than the
- * last on a loaded host. A zombie is left out, because it is already dead.
- * Where `deadline` passes first, it keeps what the last round held, each live process the last
- * state read found, by the name and the command line read in that round, and leaves out one a read
- * in that round missed.
+ * pauses and reads again. A round whose first read of states finds a process caught mid-exec cannot
+ * agree, so once a round is held to keep, such a round stops at that read: re-reading then costs
+ * one read for each pause, however many reads a whole round makes (#574). A zombie is left out,
+ * because it is already dead. Where `deadline` passes first, it keeps what the last whole round
+ * held, each live process that round's last state read found, by the name and the command line read
+ * in that round, and leaves out one a read in that round missed.
  *
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
@@ -677,10 +672,7 @@ function* census(group, kill, deadline) {
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
   let last;
-  // The reads the round in hand has made so far, each of which earns a pause (`earned`).
-  let reads = 0;
   const read = function* (args) {
-    reads += 1;
     try {
       return yield args;
     } catch (error) {
@@ -690,37 +682,19 @@ function* census(group, kill, deadline) {
   const column = function* (name) {
     return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   };
-  // The pause the last read earned, which doubles from one read to the next up to `LONGEST_PAUSE`.
-  let wait = 0;
-  // What a round's reads earned together: each read's own pause, as though it were a look of its own.
-  const earned = () => {
-    let pause = 0;
-    for (; reads > 0; reads -= 1) pause += (wait = longer(wait));
-    return pause;
-  };
-  // How long the last round took.
-  let took = 0;
-  for (let pause = 0; ; pause = earned()) {
-    // A round's pauses are waited out together after it, so its reads stay close together. Where
-    // the time left holds another round as long as the last, the census reads again, its pause cut
-    // to at most half of what the time left holds beyond one such round, so that the next round has
-    // room to run longer than the last. Otherwise it waits out its pause, never past `deadline`, and
-    // keeps the last round, though a timer can end a moment early.
-    const left = deadline - Date.now();
-    const again = left >= took;
-    const until = Math.min(pause, again ? (left - took) / 2 : left);
-    if (until > 0) yield until;
-    if (last !== undefined && (!again || Date.now() >= deadline)) return last;
-    const began = Date.now();
+  for (let wait = 0; ; wait = longer(wait)) {
+    if (wait > 0) yield wait;
+    if (last !== undefined && Date.now() >= deadline) return last;
     let round;
     try {
       const before = yield* column('stat');
+      // A round that cannot agree reads no further once there is a round to keep.
+      if (last !== undefined && [...before.values()].some((state) => state.startsWith('?'))) continue;
       const lines = yield* column('command');
       const names = yield* namesOf([...before].filter(([, state]) => live(state)).map(([pid]) => pid), read);
       const commands = yield* column('command');
       const after = yield* column('stat');
       round = { before, lines, names, commands, after };
-      took = Date.now() - began;
     } catch (error) {
       // A read given up on at `deadline` leaves the last round to keep, where there is one.
       if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return last;
