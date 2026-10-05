@@ -32,12 +32,12 @@ function ran(command, cwd) {
 export function installFromTarball(root, into) {
   const packs = join(into, 'packs');
   mkdirSync(packs, { recursive: true });
-  const [{ filename }] = JSON.parse(ran(`npm pack --json --loglevel=error --pack-destination "${packs}"`, root));
+  const [{ filename }] = JSON.parse(ran(`npm pack --json --loglevel=error --logs-dir "${join(into, 'npm-logs')}" --pack-destination "${packs}"`, root));
 
   const consumer = join(into, 'consumer');
   mkdirSync(consumer, { recursive: true });
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true }));
-  ran(`npm install --offline --no-audit --no-fund --loglevel=error "${join(packs, filename)}"`, consumer);
+  ran(`npm install --offline --no-audit --no-fund --loglevel=error --logs-dir "${join(into, 'npm-logs')}" "${join(packs, filename)}"`, consumer);
 
   const bin = join(into, 'bin');
   mkdirSync(bin, { recursive: true });
