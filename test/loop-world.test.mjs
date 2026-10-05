@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { stoppedCard } from './stop-failure.mjs';
 import {
   COLUMNS, boardOf, drive, endStandIns, positive, settledOf, settling, stoppedRun, waitFor, world,
 } from './loop-world.mjs';
@@ -105,7 +106,7 @@ test('given an answer that is an Error, that card\'s maker dispatch rejects with
     return settled(card, outcome);
   };
 
-  await assert.rejects(drive(built));
+  await assert.rejects(drive(built), stoppedCard(1));
 
   assert.deepEqual(received.map((outcome) => [outcome.status, outcome.reason?.code]), [['rejected', NOT_STARTED], ['rejected', NOT_STARTED]]);
   assert.deepEqual(built.agent.runs(), []);

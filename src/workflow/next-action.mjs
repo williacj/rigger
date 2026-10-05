@@ -60,11 +60,12 @@ const selecting = (card, kinds) =>
  * and an attempt's failure with what follows it. `attempt` is the attempt's number, 1 by default,
  * which L3 hands L2 with each outcome, so L2 keeps no count of its own (the architect's ruling 1,
  * A1). `workspace` is the outcome of L1's making the attempt's workspace, where L1 could not make it.
- * `maker` is L1's rejected maker outcome where its dispatch never started. L2 records it as an
- * environment attempt failure and answers another attempt or stop. A maker that ran is settled
- * by L2's column changes instead.
- * Without `provisioning`, L2 answers as above, whatever `outcomes`, `sink`, `attempt`, `workspace`
- * and `maker` are (the architect's ruling 6, Q-D, on #423). Its maker answer is the role
+ * `maker` is L1's maker outcome, handed unread by L3 after L2's settle. Where its dispatch never
+ * started, L2 records an environment attempt failure and answers another attempt or stop. For
+ * any other outcome, L2 answers `settled`, ending the attempt as L2's column changes settled it.
+ * Without `provisioning` and without a maker outcome, L2 answers as above, whatever `outcomes`,
+ * `sink`, `attempt` and `workspace` are (the architect's ruling 6, Q-D, on #423). A maker outcome
+ * is classified even without `provisioning`. Its maker answer is the role
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
@@ -89,8 +90,8 @@ export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, top
     : [tier.conflict, held?.reason, form.admitted ? undefined : form.reason];
   const named = reasons.filter((reason) => reason !== undefined);
   if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and ') };
-  if (provisioning === undefined) return { action: 'dispatch', kind };
-  return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning, outcomes, sink, attempt, workspace, maker });
+  if (provisioning === undefined && maker === undefined) return { action: 'dispatch', kind };
+  return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker });
 }
 
 /**
@@ -138,7 +139,7 @@ function fromTheForge(card) {
  * its name and what L1 runs; `{ maker }`, the kind's maker as a role answer, running at `tier`,
  * once every selected step has an outcome and no required one failed; or, for a required step that failed, or a `workspace` L1
  * could not make, or a maker outcome rejected with `NOT_STARTED`, the card attempted again or
- * stopped, as `failedAttempt` says. A maker rejected for another reason is not an attempt failure.
+ * stopped, as `failedAttempt` says. Any other maker outcome is answered `settled` to end the attempt.
  *
  * An optional step's failure is recorded through `sink` as an L2 `step.failed` event under the card,
  * and the attempt goes on (`R-PROV-2`). L3 asks again after each outcome, so only the newest
@@ -148,10 +149,10 @@ function fromTheForge(card) {
 function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace, maker }) {
   if (workspace !== undefined) return failedAttempt(card, attempt, unmade(workspace, card), sink);
   if (maker !== undefined) {
-    if (maker?.status !== 'rejected' || maker.reason?.code !== NOT_STARTED) {
-      throw new Error(`card #${card.number}'s maker has an outcome that is not a dispatch that never started, so L2 answers no action: ${maker?.reason?.message ?? JSON.stringify(maker)}`);
+    if (maker?.status === 'rejected' && maker.reason?.code === NOT_STARTED) {
+      return failedAttempt(card, attempt, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
     }
-    return failedAttempt(card, attempt, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
+    return { action: 'settled' };
   }
   const steps = selectedSteps(card, declared, provisioning);
   if (outcomes.length > steps.length) {

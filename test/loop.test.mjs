@@ -26,6 +26,7 @@ import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { stoppedCard } from './stop-failure.mjs';
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
@@ -89,7 +90,7 @@ test('given a board whose column read answers one turn later than the fake\'s, a
   const ran = async (later) => {
     const fake = boardOf([1, 2, 3, 4]);
     const built = world({ fake, board: later ? readingLater(fake) : handleOn(fake), concurrency: 2, answer });
-    await assert.rejects(drive(built));
+    await assert.rejects(drive(built), stoppedCard(2));
     return { started: built.dispatches.started, writes: fake.writes() };
   };
 
@@ -150,14 +151,14 @@ for (const [how, failed] of Object.entries(FAILURES)) {
 
     assert.deepEqual(built.dispatches.holding(), [2], "card 1's slot is free, and card 2 holds it");
     built.dispatches.releaseAll();
-    if (how === 'throws') await assert.rejects(run);
+    if (how === 'throws') await assert.rejects(run, stoppedCard(1));
     else await run;
   });
 
   test(`a card whose dispatch ${how} ends the run outside the review column`, async () => {
     const built = world({ cards: [1], concurrency: 1, answer: failed });
 
-    if (how === 'throws') await assert.rejects(drive(built));
+    if (how === 'throws') await assert.rejects(drive(built), stoppedCard(1));
     else await drive(built);
 
     assert.deepEqual(built.dispatches.started, how === 'throws' ? [1, 1] : [1]);
@@ -207,7 +208,7 @@ test('the same run on a board whose five columns carry other display names, with
   const answer = (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' });
   const ran = async (columns) => {
     const built = world({ cards: [1, 2, { ...readyCard(3, columns), labels: [] }, 4], columns, concurrency: 2, answer });
-    await assert.rejects(drive(built));
+    await assert.rejects(drive(built), stoppedCard(2));
     const keyOf = Object.fromEntries(Object.entries(columns).map(([key, name]) => [name, key]));
     const moves = built.fake.writes().map(({ operation, args: [id, column] }) => [operation, id, keyOf[column]]);
     return { started: built.dispatches.started, moves };
@@ -438,7 +439,7 @@ test('L3 hands L2 every dispatch outcome, one returned and one failed', async ()
   // Positive: until card 10 is held and card 11's outcome has reached L2, card 11's maker never starting.
   await positive(() => built.dispatches.holding().includes(10) && received.some(([number]) => number === 11));
   built.dispatches.releaseAll();
-  await assert.rejects(tick);
+  await assert.rejects(tick, stoppedCard(11));
 
   assert.deepEqual(received.sort(), [[10, 'fulfilled'], [11, 'rejected'], [11, 'rejected']]);
 });
@@ -532,7 +533,7 @@ const cardsOf = (built, name) => built.l3Events().filter((event) => event.event 
 test('every slot release writes one event naming the card, whether its dispatch returned or threw', async () => {
   const built = world({ cards: [1, 2, 3], concurrency: 2, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
 
-  await assert.rejects(drive(built));
+  await assert.rejects(drive(built), stoppedCard(2));
 
   assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 2, 3]);
 });
@@ -694,7 +695,7 @@ test("each card's pull event is recorded before L2 asks the board to move that c
 test('every event L3 writes carries layer L3, and L1\'s and L0\'s events carry their own layer', async () => {
   const built = world({ cards: [1, 2, { ...readyCard(3), labels: [] }], concurrency: 1, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
 
-  await assert.rejects(drive(built));
+  await assert.rejects(drive(built), stoppedCard(2));
 
   const events = built.events();
   const ofL3 = new Set(['run.start', 'trigger', 'pull', 'slot.release', 'dispatch']);

@@ -9,7 +9,6 @@ import { randomUUID } from 'node:crypto';
 import { roleDispatch } from '../execution/role.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
-import { NOT_STARTED } from '../substrate/process.mjs';
 import { pullOrder } from './pull-order.mjs';
 
 /** N when the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
@@ -300,9 +299,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * names no step. A later attempt asks L2 for its first step once its workspace is made.
    *
    * An answer that dispatches no step is the maker: the role the answer's `maker` names,
-   * dispatched through L1 as `dispatchRole` says. That outcome is handed to L2's `settled` unread.
-   * Where its dispatch never started and the settle recorded it, L3 asks L2 again with the maker
-   * outcome; a retry makes a fresh workspace. Otherwise the attempt answers the card, its
+   * dispatched through L1 as `dispatchRole` says. L3 hands L2 each maker outcome unread, first
+   * to `settled` and then to `decide` with the attempt number. L3 follows L2's `again` or `stop`
+   * answer where the settle recorded it; a retry makes a fresh workspace. Otherwise the attempt
+   * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
    * Where the settle
    * answered facts and L2, asked again with them, names judges, they are dispatched under the same
@@ -351,11 +351,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
       const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
-      if (settled.status === 'fulfilled' && outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
-        answer = decide(card, [], { attempt: number, maker: outcome });
-        if (advance(answer, number)) continue;
-        throw new Error(`card #${card.number}'s maker never started, and L2 answered no retry or stop: ${JSON.stringify(answer)}`);
-      }
+      answer = decide(card, [], { attempt: number, maker: outcome });
+      if (settled.status === 'fulfilled' && advance(answer, number)) continue;
       const reached = { card: card.number, workspace: path, outcome, settled };
       kept(reached);
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;

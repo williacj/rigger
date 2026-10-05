@@ -21,6 +21,45 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
 // proves R-FAIL-2
+test('L2 ends an attempt for a maker outcome other than a dispatch that never started', () => {
+  const outcomes = [
+    { status: 'fulfilled', value: { exit: 0 } },
+    { status: 'rejected', reason: Object.assign(new Error('the record refused an end'), { code: 'EVENT_NOT_RECORDED' }) },
+  ];
+  for (const maker of outcomes) {
+    assert.deepEqual(nextAction(readyCard(7), KINDS, undefined, {
+      columns: COLUMNS, roles: config.roles, provisioning: {}, maker,
+    }), { action: 'settled' });
+  }
+});
+
+// proves R-FAIL-2
+test('L2 ends a maker attempt even when the kind declares no provisioning steps', () => {
+  assert.deepEqual(nextAction(readyCard(7), KINDS, undefined, {
+    columns: COLUMNS, roles: config.roles, maker: { status: 'fulfilled', value: { exit: 0 } },
+  }), { action: 'settled' });
+});
+
+// proves R-FAIL-2
+test('L3 hands a maker outcome to L2 after settle without reading its contents', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({
+    cards: [cardIn(7, COLUMNS.ready)],
+    kinds: { change: { ...KINDS.change, judges: ['owner'] } },
+  });
+  const handed = [];
+  const decide = (card, outcomes, options) => {
+    if (options?.maker !== undefined) handed.push(options.maker);
+    return built.handed.decide(card, outcomes, options);
+  };
+
+  const [reached] = await loop({ ...built.handed, decide }).pull(1);
+
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0], reached.outcome);
+  assert.equal(reached.outcome.status, 'fulfilled');
+});
+
+// proves R-FAIL-2
 test('L2 retries a maker dispatch that never started and stops it after the second environment failure', () => {
   const directory = temporaryDirectory('rigger-environment-retry-');
   const sink = openSink({ directory, run: 'r-environment-retry', now: Date.now });
