@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { judgeAnswer } from '../src/workflow/judges.mjs';
