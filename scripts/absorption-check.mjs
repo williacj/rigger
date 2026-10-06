@@ -155,13 +155,20 @@ export function bullets(path, heading) {
 
 /** Pull the requirement rows out of the requirements table. */
 export function rows(path) {
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((l) => /^\| R-[A-Z]+-\d+ \|/.test(l))
-    .map((l) => {
-      const cells = l.split('|').map((c) => c.trim());
-      return { id: cells[1], text: cells[2] };
-    });
+  const found = [];
+  let requirements = false;
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (!line.trim().startsWith('|')) {
+      requirements = false;
+      continue;
+    }
+    const cells = line.split('|').map((cell) => cell.trim());
+    if (cells[1] === 'id') requirements = true;
+    else if (requirements && /^R-[A-Z]+-\d+$/.test(cells[1])) {
+      found.push({ id: cells[1], text: cells[2] });
+    }
+  }
+  return found;
 }
 
 // Words a requirement drops on purpose, because naming a mechanism is what the
