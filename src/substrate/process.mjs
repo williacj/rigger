@@ -855,6 +855,12 @@ const exited = (tool, args, status) => new Error(`${tool} ${args.join(' ')} ende
  * standard output. So exit 1 with nothing on either stream is the one answer that shows no process
  * matched.
  *
+ * Node 26.5.0's `execFile` can call back without an error after its timeout fires when the child
+ * exited 0 first but a descendant still holds its output open: the callback carries only the
+ * output read before the pipe closed. Measured by `test/read-deadline.test.mjs` on macOS 27.0 on
+ * 2026-10-06. This run owns its deadline and closes the read's pipes when it fires, so it settles
+ * without waiting for a descendant and never accepts that partial answer (`D16` rule 3).
+ *
  * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
  * nor the kill takes a process as gone because a read left it out (`census`, `beforeKill`), and the
  * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
@@ -862,13 +868,22 @@ const exited = (tool, args, status) => new Error(`${tool} ${args.join(' ')} ende
 function run(ps, args, remaining, timeout) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(late(timeout));
-    const read = execFile(ps, args, { env: PS_ENV, ...reader(remaining) }, (error, stdout, stderr) => {
+    let expired = false;
+    const read = execFile(ps, args, { env: PS_ENV, ...reader(remaining), timeout: 0 }, (error, stdout, stderr) => {
+      clearTimeout(deadline);
       reads.delete(read);
-      if (error?.killed) return reject(timedOut(timeout));
+      if (expired) return reject(timedOut(timeout));
       if (stderr !== '') return reject(failed(stderr));
       if (error && !(error.code === 1 && stdout === '')) return reject(typeof error.code === 'number' || error.signal ? exited(ps, args, error.code ?? error.signal) : error);
       resolve(stdout);
     });
+    const deadline = setTimeout(() => {
+      expired = true;
+      read.kill('SIGKILL');
+      read.stdout?.destroy();
+      read.stderr?.destroy();
+      reject(timedOut(timeout));
+    }, Math.min(remaining, TIMER_MAX));
     reads.add(read);
   });
 }
@@ -1310,6 +1325,8 @@ function sent(pid, name, kill) {
  * process `found` holds as `unnamed`, which the census killed before it could read its name, is read
  * by name and command line before the wait, within the wait's own bound, so one the kill does not
  * end is recorded by them (#579). It yields each read and each pause, as `census` does.
+ * A read cut at its deadline in that wait records the last answer that showed a process alive;
+ * without an answer, it records that the process table could not show it ended (`reaped`).
  *
  * The census lists only processes whose real uid is Rigger's, and macOS lets a process signal
  * those, so a process it may not signal is not one this host has shown it (`D16` rule 3): the
@@ -1350,6 +1367,9 @@ function* settled(found, kill, bound) {
  * Where the reads fail, it settles once `UNREAPED_BOUND` has passed, and each that still answers
  * signal 0 is one the table could not show has ended: the census stopped it, so `settled` resumes it
  * rather than leave it stopped (`R-STATE-18`), though a zombie answers signal 0 too (`D16` rule 3).
+ * A read cut at its deadline, whether `run` or `runNow` reports `ETIMEDOUT` or the driver reports
+ * `LATE`, uses the last answer where one showed a process alive, or says the table could not be
+ * read where none answered.
  */
 function* reaped(pids, kill, bound) {
   const since = Date.now();
@@ -1364,7 +1384,7 @@ function* reaped(pids, kill, bound) {
     } catch (error) {
       // Past the reads' deadline no read can be made: what the last read found alive is not ended,
       // and the rest the table could not show had ended.
-      if (error.code === LATE) return (last ?? left).map((pid) => [pid, last ? `still alive when L0's read bound ran out after its kill` : 'not shown to have ended: the process table could not be read']);
+      if (error.code === LATE || error.code === 'ETIMEDOUT') return (last ?? left).map((pid) => [pid, last ? `still alive when L0's read bound ran out after its kill` : 'not shown to have ended: the process table could not be read']);
       living = undefined;
     }
     if (living?.length === 0) return [];

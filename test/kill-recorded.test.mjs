@@ -12,6 +12,7 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { killRecordedGroups } from '../src/execution/run.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
 import { alive, fixture, scratch, startGroup, startOf, until, withoutLeader } from './process-fixtures.mjs';
+import { heldOutput } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
@@ -413,6 +414,32 @@ test('given a recorded group whose start-time read never answers, the call kills
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });
 
+// proves R-STATE-11
+test('a start-time read that exits 0 but leaves output open past its deadline does not authorize a recorded kill', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  writeFileSync(join(directory, 'hold'), '');
+  const started = await startGroup(t, directory, 'group');
+  const entry = entryFor(started);
+  writeGroups(stateOf(directory), [entry]);
+  const readTimeout = 300;
+  const cut = heldOutput(t, directory, '');
+  const ps = fixture(directory, 'ps', [
+    'if /bin/mkdir "$here/first" 2>/dev/null; then',
+    cut.body,
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const failed = killIn(directory, { ps, readTimeout }).then(() => undefined, (error) => error);
+  await cut.releaseAfter(readTimeout);
+  const error = await failed;
+
+  assert.ok(error, 'the recorded kill was accepted');
+  assert.match(error.message, /process-table read timed out after 300 ms/);
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the recorded group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
 /**
  * Stand-ins for `ps`, by how the start-time read fails, each the body of a script whose arguments
  * are the read's: the group's id is the third. Beside each, what the failure says of that read,
@@ -579,6 +606,28 @@ test('given a live group that is not the recorded one, whose start-time read pri
   });
 
   assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the group was killed');
+  assert.deepEqual(readGroups(stateOf(directory)), [entry]);
+});
+
+// proves R-STATE-11
+test('a leaderless start-time table whose output closes after its deadline fails as a timeout', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  writeFileSync(join(directory, 'hold'), '');
+  const started = await startGroup(t, directory, 'group');
+  const entry = entryFor(started, { started: started.started - 5, dispatch: 'd-leaderless', card: 33 });
+  writeGroups(stateOf(directory), [entry]);
+  writeTableLess(directory, started.group);
+  const cut = heldOutput(t, directory, 'while IFS= read -r row; do printf "%s\\n" "$row"; done < "$here/table"');
+  const ps = fixture(directory, 'ps', cut.body);
+
+  const failed = killIn(directory, { ps, readTimeout: 300 }).then(() => undefined, (error) => error);
+  await cut.releaseAfter(300);
+  const error = await failed;
+
+  assert.ok(error, 'the cut table authorized the recorded kill');
+  assert.match(error.message, /process-table read timed out after 300 ms/);
+  assert.doesNotMatch(error.message, /left out its leader/);
+  assert.equal(alive(started.leader) && alive(started.member), true, 'a process of the recorded group was killed');
   assert.deepEqual(readGroups(stateOf(directory)), [entry]);
 });
 
