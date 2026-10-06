@@ -60,6 +60,7 @@ its row stays in the table below so its id is never reused.
 | D20 | A card's author survives its writing session | Ratified |
 | D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended 2026-09-26. |
 | D22 | Binding edits need the owner's merge before M5 | Ratified |
+| D23 | The forge refuses a push to the main line | Ratified |
 
 ## D1 — Redo over resume
 
@@ -787,3 +788,28 @@ behaviour, which `docs/spec/requirements.md` alone records.
 The cost is that an authored binding edit under a kind without `owner` must stop and return to
 an owner-judged kind. That card incurs the configured judges and waits for the owner's merge.
 M5 ends the interim process rule; a trusted gate record would replace the human check.
+
+## D23 — The forge refuses a push to the main line
+
+**Status:** Ratified.
+
+### Rule
+
+1. In this repository a GitHub ruleset refuses every update to `main` except merging a pull
+   request whose required checks passed, and it names no bypass actor.
+2. The push hooks are an early check, not the boundary, because a session can run code it wrote.
+3. The ruleset can't tell the owner's merge from a session's, since both use the owner's token
+   (`R-SAFE-1`). It also does not stop a token that can rewrite the repository's settings.
+
+**Reversed by:** a session credential separate from the owner's, or M5's gate running where a
+session's code cannot reach it.
+
+### Notes
+
+The forge holds the rule because a session can run code it wrote and thereby pass a client hook
+without satisfying its intent. A rule enforced on the forge reaches Git and API updates alike.
+Card #638 records the guarded probe of those routes and of a pull request merge.
+
+The rule binds this repository's sessions, not a Rigger deployment. It adds no product
+requirement. The distinction between the owner and a session still depends on the sessions
+honouring their roles until a boundary outside their credentials can enforce it.
