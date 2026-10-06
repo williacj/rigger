@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { bareCloneInto, cloneInto, gitIn, repositoryAt } from './git-repository.mjs';
+import { worktreeAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const gate = join(
@@ -23,11 +25,12 @@ const gate = join(
  * What the gate promises is an exit code and a decision, and nothing short of running it as a
  * process observes either. `exit 2` is the blocking code Claude Code reads; `exit 0` steps aside.
  */
-function rule(command, cwd) {
+function rule(command, cwd, env = gitEnvironment()) {
   const result = spawnSync(process.execPath, [gate], {
     input: JSON.stringify({ tool_name: 'Bash', cwd, tool_input: { command } }),
     cwd,
     encoding: 'utf8',
+    env,
   });
   return { code: result.status, reason: result.stderr.trim(), decision: result.stdout };
 }
@@ -58,6 +61,40 @@ for (const defaultBranch of ['main', 'trunk']) {
     assert.equal(rule('git push origin HEAD:topic', clone).code, 0);
   });
 }
+
+function cloneWithDefault(directory, name, defaultBranch) {
+  const source = repositoryAt(join(directory, `${name}-source`), { README: 'first\n' });
+  gitIn(source, 'branch', '-M', defaultBranch);
+  const remote = bareCloneInto(source, join(directory, `${name}-remote.git`));
+  return cloneInto(remote, join(directory, `${name}-clone`));
+}
+
+test('the gate reads trunk from a linked worktree when no git variable redirects it', () => {
+  const directory = temporaryDirectory('rigger-command-gate-worktree-');
+  const clone = cloneWithDefault(directory, 'trunk', 'trunk');
+  const worktree = worktreeAt(clone, join(directory, 'worktree'), 'topic');
+  const env = gitEnvironment();
+
+  assert.equal(gitIn(worktree, 'symbolic-ref', 'refs/remotes/origin/HEAD').trim(), 'refs/remotes/origin/trunk');
+  const { code, decision } = rule('git push origin HEAD:trunk', worktree, env);
+  assert.equal(code, 2);
+  assert.match(decision, /"permissionDecision":"deny"/);
+  assert.equal(rule('git push origin HEAD:topic', worktree, env).code, 0);
+});
+
+test('an explicit GIT_DIR makes the gate read main from that repository', () => {
+  const directory = temporaryDirectory('rigger-command-gate-redirect-');
+  const trunk = cloneWithDefault(directory, 'trunk', 'trunk');
+  const main = cloneWithDefault(directory, 'main', 'main');
+  const env = { ...gitEnvironment(), GIT_DIR: join(main, '.git') };
+
+  assert.equal(gitIn(trunk, 'symbolic-ref', 'refs/remotes/origin/HEAD').trim(), 'refs/remotes/origin/trunk');
+  assert.equal(gitIn(main, 'symbolic-ref', 'refs/remotes/origin/HEAD').trim(), 'refs/remotes/origin/main');
+  const { code, decision } = rule('git push origin HEAD:main', trunk, env);
+  assert.equal(code, 2);
+  assert.match(decision, /"permissionDecision":"deny"/);
+  assert.equal(rule('git push origin HEAD:trunk', trunk, env).code, 0);
+});
 
 /** A command written over several lines. Joined here so the source has no literal line breaks,
  * which a checkout on a machine that rewrites them would otherwise turn into `\r\n`. */

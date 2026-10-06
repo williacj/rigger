@@ -49,10 +49,31 @@ export const name = 'claude';
 
 /**
  * How Claude Code is asked whether it is signed in. `D16` rule 1: Claude Code owns that fact, and
- * `claude auth status --json` states it as `loggedIn`, which `doctor`'s `agentAuth` reads and
- * records what was measured of.
+ * `claude auth status --json` states it as `loggedIn`, which `signedIn` reads for `doctor`.
  */
 export const auth = ['claude', 'auth', 'status', '--json'];
+
+/**
+ * Whether `said`, what `claude auth status --json` answered, says Claude Code is signed in: the
+ * `loggedIn` its standard output states, read rather than its exit status, because the statement
+ * is the fact and the status a second telling of it that could drift from the first. Undefined
+ * where it states no boolean `loggedIn` this can read, which is not a measured answer but the shape
+ * a later version could take, and reading a missing key as `false` would tell a signed-in consumer
+ * they are signed out on a day the CLI merely reworded itself.
+ *
+ * Where its answer can differ (`D16` rule 3), measured with Claude Code 2.1.281 on this host:
+ * signed in it states `loggedIn: true` and exits 0; pointed at an empty `CLAUDE_CONFIG_DIR` it
+ * states `loggedIn: false` and exits 1. `--json` is the default the command documents, and it is
+ * passed anyway, because a default is the one part of a tool's answer that changes without notice.
+ */
+export function signedIn(said) {
+  try {
+    const { loggedIn } = JSON.parse(said.stdout);
+    return typeof loggedIn === 'boolean' ? loggedIn : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The directory, under a consumer's repository, Claude Code reads its assets from. */
 export const assets = '.claude';

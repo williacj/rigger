@@ -198,10 +198,10 @@ test('a template for a provider Rigger has no destination for is refused by name
   // destination is the provider's to state, so a provider that has not stated one has none.
   const templates = temporaryDirectory('rigger-templates-');
   copyFileSync(join(TEMPLATES, CONFIG), join(templates, CONFIG));
-  mkdirSync(join(templates, 'codex'));
-  writeFileSync(join(templates, 'codex', 'AGENTS.md'), 'ABOUTME: a second adapter\n');
+  mkdirSync(join(templates, 'unheld'));
+  writeFileSync(join(templates, 'unheld', 'AGENTS.md'), 'ABOUTME: a second adapter\n');
 
-  assert.throws(() => plan({ templates, repo: 'acme/widgets' }), /codex/);
+  assert.throws(() => plan({ templates, repo: 'acme/widgets' }), /unheld/);
 });
 
 /** A templates directory holding the starter config and one provider directory with one file. */
@@ -764,5 +764,5 @@ test('init forks each provider\'s templates into the directory that provider\'s 
   assert.deepEqual(PROVIDER_ASSETS, Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.assets])));
   const paths = plan({ repo: 'acme/widgets' }).map(({ path }) => path).filter((path) => path !== CONFIG);
   assert.ok(paths.length > 0);
-  for (const path of paths) assert.ok(path.startsWith(`${ADAPTERS.claude.assets}/`), path);
+  for (const path of paths) assert.ok(Object.entries(ADAPTERS).some(([provider, adapter]) => path.startsWith(`${adapter.assets}/`) && existsSync(join(TEMPLATES, provider, path.slice(adapter.assets.length + 1)))), path);
 });

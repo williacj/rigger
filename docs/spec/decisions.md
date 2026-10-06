@@ -44,7 +44,7 @@ its row stays in the table below so its id is never reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01. |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01 and 2026-10-05. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -60,6 +60,7 @@ its row stays in the table below so its id is never reused.
 | D20 | A card's author survives its writing session | Ratified |
 | D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended 2026-09-26. |
 | D22 | Binding edits need the owner's merge before M5 | Ratified |
+| D23 | The forge refuses a push to the main line | Ratified |
 
 ## D1 — Redo over resume
 
@@ -184,7 +185,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified. Amended 2026-10-01.
+**Status:** Ratified. Amended 2026-10-01 and 2026-10-05.
 
 ### Rule
 
@@ -199,6 +200,10 @@ measured until it has already been allowed, so the evidence only ever argues one
    - the run installs the tarball outside every checkout;
    - the run's target is a separate clone of the commit under test;
    - the run's worktree root lies outside both that clone and the installed package.
+
+   Where a milestone's exit list runs against a fixture, the run's target is a separate fresh
+   clone of the fixture repository the exit test names, in place of the second part. The first
+   and third parts still hold for that run.
 
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
@@ -228,6 +233,16 @@ the candidate engine, and the engine rule 1 then promotes from that same commit 
 doctor` or its first dispatch. The first shows the installation rule cannot hold for a candidate.
 The second shows a candidate's exit run is not evidence for the engine promoted from the commit
 it tested.
+
+The fixture target serves the installation rule in `docs/v0-build-plan.md` rather than relaxing
+it. A separate fresh clone of a fixture shares no file with this checkout or with the installed
+package, as the second part's clone shares none. The candidate engine then runs against the
+fixture rather than against this repository. The amendment answers the exit list in
+`docs/v0-build-plan.md`, M5, and the owner's ruling P9 on #642.
+
+One observation would reverse the fixture target: an exit run against a fixture clone changes a
+file or a ref in this repository. That shows a fixture clone does not keep the run apart from the
+repository the engine builds.
 
 ## D8 — A fact the code owns is generated, never typed
 
@@ -787,3 +802,28 @@ behaviour, which `docs/spec/requirements.md` alone records.
 The cost is that an authored binding edit under a kind without `owner` must stop and return to
 an owner-judged kind. That card incurs the configured judges and waits for the owner's merge.
 M5 ends the interim process rule; a trusted gate record would replace the human check.
+
+## D23 — The forge refuses a push to the main line
+
+**Status:** Ratified.
+
+### Rule
+
+1. In this repository a GitHub ruleset refuses every update to `main` except merging a pull
+   request whose required checks passed, and it names no bypass actor.
+2. The push hooks are an early check, not the boundary, because a session can run code it wrote.
+3. The ruleset can't tell the owner's merge from a session's, since both use the owner's token
+   (`R-SAFE-1`). It also does not stop a token that can rewrite the repository's settings.
+
+**Reversed by:** a session credential separate from the owner's, or M5's gate running where a
+session's code cannot reach it.
+
+### Notes
+
+The forge holds the rule because a session can run code it wrote and thereby pass a client hook
+without satisfying its intent. A rule enforced on the forge reaches Git and API updates alike.
+Card #638 records the guarded probe of those routes and of a pull request merge.
+
+The rule binds this repository's sessions, not a Rigger deployment. It adds no product
+requirement. The distinction between the owner and a session still depends on the sessions
+honouring their roles until a boundary outside their credentials can enforce it.

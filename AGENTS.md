@@ -129,6 +129,9 @@ without the owner's approval. `npm run` lists every script.
   say what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack
   fixes.
+- **End only recorded processes.** A session may end a process by a command it runs only if it,
+  or the tool that started the process, recorded its pid at start. A process it did not start
+  goes to the owner. This binds commands a session runs, not code it writes.
 
 ## When you write code
 
@@ -199,10 +202,11 @@ agent it dispatches can delete the runtime it is running under. `npm link` does 
 this, and the worktree root belongs outside both the checkout and the package. **The engine
 never merges a change to its own live gate, config, or CLI entry point**, and never dispatches a
 card that makes one. `D22`'s permission, under "Review and merge", reaches a card changing any
-path listed below, subject to the authored-document rule there. Those three, by path:
+path listed below, subject to the authored-document rule there. Those four, by path:
 
 - The live gate: `.githooks/`.
 - The live config: `rigger.config.mjs`, and `templates/rigger.config.mjs` with it.
+- The live Codex configuration: `.codex/config.toml`, and `templates/codex/config.toml` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which `package.json` declares as its `bin`.
 
 The template is in that list because `test/init.test.mjs` compares this repository's config

@@ -224,11 +224,18 @@ which model each tier selects, and how an agent file, a prompt and a directory b
 command line, standard input and environment. A variable the adapter sets holds a path under the
 dispatch's directory or its scratch directory, and is never one that L1 removes. L1 runs that
 command line as it runs a step's. The adapter passes the CLI no setting that widens what the
-consumer's own provider settings allow, with one exception. A directory a dispatch reaches is one
-Rigger gives the dispatch beside the directory it runs in, and today that is only a judge's `head`.
-For each such directory, the adapter lets the agent read and edit there and change into it. Changing
-into it is entry, and allows no command. Every command run there still needs a rule the consumer's
-settings declare, and the consumer's deny rules still apply there.
+consumer's own provider settings allow, with two exceptions:
+
+- **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
+  the directory it runs in, and today that is only a judge's `head`. For each such directory, the
+  adapter lets the agent read and edit there and change into it. Changing into it is entry, and
+  allows no command. Every command run there still needs a rule the consumer's settings declare,
+  and the consumer's deny rules still apply there.
+- **A temporary directory.** The adapter may give each dispatch one directory the agent may write,
+  inside that dispatch's scratch directory, and point `TMPDIR` and `TMPPREFIX` at it. It belongs
+  to that dispatch alone and lies outside every worktree. A process working there is within L0's
+  sweep of the scratch directory. It allows no command, and the consumer's deny rules still apply
+  there.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -522,7 +529,7 @@ one together, checked the same way: one number, one check. Moving text from the 
 directory's file therefore changes nothing; only deleting does. The budget is 2,500 words.
 
 Rigger's live instruction pool covers its `.claude/` role prompts and skill instructions. Its
-budget is 15,000 words, separate from the `AGENTS.md` budget. The check counts each live file
+budget is 15,200 words, separate from the `AGENTS.md` budget. The check counts each live file
 once. Distribution templates under `templates/claude/` do not spend this pool. Another consumer
 sizes its own L4 roles and procedures.
 

@@ -982,7 +982,7 @@ test('a role named ... or .reviewer is accepted', () => {
 
 // proves R-SCHED-10
 test('a role naming a provider the adapter map does not hold is refused, and the refusal names the role and the provider', () => {
-  for (const provider of ['codex', 'Claude', 'toString', '', 7, null, ['claude']]) {
+  for (const provider of ['unheld', 'Claude', 'toString', '', 7, null, ['claude']]) {
     assert.ok(!Object.hasOwn(ADAPTERS, provider) || typeof provider !== 'string', `the adapter map holds ${inspect(provider)}`);
     const earned = refusal(withRole({ provider }));
     assert.match(earned, /`roles\.engineer/, inspect(provider));

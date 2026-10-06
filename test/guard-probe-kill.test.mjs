@@ -19,6 +19,7 @@ import { gitIn, repositoryAt, repositoryIn, withOrigin } from './git-repository.
 import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, gone, holding, leave, OUTLIVED, read, ready, TAIL, until, withFirstOnPath } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -335,7 +336,7 @@ test('given a stand-in for the agent CLI that doctor probes, which leaves a chil
 
   const said = `${left.out}${left.err}\n${alone.out}${alone.err}`;
   assert.equal(agentLine(alone.out + alone.err).length, 1, said);
-  assert.match(agentLine(alone.out + alone.err)[0], /loggedIn: true/, said);
+  assert.match(agentLine(alone.out + alone.err)[0], /says it is signed in/, said);
   assert.deepEqual(agentLine(left.out + left.err), agentLine(alone.out + alone.err), said);
   const children = childrenIn(leaving);
   assert.equal(children.length, 1, `the stand-in left no child, so this proves nothing: ${said}`);
@@ -371,7 +372,7 @@ test('given a stand-in for the agent CLI that never exits, doctor\'s probe settl
   claudeHanging(directory);
   const emitter = keeping();
 
-  const said = await withFirstOnPath(directory, () => agentAuth({ emitter, timeout: OUTLIVED }));
+  const said = await withFirstOnPath(directory, () => agentAuth({ emitter, timeout: OUTLIVED, adapters: { claude: ADAPTERS.claude } }));
 
   ready(directory);
   assert.equal(said.ok, null, said.detail);
