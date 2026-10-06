@@ -62,8 +62,8 @@ const configure = (repository, concurrency) => writeFileSync(join(repository, 'r
  * Whether `pid` is alive: in the process table and not a zombie, as `ps` reads its state. A zombie's
  * state starts with `Z`, and a pid the table no longer holds reads as nothing.
  */
-function living(pid) {
-  const state = processState(pid);
+function living(pid, stateOf = processState) {
+  const state = stateOf(pid);
   return state !== '' && !state.startsWith('Z');
 }
 
@@ -91,6 +91,20 @@ function workingDirectories() {
   return directories;
 }
 
+/** Waits for recorded processes to end, then checks them and the world's working directories. */
+async function assertWorldCleared(recorded, under, { stateOf = processState, directoriesOf = workingDirectories } = {}) {
+  const bound = AbortSignal.timeout(10_000);
+  try {
+    await until(() => [...recorded.keys()].every((pid) => !living(pid, stateOf)), { signal: bound });
+  } catch (error) {
+    if (error.cause !== bound.reason) throw error;
+  }
+  const left = [...recorded].filter(([pid]) => living(pid, stateOf)).map(([pid, what]) => `${what} ${pid} (${stateOf(pid)})`);
+  assert.deepEqual(left, [], 'a process the test recorded is alive after its teardown');
+  const working = [...directoriesOf()].filter(([, cwd]) => under.some((each) => cwd === each || cwd.startsWith(`${each}/`)));
+  assert.deepEqual(working, [], 'a process works under the test\'s directories after its teardown');
+}
+
 /**
  * A consumer's world for the test `t`: a repository holding the consumer's config under
  * `concurrency`, its main line on `main`, with a local bare `origin`; a fake `gh` holding the four
@@ -110,12 +124,9 @@ function worldIn(t, concurrency, plan) {
   const directory = holding(t);
   const agent = standInAgent(plan);
   const recorded = new Map();
-  t.after(() => {
-    const left = [...recorded].filter(([pid]) => living(pid)).map(([pid, what]) => `${what} ${pid} (${processState(pid)})`);
-    assert.deepEqual(left, [], 'a process the test recorded is alive after its teardown');
+  t.after(async () => {
     const under = [directory, realpathSync(agent.dir)];
-    const working = [...workingDirectories()].filter(([, cwd]) => under.some((each) => cwd === each || cwd.startsWith(`${each}/`)));
-    assert.deepEqual(working, [], 'a process works under the test\'s directories after its teardown');
+    await assertWorldCleared(recorded, under);
   });
   const repository = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings(concurrency))};\n` });
   gitIn(repository, 'branch', '-M', 'main');
@@ -313,4 +324,70 @@ test('given four pullable cards and a config declaring no concurrency, the insta
   const pulls = pullsIn(runRecord(world, 0));
   assert.equal(pulls.length, 3, JSON.stringify(pulls));
   for (const pull of pulls) assert.ok(pull.inFlight <= 3, JSON.stringify(pull));
+});
+
+test('the teardown waits for a recorded stand-in observed exiting before asserting it is gone', async () => {
+  const recorded = new Map([[123, "card #10's restarted stand-in"]]);
+  const states = ['?E', ''];
+  let reads = 0;
+  await assertWorldCleared(recorded, [], {
+    stateOf: () => states[Math.min(reads++, states.length - 1)],
+    directoriesOf: () => new Map(),
+  });
+  assert.ok(reads >= 2, 'the teardown observed the process after its exiting state');
+});
+
+test('the teardown accepts a recorded zombie without waiting for it to leave the table', async () => {
+  let reads = 0;
+  await assertWorldCleared(new Map([[123, 'a zombie']]), [], {
+    stateOf: () => { reads += 1; return 'Z'; },
+    directoriesOf: () => new Map(),
+  });
+  assert.ok(reads >= 1, 'the teardown read the zombie state');
+});
+
+test('the teardown waits for a stopped recorded process once a kill ends it', async () => {
+  const states = ['T', ''];
+  let reads = 0;
+  await assertWorldCleared(new Map([[123, 'a stopped process']]), [], {
+    stateOf: () => states[Math.min(reads++, states.length - 1)],
+    directoriesOf: () => new Map(),
+  });
+  assert.ok(reads >= 2, 'the teardown observed the process after its stopped state');
+});
+
+test('the teardown still reports a recorded running process the world cannot sweep', SETTLES_WITHIN, async (t) => {
+  let survivor;
+  t.after(() => survivor && ended(survivor));
+  const outside = temporaryDirectory('rigger-restart-survivor-', { context: t });
+  writeFileSync(join(outside, 'hold'), '');
+  const world = worldIn(t, 1, {});
+  survivor = spawn('/usr/bin/tail', ['-f', join(outside, 'hold')], { cwd: outside, detached: true, stdio: 'ignore' });
+  world.recorded.set(survivor.pid, 'the outside survivor');
+
+  await assert.rejects(
+    assertWorldCleared(world.recorded, [world.directory, realpathSync(world.agent.dir)]),
+    { message: /a process the test recorded is alive after its teardown/ },
+  );
+});
+
+test('the teardown still reports a process left working under the world after its wait', SETTLES_WITHIN, async (t) => {
+  let worker;
+  t.after(() => worker && ended(worker));
+  const outside = temporaryDirectory('rigger-restart-worker-', { context: t });
+  writeFileSync(join(outside, 'hold'), '');
+  const world = worldIn(t, 1, {});
+  const cwd = join(world.directory, 'working');
+  mkdirSync(cwd);
+  worker = spawn('/usr/bin/tail', ['-f', join(outside, 'hold')], { cwd, detached: true, stdio: 'ignore' });
+  const states = ['?E', ''];
+  let reads = 0;
+
+  await assert.rejects(
+    assertWorldCleared(new Map([[123, 'an exiting stand-in']]), [world.directory, realpathSync(world.agent.dir)], {
+      stateOf: () => states[Math.min(reads++, states.length - 1)],
+    }),
+    { message: /a process works under the test's directories after its teardown/ },
+  );
+  assert.ok(reads >= 2, 'the working-directory check ran after the recorded stand-in had exited');
 });
