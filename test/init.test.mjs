@@ -361,6 +361,28 @@ test('this repository holds exactly what init produces for it, and nothing else'
   assert.deepEqual(divergences(root, files), []);
 });
 
+test('Rigger settings allow the measured maker edit and judge comment, and no other additions', () => {
+  const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
+
+  assert.deepEqual(settings.permissions.allow, [
+    'Bash(git status:*)',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git add:*)',
+    'Bash(git commit:*)',
+    'Bash(git push:*)',
+    'Bash(npm test:*)',
+    'Bash(npm run:*)',
+    'Bash(gh issue create:*)',
+    'Bash(gh issue view:*)',
+    'Bash(gh pr create:*)',
+    'Bash(gh pr diff:*)',
+    'Bash(gh pr view:*)',
+    'Bash(gh pr comment:*)',
+    'Edit(./**)',
+  ]);
+});
+
 test('a file under .claude that this repository does not hold is nobody\'s asset', async () => {
   // `.claude/settings.local.json` is written by Claude Code when a permission is approved for
   // the project, and it is nobody's template. The defect this catches is the check above reading
