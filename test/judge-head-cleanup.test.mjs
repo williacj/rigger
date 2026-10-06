@@ -47,7 +47,6 @@ process.stdout.write(JSON.stringify(init) + '\\n');
   return { result, id, directory: join(home, '.claude', 'session-env', id) };
 }
 
-// proves R-EVIDENCE-6
 test('a judge without a result record removes its session directory', (t) => {
   const { result, id, directory } = failedSession(t);
   assert.equal(result.status, 1, result.stderr);
@@ -56,7 +55,6 @@ test('a judge without a result record removes its session directory', (t) => {
   assert.match(result.stdout, /Claude result: undefined/);
 });
 
-// proves R-EVIDENCE-6
 test('a malformed Claude output line cannot bypass session teardown', (t) => {
   const { result, id, directory } = failedSession(t, { malformed: true });
   assert.equal(result.status, 1, result.stderr);
@@ -65,7 +63,6 @@ test('a malformed Claude output line cannot bypass session teardown', (t) => {
   assert.match(result.stdout, /not-json|Unexpected token/);
 });
 
-// proves R-EVIDENCE-6
 test('a judge with no session id fails explicitly instead of passing an empty teardown check', (t) => {
   const { result } = failedSession(t, { omitId: true });
   assert.equal(result.status, 1, result.stderr);
