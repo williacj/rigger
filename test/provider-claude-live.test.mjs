@@ -124,3 +124,36 @@ test('a live claude session started from the invocation writes a background task
   const outside = join('/tmp', `claude-${userInfo().uid}`, directory.replace(/[^a-zA-Z0-9]/g, '-'));
   assert.deepEqual(filesUnder(outside), [], `the task wrote under ${outside}`);
 });
+
+test('project settings set the Bash tool default timeout under the Claude adapter project source', { skip, timeout: 2 * SESSION }, async (t) => {
+  const { gone } = await import('./process-fixtures.mjs');
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const directory = join(scratch(), 'repo');
+  forgetting(t, directory);
+  put(directory, 'hold', '');
+  const pidFile = join(directory, 'tail.pid');
+  t.after(async () => {
+    if (!existsSync(pidFile)) return;
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    assert.equal(await gone(pid), true, `the Bash child ${pid} is still alive`);
+  });
+  put(directory, '.claude/agents/live.md', ['---', '# ABOUTME: Permits one live Bash timeout probe.', 'name: live', 'description: Runs a Bash timeout probe.', '---', '', '# Live', '', 'Follow the prompt exactly.', ''].join('\n'));
+  put(directory, '.claude/settings.json', JSON.stringify({ env: { BASH_DEFAULT_TIMEOUT_MS: '10000' }, permissions: { allow: ['Bash(*)'] } }));
+  const command = `/bin/sh -c 'echo $$ > "${pidFile}"; exec /usr/bin/tail -f "${join(directory, 'hold')}"'`;
+  const prompt = `Call Bash once with this exact command and no timeout field: ${command}\nAfter its tool result, quote that result and end your turn. Use no other tool.`;
+
+  const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt, directory });
+  const calls = callsOf(run.events);
+  t.diagnostic(`args: ${JSON.stringify(run.args)}`);
+  t.diagnostic(`calls: ${JSON.stringify(calls)}`);
+  t.diagnostic(`answer: ${JSON.stringify(run.answer)}`);
+  t.diagnostic(`exit ${run.result.exit}; stderr: ${run.result.stderr.toString('utf8')}`);
+
+  assert.equal(run.result.exit, 0);
+  assert.equal(run.args[run.args.indexOf('--setting-sources') + 1], 'project');
+  assert.deepEqual(calls.map(({ name }) => name), ['Bash']);
+  assert.equal(calls[0].input.command, command);
+  assert.equal(calls[0].input.timeout, undefined);
+  assert.match(textOf(calls[0].result), /did not complete within its 10s timeout/);
+});

@@ -25,6 +25,9 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   comment on the card. Dispatched by Rigger, escalate `ambiguous` with the rows. A line covered
   by a bounded grant class named on the card needs no row; list each such line and its class in
   the pull request.
+- **Finish commands before the session ends.** Never end while a command you started runs. A
+  command moved to the background ends with the session: rerun it in the foreground with a bound
+  that covers it, or exit non-zero naming the command. Read its exit status from the tool's result.
 
 ## What you never do
 
