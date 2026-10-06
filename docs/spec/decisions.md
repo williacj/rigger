@@ -44,7 +44,7 @@ its row stays in the table below so its id is never reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01. |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01 and 2026-10-05. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -185,7 +185,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified. Amended 2026-10-01.
+**Status:** Ratified. Amended 2026-10-01 and 2026-10-05.
 
 ### Rule
 
@@ -200,6 +200,10 @@ measured until it has already been allowed, so the evidence only ever argues one
    - the run installs the tarball outside every checkout;
    - the run's target is a separate clone of the commit under test;
    - the run's worktree root lies outside both that clone and the installed package.
+
+   Where a milestone's exit list runs against a fixture, the run's target is a separate fresh
+   clone of the fixture repository the exit test names, in place of the second part. The first
+   and third parts still hold for that run.
 
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
@@ -229,6 +233,16 @@ the candidate engine, and the engine rule 1 then promotes from that same commit 
 doctor` or its first dispatch. The first shows the installation rule cannot hold for a candidate.
 The second shows a candidate's exit run is not evidence for the engine promoted from the commit
 it tested.
+
+The fixture target serves the installation rule in `docs/v0-build-plan.md` rather than relaxing
+it. A separate fresh clone of a fixture shares no file with this checkout or with the installed
+package, as the second part's clone shares none. The candidate engine then runs against the
+fixture rather than against this repository. The amendment answers the exit list in
+`docs/v0-build-plan.md`, M5, and the owner's ruling P9 on #642.
+
+One observation would reverse the fixture target: an exit run against a fixture clone changes a
+file or a ref in this repository. That shows a fixture clone does not keep the run apart from the
+repository the engine builds.
 
 ## D8 — A fact the code owns is generated, never typed
 
