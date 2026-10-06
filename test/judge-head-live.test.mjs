@@ -3,8 +3,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, relative, sep } from 'node:path';
 
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { invocation } from '../src/substrate/providers/claude.mjs';
@@ -16,7 +17,7 @@ import { onPath } from './on-path.mjs';
 /** The repository's own Claude settings and command gate, committed into the fixture. */
 const project = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-/** Every path Claude Code made in this session's transcript directory, including directories. */
+/** Every path under a directory, including directories and the directory itself. */
 function pathsUnder(directory) {
   if (!existsSync(directory)) return [];
   return [directory, ...readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -26,7 +27,7 @@ function pathsUnder(directory) {
 }
 
 /** One fixture repository with two detached worktrees at the SHAs the pull request names. */
-function pair(t) {
+function pair() {
   const root = scratch();
   const repository = repositoryAt(join(root, 'repository'), {
     README: 'base\n',
@@ -45,22 +46,13 @@ function pair(t) {
   const head = detachedWorktreeAt(repository, join(root, 'head'), headSha);
   const transcripts = transcriptsOf(main);
   assert.ok(!existsSync(transcripts), `transcripts already exist at ${transcripts}`);
-  t.after(() => {
-    const created = pathsUnder(transcripts);
-    t.diagnostic(`Claude home paths created: ${JSON.stringify(created)}`);
-    rmSync(transcripts, { recursive: true, force: true });
-    const remaining = created.filter(existsSync);
-    t.diagnostic(`Claude home paths remaining after teardown: ${JSON.stringify(remaining)}`);
-    assert.ok(!existsSync(transcripts), `Claude home transcript directory survived teardown: ${transcripts}`);
-    assert.deepEqual(remaining, [], 'Claude home paths survived teardown');
-  });
 
   const marker = join(root, 'npm-test-cwd');
   const calls = join(root, 'gh-calls');
   const bin = join(root, 'bin');
   put(bin, 'gh', '#!/bin/sh\nprintf "%s\\0" "$@" >> "$RIGGER_GH_CALLS"\n');
   chmodSync(join(bin, 'gh'), 0o755);
-  return { root, main, head, base, headSha, marker, calls, bin };
+  return { root, main, head, base, headSha, marker, calls, bin, transcripts };
 }
 
 /** The real L2 answer for this fixture's pull request. */
@@ -89,7 +81,7 @@ function promptFor({ main, base, headSha }) {
 // proves R-EVIDENCE-6
 test('a live Claude judge uses L2 instructions to diff the pull request, test in head and post findings', { skip, timeout: 2 * SESSION }, async (t) => {
   assert.ok(onPath('claude', pastRefusing()), 'no claude is installed past the refusing CLI');
-  const dirs = pair(t);
+  const dirs = pair();
   const { command, args, input, unset, env: set } = await invocation({
     agent: join(dirs.main, '.claude', 'agents', 'reviewer.md'),
     tier: 'standard',
@@ -101,10 +93,35 @@ test('a live Claude judge uses L2 instructions to diff the pull request, test in
   const env = { ...process.env, PATH: `${dirs.bin}:${pastRefusing()}`, RIGGER_HEAD_MARKER: dirs.marker, RIGGER_GH_CALLS: dirs.calls };
   for (const variable of unset) delete env[variable];
   Object.assign(env, set);
+  const home = join(homedir(), '.claude');
+  const before = new Set(pathsUnder(home));
+  assert.ok(!before.has(dirs.transcripts), `project transcript directory already exists: ${dirs.transcripts}`);
   const result = await runCommand({ command, args, input, cwd: dirs.main, env, timeout: SESSION, emitter: { emit() {} } });
   const events = eventsOf(result.stdout);
   const bash = callsOf(events).filter(({ name }) => name === 'Bash');
   const record = events.find((event) => event.type === 'result');
+  const sessionId = record?.session_id;
+  t.diagnostic(`Claude session id: ${sessionId}`);
+  t.after(() => {
+    const during = new Set(pathsUnder(home));
+    const added = [...during].filter((path) => !before.has(path));
+    const sessionPaths = added.filter((path) => {
+      const names = relative(home, path).split(sep);
+      return (sessionId && names.some((name) => name.includes(sessionId)))
+        || path === dirs.transcripts || path.startsWith(`${dirs.transcripts}${sep}`);
+    }).sort();
+    const otherPaths = added.filter((path) => !sessionPaths.includes(path)).sort().map((path) => ({ path, born: lstatSync(path).birthtime.toISOString() }));
+    const roots = sessionPaths.filter((path) => !sessionPaths.some((other) => other !== path && path.startsWith(`${other}${sep}`)));
+    for (const path of roots) rmSync(path, { recursive: true, force: true });
+    const after = new Set(pathsUnder(home));
+    t.diagnostic(`Claude home before session: ${JSON.stringify([...before].sort())}`);
+    t.diagnostic(`Claude home after teardown: ${JSON.stringify([...after].sort())}`);
+    t.diagnostic(`Claude session paths created: ${JSON.stringify(sessionPaths)}`);
+    t.diagnostic(`Claude session paths absent after teardown: ${JSON.stringify(sessionPaths.filter((path) => !after.has(path)))}`);
+    t.diagnostic(`Claude other paths added during run: ${JSON.stringify(otherPaths)}`);
+    assert.deepEqual(sessionPaths.filter((path) => after.has(path)), [], 'Claude session paths survived teardown');
+  });
+  assert.match(sessionId, /^[0-9a-f-]{36}$/);
   t.diagnostic(`Claude calls: ${JSON.stringify(bash)}`);
   t.diagnostic(`Claude result: ${JSON.stringify(record)}`);
   t.diagnostic(`Claude exit: ${result.exit}; stderr: ${result.stderr.toString('utf8')}`);
