@@ -20,7 +20,7 @@ originates here.
 
 A row may bound its scope with a dimensions table. Put that table under the row's group, directly
 after the group's row table. Give it a level-three heading beginning with the row's id, for
-example `### R-STATE-21 — Read and member states`; the row cites its id and that heading. The
+example `### R-TABLEEXAMPLE-1 — Example states`; the row cites its id and that heading. The
 table binds as its row does.
 
 **Scope.** These bind a Rigger deployment: the engine, the gate, the roles and configuration a

@@ -22,3 +22,13 @@ At base `c621e7e`, `npm run budget:instructions` measured 14,538 live words agai
 The test-first budget assertion failed because it read 14,600 where #618 proposes 15,000. The
 architect's budget delta is limited to that sentence in `ARCHITECTURE.md`; the owner's merge
 ratifies it.
+
+The first review found that the matrix builder read a dimensions table as requirements with
+empty ids. It now reads only tables headed with an `id` column, keeping the real rows and their
+`checked by` entries. The absorption check also read an id-shaped dimension as a requirement;
+its reader now requires a table headed by `id`. The duplicate-id check already does that, while
+the spec-style lint reads every table cell and admits this table's form.
+
+The architect routing test leaves test files, journal entries and generated files out of its
+placement condition. The example heading uses a group and id that no register or earlier pull
+request used.

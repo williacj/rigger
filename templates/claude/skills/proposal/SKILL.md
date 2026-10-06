@@ -80,7 +80,7 @@ mean. Read it there. What the proposal owes beyond it:
   `.claude/skills/acceptance/`, under "Systems outside Rigger's code", holds that table's form.
   A ratified row's table lives in `docs/spec/requirements.md`, under its group, directly after
   that group's row table. Head it with the row's id, for example
-  `### R-STATE-21 — Read and member states`. The row cites its own id and that heading.
+  `### R-TABLEEXAMPLE-1 — Example states`. The row cites its own id and that heading.
 
 **A proposal never lands in either register.** Every row in `docs/spec/requirements.md` and every
 entry in `docs/spec/decisions.md` binds, so yours waits in the pull request until the owner

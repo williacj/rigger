@@ -194,6 +194,7 @@ unbounded absolutes. Choose that agent from the card's body:
   "Systems outside Rigger's code" defines that class.
 - The architect reviews it if "Lands in" names `ARCHITECTURE.md`, paths under two or more layer
   homes in `ARCHITECTURE.md`'s "The layers" table ("Lives in"), or a path under no layer's home.
+  Paths under `test/`, `docs/journal/` and `docs/derived/` do not count toward this condition.
 - Otherwise the second agent is the `reviewer`.
 
 You revise the acceptance before any maker starts. This review is part of filing.

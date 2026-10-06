@@ -95,6 +95,29 @@ function documents(source, destination) {
   return dir;
 }
 
+test('a dimensions table headed by a row id supplies no destination requirement', async () => {
+  const { rows } = await import(pathToFileURL(script).href);
+  const destination = [
+    '## R-ESC — a group',
+    '',
+    '| id | requirement | made true by | checked by | from |',
+    '|---|---|---|---|---|',
+    '| R-ESC-1 | Its states are in R-ESC-1 — Scope states. | the engine | the test suite | |',
+    '',
+    '### R-ESC-1 — Scope states',
+    '',
+    '| State | In scope |',
+    '|---|---|',
+    '| R-ESC-1 | in |',
+    '',
+  ].join('\n');
+  const dir = documents('', destination);
+
+  assert.deepEqual(rows(join(dir, 'destination.md')), [
+    { id: 'R-ESC-1', text: 'Its states are in R-ESC-1 — Scope states.' },
+  ]);
+});
+
 /** The heading the two-document form reads its source clauses out of. */
 const HEADING = '## Invariants that hold across every layer';
 

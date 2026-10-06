@@ -27,6 +27,7 @@ export function register(text) {
       headings = row;
       continue;
     }
+    if (!headings.includes('id')) continue;
     if (row.every((cell) => /^-+$/.test(cell))) continue;
     const cell = (heading) => row[headings.indexOf(heading)] ?? '';
     rows.push({ id: cell('id'), checkedBy: cell('checked by') });
