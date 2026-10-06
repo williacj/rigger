@@ -200,10 +200,9 @@ measured until it has already been allowed, so the evidence only ever argues one
    - the run's target is a separate clone of the commit under test;
    - the run's worktree root lies outside both that clone and the installed package.
 
-   Where a milestone's exit list runs against a fixture, a fresh clone of the fixture repository
-   the exit test names counts as the run's target. The first and third parts still hold for that
-   run: the tarball is installed outside every checkout, and the worktree root lies outside both
-   that clone and the installed package.
+   Where a milestone's exit list runs against a fixture, the run's target is a separate fresh
+   clone of the fixture repository the exit test names, in place of the second part. The first
+   and third parts still hold for that run.
 
    The candidate engine serves the exit run alone. The installed engine that builds Rigger is
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
@@ -234,13 +233,11 @@ doctor` or its first dispatch. The first shows the installation rule cannot hold
 The second shows a candidate's exit run is not evidence for the engine promoted from the commit
 it tested.
 
-The fixture target serves the installation rule rather than relaxing it. That rule keeps a
-dispatching engine away from the files it runs from. A fresh clone of a fixture shares no file
-with this checkout or with the installed package, as a clone of the commit under test shares none.
-The candidate engine packed at the commit under test then runs against the fixture the exit test
-names, rather than against this repository. M5's exit list runs against a fixture
-(`docs/v0-build-plan.md`, M5). The owner ruled on 2026-10-05 that this amendment lands before that
-run (P9, on #642).
+The fixture target serves the installation rule in `docs/v0-build-plan.md` rather than relaxing
+it. A separate fresh clone of a fixture shares no file with this checkout or with the installed
+package, as the second part's clone shares none. The candidate engine then runs against the
+fixture rather than against this repository. The amendment answers the exit list in
+`docs/v0-build-plan.md`, M5, and the owner's ruling P9 on #642.
 
 One observation would reverse the fixture target: an exit run against a fixture clone changes a
 file or a ref in this repository. That shows a fixture clone does not keep the run apart from the
