@@ -304,6 +304,38 @@ test('each judge\'s instruction tells the judge it may read beyond what it was g
   }
 });
 
+// proves R-EVIDENCE-2
+test('each judge reads this pull request change with git diff on its base and head in the working directory', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.ok(instruction.includes(`git diff ${BASE} ${HEAD}`), instruction);
+    assert.match(instruction, /in your working directory/i);
+  }
+});
+
+// proves R-EVIDENCE-2
+test('each judge runs a command in head by changing there and running it in one line', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.match(instruction, /cd \.\.\/head && <command>/);
+    assert.match(instruction, /one line/i);
+  }
+});
+
+// proves R-EVIDENCE-2
+test('each judge keeps git commands in its working directory and never runs git in head', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.match(instruction, /never run git in `head`/i);
+  }
+});
+
+// proves R-EVIDENCE-2
+test('each judge avoids building and testing in the unprovisioned working directory and reads command exit status from its tool result', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.match(instruction, /working directory is not provisioned/i);
+    assert.match(instruction, /never build or test there/i);
+    assert.match(instruction, /exit status from the tool's result/i);
+  }
+});
+
 // proves R-EVIDENCE-1, R-EVIDENCE-3
 test('given two judges of one card at one head, the evidence L2 attaches to each is byte-identical', () => {
   const [first, ...rest] = answer(card({ comments: [comment(`Findings at ${EARLIER} by reviewer`)] })).judges;
