@@ -129,6 +129,9 @@ without the owner's approval. `npm run` lists every script.
   say what and why, never what changed.
 - **Root cause only.** One hypothesis at a time, smallest test that discriminates. Never stack
   fixes.
+- **End only recorded processes.** A session may end a process by a command it runs only if it,
+  or the tool that started the process, recorded its pid at start. A process it did not start
+  goes to the owner. This binds commands a session runs, not code it writes.
 
 ## When you write code
 

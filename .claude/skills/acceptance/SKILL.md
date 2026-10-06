@@ -137,6 +137,14 @@ sends every judge back and spends one of the card's rounds (`R-LOOP-8`); a card 
 rounds escalates as ambiguous (`R-LOOP-9`); and the change stales every verdict already returned
 (`R-GATE-7`). Settle the bar with whoever will help you before you file.
 
+**Name predictable test edits at filing.** An author may name bounded grant classes, each
+stating what it covers and the existing `test/` lines it can reach, checkable in `git diff`.
+Examples: assertion lines in a named test file may retarget the old result of this card's
+changed behaviour; fixture lines in a named test file may mirror the real error from a named
+layer. A class cannot admit deletion of a test or weaken what it proves; those go to the owner.
+With classes, word the test-line item as: `git diff` against the base changes no existing line under
+`test/` that the table does not list and no named class covers.
+
 ## Work outside the repository
 
 For a card acting on a system outside the repository where undo is not obvious, require the maker
@@ -197,6 +205,10 @@ unbounded absolutes. Choose that agent from the card's body:
   Paths under `test/`, `docs/journal/` and `docs/derived/` do not count toward this condition.
 - Otherwise the second agent is the `reviewer`.
 
+That agent checks that "Lands in" names every file an item requires or a cited placement ruling
+names. It also checks that every cited proposal, ruling or grant is posted as a comment, issue
+or pull request and linked from the card.
+
 You revise the acceptance before any maker starts. This review is part of filing.
 
 ## Before you file
@@ -222,3 +234,6 @@ You revise the acceptance before any maker starts. This review is part of filing
 18. Does every absolute about such a system carry that table or a stated edge?
 19. Did the second agent chosen under "Have it attacked before dispatch" review for missing cells
     and unbounded absolutes, and did you revise before dispatch?
+20. Does "Lands in" name every file an item or cited placement ruling requires to change?
+21. Is every cited proposal, ruling and grant posted and linked from the card?
+22. Did you name bounded grant classes for predictable existing test-line changes?
