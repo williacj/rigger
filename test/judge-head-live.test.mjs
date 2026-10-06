@@ -3,18 +3,27 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { invocation } from '../src/substrate/providers/claude.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import { detachedWorktreeAt, gitIn, repositoryAt } from './git-repository.mjs';
-import { SESSION, callsOf, eventsOf, forgetting, pastRefusing, put, scratch, skip } from './claude-live.mjs';
+import { SESSION, callsOf, eventsOf, pastRefusing, put, scratch, skip, transcriptsOf } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
 
 /** The repository's own Claude settings and command gate, committed into the fixture. */
 const project = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+/** Every path Claude Code made in this session's transcript directory, including directories. */
+function pathsUnder(directory) {
+  if (!existsSync(directory)) return [];
+  return [directory, ...readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? pathsUnder(path) : [path];
+  })];
+}
 
 /** One fixture repository with two detached worktrees at the SHAs the pull request names. */
 function pair(t) {
@@ -34,7 +43,17 @@ function pair(t) {
   const headSha = gitIn(repository, 'rev-parse', 'HEAD').trim();
   const main = detachedWorktreeAt(repository, join(root, 'main'), base);
   const head = detachedWorktreeAt(repository, join(root, 'head'), headSha);
-  forgetting(t, main);
+  const transcripts = transcriptsOf(main);
+  assert.ok(!existsSync(transcripts), `transcripts already exist at ${transcripts}`);
+  t.after(() => {
+    const created = pathsUnder(transcripts);
+    t.diagnostic(`Claude home paths created: ${JSON.stringify(created)}`);
+    rmSync(transcripts, { recursive: true, force: true });
+    const remaining = created.filter(existsSync);
+    t.diagnostic(`Claude home paths remaining after teardown: ${JSON.stringify(remaining)}`);
+    assert.ok(!existsSync(transcripts), `Claude home transcript directory survived teardown: ${transcripts}`);
+    assert.deepEqual(remaining, [], 'Claude home paths survived teardown');
+  });
 
   const marker = join(root, 'npm-test-cwd');
   const calls = join(root, 'gh-calls');
@@ -92,9 +111,10 @@ test('a live Claude judge uses L2 instructions to diff the pull request, test in
 
   assert.equal(result.exit, 0);
   assert.equal(readFileSync(dirs.marker, 'utf8'), dirs.head);
-  assert.ok(bash.some(({ input: call, result: output }) => call.command.includes('git diff') && call.command.includes(dirs.base) && call.command.includes(dirs.headSha) && output?.is_error !== true), 'no successful Bash diff held both SHAs');
+  assert.ok(bash.some(({ input: call, result: output }) => call.command.includes('git diff') && call.command.includes(dirs.base) && call.command.includes(dirs.headSha) && output?.type === 'tool_result' && output.is_error === false), 'no successful Bash diff held both SHAs');
   const gh = readFileSync(dirs.calls, 'utf8').split('\0').filter(Boolean);
   assert.deepEqual(gh.slice(0, 3), ['pr', 'comment', '70']);
   assert.equal(gh.filter((arg) => arg === 'pr').length, 1, `more than one pr comment: ${gh}`);
-  assert.deepEqual((record?.permission_denials ?? []).filter((denial) => denial.tool_name === 'Bash' && /(?:\.\.\/head|\/head)\b/.test(JSON.stringify(denial.tool_input))), []);
+  assert.ok(Array.isArray(record?.permission_denials), 'Claude result has no permission denials record');
+  assert.deepEqual(record.permission_denials.filter((denial) => denial.tool_name === 'Bash'), []);
 });

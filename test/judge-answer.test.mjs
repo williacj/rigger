@@ -374,3 +374,28 @@ test('given a body never edited, the acceptance\'s revision in each judge\'s fac
     assert.match(evidence, /never edited/);
   }
 });
+
+// proves R-EVIDENCE-2
+test('each judge reads the pull request diff in the working directory in one instruction', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.ok(instruction.includes(`\`git diff ${BASE} ${HEAD}\` in your working directory`), instruction);
+  }
+});
+
+// proves R-EVIDENCE-2
+test('each judge ties the one-line head command to cd and &&', () => {
+  for (const { instruction } of answer(card()).judges) {
+    assert.ok(instruction.includes('as one line: `cd ../head && <command>`'), instruction);
+  }
+});
+
+// proves R-EVIDENCE-2
+test('each judge keeps shell status probes and substitutions out of its separate tool calls', () => {
+  for (const { instruction } of answer(card()).judges) {
+    const separate = instruction.split('\n').find((line) => line.startsWith('Use a separate tool call'));
+    assert.ok(separate, instruction);
+    assert.match(separate, /no extra shell operations, pipes, groups, variables, or status probes/);
+    for (const shape of ['`$?`', '`${...}`', '`$(...)`']) assert.ok(separate.includes(shape), separate);
+    assert.ok(separate.includes('Keep the `cd ../head && <command>` line by itself.'), separate);
+  }
+});
