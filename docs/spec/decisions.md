@@ -28,13 +28,15 @@ A decision holds one lifespan. A permanent principle and a boundary that expires
 entry, because retiring the entry would discard both.
 
 A ratified decision may be amended when the change adds within its stated scope, and the amendment
-records its date in the entry's status. A change to what a ratified rule means is never an
-amendment: a later decision supersedes it, so the original stays readable.
+records in the entry's status the pull request that made it. A change to what a ratified rule
+means is never an amendment: a later decision supersedes it, so the original stays readable.
 
 An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
-it. Those two openings are the only ones it takes, and an amendment adds its date after `Ratified`
-rather than a third. A superseded decision's body moves to `docs/spec/decisions-retired.md`, and
-its row stays in the table below so its id is never reused.
+it. Those two openings are the only ones it takes, and an amendment adds `Amended in #NNN` after
+`Ratified` rather than a third. A later amendment adds its pull request after the earlier ones, each
+joined to the one before by `and`, in the order the pull requests merged. A superseded decision's
+body moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is
+never reused.
 
 | id | decision | status |
 |---|---|---|
@@ -44,7 +46,7 @@ its row stays in the table below so its id is never reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended 2026-10-01 and 2026-10-05. |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended in #498 and #666. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -53,12 +55,12 @@ its row stays in the table below so its id is never reused.
 | D13 | macOS is v0's only host | Ratified |
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
-| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended 2026-09-25. |
+| D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended in #282. |
 | D17 | A requirement older than this decision is a counted gap | Ratified |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Superseded by D22 |
 | D20 | A card's author survives its writing session | Ratified |
-| D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended 2026-09-26. |
+| D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended in #319. |
 | D22 | Binding edits need the owner's merge before M5 | Ratified |
 | D23 | The forge refuses a push to the main line | Ratified |
 
@@ -185,7 +187,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified. Amended 2026-10-01 and 2026-10-05.
+**Status:** Ratified. Amended in #498 and #666.
 
 ### Rule
 
@@ -484,7 +486,7 @@ outgrown. On that evidence a later decision withdraws the admission, and the pro
 
 ## D16 — Code asks the tool that owns the fact, and says where it can disagree
 
-**Status:** Ratified. Amended 2026-09-25.
+**Status:** Ratified. Amended in #282.
 
 ### Rule
 
@@ -704,7 +706,7 @@ rule.
 
 ## D21 — Until M5, the owner's merge is the owner's ratification
 
-**Status:** Ratified. Amended 2026-09-26.
+**Status:** Ratified. Amended in #319.
 
 ### Rule
 
