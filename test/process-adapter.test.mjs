@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
+import { READ_TIMEOUT } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -1007,6 +1008,127 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   const cpu = (user + system) / 1000;
   t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
   assert.ok(cpu < rereading / 10, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
+});
+
+/**
+ * A compiled `ps` stand-in in `directory`, warmed, that runs `ps` and passes each read through,
+ * except that it shows every process caught mid-exec, state `?`, in the census's reads of states,
+ * which begin `-ww`: in every such read where `every` is set, and otherwise in the first alone.
+ * Once its `ps` has exited and its output is written, it adds a line to `calls`: when the call
+ * began and when it ended, in milliseconds, then its arguments. So the time from one call's end to
+ * the next call's start holds the caller's pause, and none of either call's own run. It is
+ * compiled, so the start of a call adds next to nothing to that time whatever the load.
+ */
+function timedPs(directory, { every }) {
+  writeFileSync(join(directory, 'ps.c'), [
+    '#include <stdio.h>',
+    '#include <stdlib.h>',
+    '#include <string.h>',
+    '#include <sys/stat.h>',
+    '#include <sys/time.h>',
+    '#include <sys/wait.h>',
+    '#include <unistd.h>',
+    'static double now(void) { struct timeval tv; gettimeofday(&tv, 0); return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0; }',
+    'int main(int argc, char **argv) {',
+    '  double began = now();',
+    '  if (getenv("RIGGER_FIXTURE_WARMING")) return 0;',
+    '  char here[4096], path[4608];',
+    '  snprintf(here, sizeof here, "%s", argv[0]);',
+    '  *strrchr(here, \'/\') = 0;',
+    '  int states = argc > 1 && strcmp(argv[1], "-ww") == 0 && strstr(argv[argc - 1], "stat=") != 0;',
+    '  snprintf(path, sizeof path, "%s/shown", here);',
+    `  if (states && !${every ? 1 : 0} && mkdir(path, 0700) != 0) states = 0;`,
+    '  int out[2];',
+    '  if (pipe(out) != 0) return 127;',
+    '  pid_t pid = fork();',
+    '  if (pid < 0) return 127;',
+    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv("/bin/ps", argv); _exit(127); }',
+    '  close(out[1]);',
+    '  FILE *in = fdopen(out[0], "r");',
+    '  char line[65536];',
+    '  while (fgets(line, sizeof line, in)) { int row; if (!states) fputs(line, stdout); else if (sscanf(line, "%d", &row) == 1) printf("%d ?\\n", row); }',
+    '  int status;',
+    '  if (waitpid(pid, &status, 0) != pid) return 127;',
+    '  fflush(stdout);',
+    '  snprintf(path, sizeof path, "%s/calls", here);',
+    '  FILE *log = fopen(path, "a");',
+    '  if (!log) return 127;',
+    '  fprintf(log, "%.3f %.3f", began, now());',
+    '  for (int i = 1; i < argc; i++) fprintf(log, " %s", argv[i]);',
+    '  fputc(\'\\n\', log);',
+    '  fclose(log);',
+    '  return WIFEXITED(status) ? WEXITSTATUS(status) : 127;',
+    '}',
+  ].join('\n'));
+  const ps = join(directory, 'ps');
+  const built = spawnSync('/usr/bin/cc', ['-o', ps, join(directory, 'ps.c')], { encoding: 'utf8' });
+  assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
+  return warmed(ps);
+}
+
+/**
+ * The census's reads `timedPs` logged in `directory`, each with when it began and ended and its
+ * arguments, and the index of each round's first read. The census's reads are the calls up to its
+ * last read that begins `-ww`, and each of its rounds begins and ends with a read of states, so
+ * every other such read begins a round.
+ */
+function censusCalls(directory) {
+  const calls = read(directory, 'calls').split('\n').map((line) => {
+    const [began, ended, ...args] = line.split(' ');
+    return { began: Number(began), ended: Number(ended), args: args.join(' ') };
+  });
+  const census = calls.slice(0, calls.findLastIndex(({ args }) => args.startsWith('-ww ')) + 1);
+  const starts = census.flatMap(({ args }, index) => (args.startsWith('-ww ') && args.endsWith('stat=') ? [index] : [])).filter((_, nth) => nth % 2 === 0);
+  return { census, starts };
+}
+
+test('a census whose every read of states finds a process caught mid-exec makes one read in each round after its first, which it keeps', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const ps = timedPs(directory, { every: true });
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })), [{ event: 'survivor.killed', pid: Number(read(directory, 'survivor.pid')), name: 'tail' }], 'the census did not keep its first round once its reads never agreed');
+  const { census } = censusCalls(directory);
+  const states = ({ args }) => args.startsWith('-ww ') && args.endsWith('stat=');
+  // The first round is whole: states, command lines, the survivor's name, command lines, states.
+  // A round whose first read of states finds a process caught mid-exec cannot agree, so each later
+  // round stops at that read, and the census's re-reading costs one read for each pause, whatever
+  // a whole round holds.
+  const later = census.slice(5);
+  t.diagnostic(`the census made ${census.length} reads: a first round of 5, then ${later.length} reads, ${later.filter(states).length} of them of states`);
+  assert.deepEqual(census.slice(0, 5).map(states), [true, false, false, false, true], 'the census\'s first round was not whole');
+  assert.ok(later.length >= 3, `the census read again ${later.length} times, too few to tell`);
+  assert.deepEqual(later.filter((call) => !states(call)).map(({ args }) => args), [], 'a round after the first read past a read of states that found a process caught mid-exec');
+});
+
+test('a census of 100 survivors whose first read of states disagrees reads again and agrees before its deadline, naming each survivor it kills', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const ps = timedPs(directory, { every: false });
+  const command = fixture(directory, 'command', Array.from({ length: 100 }, (_, nth) => leave(TAIL, `tail${nth}`)).join('\n'));
+
+  const { events } = await recorded(directory, { command, ps });
+
+  const { census, starts } = censusCalls(directory);
+  const took = census.at(-1).ended - census[0].began;
+  t.diagnostic(`the census read in ${starts.length} rounds, ${census.length} reads, over ${Math.round(took)} ms`);
+  // The first round disagreed, so a second that agreed is the census's last: two rounds, of four
+  // reads of states between them.
+  assert.equal(starts.length, 2, `the census read in ${starts.length} rounds, not a disagreeing first and an agreeing second`);
+  // A second round can run longer than the first, on a loaded host or for a group that grew. After
+  // its first round the census pauses one millisecond, as it always has, so the second round has
+  // nearly all the time the first left, and not a share the first round's reads earned away.
+  const deadline = census[0].began + READ_TIMEOUT;
+  const leftAfterFirst = deadline - census[starts[1] - 1].ended;
+  const leftAtSecond = deadline - census[starts[1]].began;
+  t.diagnostic(`the first round took ${Math.round(census[starts[1] - 1].ended - census[0].began)} ms and left ${Math.round(leftAfterFirst)} ms; the second began with ${Math.round(leftAtSecond)} ms left`);
+  assert.ok(leftAtSecond >= leftAfterFirst * 0.9, `the census began its second round with ${leftAtSecond} ms left of the ${leftAfterFirst} ms its first round left, less than nine tenths`);
+  assert.equal(census.filter(({ args }) => args.startsWith('-ww ') && args.endsWith('stat=')).length, 4, 'the census\'s second round did not read its states twice');
+  // Its deadline falls `READ_TIMEOUT` after its first read began, at the latest.
+  assert.ok(took < READ_TIMEOUT, `the census's reads ran ${took} ms, past its deadline`);
+  const tails = Array.from({ length: 100 }, (_, nth) => Number(read(directory, `tail${nth}.pid`))).sort((a, b) => a - b);
+  assert.deepEqual(events.map(({ event, pid, name }) => ({ event, pid, name })).sort((a, b) => a.pid - b.pid), tails.map((pid) => ({ event: 'survivor.killed', pid, name: 'tail' })));
 });
 
 test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {
