@@ -188,7 +188,15 @@ returns the card to you with the reason rather than rewriting it (`R-LOOP-6`).
 ## Have it attacked before dispatch
 
 Before a card is dispatched, a second agent reviews its acceptance for missing cells and
-unbounded absolutes. For a process, filesystem or structure card, that agent is the architect.
+unbounded absolutes. Choose that agent from the card's body:
+
+- The architect reviews it if an acceptance item depends on a system outside Rigger's code, as
+  "Systems outside Rigger's code" defines that class.
+- The architect reviews it if "Lands in" names `ARCHITECTURE.md`, paths under two or more layer
+  homes in `ARCHITECTURE.md`'s "The layers" table ("Lives in"), or a path under no layer's home.
+  Paths under `test/`, `docs/journal/` and `docs/derived/` do not count toward this condition.
+- Otherwise the second agent is the `reviewer`.
+
 You revise the acceptance before any maker starts. This review is part of filing.
 
 ## Before you file
@@ -212,5 +220,5 @@ You revise the acceptance before any maker starts. This review is part of filing
 17. Where an item depends on a system outside Rigger's code, does it name the dimensions and
     their values, mark each cell in or out of scope, and give each in-scope cell a test?
 18. Does every absolute about such a system carry that table or a stated edge?
-19. Has a second agent, the architect for a process, filesystem or structure card, reviewed the
-    acceptance for missing cells and unbounded absolutes, and have you revised before dispatch?
+19. Did the second agent chosen under "Have it attacked before dispatch" review for missing cells
+    and unbounded absolutes, and did you revise before dispatch?

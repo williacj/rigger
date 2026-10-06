@@ -271,6 +271,49 @@ test('a row is read by the headings the register gives its columns, not by their
   assert.deepEqual(register(text), [{ id: 'R-ONE-1', checkedBy: 'nothing yet' }]);
 });
 
+test('a requirement dimensions table adds no matrix row and leaves every requirement readable', () => {
+  const requirements = lines(
+    'ABOUTME: a fixture register.',
+    '',
+    '## R-ONE — a group',
+    '',
+    '| id | requirement | made true by | checked by | from |',
+    '|---|---|---|---|---|',
+    '| R-ONE-1 | Its states are in R-ONE-1 — Input states. | the engine | the test suite | |',
+    '| R-ONE-2 | Another requirement. | the engine | nothing yet | |',
+    '',
+    '### R-ONE-1 — Input states',
+    '',
+    '| Input state | In scope |',
+    '|---|---|',
+    '| present | in |',
+    '| absent | out |',
+    '',
+  );
+  const dir = fixture({
+    'docs/spec/requirements.md': requirements,
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/first.test.mjs': proving('// proves R-ONE-1', 'the first thing holds'),
+  });
+
+  assert.deepEqual(register(requirements), [
+    { id: 'R-ONE-1', checkedBy: 'the test suite' },
+    { id: 'R-ONE-2', checkedBy: 'nothing yet' },
+  ]);
+
+  const written = run(dir, '--write');
+  assert.equal(written.status, 0, written.stderr);
+  const matrix = readFileSync(join(dir, 'docs', 'derived', 'test-matrix.md'), 'utf8');
+  assert.equal(rowFor(matrix, 'R-ONE-1'), '| R-ONE-1 | `test/first.test.mjs` the first thing holds |');
+  assert.equal(rowFor(matrix, 'R-ONE-2'), '| R-ONE-2 | nothing yet |');
+  assert.equal(matrix.split('\n').filter((line) => /^\| R-ONE-\d+ \|/.test(line)).length, 2);
+  assert.doesNotMatch(matrix, /^\|  \|/m);
+
+  const checked = run(dir);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stdout, /1 of 2 requirements have no test/);
+});
+
 test('a test declares the requirements it proves in a comment on the line above it', () => {
   const source = lines(
     "import { test } from 'node:test';",
