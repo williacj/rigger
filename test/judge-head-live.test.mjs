@@ -26,6 +26,19 @@ function pathsUnder(directory) {
   })];
 }
 
+/** The first session id in stream-json output, ignoring incomplete or non-JSON lines. */
+function sessionIdOf(stdout) {
+  for (const line of stdout?.toString('utf8').split('\n') ?? []) {
+    try {
+      const id = JSON.parse(line).session_id;
+      if (typeof id === 'string') return id;
+    } catch {
+      // A cut-short line cannot hide a session id in an earlier record.
+    }
+  }
+  return undefined;
+}
+
 /** One fixture repository with two detached worktrees at the SHAs the pull request names. */
 function pair() {
   const root = scratch();
@@ -96,12 +109,7 @@ test('a live Claude judge uses L2 instructions to diff the pull request, test in
   const home = join(homedir(), '.claude');
   const before = new Set(pathsUnder(home));
   assert.ok(!before.has(dirs.transcripts), `project transcript directory already exists: ${dirs.transcripts}`);
-  const result = await runCommand({ command, args, input, cwd: dirs.main, env, timeout: SESSION, emitter: { emit() {} } });
-  const events = eventsOf(result.stdout);
-  const bash = callsOf(events).filter(({ name }) => name === 'Bash');
-  const record = events.find((event) => event.type === 'result');
-  const sessionId = record?.session_id;
-  t.diagnostic(`Claude session id: ${sessionId}`);
+  let sessionId;
   t.after(() => {
     const during = new Set(pathsUnder(home));
     const added = [...during].filter((path) => !before.has(path));
@@ -110,18 +118,39 @@ test('a live Claude judge uses L2 instructions to diff the pull request, test in
       return (sessionId && names.some((name) => name.includes(sessionId)))
         || path === dirs.transcripts || path.startsWith(`${dirs.transcripts}${sep}`);
     }).sort();
-    const otherPaths = added.filter((path) => !sessionPaths.includes(path)).sort().map((path) => ({ path, born: lstatSync(path).birthtime.toISOString() }));
     const roots = sessionPaths.filter((path) => !sessionPaths.some((other) => other !== path && path.startsWith(`${other}${sep}`)));
     for (const path of roots) rmSync(path, { recursive: true, force: true });
     const after = new Set(pathsUnder(home));
+    const otherPaths = added.filter((path) => !sessionPaths.includes(path)).sort().map((path) => {
+      try {
+        return { path, born: lstatSync(path).birthtime.toISOString() };
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        return { path, born: null };
+      }
+    });
+    t.diagnostic(`Claude session id: ${sessionId}`);
     t.diagnostic(`Claude home before session: ${JSON.stringify([...before].sort())}`);
     t.diagnostic(`Claude home after teardown: ${JSON.stringify([...after].sort())}`);
     t.diagnostic(`Claude session paths created: ${JSON.stringify(sessionPaths)}`);
     t.diagnostic(`Claude session paths absent after teardown: ${JSON.stringify(sessionPaths.filter((path) => !after.has(path)))}`);
     t.diagnostic(`Claude other paths added during run: ${JSON.stringify(otherPaths)}`);
+    assert.match(sessionId ?? '', /^[0-9a-f-]{36}$/, 'Claude session id was not found in any output record');
+    assert.ok(sessionPaths.length > 0, 'Claude made no path named by its session id or working directory');
     assert.deepEqual(sessionPaths.filter((path) => after.has(path)), [], 'Claude session paths survived teardown');
   });
-  assert.match(sessionId, /^[0-9a-f-]{36}$/);
+  let result;
+  try {
+    result = await runCommand({ command, args, input, cwd: dirs.main, env, timeout: SESSION, emitter: { emit() {} } });
+    sessionId = sessionIdOf(result.stdout);
+  } catch (error) {
+    sessionId = sessionIdOf(error.result?.stdout);
+    throw error;
+  }
+  assert.match(sessionId ?? '', /^[0-9a-f-]{36}$/, 'Claude session id was not found in any output record');
+  const events = eventsOf(result.stdout);
+  const bash = callsOf(events).filter(({ name }) => name === 'Bash');
+  const record = events.find((event) => event.type === 'result');
   t.diagnostic(`Claude calls: ${JSON.stringify(bash)}`);
   t.diagnostic(`Claude result: ${JSON.stringify(record)}`);
   t.diagnostic(`Claude exit: ${result.exit}; stderr: ${result.stderr.toString('utf8')}`);
