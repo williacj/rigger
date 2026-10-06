@@ -28,3 +28,13 @@ no CLI:
 - through L1 with the stand-in `codex`, where L1 hands the variables over a `TMPDIR` the caller set.
 
 The live run shows whether a heredoc then works under the sandbox.
+
+**Three more O93 tests.** The PM's amendment asked for a stand-in writing a file in the directory,
+two dispatches getting two directories, and the directory lying in no worktree. One guarded mutation
+per test, each run on that test alone, reds it, and each was restored byte-exact:
+- dropping `TMPDIR` from the env: the file was not in the directory (ENOENT);
+- one shared directory beside the scratch directories: `notEqual` failed;
+- the directory inside the working directory: "lies in a worktree".
+
+The stand-in that writes is a shell `codex` ahead of the shared stand-in. It writes under its
+`TMPDIR`, then hands the run on, so the shared stand-in is unchanged.

@@ -300,6 +300,57 @@ test('given a Codex role dispatch through L1, L1 hands the stand-in codex TMPDIR
   assert.deepEqual(following(session.args, '--add-dir'), [temporary]);
 });
 
+/** Whether `path`, or a directory above it, holds a `.git`, and so lies in a git worktree. */
+function inWorktree(path) {
+  for (let at = path; at !== dirname(at); at = dirname(at)) if (existsSync(join(at, '.git'))) return true;
+  return false;
+}
+
+test('given a Codex role dispatch through L1, a file the session writes under its TMPDIR lands in the role\'s temporary directory (O93)', async (t) => {
+  const { root, directory, base, repository, state, sink } = dispatchLayout(t);
+  const stand = onPath({ skills: [] });
+  // A `codex` ahead of the stand-in that writes one file under its TMPDIR, then hands the run on.
+  const writer = join(root, 'writer');
+  mkdirSync(writer);
+  writeFileSync(join(writer, 'codex'), `#!/bin/sh\nfor arg in "$@"; do [ "$arg" = prompt-input ] && exec '${join(stand.dir, 'codex')}' "$@"; done\nprintf landed > "$TMPDIR/landed-by-the-session"\nexec '${join(stand.dir, 'codex')}' "$@"\n`, { mode: 0o755 });
+  process.env.PATH = `${writer}:${process.env.PATH}`;
+
+  const result = await throughL1({ answer: answerOf(), cwd: directory, directory, scratch: base, repository, reach: [], env: { PATH: process.env.PATH, TMPDIR: join(root, 'handed-tmp') }, sink, state });
+
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.equal(readFileSync(join(realpathSync.native(base), 'engineer', 'tmp', 'landed-by-the-session'), 'utf8'), 'landed');
+  assert.equal(existsSync(join(root, 'handed-tmp', 'landed-by-the-session')), false, 'the file landed under the TMPDIR the caller handed');
+});
+
+test('two Codex dispatches get two different temporary directories, each inside its own scratch directory (O93)', async (t) => {
+  const { directory, agent, root } = layout(t);
+  onPath({ skills: [] });
+  const first = join(root, 'scratch', 'first');
+  const second = join(root, 'scratch', 'second');
+  for (const each of [first, second]) mkdirSync(each, { recursive: true });
+
+  const one = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: first, emitter: keeping() });
+  const two = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: second, emitter: keeping() });
+
+  assert.notEqual(one.env.TMPDIR, two.env.TMPDIR);
+  assert.ok(one.env.TMPDIR.startsWith(`${realpathSync.native(first)}/`), one.env.TMPDIR);
+  assert.ok(two.env.TMPDIR.startsWith(`${realpathSync.native(second)}/`), two.env.TMPDIR);
+});
+
+test('given a Codex dispatch whose working directory is a git worktree, its temporary directory lies in no worktree (O93)', async (t) => {
+  const { root, base, repository, sink } = dispatchLayout(t);
+  for (const each of [join(repository, '.codex'), join(repository, '.claude', 'agents')]) mkdirSync(each, { recursive: true });
+  writeFileSync(join(repository, '.codex', 'config.toml'), DECLARATION);
+  writeFileSync(join(repository, '.claude', 'agents', 'engineer.md'), '# Engineer\n');
+  const stand = onPath({ skills: [] });
+  assert.ok(inWorktree(repository), `${repository} is no worktree, so this compares nothing`);
+
+  const handed = await roleDispatch({ answer: answerOf(), cwd: repository, directory: repository, scratch: base, repository: join(root, 'repository'), reach: [], env: { PATH: stand.first() }, sink, id: 'd-codex', card: 1412 });
+
+  assert.equal(inWorktree(handed.env.TMPDIR), false, `${handed.env.TMPDIR} lies in a worktree`);
+  assert.deepEqual(following(handed.args, '--add-dir'), [handed.env.TMPDIR]);
+});
+
 test('the invocation hands the session the role\'s agent file whole, frontmatter included, from the path the role names, and refuses one outside the directory', async (t) => {
   const { directory, scratch: made, agent, root } = layout(t);
   onPath({ skills: [] });
