@@ -31,3 +31,16 @@ test('a session ends only its own recorded process, by command', () => {
   assert.match(rules, /process it did not start[\s\S]*?owner/i);
   assert.match(rules, /commands[\s\S]*?not code it writes/i);
 });
+
+test('an uncovered existing test line triggers batching even when the card grants none', () => {
+  const prompt = read('.claude/agents/engineer.md');
+  assert.ok(
+    /(?:no grant|lacks a grant)[\s\S]*?whole change locally[\s\S]*?npm test[\s\S]*?ask once/i.test(prompt),
+    'the sequence must begin with an uncovered line, not with a card that grants some lines',
+  );
+});
+
+test('the acceptance reviewer checks that cited sources are posted and linked', () => {
+  const skill = read('.claude/skills/acceptance/SKILL.md');
+  assert.match(skill, /That agent checks[\s\S]*?It also checks that every cited proposal, ruling or grant is posted[\s\S]*?linked from the card/i);
+});

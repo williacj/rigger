@@ -206,8 +206,8 @@ unbounded absolutes. Choose that agent from the card's body:
 - Otherwise the second agent is the `reviewer`.
 
 That agent checks that "Lands in" names every file an item requires or a cited placement ruling
-names. Every cited proposal, ruling or grant must be posted as a comment, issue or pull request
-and linked from the card.
+names. It also checks that every cited proposal, ruling or grant is posted as a comment, issue
+or pull request and linked from the card.
 
 You revise the acceptance before any maker starts. This review is part of filing.
 
