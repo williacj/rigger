@@ -709,7 +709,6 @@ test('given a read after the exit cleanup\'s kill that exits 1 and prints nothin
   await assertLeaderGone(group);
 });
 
-// proves R-STATE-9
 test('the guard waits for a leader to end after its first read', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const leader = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { detached: true, stdio: 'ignore' });
@@ -719,7 +718,6 @@ test('the guard waits for a leader to end after its first read', SETTLES_WITHIN,
   await assertLeaderGone(leader.pid);
 });
 
-// proves R-STATE-19
 test('the guard fails for a live leader outside every group L0 killed', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const leader = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { detached: true, stdio: 'ignore' });
