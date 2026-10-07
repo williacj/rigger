@@ -243,7 +243,7 @@ function fixtures(directory) {
   // Written in place, the file could be seen before it held the pid, and a kill in between would
   // leave it empty: `Number('')` is 0, which names the test's own process group to signal 0.
   const joiner = [
-    'my ($here, $group, $caller) = @ARGV;',
+    'my ($here, $group, $caller, $reaped) = @ARGV;',
     'setpgrp(0, 0) or die "leaving: $!";',
     'open my $ready, ">", "$here/joiner.ready" or die; close $ready;',
     '1 until -e "$here/go-join";',
@@ -255,14 +255,14 @@ function fixtures(directory) {
     '  1 while kill 0, $caller;',
     '  exec "/usr/bin/tail", "-f", "$here/hold";',
     '}',
-    'waitpid($pid, 0);',
+    'waitpid($pid, 0); if (defined $reaped) { open my $mark, ">", "$here/$reaped" or die; close $mark; }',
   ].join(' ');
   fixture(directory, 'joining', [
     'echo $$ > "$here/group.$1"',
     "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
     'echo $! > "$here/child.$1.tmp"',
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
-    `/usr/bin/perl -e '${joiner}' "$here" $$ $PPID &`,
+    `/usr/bin/perl -e '${joiner}' "$here" $$ $PPID \${RIGGER_REAP_MARK:+"$RIGGER_REAP_MARK"} &`,
     'while [ ! -f "$here/joiner.ready" ]; do :; done',
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
     'wait',
@@ -290,8 +290,39 @@ function fixtures(directory) {
     'fi',
     'exec /bin/ps "$@"',
   ].join('\n'));
+  fixture(directory, 'joining-reaped', 'export RIGGER_REAP_MARK=joiner.reaped\nexec "$here/joining" "$@"');
+  fixture(directory, 'ps-join-reaped', [
+    'case " $* " in *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
+    '  if /bin/mkdir "$here/first-confirmation" 2>/dev/null; then',
+    '    : > "$here/go-join"',
+    '    while [ ! -f "$here/joined.pid" ]; do :; done',
+    '    echo "first confirmation failed: $*" >> "$here/ps-reaped.log"',
+    '    echo "ps: first confirmation failed" >&2',
+    '    exit 2',
+    '  fi',
+    '  while [ ! -f "$here/joiner.reaped" ]; do :; done',
+    '  /bin/ps "$@" | /usr/bin/tee -a "$here/ps-reaped.log"',
+    '  exit 0 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
   // `ps-hides` answers every read of group 1's that the census and the kill make, those that
   // begin `-ww` or read parents, leaving out the row of group 1's child.
+  for (const [name, target] of [['ps-logged-reaped', 'ps-join-reaped'], ['ps-logged-fails', 'ps-status-fails'], ['ps-logged-join', 'ps-join']]) {
+    fixture(directory, name, [
+      'error="$here/ps-error.$$"',
+      'answer=$("$here/' + target + '" "$@" 2>"$error")',
+      'status=$?',
+      'failure=$(/bin/cat "$error")',
+      '/bin/rm -f "$error"',
+      'printf "READ %s\nSTATUS %s\n" "$*" "$status" >> "$here/ps-reads.log"',
+      '[ -z "$answer" ] || printf "%s\n" "$answer" | /usr/bin/sed "s/^/OUT /" >> "$here/ps-reads.log"',
+      '[ -z "$failure" ] || printf "%s\n" "$failure" | /usr/bin/sed "s/^/ERR /" >> "$here/ps-reads.log"',
+      '[ -z "$answer" ] || printf "%s\n" "$answer"',
+      '[ -z "$failure" ] || printf "%s\n" "$failure" >&2',
+      'exit "$status"',
+    ].join('\n'));
+  }
   fixture(directory, 'ps-hides', [
     'case " $* " in *" -g $(/bin/cat "$here/group.1" 2>/dev/null) "*)',
     '  case " $* " in *" -ww "*|*ppid=*) /bin/ps "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'; exit 0 ;; esac ;;',
@@ -858,6 +889,58 @@ test('a process that joins a group during the cleanup\'s first read of it after 
   assert.ok(existsSync(join(directory, 'failed')), 'the stand-in never failed the confirmation\'s first read, so this proves nothing');
   await assertNoneAlive(directory);
   assert.equal(alive(Number(read(directory, 'joined.pid'))), false, 'the process that joined the group is alive');
+});
+
+/** Captures every group kill the caller's L0 sends without changing the caller's group setup. */
+const KILL_LOGGER = "const nativeKill = process.kill.bind(process); process.kill = (target, name) => { if (name === 'SIGKILL') writeFileSync(join(directory, 'kills.log'), JSON.stringify([target, name]) + '\\n', { flag: 'a' }); return nativeKill(target, name); };";
+
+// proves R-STATE-12, R-STATE-19
+test('E1: a failed first confirmation records the group kill when the reaped joiner is absent afterward', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining-reaped' }, ps: 'ps-logged-reaped', before: KILL_LOGGER }, { signal: 'SIGTERM' });
+
+  assert.equal(signal, 'SIGTERM', stderr);
+  assert.ok(existsSync(join(directory, 'joiner.reaped')), 'the joiner parent did not reap it');
+  const trace = read(directory, 'ps-reaped.log');
+  const joined = Number(read(directory, 'joined.pid'));
+  assert.match(trace, /first confirmation failed:/);
+  assert.ok(!trace.split('\n').slice(1).some((line) => new RegExp(`^\\s*${joined} `).test(line)), `a post-kill read listed the reaped joiner: ${trace}`);
+  await assertNoneAlive(directory);
+  const group = Number(read(directory, 'group.1'));
+  const events = streamOf(directory);
+  t.diagnostic(JSON.stringify({ cell: 'E1', group, members: membersOf(directory, 1), joined, trace: read(directory, 'ps-reads.log'), reapMark: 'joiner.reaped:' + existsSync(join(directory, 'joiner.reaped')), kills: read(directory, 'kills.log'), events }));
+  const reads = read(directory, 'ps-reads.log').split(/(?=READ )/);
+  const confirmation = `READ -g ${group} -o pid=,stat=,xstat=\n`;
+  const failed = reads.findIndex((response) => response.startsWith(confirmation) && response.includes('STATUS 2\n'));
+  const answeredAfterKill = reads.slice(failed + 1).filter((response) => response.startsWith(confirmation) && response.includes('STATUS 0\n'));
+  assert.ok(failed >= 0 && answeredAfterKill.some((response) => new RegExp(`^OUT\\s+${group}\\s`, 'm').test(response) && !new RegExp(`^OUT\\s+${joined}\\s`, 'm').test(response)), 'the answered post-kill read did not list the expected group member while omitting the reaped joiner');
+  assert.equal(groupKills(events, group).length, 1, `the failed pre-kill read was lost: ${JSON.stringify(events)}`);
+});
+
+// proves R-STATE-12, R-STATE-19
+test('E2: every failed confirmation read records the group kill', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, ps: 'ps-logged-fails', before: KILL_LOGGER }, { signal: 'SIGTERM' });
+  assert.equal(signal, 'SIGTERM', stderr);
+  await assertNoneAlive(directory);
+  const group = Number(read(directory, 'group.1'));
+  const trace = read(directory, 'ps-reads.log');
+  assert.ok((trace.match(/ERR ps: the test refuses this read/g) ?? []).length > 1, 'the confirmation did not fail on every read');
+  const events = streamOf(directory);
+  t.diagnostic(JSON.stringify({ cell: 'E2', group, members: membersOf(directory, 1), trace, kills: read(directory, 'kills.log'), events }));
+  assert.equal(groupKills(events, group).length, 1, 'the repeated failures were not recorded: ' + JSON.stringify(events));
+});
+
+// proves R-STATE-12, R-STATE-19
+test('E3: an answering confirmation that lists a joiner records the group kill', ENDS_WITHIN, async (t) => {
+  const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-logged-join', before: KILL_LOGGER }, { signal: 'SIGTERM' });
+  assert.equal(signal, 'SIGTERM', stderr);
+  await assertNoneAlive(directory);
+  const group = Number(read(directory, 'group.1'));
+  const joined = Number(read(directory, 'joined.pid'));
+  const trace = read(directory, 'ps-reads.log');
+  assert.match(trace, new RegExp('OUT\\s+' + joined + ' '), 'no confirmation read listed the joiner');
+  const events = streamOf(directory);
+  t.diagnostic(JSON.stringify({ cell: 'E3', group, members: membersOf(directory, 1), joined, trace, kills: read(directory, 'kills.log'), events }));
+  assert.equal(groupKills(events, group).length, 1, 'the joiner was not recorded by the group kill: ' + JSON.stringify(events));
 });
 
 test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded by name and command line', ENDS_WITHIN, async (t) => {
