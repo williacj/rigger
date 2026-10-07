@@ -908,6 +908,11 @@ test('E1: a failed first confirmation records the group kill when the reaped joi
   const group = Number(read(directory, 'group.1'));
   const events = streamOf(directory);
   t.diagnostic(JSON.stringify({ cell: 'E1', group, members: membersOf(directory, 1), joined, trace: read(directory, 'ps-reads.log'), reapMark: 'joiner.reaped:' + existsSync(join(directory, 'joiner.reaped')), kills: read(directory, 'kills.log'), events }));
+  const reads = read(directory, 'ps-reads.log').split(/(?=READ )/);
+  const confirmation = `READ -g ${group} -o pid=,stat=,xstat=\n`;
+  const failed = reads.findIndex((response) => response.startsWith(confirmation) && response.includes('STATUS 2\n'));
+  const answeredAfterKill = reads.slice(failed + 1).filter((response) => response.startsWith(confirmation) && response.includes('STATUS 0\n'));
+  assert.ok(failed >= 0 && answeredAfterKill.some((response) => new RegExp(`^OUT\\s+${group}\\s`, 'm').test(response) && !new RegExp(`^OUT\\s+${joined}\\s`, 'm').test(response)), 'the answered post-kill read did not list the expected group member while omitting the reaped joiner');
   assert.equal(groupKills(events, group).length, 1, `the failed pre-kill read was lost: ${JSON.stringify(events)}`);
 });
 
