@@ -232,6 +232,25 @@ export async function tailIn(t, directory, cwd) {
 /** A survivor that runs until killed: `tail` following a file nothing writes to. */
 export const TAIL = '/usr/bin/tail -f "$here/hold"';
 
+/**
+ * A read that exits while a descendant keeps its output open. Its teardown ends every holder on
+ * every path. `started` waits for the stand-in to have printed, without releasing the holder.
+ */
+export function heldOutput(t, directory, output, ending = 'exit 0') {
+  const holders = () => existsSync(join(directory, 'read-holders.pids')) ? read(directory, 'read-holders.pids').split('\n').map(Number) : [];
+  const release = () => {
+    const live = new Set(running(join(directory, 'hold')));
+    for (const holder of holders()) if (live.has(String(holder))) process.kill(holder, 'SIGKILL');
+  };
+  t.after(release);
+  return {
+    body: [`${TAIL} &`, 'echo $! >> "$here/read-holders.pids"', output, ': > "$here/printed"', ending].join('\n'),
+    async started() {
+      await until(() => existsSync(join(directory, 'printed')), t);
+    },
+  };
+}
+
 /** A scratch directory holding the file `TAIL` follows. */
 export function holding(t) {
   const directory = scratch(t);

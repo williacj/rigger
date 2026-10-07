@@ -14,6 +14,7 @@ import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until } from './process-fixtures.mjs';
+import { heldOutput } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 
@@ -211,6 +212,52 @@ test('given a census read that never answers, the dispatch\'s call still settles
   assert.deepEqual(unread.map(({ layer, dispatch: id, card, directory: named }) => ({ layer, id, card, named })), [
     { layer: 'L0', id: 'd-census', card: 1412, named: realpathSync.native(directory) },
   ]);
+});
+
+// proves R-STATE-17, R-STATE-19
+test('a directory listing cut before its path at the read deadline records the directory as unread', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const workspace = join(directory, 'work');
+  const outside = await tailIn(t, directory, join(workspace, 'sub'));
+  const readTimeout = 300;
+  const cut = heldOutput(t, directory, `printf 'p${outside}\\nu${process.getuid()}\\n'`);
+  const lsof = fixture(directory, 'lsof', cut.body);
+
+  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', lsof, readTimeout });
+  await cut.started();
+  await settled;
+
+  const unread = readEvents(stateOf(workspace)).find(({ event }) => event === 'directory.unread');
+  assert.ok(unread, 'the cut listing was accepted as a complete directory census');
+  assert.match(unread.census, /process-table read timed out after 300 ms/);
+  assertUntouched(outside, 'the process working in the directory');
+});
+
+// proves R-STATE-17, R-STATE-19
+test('a cut state read during the directory sweep records the directory as unread', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const workspace = join(directory, 'work');
+  const outside = await tailIn(t, directory, join(workspace, 'sub'));
+  const readTimeout = 300;
+  const cut = heldOutput(t, directory, `printf '${outside}'`);
+  writeFileSync(join(directory, 'outside.pid'), String(outside));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(workspace, 'sub'))));
+  const ps = fixture(directory, 'ps', [
+    `case "$*" in "-p ${outside} -o pid=,stat=")`,
+    cut.body,
+    '  ;;',
+    '  *) exec /bin/ps "$@" ;;',
+    'esac',
+  ].join('\n'));
+
+  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', ps, lsof, readTimeout });
+  await cut.started();
+  await settled;
+
+  const unread = readEvents(stateOf(workspace)).find(({ event }) => event === 'directory.unread');
+  assert.ok(unread, 'the cut state read was accepted as a complete directory census');
+  assert.match(unread.census, /process-table read timed out after 300 ms/);
+  assertUntouched(outside, 'the process working in the directory');
 });
 
 // proves R-STATE-17, R-STATE-12
