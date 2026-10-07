@@ -16,6 +16,8 @@ import { realpathSync } from 'node:fs';
 
 import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until } from './process-fixtures.mjs';
+import { ended } from './process-fixtures.mjs';
+import { gone } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
@@ -696,10 +698,33 @@ test('given a leader the kill does not end, and a process table that stops answe
  */
 const emptyAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exit 1\nexec /bin/ps "$@"');
 
+/** The leader must end within `gone`'s bound; report its last state if it does not. */
+async function assertLeaderGone(group, within) {
+  assert.ok(await gone(group, within), `the leader outlived the kill, so the test proves nothing: ${processState(group)}`);
+}
+
 // proves R-STATE-19, R-STATE-9
 test('given a read after the exit cleanup\'s kill that exits 1 and prints nothing while the leader\'s zombie is still in the group, the cleanup records the leader as not shown to have ended, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
   const { group } = await assertLeaderNotKilled(t, { table: emptyAfterKill, reason: /^not shown to have ended: .*did not list its leader/, why: /the command was not shown to have ended: .*did not list its leader/ });
-  assert.ok(processState(group).startsWith('Z') || !alive(group), `the leader outlived the kill, so the test proves nothing: ${processState(group)}`);
+  await assertLeaderGone(group);
+});
+
+test('the guard waits for a leader to end after its first read', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const leader = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { detached: true, stdio: 'ignore' });
+  t.after(() => ended(leader));
+  assert.equal(alive(leader.pid), true);
+  setImmediate(() => leader.kill('SIGKILL'));
+  await assertLeaderGone(leader.pid);
+});
+
+test('the guard fails for a live leader outside every group L0 killed', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const leader = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { detached: true, stdio: 'ignore' });
+  t.after(() => ended(leader));
+  assert.equal(alive(leader.pid), true);
+  await assert.rejects(assertLeaderGone(leader.pid, 100), /the leader outlived the kill, so the test proves nothing:/);
+  assert.equal(alive(leader.pid), true);
 });
 
 /** Where `CALLER` defines its signal call: the line the settling variant below extends. */
