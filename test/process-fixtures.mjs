@@ -233,10 +233,10 @@ export async function tailIn(t, directory, cwd) {
 export const TAIL = '/usr/bin/tail -f "$here/hold"';
 
 /**
- * A read that exits 0 while a descendant keeps its output open. The test ends the holder after
- * `within` has passed since it saw the read start, and its teardown ends it on every path.
+ * A read that exits while a descendant keeps its output open. Its teardown ends every holder on
+ * every path. `started` waits for the stand-in to have printed, without releasing the holder.
  */
-export function heldOutput(t, directory, output) {
+export function heldOutput(t, directory, output, ending = 'exit 0') {
   const holders = () => existsSync(join(directory, 'read-holders.pids')) ? read(directory, 'read-holders.pids').split('\n').map(Number) : [];
   const release = () => {
     const live = new Set(running(join(directory, 'hold')));
@@ -244,12 +244,9 @@ export function heldOutput(t, directory, output) {
   };
   t.after(release);
   return {
-    body: [`${TAIL} &`, 'echo $! >> "$here/read-holders.pids"', output, ': > "$here/printed"', 'exit 0'].join('\n'),
-    async releaseAfter(within) {
+    body: [`${TAIL} &`, 'echo $! >> "$here/read-holders.pids"', output, ': > "$here/printed"', ending].join('\n'),
+    async started() {
       await until(() => existsSync(join(directory, 'printed')), t);
-      const marked = Date.now();
-      await until(() => Date.now() - marked >= within, t);
-      release();
     },
   };
 }

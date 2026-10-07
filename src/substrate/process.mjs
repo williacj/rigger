@@ -818,10 +818,11 @@ function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
 }
 
 /**
- * How `ps` and `lsof` are run besides their environment: killed outright at `remaining`
- * milliseconds, or at `TIMER_MAX` where that is less, since Node runs a longer timeout out at once,
- * and working in `/`, so the census of working directories never lists a read of its own, nor one of
- * another call's, as working in a dispatch's directory.
+ * How `ps` and `lsof` are run besides their environment: synchronous reads are killed outright at
+ * `remaining` milliseconds, or at `TIMER_MAX` where that is less, since Node runs a longer timeout
+ * out at once. The asynchronous `run` owns the same deadline and overrides this option's timeout.
+ * Each read works in `/`, so the census of working directories never lists a read of its own, nor
+ * one of another call's, as working in a dispatch's directory.
  */
 const reader = (remaining) => ({ timeout: Math.min(remaining, TIMER_MAX), killSignal: 'SIGKILL', maxBuffer: Infinity, encoding: 'utf8', cwd: '/' });
 
@@ -857,9 +858,10 @@ const exited = (tool, args, status) => new Error(`${tool} ${args.join(' ')} ende
  *
  * Node 26.5.0's `execFile` can call back without an error after its timeout fires when the child
  * exited 0 first but a descendant still holds its output open: the callback carries only the
- * output read before the pipe closed. Measured by `test/read-deadline.test.mjs` on macOS 27.0 on
- * 2026-10-06. This run owns its deadline and closes the read's pipes when it fires, so it settles
- * without waiting for a descendant and never accepts that partial answer (`D16` rule 3).
+ * output read before the pipe closed. Measured by running `test/read-deadline.test.mjs` over base
+ * source `78554e7` on macOS 27.0 on 2026-10-06. This run owns its deadline and closes the read's
+ * pipes when it fires, so it settles without waiting for a descendant and never accepts that
+ * partial answer (`D16` rule 3).
  *
  * What `ps` cannot show is that the kernel handed it every process there is, so neither the census
  * nor the kill takes a process as gone because a read left it out (`census`, `beforeKill`), and the

@@ -291,7 +291,7 @@ test('a cut name read for an unshown member after the group kill cannot name it 
   const signals = standIn(directory, { refused: 'two' });
 
   const settled = called(directory, { command: leavingTwo(directory), ps, readTimeout: 1_000, kill: markingKill(directory, signals) });
-  await cut.releaseAfter(1_000);
+  await cut.started();
   const { events } = await settled;
 
   const two = pidIn(directory, 'two');
@@ -315,7 +315,7 @@ test('a cut state read after the group kill records that the read timed out', SE
   const signals = standIn(directory, { refused: 'one' });
 
   const settled = called(directory, { command: leavingTwo(directory), ps, readTimeout: 300, kill: markingKill(directory, signals) });
-  await cut.releaseAfter(300);
+  await cut.started();
   const { events } = await settled;
 
   const unread = events.find(({ event }) => event === 'group.killed');
@@ -519,6 +519,38 @@ function assertUnended(directory, events, event, reason) {
   assert.ok(!processState(outside).startsWith('T'), `the census left the outside process stopped: ${processState(outside)}`);
 }
 
+/** A post-kill state read that fails on standard error, then answers with a zombie row. */
+function failingReaped(directory, outside, ready, earlierAnswer = false) {
+  return fixture(directory, 'ps', [
+    `[ -f "$here/${ready}" ] || exec /bin/ps "$@"`,
+    `case "$*" in "-p ${outside} -o pid=,stat=")`,
+    ...(earlierAnswer ? [`  if /bin/mkdir "$here/answered" 2>/dev/null; then printf "%s S\\n" "${outside}"; exit 0; fi`] : []),
+    '  if /bin/mkdir "$here/failed" 2>/dev/null; then echo "ps: reaped failure" >&2; exit 2; fi',
+    `  printf "%s Z\\n" "${outside}"; exit 0 ;;`,
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+}
+
+/** Advances only the async read driver's clock after a completed state read marks `clock-cut`. */
+async function cutAsyncReading(directory, action) {
+  const now = Date.now;
+  let jumps = 0;
+  Date.now = () => {
+    const caller = new Error().stack?.split('\n')[2] ?? '';
+    if (existsSync(join(directory, 'clock-cut')) && caller.includes('at reading (')) {
+      jumps += 1;
+      return now() + KILL_BOUND + 10_000;
+    }
+    return now();
+  };
+  try {
+    return { result: await action(), jumps };
+  } finally {
+    Date.now = now;
+  }
+}
+
 // proves R-STATE-19
 test('given a dispatch\'s directory holding a process L0 may not signal, the call\'s census records it as a process it could not end because of EPERM, and settles before KILL_BOUND', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -545,10 +577,11 @@ test('a cut name read while describing a refused directory process does not supp
     '  *) exec /bin/ps "$@" ;;',
     'esac',
   ].join('\n'));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   const signals = standIn(directory, { refused: 'outside' });
 
-  const settled = called(directory, { command: '/usr/bin/true', directory: work, ps, readTimeout: 300, kill: signals.kill });
-  await cut.releaseAfter(KILL_BOUND + 300);
+  const settled = called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, readTimeout: 300, kill: signals.kill });
+  await cut.started();
   const { events } = await settled;
 
   assert.deepEqual(recordOf(events, outside), [{ event: 'survivor.unended', name: undefined, cmd: undefined, reason: 'EPERM' }]);
@@ -574,7 +607,7 @@ test('a cut name read while describing a killed unnamed directory process does n
   const signals = standIn(directory, { unkept: 'outside' });
 
   const settled = called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, readTimeout: 300, kill: signals.kill });
-  await cut.releaseAfter(KILL_BOUND + 300);
+  await cut.started();
   const { events } = await settled;
 
   assert.deepEqual(recordOf(events, outside), [{ event: 'survivor.unended', name: undefined, cmd: undefined, reason: 'not shown to have ended: the process table could not be read' }]);
@@ -584,6 +617,8 @@ test('a cut name read while describing a killed unnamed directory process does n
 
 // proves R-STATE-19
 test('after an answered directory kill wait, a cut state read at its deadline keeps the earlier live answer', SETTLES_WITHIN, async (t) => {
+  await failedAsyncWait(t);
+  await lateAsyncWait(t);
   const directory = holding(t);
   const work = await workedIn(t, directory);
   const outside = pidIn(directory, 'outside');
@@ -605,7 +640,7 @@ test('after an answered directory kill wait, a cut state read at its deadline ke
   };
 
   const settled = called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, readTimeout: 300, kill });
-  await cut.releaseAfter(KILL_BOUND + 300);
+  await cut.started();
   const { events } = await settled;
 
   assert.ok(existsSync(join(directory, 'answered')), 'no earlier read showed the process alive');
@@ -716,6 +751,8 @@ test('given a dispatch\'s directory holding a process the kill does not end, the
 
 // proves R-STATE-19, R-STATE-9
 test('after an answered read, a timed-out read of a killed directory process records what the earlier read found alive', SETTLES_WITHIN, async (t) => {
+  await failedSynchronousWait(t, true);
+  await lateSynchronousWait(t, true);
   const directory = holding(t);
   const work = await workedIn(t, directory);
   holdingNone(directory);
@@ -752,7 +789,7 @@ test('an exit-cleanup read whose child exits 0 with its output open is reported 
   ].join('\n'));
 
   const settled = cleanedUp(directory, { ps: 'ps', readTimeout: CLEANUP_BOUND });
-  await cut.releaseAfter(CLEANUP_BOUND);
+  await cut.started();
   const { status, events } = await settled;
 
   assert.equal(status, 0);
@@ -763,6 +800,8 @@ test('an exit-cleanup read whose child exits 0 with its output open is reported 
 
 // proves R-STATE-19, R-STATE-9
 test('without an answered read, a timed-out read of a killed directory process records that it could not be shown ended', SETTLES_WITHIN, async (t) => {
+  await failedSynchronousWait(t, false);
+  await lateSynchronousWait(t, false);
   const directory = holding(t);
   const work = await workedIn(t, directory);
   holdingNone(directory);
@@ -782,6 +821,75 @@ test('without an answered read, a timed-out read of a killed directory process r
   assert.ok(existsSync(join(directory, 'timed-out')), 'the wait made no timed-out read');
   assertUnended(directory, events, 'survivor.unended', 'not shown to have ended: the process table could not be read');
 });
+
+/** Shows that an async failed read after a live answer is retried and the next answer is used. */
+async function failedAsyncWait(t) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  const signals = standIn(directory, { unkept: 'outside' });
+  const kill = (target, name) => {
+    if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'outside-killed'), '');
+    return signals.kill(target, name);
+  };
+  const ps = failingReaped(directory, outside, 'outside-killed', true);
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+
+  const { events } = await called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, kill, readTimeout: 2_000 });
+
+  assert.ok(existsSync(join(directory, 'answered')), 'no earlier read showed the process alive');
+  assert.ok(existsSync(join(directory, 'failed')), 'the read after the live answer did not fail on standard error');
+  assert.deepEqual(events.filter(({ pid }) => pid === outside).map(({ event }) => event), ['survivor.killed']);
+  assert.equal(alive(outside), true, 'the signal stand-in ended the process before its state reads');
+}
+
+/** Shows that an async read begun past the deadline uses the prior live answer. */
+async function lateAsyncWait(t) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  const signals = standIn(directory, { unkept: 'outside' });
+  const kill = (target, name) => {
+    if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'outside-killed'), '');
+    return signals.kill(target, name);
+  };
+  const ps = fixture(directory, 'ps', [
+    '[ -f "$here/outside-killed" ] || exec /bin/ps "$@"',
+    `case "$*" in "-p ${outside} -o pid=,stat=")`,
+    '  if /bin/mkdir "$here/answered" 2>/dev/null; then',
+    `    printf '%s S\\n' '${outside}'; : > "$here/clock-cut"; exit 0`,
+    '  fi',
+    '  : > "$here/unexpected-read"; exit 2 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+
+  const { result: { events }, jumps } = await cutAsyncReading(directory, () => called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, kill, readTimeout: 300 }));
+
+  assert.ok(existsSync(join(directory, 'answered')), 'no earlier read showed the process alive');
+  assert.ok(jumps > 0, 'the next read did not see the cut deadline');
+  assert.equal(existsSync(join(directory, 'unexpected-read')), false, 'a read ran after LATE');
+  assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+}
+
+/** Runs an exit-cleanup directory wait with a failing state read, with or without a prior answer. */
+async function failedSynchronousWait(t, earlierAnswer) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+  failingReaped(directory, outside, 'hang', earlierAnswer);
+
+  const { status, events } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000 });
+
+  assert.equal(status, 0);
+  assert.equal(existsSync(join(directory, 'answered')), earlierAnswer, 'the prior-answer branch was not forced');
+  assert.ok(existsSync(join(directory, 'failed')), 'the state read did not fail on standard error');
+  assert.deepEqual(events.filter(({ pid }) => pid === outside).map(({ event }) => event), ['survivor.killed']);
+  assert.equal(alive(outside), true, 'the signal stand-in ended the process before its state reads');
+}
 
 /**
  * A `ps` stand-in that, until `$here/hang` exists, holds the census's read of the outside process's
@@ -953,6 +1061,50 @@ async function cleanedUpBy(caller, directory, options) {
   run.stderr.on('data', (chunk) => { stderr += chunk; });
   const [status] = await once(run, 'exit');
   return { status, stderr, events: linesOf(directory, 'events') };
+}
+
+/** A caller whose synchronous read driver sees an expired clock only after `clock-cut` is marked. */
+const CLOCKED_CALLER = (() => {
+  const anchor = 'const options = JSON.parse(process.argv[3]);';
+  assert.equal(CALLER.split(anchor).length, 2, 'the caller options moved, so the clock forcing did not land');
+  return CALLER.replace(anchor, [
+    anchor,
+    'const realNow = Date.now;',
+    "Date.now = () => { const caller = new Error().stack?.split('\\n')[2] ?? ''; if (options.clockCut && existsSync(join(here, 'clock-cut')) && caller.includes('at readingNow (')) { appendFileSync(join(here, 'clock-jumps'), 'J'); return realNow() + options.clockCut; } return realNow(); };",
+  ].join('\n'));
+})();
+
+/** Forces a synchronous wait's next read to start after its deadline, with or without an answer. */
+async function lateSynchronousWait(t, earlierAnswer) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', [
+    ...(!earlierAnswer ? ['[ -f "$here/hang" ] && : > "$here/clock-cut"'] : []),
+    listingOf('outside', realpathSync.native(join(work, 'sub'))),
+  ].join('\n'));
+  fixture(directory, 'ps', [
+    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    `case "$*" in "-p ${outside} -o pid=,stat=")`,
+    ...(earlierAnswer ? [
+      '  if /bin/mkdir "$here/answered" 2>/dev/null; then',
+      `    printf '%s S\\n' '${outside}'; : > "$here/clock-cut"; exit 0`,
+      '  fi',
+    ] : []),
+    '  : > "$here/unexpected-read"; exit 2 ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000, clockCut: 20_000 });
+
+  assert.equal(status, 0, stderr);
+  assert.equal(existsSync(join(directory, 'answered')), earlierAnswer, 'the prior-answer branch was not forced');
+  assert.ok(existsSync(join(directory, 'clock-cut')), 'the read deadline was not cut');
+  assert.ok(existsSync(join(directory, 'clock-jumps')), 'the synchronous read driver did not see the cut clock');
+  assert.equal(existsSync(join(directory, 'unexpected-read')), false, 'a state read ran after LATE');
+  assertUnended(directory, events, 'survivor.unended', earlierAnswer ? 'still alive when L0\'s read bound ran out after its kill' : 'not shown to have ended: the process table could not be read');
 }
 
 // proves R-STATE-19, R-STATE-9

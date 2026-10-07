@@ -224,7 +224,7 @@ test('a directory listing cut before its path at the read deadline records the d
   const lsof = fixture(directory, 'lsof', cut.body);
 
   const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', lsof, readTimeout });
-  await cut.releaseAfter(readTimeout);
+  await cut.started();
   await settled;
 
   const unread = readEvents(stateOf(workspace)).find(({ event }) => event === 'directory.unread');
@@ -251,7 +251,7 @@ test('a cut state read during the directory sweep records the directory as unrea
   ].join('\n'));
 
   const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', ps, lsof, readTimeout });
-  await cut.releaseAfter(readTimeout);
+  await cut.started();
   await settled;
 
   const unread = readEvents(stateOf(workspace)).find(({ event }) => event === 'directory.unread');

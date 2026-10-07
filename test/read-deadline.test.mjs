@@ -33,7 +33,7 @@ function cutCensus(t) {
 // proves R-STATE-12, R-STATE-19
 test('a census read cut mid-row at its deadline is recorded as timed out', SETTLES_WITHIN, async (t) => {
   const { cut, settled, events } = cutCensus(t);
-  await cut.releaseAfter(300);
+  await cut.started();
   await settled;
 
   const unread = events.find(({ event }) => event === 'group.killed');
@@ -55,7 +55,7 @@ test('a timed-out read settles while the descendant still holds its output open'
 });
 
 // proves R-STATE-12, R-STATE-19
-test('run keeps before-deadline signal and spawn failures distinct from a held-output timeout', SETTLES_WITHIN, async (t) => {
+test('run keeps before-deadline failures and a fired nonzero read distinct from a held-output exit-0 timeout', SETTLES_WITHIN, async (t) => {
   for (const [failure, body, remove] of [
     ['SIGTERM', 'kill -TERM $$', false],
     ['ENOENT', 'exec /bin/ps "$@"', true],
@@ -70,8 +70,26 @@ test('run keeps before-deadline signal and spawn failures distinct from a held-o
     assert.match(unread.census, new RegExp(failure));
   }
 
+  const nonzeroDirectory = holding(t);
+  const nonzeroCommand = fixture(nonzeroDirectory, 'command', leave(TAIL, 'survivor'));
+  const nonzeroCut = heldOutput(t, nonzeroDirectory, 'printf "123"', 'exit 2');
+  const nonzeroPs = fixture(nonzeroDirectory, 'ps', [
+    'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac',
+    'if /bin/mkdir "$here/first" 2>/dev/null; then',
+    nonzeroCut.body,
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const nonzeroEvents = [];
+  const nonzeroSettled = runCommand({ command: nonzeroCommand, args: [], cwd: nonzeroDirectory, env: {}, timeout: 15_000, ps: nonzeroPs, readTimeout: 300, emitter: { emit: (event, fields) => nonzeroEvents.push({ event, ...fields }) } });
+  await nonzeroCut.started();
+  await nonzeroSettled;
+  const nonzeroUnread = nonzeroEvents.find(({ event }) => event === 'group.killed');
+  assert.ok(nonzeroUnread, `the nonzero read was not recorded: ${JSON.stringify(nonzeroEvents)}`);
+  assert.match(nonzeroUnread.census, /process-table read timed out after 300 ms/);
+
   const { cut, settled, events } = cutCensus(t);
-  await cut.releaseAfter(300);
+  await cut.started();
   await settled;
   const unread = events.find(({ event }) => event === 'group.killed');
   assert.ok(unread, `the held output was taken as a complete read: ${JSON.stringify(events)}`);
@@ -96,7 +114,7 @@ test('a read just before the group kill cut at its deadline records the kill as 
   const events = [];
 
   const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
-  await cut.releaseAfter(2 * readTimeout);
+  await cut.started();
   await settled;
 
   const unread = events.find(({ event }) => event === 'group.killed');
@@ -120,7 +138,7 @@ test('a read that writes standard error before its deadline is still timed out o
   const events = [];
 
   const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
-  await cut.releaseAfter(readTimeout);
+  await cut.started();
   await settled;
 
   const unread = events.find(({ event }) => event === 'group.killed');
@@ -149,7 +167,7 @@ test('whole rows and the whole answer are timed out when their output closes aft
     const events = [];
 
     const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
-    await cut.releaseAfter(readTimeout);
+    await cut.started();
     await settled;
 
     const unread = events.find(({ event }) => event === 'group.killed');
@@ -182,7 +200,7 @@ test('startOf refuses an exit-0 read whose output stays open past the synchronou
   const child = spawn(process.execPath, [caller], { cwd: directory, stdio: 'ignore' });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
 
-  await cut.releaseAfter(readTimeout);
+  await cut.started();
   const [status] = await once(child, 'exit');
 
   assert.equal(status, 0, 'the caller failed before it recorded the start-time result');

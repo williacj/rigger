@@ -431,7 +431,7 @@ test('a start-time read that exits 0 but leaves output open past its deadline do
   ].join('\n'));
 
   const failed = killIn(directory, { ps, readTimeout }).then(() => undefined, (error) => error);
-  await cut.releaseAfter(readTimeout);
+  await cut.started();
   const error = await failed;
 
   assert.ok(error, 'the recorded kill was accepted');
@@ -621,7 +621,7 @@ test('a leaderless start-time table whose output closes after its deadline fails
   const ps = fixture(directory, 'ps', cut.body);
 
   const failed = killIn(directory, { ps, readTimeout: 300 }).then(() => undefined, (error) => error);
-  await cut.releaseAfter(300);
+  await cut.started();
   const error = await failed;
 
   assert.ok(error, 'the cut table authorized the recorded kill');
