@@ -482,19 +482,19 @@ function forbidden(pid, kill) {
 }
 
 /**
- * The live members of `group` L0's read of states finds just before its kill, against `members`,
- * those the census named: `named`, each of `members` still alive, and `left`, why the kill of the
- * group is recorded beside them, where that read found a live member the census had not named and
- * could not read its name and command line (`namedNow`), and `listed`, every process it listed,
- * alive or a zombie. A
- * member the census named that the read finds a zombie, or leaves out once signal 0 no longer
- * reaches it, has exited on its own, and is not recorded as killed (`there`). It yields each read and each pause, as `census` does, so the call and the
- * exit cleanup both take it.
+ * The live members of `group` just before its kill: `named`, each complete identity from the
+ * census's current members or earlier sightings still alive by the confirming read, and `listed`,
+ * every pid that read listed. An earlier sighting that the confirming read omits still counts where
+ * signal 0 reaches its pid. A member that is a zombie there, or that no longer answers signal 0,
+ * exited on its own and is not recorded as killed (`there`). Where any read showed a member but
+ * no complete name and command line were obtained, `left` records why the group's kill may have
+ * ended it. A new live member in the confirming read is named through `namedNow`. The generator
+ * yields each read and pause so both the call and exit cleanup can take it.
  *
  * A read that lists no process while signal 0 still reaches the group is taken again, because a
  * member that is exiting still answers signal 0 (`occupied`) and may not be listed, until the group
  * no longer answers or `deadline`, `timeout` after it began, has passed. Then, or where the read
- * fails, the census's members are read by pid in its place, so one that exited on its own is still
+ * fails, every pid the census saw is read by pid in its place, so one that exited on its own is still
  * told apart, and the kill of the group is recorded beside them with why, since a member the census
  * had not named may have been ended. Where that read fails too, it throws, and the group's kill is
  * recorded alone, with why its processes went unnamed.
@@ -522,7 +522,9 @@ function forbidden(pid, kill) {
  * Recording the group's kill whenever signal 0 reaches the group would record the kill of every
  * group left holding only zombies, which L0 did not end.
  */
-function* beforeKill(group, members, kill, timeout, deadline) {
+function* beforeKill(group, members, sightings, kill, timeout, deadline) {
+  // A settled last round does not erase identities an earlier read obtained.
+  const known = [...new Map([...sightings.values()].filter(Boolean).concat(members).map((member) => [member.pid, member])).values()];
   let why;
   for (let wait = 0; why === undefined; wait = longer(wait)) {
     if (wait > 0) yield wait;
@@ -539,20 +541,24 @@ function* beforeKill(group, members, kill, timeout, deadline) {
       continue;
     }
     if (states.size === 0) continue;
-    const named = members.filter(({ pid }) => there(states, pid, kill));
+    const named = known.filter(({ pid }) => there(states, pid, kill));
     const listed = new Set(states.keys());
-    const extra = [...states].filter(([pid, state]) => live(state) && !members.some((member) => member.pid === pid)).map(([pid]) => pid);
-    if (extra.length === 0) return { named, listed };
+    const extra = [...states].filter(([pid, state]) => live(state) && !known.some((member) => member.pid === pid)).map(([pid]) => pid);
     // A live member the census did not name is named here, before the kill, as the census names one.
-    const late = yield* namedNow(extra);
-    const left = late.length < extra.length ? 'the group still held a live process the census and the kill had not named, which the kill of the group ended' : undefined;
+    const late = extra.length === 0 ? [] : yield* namedNow(extra);
+    const identified = new Set([...named, ...late].map(({ pid }) => pid));
+    // Signal 0 checks an omitted sighting; a pid already reaped before this read contributes none.
+    const unresolved = new Set([...sightings.keys(), ...extra]);
+    const left = [...unresolved].some((pid) => !identified.has(pid) && there(states, pid, kill))
+      ? 'a pre-kill read showed a member whose complete name and command line were unavailable, so the group kill may have ended it'
+      : undefined;
     return { named: [...named, ...late], left, listed };
   }
   const left = `${why}, so the kill of the group may have ended a process the census had not named`;
-  if (members.length === 0) return { named: [], left };
+  if (sightings.size === 0) return { named: [], left };
   try {
-    const states = rowsOf(yield ['-p', members.map(({ pid }) => pid).join(','), '-o', 'pid=,stat=']);
-    return { named: members.filter(({ pid }) => there(states, pid, kill)), left };
+    const states = rowsOf(yield ['-p', [...sightings.keys()].join(','), '-o', 'pid=,stat=']);
+    return { named: known.filter(({ pid }) => there(states, pid, kill)), left };
   } catch (error) {
     throw new Error(`${why}, and the read of the census's processes by pid failed too: ${error.message}`);
   }
@@ -611,7 +617,9 @@ function signal(group, name, kill = SIGNAL) {
  * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
  * pauses and reads again. A zombie is left out, because it is already dead. Where `deadline` passes
  * first, it keeps what the last round held, each live process the last state read found, by the
- * name and the command line read in that round, and leaves out one a read in that round missed.
+ * name and the command line read in that round. Alongside those members it carries every pid a
+ * completed round's state or command read showed, with its name and second command line where
+ * both answered. The confirming read decides whether an earlier sighting is still alive.
  *
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
@@ -690,6 +698,8 @@ function* census(group, kill, deadline) {
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
   let last;
+  // Retain every pid a completed round showed, even where a later round settles without it.
+  const sightings = new Map();
   const read = function* (args) {
     try {
       return yield args;
@@ -702,7 +712,7 @@ function* census(group, kill, deadline) {
   };
   for (let wait = 0; ; wait = longer(wait)) {
     if (wait > 0) yield wait;
-    if (last !== undefined && Date.now() >= deadline) return last;
+    if (last !== undefined && Date.now() >= deadline) return { members: last, sightings };
     let round;
     try {
       const before = yield* column('stat');
@@ -713,10 +723,15 @@ function* census(group, kill, deadline) {
       round = { before, lines, names, commands, after };
     } catch (error) {
       // A read given up on at `deadline` leaves the last round to keep, where there is one.
-      if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return last;
+      if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return { members: last, sightings };
       throw error;
     }
     const { before, lines, names, commands, after } = round;
+    for (const pid of new Set([...before.keys(), ...lines.keys(), ...commands.keys(), ...after.keys()])) {
+      if (!sightings.has(pid)) sightings.set(pid, undefined);
+      // The first command read tests consistency; the second supplies the recorded command line.
+      if (names.has(pid) && commands.has(pid)) sightings.set(pid, { pid, name: names.get(pid), cmd: commands.get(pid) });
+    }
     unseen = after.size === 0 && occupied(group, kill) ? 'named no process of the group while it still had one'
       : !after.has(group) && answers(group, kill) ? `left out the group's leader, ${group}, while signal 0 still reached its pid`
       : undefined;
@@ -724,7 +739,7 @@ function* census(group, kill, deadline) {
     const living = [...after].filter(([, state]) => live(state)).map(([pid]) => pid);
     last = living.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
     const settled = [before, after].every((states) => [...states.values()].every((state) => !state.startsWith('?')));
-    if (settled && samePids(before, after) && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid))) return last;
+    if (settled && samePids(before, after) && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid))) return { members: last, sightings };
   }
 }
 
@@ -926,13 +941,15 @@ function runOnce(ps, args, remaining, timeout) {
  * Ends what is left of `group`, once its command has exited or at its timeout, and hands back the
  * `L0` events to record, without ever stopping the group (`census`). In order:
  *
- * 1. the census reads which processes the group holds, by name and command line;
- * 2. a read of states just before the kill finds which of them are still alive (`beforeKill`);
+ * 1. the census reads which processes the group holds, retaining each sighting and any complete
+ *    name and command line it found;
+ * 2. a read of states just before the kill checks which of those sightings remain alive
+ *    (`beforeKill`);
  * 3. L0 kills the group whole, through `kill`;
  * 4. L0 kills it and reads it again until no member is left alive (`ended`);
- * 5. and only then it hands back a `killed` event for each member the read before the kill found
- *    alive, and the kill of the group beside them where that read found a live member the census
- *    had not named. Each member still alive at `KILL_BOUND`, or that L0 may not signal, is handed
+ * 5. and only then it hands back a `killed` event for each still-live member whose name and
+ *    command line were read, and the group kill where a shown member could not be named. Each
+ *    member still alive at `KILL_BOUND`, or that L0 may not signal, is handed
  *    back as a process it could not end, with why, in place of a kill.
  *
  * A census or a read before the kill that fails still has the group killed, and hands back the
@@ -970,8 +987,8 @@ async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
   let listed;
   let unnamed;
   try {
-    const members = await within((deadline) => census(group, kill, deadline));
-    ({ named, left, listed } = await within((deadline) => beforeKill(group, members, kill, readTimeout, deadline), readTimeout));
+    const { members, sightings } = await within((deadline) => census(group, kill, deadline));
+    ({ named, left, listed } = await within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline), readTimeout));
   } catch (error) {
     unnamed = error.message;
   }
@@ -1034,6 +1051,8 @@ function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
  * of it, is ended by L0's next kill, and is reaped by a parent outside the group before any read
  * lists it, is ended unrecorded. A read after a kill that fails has the kill of the group recorded
  * in place of what it could not list (`emptied`).
+ * A failed first confirmation read, before the kill, is also retained: a later read can omit a
+ * joiner whose outside parent already reaped it, or the failure can end this cleanup's reads.
  *
  * Where the confirmation's reads fail or run out of time, the group has the kill on every look until
  * `UNREAPED_BOUND` has passed, and the cleanup goes on: it cannot wait longer on a process table it
@@ -1051,8 +1070,8 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
   let listed;
   let unnamed;
   try {
-    const members = within((deadline) => census(group, kill, deadline));
-    ({ named, left, listed } = within((deadline) => beforeKill(group, members, kill, readTimeout, deadline), readTimeout));
+    const { members, sightings } = within((deadline) => census(group, kill, deadline));
+    ({ named, left, listed } = within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline), readTimeout));
   } catch (error) {
     unnamed = error.message;
   }
@@ -1065,8 +1084,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout), ps, readTimeout));
     if (leader === undefined && stuck.length === 0) unread = 'the process table did not list it';
   } catch (error) {
-    // The kill was sent on every look but one whose read failed before the first kill, so that
-    // kill is sent now.
+    // A failed first look is retained in seen.beforeUnread; send its pending group kill now.
     if (!seen.sent) signal(group, 'SIGKILL', kill);
     unread = error.message;
     // No read after the kill showed the members ended, so each the read before it found alive that
@@ -1077,8 +1095,9 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
     const why = `the process table could not be read after the kill: ${error.message}`;
     stuck = (named ?? []).filter(({ pid }) => answers(pid, kill)).map(({ pid }) => ({ pid, reason: pid === group && refusedAcross(group, kill) ? 'EPERM' : `${NOT_SHOWN}: ${why}` }));
   }
-  // Every member the census named was read alive or gone just before the kill, so a live one the
-  // confirmation finds that no read before it named joined the group after that read.
+  // The first confirmation's failure may be the only evidence of a member that joined after
+  // beforeKill. Keep it even if every later read omits that member or no later read runs.
+  if (unnamed === undefined && seen.beforeUnread !== undefined) left ??= `the first read of the group before its kill failed, so the kill of the group may have ended a process no read before it had listed: ${seen.beforeUnread}`;
   if (unnamed === undefined && seen.unread !== undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${seen.unread}`;
   if (unnamed === undefined && seen.live) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
   // A member the census named is recorded by its name and command line, and so is one that joined
@@ -1112,7 +1131,9 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  *
  * Where `seen.first` is set, it reads the group once before its first kill, so a process that
  * joined the group after the reads before it is read live before the kill ends it. It sets
- * `seen.sent` once it has sent a kill. Where a look lists a process, alive or a zombie, that is not
+ * `seen.sent` once it has sent a kill. A failure of that first read is kept in
+ * `seen.beforeUnread`, including when the bound prevents any later read. Where a look lists a
+ * process, alive or a zombie, that is not
  * among `seen.listed`, every process the read before the kill listed, it sets `seen.live`, even
  * where a later read fails, because the kill of the group may then have ended a process that no
  * read before it had named. Where a read after a kill fails, it keeps why in `seen.unread`, since the
@@ -1137,6 +1158,7 @@ function* emptied(group, seen, kill, bound) {
       if (sent && !states.has(group) && answers(group, kill)) throw leaderUnlisted(group);
     } catch (error) {
       if (sent) seen.unread ??= error.message;
+      else seen.beforeUnread ??= error.message;
       // A read the bound cut short leaves each member the last read found alive not ended.
       if (last !== undefined && (error.code === LATE || error.code === 'ETIMEDOUT')) return { leader: last.leader, stuck: last.living.map((pid) => ({ pid, reason: `still alive when the exit cleanup's read bound of ${bound} ms ran out` })) };
       if (error.code === LATE || unreadSince === undefined || Date.now() - unreadSince >= UNREAPED_BOUND) throw error;

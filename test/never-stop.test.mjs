@@ -22,6 +22,7 @@ import { gone } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
+import { sightingPs } from './census-sightings.mjs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -264,6 +265,295 @@ function markingKill(directory, signals) {
     return signals.kill(target, name);
   };
 }
+
+/** A parent outside the group that reaps its joined child once a state read releases it. */
+function reapingJoiner(directory) {
+  const program = join(directory, 'reaping-joiner');
+  writeFileSync(program, [
+    'my ($here, $group) = @ARGV;',
+    'setpgrp(0, 0) or die "leave: $!";',
+    'my $child = fork() // die "fork: $!";',
+    'if ($child == 0) {',
+    '  setpgrp(0, $group) or die "join: $!";',
+    '  open my $pid, ">", "$here/two.pid.tmp" or die; print $pid $$; close $pid;',
+    '  rename "$here/two.pid.tmp", "$here/two.pid" or die;',
+    '  1 until -e "$here/release-two";',
+    '  exit 0;',
+    '}',
+    'waitpid($child, 0);',
+    'open my $mark, ">", "$here/reaped-two" or die; close $mark;',
+  ].join(' '));
+  return program;
+}
+
+/** Starts a member whose parent can prove reaping before L0's confirming read and kill. */
+function reapingCommand(directory, hold) {
+  const joiner = reapingJoiner(directory);
+  return fixture(directory, 'command', [
+    ...(hold ? ['echo $$ > "$here/group.pid"'] : []),
+    leave(TAIL, 'one'),
+    '/usr/bin/perl "' + joiner + '" "$here" $$ >/dev/null 2>&1 &',
+    'while [ ! -f "$here/two.pid" ]; do :; done',
+    ...(hold ? [': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'] : []),
+  ].join('\n'));
+}
+
+/** Runs one controlled census sighting through the call's containment and returns its trace. */
+async function censusCall(t, cell, afterKill = 'omit') {
+  const directory = holding(t);
+  const signals = standIn(directory);
+  const command = cell === 'X' ? reapingCommand(directory, false)
+    : afterKill === 'zombie' ? fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'))
+      : leavingTwo(directory);
+  const { events } = await called(directory, { command, ps: sightingPs(directory, { cell, afterKill }), kill: markingKill(directory, signals) });
+
+  const two = pidIn(directory, 'two');
+  const group = signals.pairs.find(([target, name]) => target < 0 && name === 'SIGKILL')?.[0] * -1;
+  const trace = read(directory, 'sighted-ps.log');
+  assert.ok(existsSync(join(directory, 'sighted-first-stat')), 'the first census state read did not happen');
+  if (cell !== 'X') assert.ok(existsSync(join(directory, 'sighted-live')), 'the last read before the kill did not find the member alive');
+  assert.ok(groupKills(signals.pairs, group) > 0, 'no group kill was sent');
+  const mark = cell === 'X' ? 'reaped-two:' + existsSync(join(directory, 'reaped-two'))
+    : afterKill === 'zombie' ? 'state:' + processState(two)
+      : 'live-before-kill:' + existsSync(join(directory, 'sighted-live'));
+  t.diagnostic(JSON.stringify({ cell: `${cell}-call-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: signals.pairs, events }));
+  return { directory, events, group, two, trace };
+}
+
+/** Runs the same stand-in through synchronous exit containment. */
+async function censusExit(t, cell, afterKill = 'omit') {
+  const directory = holding(t);
+  if (cell === 'X') reapingCommand(directory, true);
+  else if (afterKill === 'zombie') joinedLate(directory);
+  else holdingTwo(directory);
+  sightingPs(directory, { cell, afterKill });
+  const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
+  const group = pidIn(directory, 'group');
+  const two = pidIn(directory, 'two');
+  const trace = read(directory, 'sighted-ps.log');
+  assert.equal(status, 0, stderr);
+  assert.ok(existsSync(join(directory, 'sighted-first-stat')), 'the first census state read did not happen');
+  if (cell !== 'X') assert.ok(existsSync(join(directory, 'sighted-live')), 'the last read before the kill did not find the member alive');
+  assert.ok(groupKills(pairs, group) > 0, 'no group kill was sent');
+  const mark = cell === 'X' ? 'reaped-two:' + existsSync(join(directory, 'reaped-two'))
+    : afterKill === 'zombie' ? 'state:' + processState(two)
+      : 'live-before-kill:' + existsSync(join(directory, 'sighted-live'));
+  t.diagnostic(JSON.stringify({ cell: `${cell}-exit-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: pairs, events }));
+  return { directory, events, group, two, trace };
+}
+
+/** The ordered arguments and response rows of the stand-in's complete read log. */
+function sightingReads(trace) {
+  return trace.split(/(?=READ )/).filter(Boolean).map((block) => {
+    const [first, ...rows] = block.trimEnd().split('\n');
+    return { args: first.slice(5), rows };
+  });
+}
+
+/** Guards the first census round's distinct read positions for `cell`. */
+function assertSighting(trace, two, cell) {
+  const reads = sightingReads(trace);
+  const states = reads.filter(({ args }) => args.startsWith('-ww -g ') && args.endsWith('pid=,stat='));
+  const commands = reads.filter(({ args }) => args.startsWith('-ww -g ') && args.endsWith('pid=,command='));
+  const has = ({ rows }) => rows.some((line) => new RegExp(`^ROW\\s+${two} `).test(line));
+  const expected = {
+    B: { states: [true, false], commands: [true, true], name: true },
+    U1: { states: [true, false], commands: [true, true], name: false },
+    U2: { states: [true, false], commands: [true, false], name: true },
+    A: { states: [false, true, false], commands: [false, false] },
+    C1: { states: [false, false], commands: [true, false] },
+    C2: { states: [false, false], commands: [false, true] },
+    N: { states: [false, false], commands: [false, false] },
+    X: { states: [true, false, false], commands: [true, true], name: true },
+  }[cell];
+  assert.ok(expected, `unknown census cell ${cell}`);
+  assert.deepEqual(states.slice(0, expected.states.length).map(has), expected.states, `wrong state-read positions for ${cell}: ${trace}`);
+  assert.deepEqual(commands.slice(0, expected.commands.length).map(has), expected.commands, `wrong command-read positions for ${cell}: ${trace}`);
+  const name = reads.find(({ args }) => args === `-p ${two} -o ucomm=`);
+  if (expected.name === true) assert.ok(name?.rows.some((row) => row.startsWith('ROW ') && row !== 'ROW '), `no name read for ${cell}: ${trace}`);
+  if (expected.name === false) assert.deepEqual(name?.rows, ['FAIL 1 empty'], `the name read did not omit the member: ${trace}`);
+  if (expected.name === undefined) assert.equal(name, undefined, `the census named a member no before-state read showed: ${trace}`);
+}
+
+// proves R-STATE-12
+test('B0 call: a member named by the first census round remains recorded after later reads omit it', SETTLES_WITHIN, async (t) => {
+  const { directory, events, two, trace } = await censusCall(t, 'B');
+  assert.ok(existsSync(join(directory, 'sighted-next-stat')), 'no later census state read omitted the member');
+  assertSighting(trace, two, 'B');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+});
+
+// proves R-STATE-12, R-STATE-19
+test('U1 call: a census name read that omits a shown member records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  const { events, group, two, trace } = await censusCall(t, 'U1');
+  assertSighting(trace, two, 'U1');
+  assert.deepEqual(recordOf(events, two), [], 'an incomplete identity was recorded as named');
+  assert.match(events.find(({ event, group: id }) => event === 'group.killed' && id === group)?.census ?? '', /complete name and command line were unavailable/);
+});
+
+/** Asserts the member has no invented identity and the group has one reasoned kill record. */
+function assertUnnamedSighting(events, group, two) {
+  assert.deepEqual(recordOf(events, two), [], 'an incomplete identity was recorded as named');
+  const found = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+  assert.equal(found.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
+  assert.match(found[0].census, /complete name and command line were unavailable/);
+}
+
+/** Runs and verifies a member whose census sighting supplied no complete identity. */
+async function unnamedCensusCell(t, path, cell, afterKill = 'omit') {
+  const { events, group, two, trace } = await (path === 'call' ? censusCall(t, cell, afterKill) : censusExit(t, cell, afterKill));
+  assertSighting(trace, two, cell);
+  if (afterKill === 'zombie') {
+    assert.ok(processState(two).startsWith('Z'), `the member was not left a zombie: ${processState(two)}`);
+    assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
+  }
+  assertUnnamedSighting(events, group, two);
+}
+
+// proves R-STATE-12, R-STATE-19
+test('U2 call: a missing second command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  const { events, group, two, trace } = await censusCall(t, 'U2');
+  assertSighting(trace, two, 'U2');
+  assertUnnamedSighting(events, group, two);
+});
+
+// proves R-STATE-12, R-STATE-19
+test('U1 exit: a census name read that omits a shown member records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'U1');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('U2 exit: a missing second command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'U2');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('A0 call omitted: a member shown only in the after state read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'A');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('A0 exit omitted: a member shown only in the after state read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'A');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C1 call omitted: a member shown only in the first command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'C1');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C1 exit omitted: a member shown only in the first command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'C1');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C2 call omitted: a member shown only in the second command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'C2');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C2 exit omitted: a member shown only in the second command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'C2');
+});
+
+// proves R-STATE-12
+test('B1 call: a member named by an early census read and left a zombie is recorded by name', SETTLES_WITHIN, async (t) => {
+  const { directory, events, two, trace } = await censusCall(t, 'B', 'zombie');
+  assertSighting(trace, two, 'B');
+  assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
+  assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+});
+
+// proves R-STATE-12
+test('B1 exit: a member named by an early census read and left a zombie is recorded by name', SETTLES_WITHIN, async (t) => {
+  const { directory, events, two, trace } = await censusExit(t, 'B', 'zombie');
+  assertSighting(trace, two, 'B');
+  assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
+  assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+});
+
+// proves R-STATE-12, R-STATE-19
+test('A0 call zombie: an after-state-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'A', 'zombie');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('A0 exit zombie: an after-state-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'A', 'zombie');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C1 call zombie: a first-command-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'C1', 'zombie');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C1 exit zombie: a first-command-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'C1', 'zombie');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C2 call zombie: a second-command-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'call', 'C2', 'zombie');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('C2 exit zombie: a second-command-only sighting records an unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await unnamedCensusCell(t, 'exit', 'C2', 'zombie');
+});
+
+// proves R-STATE-12
+test('N0 call: a member every read omits has no pid event or group fallback', SETTLES_WITHIN, async (t) => {
+  const { events, group, two, trace } = await censusCall(t, 'N');
+  assertSighting(trace, two, 'N');
+  assert.deepEqual(recordOf(events, two), []);
+  assert.deepEqual(events.filter(({ event, group: id }) => event === 'group.killed' && id === group), []);
+});
+
+// proves R-STATE-12
+test('N0 exit: a member every read including the first confirmation omits has no pid event or group fallback', SETTLES_WITHIN, async (t) => {
+  const { events, group, two, trace } = await censusExit(t, 'N');
+  assertSighting(trace, two, 'N');
+  const confirmation = sightingReads(trace).filter(({ args }) => args === '-g ' + group + ' -o pid=,stat=,xstat=');
+  assert.ok(confirmation.length > 0, 'the exit confirmation made no read');
+  assert.equal(confirmation.some(({ rows }) => rows.some((row) => new RegExp('^ROW\\s+' + two + ' ').test(row))), false, 'a confirmation read listed the member');
+  assert.deepEqual(recordOf(events, two), []);
+  assert.deepEqual(events.filter(({ event, group: id }) => event === 'group.killed' && id === group), []);
+});
+
+/** The shown member exited on its own, and the parent reaped it before confirmation and kill. */
+async function reapedCensusCell(t, path) {
+  const { directory, events, group, two, trace } = await (path === 'call' ? censusCall(t, 'X') : censusExit(t, 'X'));
+  assertSighting(trace, two, 'X');
+  assert.ok(existsSync(join(directory, 'reaped-two')), 'the parent did not mark its successful waitpid');
+  const reads = sightingReads(trace);
+  const censusStates = reads.map(({ args }, index) => args === '-ww -g ' + group + ' -o pid=,stat=' ? index : -1).filter((index) => index >= 0);
+  const after = censusStates[1];
+  const confirming = reads.findIndex(({ args }) => args === '-g ' + group + ' -o pid=,stat=');
+  assert.ok(after >= 0 && confirming > after, 'the confirming read did not follow the reaping state read');
+  assert.deepEqual(recordOf(events, two), [], 'the member reaped before the kill was recorded as ended by it');
+  assert.deepEqual(events.filter(({ event, group: id }) => event === 'group.killed' && id === group), []);
+}
+
+// proves R-STATE-12
+test('X0 call: a once-shown member reaped on its own before confirmation has no kill event', SETTLES_WITHIN, async (t) => {
+  await reapedCensusCell(t, 'call');
+});
+
+// proves R-STATE-12
+test('X0 exit: a once-shown member reaped on its own before confirmation has no kill event', SETTLES_WITHIN, async (t) => {
+  await reapedCensusCell(t, 'exit');
+});
+
+// proves R-STATE-12
+test('B0 exit: a member named by the first census round remains recorded after later reads omit it', SETTLES_WITHIN, async (t) => {
+  const { directory, events, two, trace } = await censusExit(t, 'B');
+  assertSighting(trace, two, 'B');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+});
 
 // proves R-STATE-12, R-STATE-7
 test('on the call\'s containment, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
@@ -1095,7 +1385,7 @@ const CLOCKED_CALLER = (() => {
   return CALLER.replace(anchor, [
     anchor,
     'const realNow = Date.now;',
-    "Date.now = () => { const caller = new Error().stack?.split('\\n')[2] ?? ''; if (options.clockCut && existsSync(join(here, 'clock-cut')) && caller.includes('at readingNow (')) { appendFileSync(join(here, 'clock-jumps'), 'J'); return realNow() + options.clockCut; } return realNow(); };",
+    "Date.now = () => { const caller = new Error().stack?.split('\\n')[2] ?? ''; if (options.clockCut && existsSync(join(here, 'clock-cut')) && caller.includes(options.clockInEmptied ? 'at emptied (' : 'at readingNow (')) { if (options.clockAfterDeadline && !globalThis.clockDeadlineSet) { globalThis.clockDeadlineSet = true; appendFileSync(join(here, 'clock-deadline'), 'D'); return realNow(); } appendFileSync(join(here, 'clock-jumps'), 'J'); return realNow() + options.clockCut; } return realNow(); };",
   ].join('\n'));
 })();
 
@@ -1131,6 +1421,85 @@ async function lateSynchronousWait(t, earlierAnswer) {
   assert.equal(existsSync(join(directory, 'unexpected-read')), false, 'a state read ran after LATE');
   assertUnended(directory, events, 'survivor.unended', earlierAnswer ? 'still alive when L0\'s read bound ran out after its kill' : 'not shown to have ended: the process table could not be read');
 }
+
+/** A marked first exit-confirmation failure, with every process-table request and answer logged. */
+function failingFirstConfirmation(directory, mode) {
+  return fixture(directory, 'ps-first-fails', [
+    'mode=' + mode,
+    'args="$*"',
+    'case "$args" in',
+    '  "-g "*" -o pid=,stat=")',
+    '    if [ "$mode" = F1 ]; then : > "$here/clock-cut"; fi ;;',
+    '  "-g "*" -o pid=,stat=,xstat=")',
+    '    : > "$here/first-read"',
+    '    printf "READ %s\n" "$args" >> "$here/first-ps.log"',
+    '    if [ "$mode" = F2 ]; then',
+    '      : > "$here/clock-cut"',
+    '      printf "FAIL 2 plain\n" >> "$here/first-ps.log"',
+    '      echo "ps: first confirmation fails" >&2; exit 2',
+    '    fi',
+    '    if [ "$mode" = F3 ]; then',
+    '      printf "HANG until ETIMEDOUT\n" >> "$here/first-ps.log"',
+    '      exec /usr/bin/tail -f "$here/hold"',
+    '    fi ;;',
+    'esac',
+    'answer=$(/bin/ps "$@")',
+    'printf "READ %s\n" "$args" >> "$here/first-ps.log"',
+    'printf "%s\n" "$answer" | /usr/bin/sed "s/^/ROW /" >> "$here/first-ps.log"',
+    'printf "%s\n" "$answer"',
+  ].join('\n'));
+}
+
+/** Forces an F cell, then checks the failed first read, absent later read and complete event stream. */
+async function firstConfirmationCell(t, mode) {
+  const directory = holding(t);
+  holdingTwo(directory);
+  failingFirstConfirmation(directory, mode);
+  const options = {
+    ps: 'ps-first-fails', readTimeout: 2_000,
+    ...(mode === 'F3' ? {} : { clockCut: 20_000, clockAfterDeadline: mode === 'F1', clockInEmptied: mode === 'F2' }),
+  };
+  const caller = mode === 'F3' ? CALLER : CLOCKED_CALLER;
+  const { status, stderr, events } = await cleanedUpBy(caller, directory, options);
+  const group = pidIn(directory, 'group');
+  const members = [group, pidIn(directory, 'one'), pidIn(directory, 'two')];
+  const pairs = linesOf(directory, 'pairs');
+  const trace = read(directory, 'first-ps.log');
+  assert.equal(status, 0, stderr);
+  assert.ok(existsSync(join(directory, 'clock-cut')) || mode === 'F3', 'the stand-in never armed the clock cut');
+  if (mode !== 'F3') assert.ok(existsSync(join(directory, 'clock-jumps')), 'the caller clock never advanced');
+  if (mode === 'F1') assert.equal(read(directory, 'clock-deadline'), 'D', 'the deadline was not established before the clock cut');
+  assert.equal(existsSync(join(directory, 'first-read')), mode !== 'F1', 'the first confirmation read did not follow the forced path');
+  const confirmations = trace.match(/READ -g \d+ -o pid=,stat=,xstat=/g) ?? [];
+  assert.equal(confirmations.length, mode === 'F1' ? 0 : 1, 'a read followed the group kill');
+  assert.ok(groupKills(pairs, group) > 0, 'the exit cleanup did not kill the group');
+  t.diagnostic(JSON.stringify({ cell: mode, group, members, trace, mark: mode === 'F3' ? 'ETIMEDOUT' : read(directory, 'clock-jumps'), deadlineMark: mode === 'F1' ? read(directory, 'clock-deadline') : undefined, kills: pairs, events }));
+  const groupEvents = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+  assert.equal(groupEvents.length, 1, 'the failed pre-kill read was not recorded once: ' + JSON.stringify(events));
+  assert.match(groupEvents[0].census, /first read of the group before its kill failed/);
+  for (const pid of members) {
+    const records = events.filter((event) => event.pid === pid);
+    assert.equal(records.length, 1, 'member ' + pid + ' was not recorded exactly once: ' + JSON.stringify(events));
+    assert.match(records[0].event, /^survivor\.(killed|unended)$/);
+    assert.ok(records[0].name && records[0].cmd, 'member ' + pid + ' was not recorded by name and command line');
+  }
+  assert.deepEqual(events.filter(({ pid }) => pid !== undefined && !members.includes(pid)), [], 'an unseen pid was recorded');
+}
+
+// proves R-STATE-12, R-STATE-19
+test('F1: a late first confirmation read with no post-kill read records the group kill', SETTLES_WITHIN, async (t) => {
+  await firstConfirmationCell(t, 'F1');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('F2: a plain first confirmation failure after the bound with no post-kill read records the group kill', SETTLES_WITHIN, async (t) => {
+  await firstConfirmationCell(t, 'F2');
+});
+
+// proves R-STATE-12, R-STATE-19
+test('F3: an unanswered first confirmation read with no post-kill read records the group kill', SETTLES_WITHIN, async (t) => {
+  await firstConfirmationCell(t, 'F3');
+});
 
 // proves R-STATE-19, R-STATE-9
 test('given a leader that answers signal 0 with EPERM until the next kill reaches it, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup does not record the leader as one it may not signal, nor as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {

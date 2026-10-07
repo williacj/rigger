@@ -13,6 +13,7 @@ import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { sightingPs } from './census-sightings.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -241,6 +242,25 @@ test('a child left alive when its command exits is recorded under L0 as killed, 
     pid: Number(read(directory, 'survivor.pid')),
     name: 'tail',
     cmd: `/usr/bin/tail -f ${directory}/hold`,
+  }]);
+});
+
+// proves R-STATE-12
+test('B0 adapter wiring: an early named census member omitted later is recorded by exact identity', async (t) => {
+  const directory = holding(t);
+  const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
+  const kills = [];
+  let group;
+  const kill = (target, name) => { kills.push([target, name]); return process.kill(target, name); };
+  const { events } = await recorded(directory, { command, ps: sightingPs(directory, { cell: 'B' }), kill, onGroup: (id) => { group = id; } });
+  const two = Number(read(directory, 'two.pid'));
+  const trace = read(directory, 'sighted-ps.log');
+  assert.ok(existsSync(join(directory, 'sighted-next-stat')), 'the later census round did not omit the member');
+  assert.ok(existsSync(join(directory, 'sighted-live')), 'the confirming read did not find it alive');
+  assert.match(trace, new RegExp('ROW\\s+' + two + ' '), 'the first census round did not show the member');
+  t.diagnostic(JSON.stringify({ cell: 'B0-adapter', group, members: [Number(read(directory, 'one.pid')), two], mark: 'live-before-kill:' + existsSync(join(directory, 'sighted-live')), trace, kills, events }));
+  assert.deepEqual(events.filter(({ pid }) => pid === two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{
+    event: 'survivor.killed', name: 'tail', cmd: '/usr/bin/tail -f ' + directory + '/hold',
   }]);
 });
 
