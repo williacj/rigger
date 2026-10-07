@@ -303,8 +303,7 @@ async function censusCall(t, cell, afterKill = 'omit') {
   const directory = holding(t);
   const signals = standIn(directory);
   const command = cell === 'X' ? reapingCommand(directory, false)
-    : afterKill === 'zombie' ? fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'))
-      : leavingTwo(directory);
+    : fixture(directory, 'command', [leave(TAIL, 'one'), joining(directory)].join('\n'));
   const { events } = await called(directory, { command, ps: sightingPs(directory, { cell, afterKill }), kill: markingKill(directory, signals) });
 
   const two = pidIn(directory, 'two');
@@ -317,6 +316,7 @@ async function censusCall(t, cell, afterKill = 'omit') {
     : afterKill === 'zombie' ? 'state:' + processState(two)
       : 'live-before-kill:' + existsSync(join(directory, 'sighted-live'));
   t.diagnostic(JSON.stringify({ cell: `${cell}-call-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: signals.pairs, events }));
+  if (afterKill === 'omit' && cell !== 'X') assertPostKillOmission(trace, group, two, 'call');
   return { directory, events, group, two, trace };
 }
 
@@ -339,6 +339,7 @@ async function censusExit(t, cell, afterKill = 'omit') {
     : afterKill === 'zombie' ? 'state:' + processState(two)
       : 'live-before-kill:' + existsSync(join(directory, 'sighted-live'));
   t.diagnostic(JSON.stringify({ cell: `${cell}-exit-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: pairs, events }));
+  if (afterKill === 'omit' && cell !== 'X') assertPostKillOmission(trace, group, two, 'exit');
   return { directory, events, group, two, trace };
 }
 
@@ -348,6 +349,14 @@ function sightingReads(trace) {
     const [first, ...rows] = block.trimEnd().split('\n');
     return { args: first.slice(5), rows };
   });
+}
+
+/** Requires an answered post-kill read that omitted the target, not just a fixture label. */
+function assertPostKillOmission(trace, group, two, path) {
+  const args = `-g ${group} -o pid=,stat=${path === 'exit' ? ',xstat=' : ''}`;
+  const after = sightingReads(trace).filter(({ args: readArgs, rows }) => readArgs === args && rows.includes('PHASE after-kill'));
+  assert.ok(after.length > 0, `no post-kill response for the omitted member: ${trace}`);
+  assert.ok(after.every(({ rows }) => rows.every((row) => !new RegExp(`^ROW\\s+${two}(?:\\s|$)`).test(row))), `a post-kill response listed the omitted member: ${trace}`);
 }
 
 /** Guards the first census round's distinct read positions for `cell`. */
@@ -403,6 +412,7 @@ function assertUnnamedSighting(events, group, two) {
 async function unnamedCensusCell(t, path, cell, afterKill = 'omit') {
   const { events, group, two, trace } = await (path === 'call' ? censusCall(t, cell, afterKill) : censusExit(t, cell, afterKill));
   assertSighting(trace, two, cell);
+  if (afterKill === 'omit') assertPostKillOmission(trace, group, two, path);
   if (afterKill === 'zombie') {
     assert.ok(processState(two).startsWith('Z'), `the member was not left a zombie: ${processState(two)}`);
     assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');

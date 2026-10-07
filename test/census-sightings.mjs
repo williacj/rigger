@@ -13,6 +13,7 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit' } = {}) {
     `afterKill=${afterKill}`,
     'target=$(/bin/cat "$here/two.pid" 2>/dev/null)',
     'args="$*"',
+    'if [ -f "$here/hang" ]; then phase=after-kill; else phase=before-kill; fi',
     'if [ "$cell" = U1 ] && [ "$1" = -p ] && [ "$2" = "$target" ]; then',
     '  printf "READ %s\\nFAIL 1 empty\\n" "$args" >> "$here/sighted-ps.log"',
     '  exit 1',
@@ -47,7 +48,7 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit' } = {}) {
     '  "-g "*" -o pid=,stat=,xstat=") if [ "$cell" = N ] || { [ -f "$here/hang" ] && [ "$afterKill" = omit ]; }; then cut=yes; fi ;;',
     'esac',
     'if [ "$cut" = yes ]; then answer=$(printf "%s\\n" "$answer" | /usr/bin/awk -v pid="$target" \'$1 != pid\'); fi',
-    'printf "READ %s\\n" "$args" >> "$here/sighted-ps.log"',
+    'printf "READ %s\\nPHASE %s\\n" "$args" "$phase" >> "$here/sighted-ps.log"',
     'printf "%s\\n" "$answer" | /usr/bin/sed "s/^/ROW /" >> "$here/sighted-ps.log"',
     'printf "%s\\n" "$answer"',
   ].join('\n'));
