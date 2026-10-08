@@ -1680,7 +1680,7 @@ async function directoryReadCell(t, { listing, first, second, third, caller, clo
     failed: ': > "$here/state-failed"; echo "ps: forced failure" >&2; exit 2',
   })[mode];
   const answerFor = (mode, cut) => {
-    if (mode === 'timeout') return `${cut ? ': > "$here/clock-cut"; ' : ''}: > "$here/state-timeout"; exec /usr/bin/tail -f "$here/hold"`;
+    if (mode === 'timeout') return `${cut ? `: > "$here/clock-cut"; : > "$here/state-live"; printf '%s T\\n' '${outside}'; ` : ''}: > "$here/state-timeout"; exec /usr/bin/tail -f "$here/hold"`;
     const result = answer(mode);
     if (!cut) return result;
     assert.match(result, /exit [02]$/, `the ${mode} answer has no clock-cut boundary`);
@@ -1866,6 +1866,11 @@ test('a later state read timed out after the first live answer records live at t
 test('a plain failed post-kill listing still permits a later live state answer', SETTLES_WITHIN, async (t) => {
   await directoryReadCell(t, { listing: 'failed', first: 'live', second: 'live', caller: TRACED_CALLER, clockCutAt: 'second', observe: ({ directory, outside, result, trace }) => {
     assert.equal(read(directory, 'state-count'), '2');
+    assert.ok(existsSync(join(directory, 'post-kill-failed')), 'the listing did not mark its plain failure');
+    const listingStart = trace.find(({ kind, tool, markers }) => kind === 'read-start' && tool === join(directory, 'lsof') && markers?.stateLive && !markers?.listingFailed)?.sequence;
+    const listingEnd = trace.find(({ sequence, kind, tool, status, stderr, markers }) => sequence > listingStart && kind === 'read-end' && tool === join(directory, 'lsof') && status === 2 && stderr === 'lsof: forced failure\n' && markers?.listingFailed)?.sequence;
+    assert.ok(listingStart && listingEnd, 'the listing did not start, mark, then return its plain failure');
+    assert.ok(trace.some(({ sequence, kind, tool, args, status, stdout }) => sequence > listingEnd && kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=` && status === 0 && stdout === `${outside} T\n`), 'the later live state answer did not follow the failed listing');
     assert.match(result.events.find(({ event }) => event === 'directory.unread')?.census ?? '', /lsof: forced failure/);
     assert.equal(liveAnswersOf(trace, directory, outside).length, 2);
     assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
@@ -1878,6 +1883,9 @@ test('a cut post-kill listing has no returned omission answer or later state rea
     assert.equal(read(directory, 'state-count'), '1');
     assert.equal(liveAnswersOf(trace, directory, outside).length, 1, 'the first live result did not reach L0');
     assert.equal(existsSync(join(directory, 'post-kill-listing')), false);
+    const killed = trace.find(({ kind, target, name }) => kind === 'signal-answer' && target === outside && name === 'SIGKILL')?.sequence;
+    assert.ok(killed, 'the named kill did not precede the cut');
+    assert.equal(trace.some(({ sequence, kind, tool }) => sequence > killed && kind === 'read-start' && tool === join(directory, 'lsof')), false, 'a listing began before the cut');
     assert.match(result.events.find(({ event }) => event === 'directory.unread')?.census ?? '', /did not finish within/);
     assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
   } });
@@ -1888,9 +1896,12 @@ test('a timed-out post-kill listing returns no omission answer', SETTLES_WITHIN,
   await directoryReadCell(t, { listing: 'timeout', first: 'live', second: 'live', caller: TRACED_CALLER, clockCutAt: 'listingTimeout', observe: ({ directory, outside, result, trace }) => {
     assert.ok(existsSync(join(directory, 'post-kill-timeout')));
     assert.equal(liveAnswersOf(trace, directory, outside).length, 1, 'a live result reached L0 after the listing timed out');
-    const timedOut = trace.find(({ kind, tool, error }) => kind === 'read-end' && tool === join(directory, 'lsof') && error === 'ETIMEDOUT')?.sequence;
-    assert.ok(timedOut, 'the listing did not time out');
-    assert.ok(trace.some(({ sequence, kind, code }) => sequence > timedOut && kind === 'read-cut' && code === 'LATE'), 'the later state read was not cut at the bound');
+    const listingStart = trace.find(({ kind, tool, markers }) => kind === 'read-start' && tool === join(directory, 'lsof') && markers?.stateLive && !markers?.listingTimeout)?.sequence;
+    const listingEnd = trace.find(({ sequence, kind, tool, error, stdout, markers }) => sequence > listingStart && kind === 'read-end' && tool === join(directory, 'lsof') && error === 'ETIMEDOUT' && stdout === '' && markers?.listingTimeout)?.sequence;
+    assert.ok(listingStart && listingEnd, 'the listing did not start, mark its timeout, then return ETIMEDOUT without an answer');
+    assert.equal(existsSync(join(directory, 'post-kill-omitted')), false, 'the listing emitted an omission answer');
+    assert.equal(trace.some(({ sequence, kind, tool, args }) => sequence > listingEnd && kind === 'read-start' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`), false, 'a later state read started after the listing timeout');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > listingEnd && kind === 'read-cut' && code === 'LATE'), 'the later state read was not cut at the bound');
     assert.match(result.events.find(({ event }) => event === 'directory.unread')?.census ?? '', /timed out/);
     assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
   } });
@@ -1900,11 +1911,18 @@ test('a timed-out post-kill listing returns no omission answer', SETTLES_WITHIN,
 test('a timed-out first post-kill state operation supplies no live answer', SETTLES_WITHIN, async (t) => {
   await directoryReadCell(t, { listing: 'omitted', first: 'timeout', second: 'live', caller: TRACED_CALLER, clockCutAt: 'firstTimeout', observe: ({ directory, outside, result, trace }) => {
     assert.ok(existsSync(join(directory, 'state-timeout')));
+    assert.ok(existsSync(join(directory, 'state-live')), 'the first state operation did not mark its live partial output');
+    const killed = trace.find(({ kind, target, name }) => kind === 'signal-answer' && target === outside && name === 'SIGKILL')?.sequence;
+    assert.ok(killed, 'the named kill did not precede the first state read');
+    const firstStart = trace.find(({ sequence, kind, tool, args, markers }) => sequence > killed && kind === 'read-start' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=` && !markers?.stateLive)?.sequence;
+    const firstEnd = trace.find(({ sequence, kind, tool, args, error, stdout, markers }) => sequence > firstStart && kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=` && error === 'ETIMEDOUT' && stdout === `${outside} T\n` && markers?.stateLive && markers?.stateTimeout)?.sequence;
+    assert.ok(firstStart && firstEnd, 'the first state read did not start, mark and print live, then return ETIMEDOUT without an answer');
     assert.equal(liveAnswersOf(trace, directory, outside).length, 0, 'a live result reached L0 despite the timed-out first and later reads');
-    const timedOut = trace.find(({ kind, tool, args, error }) => kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=` && error === 'ETIMEDOUT')?.sequence;
-    assert.ok(timedOut, 'the first state operation did not time out');
-    assert.ok(trace.some(({ sequence, kind, code }) => sequence > timedOut && kind === 'read-cut' && code === 'LATE'), 'the wait did not cut a later state read');
+    assert.equal(trace.some(({ sequence, kind, tool }) => sequence > firstEnd && kind === 'read-start' && tool === join(directory, 'lsof')), false, 'a listing started after the first state timeout');
+    assert.equal(trace.some(({ sequence, kind, tool, args }) => sequence > firstEnd && kind === 'read-start' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`), false, 'a later state read started after the first timeout');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > firstEnd && kind === 'read-cut' && code === 'LATE'), 'the wait did not cut a later state read');
     assert.equal(existsSync(join(directory, 'post-kill-omitted')), false, 'the listing answered despite the spent census bound');
+    assert.match(result.events.find(({ event }) => event === 'directory.unread')?.census ?? '', /did not finish within/);
     assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended: the process table could not be read');
   } });
 });
