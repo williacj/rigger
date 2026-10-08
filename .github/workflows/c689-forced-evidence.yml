@@ -1,0 +1,49 @@
+# ABOUTME: Runs audited card 689 base and head boundary proofs on an isolated macOS runner.
+
+name: Card 689 forced evidence
+
+on:
+  push:
+    branches:
+      - tq/689-forced-evidence
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c689-forced-evidence
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: |
+          mkdir -p "$RUNNER_TEMP/c615-tmp"
+          npm ci
+      - run: |
+          git clone --branch tq/689-postkill-live-read --single-branch https://github.com/williacj/rigger.git "$RUNNER_TEMP/c615-tmp/head"
+          test "$(git -C "$RUNNER_TEMP/c615-tmp/head" rev-parse HEAD)" = c66c28fb07469a4f9f37f662c3a4d7932d54d9d7
+          npm --prefix "$RUNNER_TEMP/c615-tmp/head" ci
+        env:
+          TMPDIR: ${{ runner.temp }}/c615-tmp
+      - run: |
+          node --check .github/evidence/c689-force-preload.cjs
+          python3 -c 'import ast, pathlib; ast.parse(pathlib.Path(".github/evidence/c689-force-run.py").read_text())'
+          python3 .github/evidence/c689-force-run.py
+        env:
+          TMPDIR: ${{ runner.temp }}/c615-tmp
+      - uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: c689-forced-base-head
+          path: ${{ runner.temp }}/c615-tmp/c689-forced/public
+          if-no-files-found: error

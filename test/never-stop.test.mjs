@@ -1621,6 +1621,7 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
 /** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
 async function directoryReadCell(t, { listing, first, second }) {
   const directory = holding(t);
+  if (listing === 'omitted' && first === 'failed' && second === 'live') writeFileSync(join(directory, 'c689-trace-id'), '689');
   const work = await workedIn(t, directory);
   const outside = pidIn(directory, 'outside');
   holdingNone(directory);
