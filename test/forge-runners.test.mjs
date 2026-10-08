@@ -266,16 +266,18 @@ async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
   const path = [...entries.map((entry) => (entry === 'F' ? fakeDir : realDir)), tools].join(delimiter);
   const env = { ...process.env, PATH: path };
   delete env.NODE_TEST_CONTEXT;
+  env.RIGGER_GH_CELL_CHILD = '1';
   if (failure) env.RIGGER_GH_PROBE_FAILURE = failure;
-  const selection = allTests ? '--test-skip-pattern=^P[1-5]-' : `--test-name-pattern=${LIVE_GH_PROBE}`;
+  const selection = allTests ? [] : [`--test-name-pattern=${LIVE_GH_PROBE}`];
   const result = await new Promise((done) => {
-    execFile(process.execPath, [process.env.npm_execpath, 'test', '--', '--test-reporter=tap', selection, 'test/forge-runners.test.mjs'],
+    execFile(process.execPath, [process.env.npm_execpath, 'test', '--', '--test-reporter=tap', ...selection, 'test/forge-runners.test.mjs'],
       { env, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => done({ error, output: stdout + stderr }));
   });
   return { ...result, fake };
 }
 
 async function successfulGhCell(t, entries) {
+  if (process.env.RIGGER_GH_CELL_CHILD === '1') return;
   const realGh = realGhOnPath();
   if (!realGh) return t.skip('no installed real gh available for the cell fixture');
   const { error, output, fake } = await runGhCell(t, entries, realGh);
@@ -285,6 +287,7 @@ async function successfulGhCell(t, entries) {
 }
 
 async function failedGhCell(t, entries, failure) {
+  if (process.env.RIGGER_GH_CELL_CHILD === '1') return;
   const realGh = realGhOnPath();
   if (!realGh) return t.skip('no installed real gh available for the cell fixture');
   const { error, output, fake } = await runGhCell(t, entries, realGh, failure);
@@ -297,6 +300,7 @@ async function failedGhCell(t, entries, failure) {
 }
 
 async function noRealGhCell(t, entries) {
+  if (process.env.RIGGER_GH_CELL_CHILD === '1') return;
   const { error, output, fake } = await runGhCell(t, entries, null, null, true);
   assert.equal(error, null, output);
   assert.match(output, /ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body # SKIP no real gh on PATH; real-gh method\/body probe not run/);
