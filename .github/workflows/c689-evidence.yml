@@ -1,0 +1,36 @@
+# ABOUTME: Runs card 689's original-base measurement on a disposable macOS runner after review.
+
+name: Card 689 evidence
+
+on:
+  push:
+    branches:
+      - tq/689-evidence
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c689-evidence
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: bash .github/evidence/c689-run.sh
+      - uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: c689-original-base-runs
+          path: ${{ runner.temp }}/c689-evidence/public
+          if-no-files-found: error
