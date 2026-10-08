@@ -134,15 +134,52 @@ const CALLER = [
   `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
   `import { signalStandIn } from ${JSON.stringify(new URL('./signal-stand-in.mjs', import.meta.url).href)};`,
   "import { appendFileSync, existsSync, readFileSync } from 'node:fs';",
+  "import child from 'node:child_process';",
+  "import { syncBuiltinESMExports } from 'node:module';",
   "import { join } from 'node:path';",
   'const here = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
+  "const trace = (operation, fields = {}) => { if (options.postKillTrace) appendFileSync(join(here, 'post-kill-trace'), `${JSON.stringify({ at: new Date().getTime(), operation, ...fields })}\\n`); };",
+  "if (options.postKillTrace) {",
+  "  const originalRead = child.spawnSync;",
+  "  child.spawnSync = function observedRead(tool, argv, settings) {",
+  "    const named = existsSync(join(here, 'hang')) && (tool === join(here, options.ps) || tool === join(here, options.lsof));",
+  "    const which = tool === join(here, options.ps) ? 'ps' : 'lsof';",
+  "    if (named) trace('read-start', { tool: which, argv, timeout: settings?.timeout });",
+  "    try {",
+  "      const result = originalRead.apply(this, arguments);",
+  "      if (named) trace('read-end', { tool: which, argv, status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr, error: result.error?.code ?? null });",
+  "      return result;",
+  "    } catch (error) {",
+  "      if (named) trace('read-threw', { tool: which, argv, code: error.code ?? null });",
+  "      throw error;",
+  "    }",
+  "  };",
+  "  syncBuiltinESMExports();",
+  "}",
+  "if (options.postKillCut) { const realNow = Date.now; let held; Date.now = () => { if (!existsSync(join(here, 'hang'))) return realNow(); held ??= realNow(); const caller = new Error().stack?.split('\\n').find((line) => line.includes('at readingNow (') || line.includes('at reaped (')) ?? ''; if (existsSync(join(here, 'clock-cut')) && caller.includes('at readingNow (')) { appendFileSync(join(here, 'clock-jumps'), 'J'); return held + 20_000; } return held; }; }",
+  "if (options.postKillTerminal) { const realNow = Date.now; let held; Date.now = () => { if (!existsSync(join(here, 'hang'))) return realNow(); held ??= realNow(); const caller = new Error().stack?.split('\\n').find((line) => line.includes('at readingNow (') || line.includes('at reaped (')) ?? ''; if (existsSync(join(here, 'clock-cut')) && caller.includes('at reaped (')) { appendFileSync(join(here, 'clock-terminal'), 'T'); trace('terminal-live', { logical: held + options.readTimeout }); return held + options.readTimeout; } return held; }; }",
+  "if (options.postKillTrace) {",
+  "  const underlyingNow = Date.now; let began; let killedAt; let held;",
+  "  Date.now = () => {",
+  "    const stack = new Error().stack?.split('\\n') ?? [];",
+  "    const plainFailures = !options.postKillCut && !options.postKillTerminal;",
+  "    if (plainFailures && existsSync(join(here, 'hang'))) held ??= underlyingNow();",
+  "    const afterLaterFailure = plainFailures && held !== undefined && existsSync(join(here, 'state-count')) && Number(readFileSync(join(here, 'state-count'), 'utf8')) >= 2 && stack[2]?.includes('at readingNow (');",
+  "    const now = afterLaterFailure ? held + 20_000 : held ?? underlyingNow();",
+  "    if (afterLaterFailure) appendFileSync(join(here, 'clock-jumps'), 'J');",
+  "    if (stack[2]?.includes('at sweptNow (') && began === undefined) { began = now; trace('census-bound', { logical: now, remaining: options.readTimeout }); }",
+  "    if (stack[2]?.includes('at sweeping (') && existsSync(join(here, 'hang')) && killedAt === undefined) { killedAt = now; trace('kill-clock', { logical: now }); }",
+  "    if (stack[2]?.includes('at readingNow (') && existsSync(join(here, 'hang'))) { const wait = existsSync(join(here, 'post-kill-listing')); trace('read-boundary', { logical: now, phase: wait ? 'wait' : 'census', remaining: (wait ? killedAt : began) + options.readTimeout - now }); }",
+  "    return now;",
+  "  };",
+  "}",
   "if (options.censusElapsed) { const realNow = Date.now; Date.now = () => { const caller = new Error().stack?.split('\\n')[2] ?? ''; if (!globalThis.censusCut && caller.includes('at sweptNow (')) { globalThis.censusCut = true; appendFileSync(join(here, 'census-clock-cut'), 'C'); return realNow() - options.censusElapsed; } return realNow(); }; }",
   "const pidIn = (name) => (name && existsSync(join(here, `${name}.pid`)) ? Number(readFileSync(join(here, `${name}.pid`), 'utf8')) : undefined);",
   'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept), flickers: () => pidIn(options.flickers), outlasts: () => pidIn(options.outlasts) });',
   "const hangs = () => (options.hangAfter === 'group' ? -pidIn('group') : pidIn(options.hangAfter));",
-  "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) appendFileSync(join(here, 'hang'), ''); return signalled(target, name); };",
-  "const emitter = { emit: (event, fields) => appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`) };",
+  "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) { appendFileSync(join(here, 'hang'), ''); trace('named-kill', { target }); } try { const answer = signalled(target, name); if (name === 0) trace('signal-0', { target, answer: 'yes' }); return answer; } catch (error) { if (name === 0) trace('signal-0', { target, answer: error.code ?? error.message }); throw error; } };",
+  "const emitter = { emit: (event, fields) => { appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`); trace('event', { event, ...fields }); } };",
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
   "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
@@ -1619,10 +1656,11 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
 });
 
 /** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
-async function directoryReadCell(t, { listing, first, second }) {
+async function directoryReadCell(t, { listing, first, second, postKillCut = false }) {
   const directory = holding(t);
   const work = await workedIn(t, directory);
   const outside = pidIn(directory, 'outside');
+  const postKillTrace = postKillCut || (first === 'failed' && second === 'failed');
   holdingNone(directory);
   const listed = listingOf('outside', realpathSync.native(join(work, 'sub')));
   const after = {
@@ -1633,6 +1671,8 @@ async function directoryReadCell(t, { listing, first, second }) {
   fixture(directory, 'lsof', [
     'if [ -f "$here/hang" ]; then',
     '  : > "$here/post-kill-listing"',
+    `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-start","argv":"%s"}\\n' "$*" >> "$here/post-kill-trace"`,
+    `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-end","result":"${listing}"}\\n' >> "$here/post-kill-trace"`,
     after,
     'fi',
     listed,
@@ -1647,13 +1687,16 @@ async function directoryReadCell(t, { listing, first, second }) {
     `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
     '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
     '  count=$((count + 1)); echo "$count" > "$here/state-count"',
-    `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; ${answer(first)}; fi`,
-    `  ${answer(second)}`,
+    '  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-start","argv":"%s","count":%s}\\n\' "$*" "$count" >> "$here/post-kill-trace"',
+    `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":1,"result":"${first}"}\\n' >> "$here/post-kill-trace"; ${answer(first)}; fi`,
+    `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":%s,"result":"${second}"}\\n' "$count" >> "$here/post-kill-trace"; ${postKillCut ? ': > "$here/clock-cut"; ' : ''}${answer(second)}`,
     'fi',
     'exec /bin/ps "$@"',
   ].join('\n'));
-  const result = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  const result = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', postKillCut, postKillTrace });
+  if (postKillTrace) t.diagnostic(JSON.stringify({ runId: process.env.RIGGER_689_RUN_ID, trace: [...linesOf(directory, 'post-kill-trace'), { at: result.ended, operation: 'caller-end', status: result.status }], pairs: result.pairs, events: result.events, stateReads: existsSync(join(directory, 'state-count')) ? read(directory, 'state-count') : 'not reached', clockJumps: existsSync(join(directory, 'clock-jumps')), notReached: existsSync(join(directory, 'clock-jumps')) ? ['next ps: the read boundary reported LATE after the chosen later answer'] : [] }));
   assert.equal(result.status, 0, result.stderr);
+  if (postKillCut) assert.ok(existsSync(join(directory, 'clock-jumps')), 'the reached live answer did not force a cut at the next read boundary');
   assert.ok(existsSync(join(directory, 'post-kill-listing')), 'the named kill was not followed by the chosen directory listing');
   assert.ok(existsSync(join(directory, `post-kill-${listing}`)), 'the post-kill listing did not force its chosen answer');
   assert.ok(killedIn(result.pairs, outside) !== undefined, 'the census did not send the named outside PID its kill');
@@ -1741,7 +1784,67 @@ test('without a prior post-kill state answer, a gone answer ends the directory w
 
 // proves R-STATE-19, R-STATE-9
 test('without a prior post-kill state answer, a live answer persists until the directory read bound', SETTLES_WITHIN, async (t) => {
-  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'live' });
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'live', postKillCut: true });
+});
+
+/** Drives an omitted post-kill listing into a chosen later-read boundary. */
+async function postKillBoundaryCell(t, mode) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  const listed = listingOf('outside', realpathSync.native(join(work, 'sub')));
+  fixture(directory, 'lsof', [
+    'if [ -f "$here/hang" ]; then',
+    '  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"lsof-start","argv":"%s"}\\n\' "$*" >> "$here/post-kill-trace"',
+    '  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"lsof-end","result":"omitted"}\\n\' >> "$here/post-kill-trace"',
+    `  : > "$here/post-kill-listing"; ${mode === 'before-later' ? ': > "$here/clock-cut"; ' : ''}exit 1`,
+    'fi',
+    listed,
+  ].join('\n'));
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-start","argv":"%s","phase":"%s"}\\n\' "$*" "$([ -f "$here/first-state" ] && echo later || echo first)" >> "$here/post-kill-trace"',
+    '  if [ ! -f "$here/first-state" ]; then',
+    '    [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-end","result":"failed"}\\n\' >> "$here/post-kill-trace"',
+    '    : > "$here/first-state"; echo "ps: forced failure" >&2; exit 2',
+    '  fi',
+    `  : > "$here/${mode === 'before-later' ? 'unexpected-state' : 'later-state'}"`,
+    ...(mode === 'timeout' ? [] : ['  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-end","result":"live"}\\n\' >> "$here/post-kill-trace"']),
+    ...(mode === 'timeout' ? ['  : > "$here/timed-out-state"; exec /usr/bin/tail -f "$here/hold"'] : [`  ${mode === 'terminal-live' ? ': > "$here/clock-cut"; ' : ''}printf '%s T\\n' '${outside}'; exit 0`]),
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const { status, stderr, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', postKillCut: mode === 'before-later', postKillTerminal: mode === 'terminal-live' || mode === 'timeout', postKillTrace: true });
+  t.diagnostic(JSON.stringify({ runId: process.env.RIGGER_689_RUN_ID, mode, trace: [...linesOf(directory, 'post-kill-trace'), { at: ended, operation: 'caller-end', status }], pairs, events, outsideState: processState(outside), outsideAnswersSignal0: alive(outside), terminalClockSeen: existsSync(join(directory, 'clock-terminal')), notReached: [!existsSync(join(directory, 'later-state')) && !existsSync(join(directory, 'unexpected-state')) ? 'later ps: deadline before read' : undefined, mode === 'timeout' ? 'later ps answer: command timed out' : undefined].filter(Boolean) }));
+  assert.equal(status, 0, stderr);
+  assert.ok(killedIn(pairs, outside) !== undefined, 'the named outside PID was not killed');
+  assert.ok(existsSync(join(directory, 'first-state')), 'the first post-kill state read did not fail');
+  assert.ok(existsSync(join(directory, 'post-kill-listing')), 'the omitted listing was not read');
+  if (mode === 'before-later') {
+    assert.ok(existsSync(join(directory, 'clock-jumps')), 'the next read boundary did not see the spent bound');
+    assert.equal(existsSync(join(directory, 'unexpected-state')), false, 'a later state read started after the bound');
+  } else {
+    assert.ok(existsSync(join(directory, 'later-state')), 'the later state read did not start');
+  }
+  if (mode === 'terminal-live') assert.ok(existsSync(join(directory, 'clock-terminal')), 'the answered live read was not evaluated at the wait bound');
+  if (mode === 'timeout') assert.ok(existsSync(join(directory, 'timed-out-state')), 'the later state read did not reach its timed-out command');
+  assertUnended(directory, events, 'survivor.unended', mode === 'terminal-live' ? `still alive ${CLEANUP_BOUND} ms after L0's kill` : 'not shown to have ended: the process table could not be read');
+}
+
+// proves R-STATE-19, R-STATE-9
+test('after a failed post-kill state read and omitted listing, a spent bound starts no later state read', SETTLES_WITHIN, async (t) => {
+  await postKillBoundaryCell(t, 'before-later');
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a failed post-kill state read and omitted listing, a live answer evaluated at the bound records the answered-live reason', SETTLES_WITHIN, async (t) => {
+  await postKillBoundaryCell(t, 'terminal-live');
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a failed post-kill state read and omitted listing, a timed-out later read records no answered state', SETTLES_WITHIN, async (t) => {
+  await postKillBoundaryCell(t, 'timeout');
 });
 
 // proves R-STATE-19, R-STATE-9
