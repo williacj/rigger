@@ -1034,6 +1034,41 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
   assert.ok(ended - exiting < KILL_BOUND, `the caller ended ${ended - exiting} ms after it began to exit`);
 });
 
+test('D02: a failed first directory listing records the directory without naming an outside process', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  fixture(directory, 'lsof', ': > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2');
+
+  const { status, events, pairs, exiting, ended } = await cleanedUp(directory, { directory: work, lsof: 'lsof', refused: 'outside' });
+  const outside = pidIn(directory, 'outside');
+  t.diagnostic(JSON.stringify({ outside, exiting, ended, events, pairs }));
+  assert.equal(status, 0);
+  assert.equal(existsSync(join(directory, 'first-listing-entered')), true);
+  assert.match(events.find(({ event }) => event === 'directory.unread')?.census ?? '', /lsof: forced first-listing failure/);
+  assert.deepEqual(events.filter(({ pid }) => pid === outside), []);
+  assert.equal(pairs.some(([target]) => target === outside), false);
+  assert.equal(alive(outside), true);
+});
+
+test('D03: an expired first directory listing records the directory without naming an outside process', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  fixture(directory, 'lsof', ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(join(work, 'sub'))));
+
+  const { status, events, pairs, exiting, ended } = await cleanedUp(directory, { directory: work, lsof: 'lsof', refused: 'outside', censusElapsed: CLEANUP_BOUND + 1 });
+  const outside = pidIn(directory, 'outside');
+  t.diagnostic(JSON.stringify({ outside, exiting, ended, events, pairs }));
+  assert.equal(status, 0);
+  assert.equal(existsSync(join(directory, 'census-clock-cut')), true);
+  assert.equal(existsSync(join(directory, 'first-listing-entered')), false);
+  assert.match(events.find(({ event }) => event === 'directory.unread')?.census ?? '', /did not finish within 1000 ms/);
+  assert.deepEqual(events.filter(({ pid }) => pid === outside), []);
+  assert.equal(pairs.some(([target]) => target === outside), false);
+  assert.equal(alive(outside), true);
+});
+
 // proves R-STATE-19, R-STATE-9
 test('given a dispatch\'s directory holding a process the kill does not end, the exit cleanup\'s census records it as a process it could not end, alive at the cleanup\'s own bound, and leaves it running', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
