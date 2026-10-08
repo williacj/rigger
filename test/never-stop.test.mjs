@@ -1717,7 +1717,7 @@ test('after a named directory kill, a late listing records the unread directory 
     'fi',
     'exec /bin/ps "$@"',
   ].join('\n'));
-  const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000, clockCut: 20_000 });
+  const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', clockCut: 20_000 });
   const pairs = linesOf(directory, 'pairs');
   assert.equal(status, 0, stderr);
   assert.ok(killedIn(pairs, outside) !== undefined, 'the census did not send the named outside PID its kill');
