@@ -282,7 +282,8 @@ async function successfulGhCell(t, entries) {
   if (!realGh) return t.skip('no installed real gh available for the cell fixture');
   const { error, output, fake } = await runGhCell(t, entries, realGh);
   assert.equal(error, null, output);
-  assert.match(output, /ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body/);
+  assert.match(output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body$/m);
+  assert.doesNotMatch(output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body # SKIP/m, 'the live real-gh probe was skipped');
   assert.deepEqual(fake.sent(), []);
 }
 
@@ -311,10 +312,10 @@ async function noRealGhCell(t, entries) {
 test('P1-S: fake then real gh runs the live method and body probe through real gh', (t) => successfulGhCell(t, ['F', 'R']));
 test('P1-X: fake then real gh reports a real spawn failure without probing fake gh', (t) => failedGhCell(t, ['F', 'R'], 'spawn'));
 test('P1-Y: fake then real gh reports a failed local proxy request without probing fake gh', (t) => failedGhCell(t, ['F', 'R'], 'proxy'));
-test('P2-S: real then fake gh runs the live method and body probe through real gh', (t) => successfulGhCell(t, ['R', 'F']));
+test('P2-S control: real then fake gh runs the live method and body probe through real gh', (t) => successfulGhCell(t, ['R', 'F']));
 test('P2-X: real then fake gh reports a real spawn failure without probing fake gh', (t) => failedGhCell(t, ['R', 'F'], 'spawn'));
 test('P2-Y: real then fake gh reports a failed local proxy request without probing fake gh', (t) => failedGhCell(t, ['R', 'F'], 'proxy'));
-test('P3-S: real gh alone runs the live method and body probe', (t) => successfulGhCell(t, ['R']));
+test('P3-S control: real gh alone runs the live method and body probe', (t) => successfulGhCell(t, ['R']));
 test('P3-X: real gh alone reports a spawn failure', (t) => failedGhCell(t, ['R'], 'spawn'));
 test('P3-Y: real gh alone reports a failed local proxy request', (t) => failedGhCell(t, ['R'], 'proxy'));
 test('P4-N: fake gh alone leaves the live probe skipped and the file passing', (t) => noRealGhCell(t, ['F']));
