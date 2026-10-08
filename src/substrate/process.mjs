@@ -1365,7 +1365,7 @@ function* settled(found, kill, bound) {
   } catch {
     // The process table cannot be read, so each is recorded by its pid alone.
   }
-  const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound));
+  const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound, found.observed));
   const stuck = new Set(why.keys());
   for (const pid of stuck) sent(pid, 'SIGCONT', kill);
   let refused = (found.refused ?? []).map((pid) => ({ pid, reason: 'EPERM' }));
@@ -1392,23 +1392,28 @@ function* settled(found, kill, bound) {
  * signal 0 is one the table could not show has ended: the census stopped it, so `settled` resumes it
  * rather than leave it stopped (`R-STATE-18`), though a zombie answers signal 0 too (`D16` rule 3).
  * A read cut at its deadline, whether `run` or `runNow` reports `ETIMEDOUT` or the driver reports
- * `LATE`, uses the last answer where one showed a process alive, or says the table could not be
- * read where none answered.
+ * `LATE`, uses the last answer where one showed a process alive, including a synchronous sweep's
+ * answer immediately after the kill. Where none answered, the table could not show it ended.
  */
-function* reaped(pids, kill, bound) {
+function* reaped(pids, kill, bound, observed = new Map()) {
   const since = Date.now();
   let last;
   for (let wait = 1; ; wait = longer(wait)) {
-    const left = pids.filter((pid) => answers(pid, kill));
+    const left = pids.filter((pid) => observed.get(pid) !== 'ended' && answers(pid, kill));
     if (left.length === 0) return [];
     let living;
     try {
       living = [...rowsOf(yield ['-p', left.join(','), '-o', 'pid=,stat='])].filter(([, state]) => live(state)).map(([pid]) => pid);
       last = living;
     } catch (error) {
-      // Past the reads' deadline no read can be made: what the last read found alive is not ended,
-      // and the rest the table could not show had ended.
-      if (error.code === LATE || error.code === 'ETIMEDOUT') return (last ?? left).map((pid) => [pid, last ? `still alive when L0's read bound ran out after its kill` : 'not shown to have ended: the process table could not be read']);
+      // Past the reads' deadline no read can be made: what a post-kill read found alive is not
+      // ended, and the rest the table could not show had ended.
+      if (error.code === LATE || error.code === 'ETIMEDOUT') {
+        const pending = last ?? left;
+        return pending.map((pid) => [pid, last || observed.get(pid) === 'live'
+          ? `still alive when L0's read bound ran out after its kill`
+          : 'not shown to have ended: the process table could not be read']);
+      }
       living = undefined;
     }
     if (living?.length === 0) return [];
@@ -1441,6 +1446,9 @@ function* reaped(pids, kill, bound) {
  * successors faster than a round ends holds the census until its read timeout, and is then recorded
  * as unread.
  *
+ * On the synchronous exit path, it also reads killed processes' states before another directory
+ * listing can spend the remaining read bound. A failed optional state read leaves the sweep going.
+ *
  * It resumes a process it stopped only where a later list no longer finds it working there, or where
  * the census gives up before it has listed that process again: a failed read leaves nothing it
  * stopped stopped. A process it has listed again, stopped, it kills, by name or, where a later read
@@ -1450,8 +1458,9 @@ function* reaped(pids, kill, bound) {
  * stopped in the directory. A process the call's had stopped and not yet listed again, which can
  * only be a pid handed on to a process outside it between a list and the stop, stays stopped.
  */
-function* sweeping(directory, lsof, kill) {
+function* sweeping(directory, lsof, kill, observeAfterKill = false) {
   const kills = [];
+  const observed = new Map();
   // Stopped and not yet listed again; and listed again, stopped, and not yet killed.
   const held = new Set();
   const ours = new Set();
@@ -1485,7 +1494,7 @@ function* sweeping(directory, lsof, kill) {
         if (stop === 'EPERM') forbidden.add(pid);
       }
       const pids = [...held, ...ours];
-      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt };
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt, observed };
       if (pids.length === 0) continue;
       const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
@@ -1498,19 +1507,29 @@ function* sweeping(directory, lsof, kill) {
       const commands = rowsOf(yield ['-ww', '-p', pids.join(','), '-o', 'pid=,command=']);
       const after = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       if (!stopped(after) || ![before, names, commands].every((each) => samePids(each, after))) continue;
+      const killedNow = [];
       for (const [pid, state] of after) {
         if (!ours.has(pid) || !state.startsWith('T')) continue;
         ours.delete(pid);
         if (!sent(pid, 'SIGKILL', kill)) continue;
         killed.add(pid);
+        killedNow.push(pid);
         killedAt ??= Date.now();
         kills.push({ pid, name: names.get(pid), cmd: commands.get(pid) });
+      }
+      if (observeAfterKill && killedNow.length > 0) {
+        try {
+          const state = rowsOf(yield ['-p', killedNow.join(','), '-o', 'pid=,stat=']);
+          for (const pid of killedNow) observed.set(pid, state.has(pid) ? (live(state.get(pid)) ? 'live' : 'ended') : 'ended');
+        } catch {
+          // A failed optional look does not prevent the directory sweep from completing.
+        }
       }
     }
   } catch (error) {
     const unnamed = [...ours].filter((pid) => sent(pid, 'SIGKILL', kill));
     if (unnamed.length > 0) killedAt ??= Date.now();
-    return { kills, unread: error.message, unnamed, killedAt };
+    return { kills, unread: error.message, unnamed, killedAt, observed };
   } finally {
     resume([...held]);
   }
@@ -1543,7 +1562,7 @@ function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
   const began = Date.now();
   const answered = !unanswered.has(ps);
-  const found = readingNow(sweeping(directory, lsof, kill), ps, readTimeout, began + readTimeout);
+  const found = readingNow(sweeping(directory, lsof, kill, true), ps, readTimeout, began + readTimeout);
   // A read of `ps` this census gave up on at its own bound, before its kill, is made again in the
   // wait on what it killed, which has a bound of its own; a table that does not answer that either
   // is given up on again.

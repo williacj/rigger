@@ -137,6 +137,7 @@ const CALLER = [
   "import { join } from 'node:path';",
   'const here = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
+  "if (options.censusElapsed) { const realNow = Date.now; Date.now = () => { const caller = new Error().stack?.split('\\n')[2] ?? ''; if (!globalThis.censusCut && caller.includes('at sweptNow (')) { globalThis.censusCut = true; appendFileSync(join(here, 'census-clock-cut'), 'C'); return realNow() - options.censusElapsed; } return realNow(); }; }",
   "const pidIn = (name) => (name && existsSync(join(here, `${name}.pid`)) ? Number(readFileSync(join(here, `${name}.pid`), 'utf8')) : undefined);",
   'const signalled = signalStandIn({ refused: () => pidIn(options.refused), unkept: () => pidIn(options.unkept), flickers: () => pidIn(options.flickers), outlasts: () => pidIn(options.outlasts) });',
   "const hangs = () => (options.hangAfter === 'group' ? -pidIn('group') : pidIn(options.hangAfter));",
@@ -1399,6 +1400,17 @@ const CLOCKED_CALLER = (() => {
   ].join('\n'));
 })();
 
+/** Advances the group-census read driver's clock once, after its first read marked the cut. */
+const GROUP_LATE_CALLER = (() => {
+  const anchor = 'const options = JSON.parse(process.argv[3]);';
+  assert.equal(CALLER.split(anchor).length, 2, 'the caller options moved, so the group clock forcing did not land');
+  return CALLER.replace(anchor, [
+    anchor,
+    'const realNow = Date.now;',
+    "Date.now = () => { const stack = new Error().stack ?? ''; if (existsSync(join(here, 'group-clock-cut')) && stack.split('\\n')[2]?.includes('at readingNow (') && stack.includes('at within (') && !globalThis.groupClockCut) { globalThis.groupClockCut = true; appendFileSync(join(here, 'group-clock-jump'), 'J'); return realNow() + 20_000; } return realNow(); };",
+  ].join('\n'));
+})();
+
 /** Forces a synchronous wait's next read to start after its deadline, with or without an answer. */
 async function lateSynchronousWait(t, earlierAnswer) {
   const directory = holding(t);
@@ -1417,6 +1429,7 @@ async function lateSynchronousWait(t, earlierAnswer) {
       `    printf '%s S\\n' '${outside}'; : > "$here/clock-cut"; exit 0`,
       '  fi',
     ] : []),
+    '  [ -f "$here/clock-cut" ] || { echo "ps: optional state read unavailable" >&2; exit 2; }',
     '  : > "$here/unexpected-read"; exit 2 ;;',
     'esac',
     'exec /bin/ps "$@"',
@@ -1544,6 +1557,8 @@ test('given a leader that answers signal 0 with EPERM until the next kill reache
  * refused. The group holds one process, the command, whose pid is the group's: read live, `S`, until
  * the caller has sent the group its kill, and from then on a zombie, `Z`, with `SIGKILL`'s wait
  * status, `9`, since the caller, exiting, does not reap it. Any other read fails, naming itself.
+ * After the outside PID's named kill, its state stand-in reports a live answer before the next
+ * directory listing and times out on the following state read. Those reads are marked separately.
  */
 function answeringAtOnce(directory) {
   const pid = read(directory, 'outside.pid');
@@ -1551,9 +1566,13 @@ function answeringAtOnce(directory) {
   writeFileSync(join(directory, 'listed'), tool('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-p', pid, '-F', 'pun']));
   writeFileSync(join(directory, 'ucomm'), tool('/bin/ps', ['-p', pid, '-o', 'ucomm=']));
   writeFileSync(join(directory, 'cmdline'), tool('/bin/ps', ['-ww', '-p', pid, '-o', 'pid=,command=']));
-  fixture(directory, 'lsof', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/cat "$here/listed"');
+  fixture(directory, 'lsof', '[ -f "$here/hang" ] && { : > "$here/post-kill-listing"; exec /usr/bin/tail -f "$here/hold"; }\nexec /bin/cat "$here/listed"');
   fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
+    'if [ -f "$here/hang" ] && [ "$*" = "-p $pid -o pid=,stat=" ]; then',
+    '  [ -f "$here/post-kill-listing" ] && { : > "$here/post-kill-state-too-late"; exec /usr/bin/tail -f "$here/hold"; }',
+    '  : > "$here/post-kill-live"; echo "$pid T"; exit 0',
+    'fi',
     'case "$*" in',
     '  "-p $pid -o pid=,stat=") echo "$pid T"; exit 0 ;;',
     '  "-p $pid -o ucomm=") exec /bin/cat "$here/ucomm" ;;',
@@ -1580,17 +1599,224 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
   answeringAtOnce(directory);
   assert.match(read(directory, 'listed'), new RegExp(`^n${realpathSync.native(work)}/sub$`, 'm'), 'lsof did not list the outside process as working in the dispatch\'s directory, so the test proves nothing');
 
-  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  const { status, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', censusElapsed: 150 });
 
   assert.equal(status, 0);
   assert.ok(existsSync(join(directory, 'hang')), 'the census never sent the outside process its kill, so the test proves nothing');
   assert.ok(events.some(({ event }) => event === 'directory.unread'), 'the census\'s listing after its kill answered within its read bound, so the test proves nothing');
+  t.diagnostic(JSON.stringify({ postKillListing: existsSync(join(directory, 'post-kill-listing')), postKillLive: existsSync(join(directory, 'post-kill-live')), postKillStateTooLate: existsSync(join(directory, 'post-kill-state-too-late')), pairs, events, killed: killedIn(pairs, pidIn(directory, 'outside')), ended }));
   assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  assert.ok(existsSync(join(directory, 'post-kill-listing')), 'the post-kill directory listing did not consume the read bound');
+  assert.ok(existsSync(join(directory, 'post-kill-live')), 'no state read showed the named outside process alive after its kill');
+  assert.ok(existsSync(join(directory, 'post-kill-state-too-late')), 'the state read after the timed-out listing did not reach its synchronous timeout');
+  assert.equal(read(directory, 'census-clock-cut'), 'C', 'the census read deadline was not cut before the named kill');
+  assert.match(events.find(({ event }) => event === 'directory.unread')?.census ?? '', /process-table read timed out/, 'the directory listing did not time out');
   // The census waits on what it killed until the cleanup's own bound has passed since that kill,
   // whatever its reads before took, and no longer.
   const killed = killedIn(pairs, pidIn(directory, 'outside'));
   assert.ok(ended - killed >= CLEANUP_BOUND, `the caller ended ${ended - killed} ms after the census's kill, before the cleanup's own bound of ${CLEANUP_BOUND} ms`);
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
+});
+
+/** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
+async function directoryReadCell(t, { listing, first, second }) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  const listed = listingOf('outside', realpathSync.native(join(work, 'sub')));
+  const after = {
+    listed: `: > "$here/post-kill-listed"\n${listed}\nexit 0`,
+    omitted: ': > "$here/post-kill-omitted"; exit 1',
+    failed: ': > "$here/post-kill-failed"; echo "lsof: forced failure" >&2; exit 2',
+  }[listing];
+  fixture(directory, 'lsof', [
+    'if [ -f "$here/hang" ]; then',
+    '  : > "$here/post-kill-listing"',
+    after,
+    'fi',
+    listed,
+  ].join('\n'));
+  const answer = (mode) => ({
+    live: `: > "$here/state-live"; printf '%s T\\n' '${outside}'; exit 0`,
+    zombie: `: > "$here/state-zombie"; printf '%s Z\\n' '${outside}'; exit 0`,
+    gone: ': > "$here/state-gone"; exit 1',
+    failed: ': > "$here/state-failed"; echo "ps: forced failure" >&2; exit 2',
+  })[mode];
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
+    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; ${answer(first)}; fi`,
+    `  ${answer(second)}`,
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const result = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(existsSync(join(directory, 'post-kill-listing')), 'the named kill was not followed by the chosen directory listing');
+  assert.ok(existsSync(join(directory, `post-kill-${listing}`)), 'the post-kill listing did not force its chosen answer');
+  assert.ok(killedIn(result.pairs, outside) !== undefined, 'the census did not send the named outside PID its kill');
+  assert.ok(existsSync(join(directory, `state-${first}`)), 'the optional state read did not force its chosen answer');
+  const reads = Number(read(directory, 'state-count'));
+  if (first === 'zombie' || first === 'gone') {
+    assert.ok(existsSync(join(directory, 'state-before-listing')), 'the ended state was not observed before the next directory listing');
+    assert.equal(reads, 1, 'a process shown ended before the next listing was read again');
+    assert.equal(existsSync(join(directory, `state-${second}`)), false, 'a state read followed the ended answer');
+    assert.deepEqual(result.events.filter(({ pid }) => pid === outside).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+  } else if (second === 'live') {
+    assert.ok(existsSync(join(directory, `state-${second}`)), 'the following state read did not force its chosen answer');
+    assert.ok(reads >= 2, 'the second live answer was not reached');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } else if (second === 'failed') {
+    assert.ok(existsSync(join(directory, `state-${second}`)), 'the following state read did not force its chosen answer');
+    assert.ok(reads >= 2, 'the plain failed state read was not reached');
+    assertUnended(directory, result.events, 'survivor.unended', first === 'live' ? 'still alive when L0\'s read bound ran out after its kill' : 'not shown to have ended: the process table could not be read');
+  } else {
+    assert.ok(existsSync(join(directory, `state-${second}`)), 'the following state read did not force its chosen answer');
+    assert.equal(reads, 2, 'the chosen ended-state answer was not the next read');
+    assert.deepEqual(result.events.filter(({ pid }) => pid === outside).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+  }
+  t.diagnostic(JSON.stringify({ cell: { listing, first, second }, pairs: result.pairs, events: result.events, stateReads: read(directory, 'state-count') }));
+  return result.events;
+}
+
+// proves R-STATE-19, R-STATE-9
+test('after a named directory kill, an answered listing still lists its PID and records no unread directory', SETTLES_WITHIN, async (t) => {
+  const events = await directoryReadCell(t, { listing: 'listed', first: 'live', second: 'zombie' });
+  assert.equal(events.some(({ event }) => event === 'directory.unread'), false);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a named directory kill, an answered listing omits its PID and records no unread directory', SETTLES_WITHIN, async (t) => {
+  const events = await directoryReadCell(t, { listing: 'omitted', first: 'live', second: 'zombie' });
+  assert.equal(events.some(({ event }) => event === 'directory.unread'), false);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a named directory kill, a plain failed listing records the unread directory before reaping', SETTLES_WITHIN, async (t) => {
+  const events = await directoryReadCell(t, { listing: 'failed', first: 'live', second: 'zombie' });
+  assert.match(events.find(({ event }) => event === 'directory.unread')?.census ?? '', /lsof: forced failure/);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a named directory kill, a late listing records the unread directory before reaping', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', [
+    '[ -f "$here/hang" ] && : > "$here/post-kill-listing"',
+    listingOf('outside', realpathSync.native(join(work, 'sub'))),
+  ].join('\n'));
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  : > "$here/post-kill-live"',
+    '  : > "$here/clock-cut"',
+    `  printf '%s T\\n' '${outside}'; exit 0`,
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000, clockCut: 20_000 });
+  const pairs = linesOf(directory, 'pairs');
+  assert.equal(status, 0, stderr);
+  assert.ok(killedIn(pairs, outside) !== undefined, 'the census did not send the named outside PID its kill');
+  assert.ok(existsSync(join(directory, 'post-kill-live')), 'the state read did not show the named outside process alive after its kill');
+  assert.equal(existsSync(join(directory, 'post-kill-listing')), false, 'the listing ran instead of receiving LATE before its read');
+  assert.ok(existsSync(join(directory, 'clock-jumps')), 'the synchronous read driver did not reach LATE');
+  assert.match(events.find(({ event }) => event === 'directory.unread')?.census ?? '', /did not finish within/);
+  assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  t.diagnostic(JSON.stringify({ cell: 'post-kill listing LATE', pairs, events }));
+});
+
+// proves R-STATE-19, R-STATE-9
+test('without a prior post-kill state answer, a zombie answer ends the directory wait', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'zombie' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('without a prior post-kill state answer, a gone answer ends the directory wait', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'gone' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('without a prior post-kill state answer, a live answer persists until the directory read bound', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'live' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a live post-kill state answer, a zombie answer ends the directory wait', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'live', second: 'zombie' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a live post-kill state answer, a gone answer ends the directory wait', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'live', second: 'gone' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a live post-kill answer remains live until the directory read bound', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'live', second: 'live' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a zombie seen immediately after the named kill is not read again after the next listing', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'zombie', second: 'failed' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a PID gone immediately after the named kill is not read again after the next listing', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'gone', second: 'failed' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('without a prior post-kill state answer, plain state-read failures retry until the read bound', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('after a live post-kill state answer, plain state-read failures retry until the read bound', SETTLES_WITHIN, async (t) => {
+  await directoryReadCell(t, { listing: 'omitted', first: 'live', second: 'failed' });
+});
+
+/** Shows a failed group census can still reach and name the outside directory process. */
+async function groupReadCell(t, mode) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+  fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*" -o pid=,stat=")',
+    '  if [ ! -f "$here/group-first" ]; then',
+    '    : > "$here/group-first"',
+    ...(mode === 'failed' ? ['    echo "ps: forced group failure" >&2; exit 2'] : ['    : > "$here/group-clock-cut"']),
+    '  fi ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const caller = mode === 'late' ? GROUP_LATE_CALLER : CALLER;
+  const { status, stderr, events } = await cleanedUpBy(caller, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
+  const pairs = linesOf(directory, 'pairs');
+  assert.equal(status, 0, stderr);
+  assert.ok(existsSync(join(directory, 'group-first')), 'the group census did not reach its forced read');
+  if (mode === 'late') assert.ok(existsSync(join(directory, 'group-clock-jump')), 'the group read driver did not reach LATE');
+  assert.ok(killedIn(pairs, outside) !== undefined, 'the later directory sweep did not kill the named outside PID');
+  assert.ok(events.some(({ pid, name, cmd }) => pid === outside && name === 'tail' && cmd === tailOf(directory).cmd), 'the later directory record did not name the outside PID');
+  t.diagnostic(JSON.stringify({ cell: `group.${mode}`, pairs, events }));
+  return events;
+}
+
+// proves R-STATE-19, R-STATE-9
+test('a plain failed group census still reaches the named outside directory process', SETTLES_WITHIN, async (t) => {
+  const events = await groupReadCell(t, 'failed');
+  assert.ok(events.some(({ event, census }) => event === 'group.killed' && /ps: forced group failure/.test(census ?? '')));
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a late group census still reaches the named outside directory process', SETTLES_WITHIN, async (t) => {
+  const events = await groupReadCell(t, 'late');
+  assert.ok(events.some(({ event, census }) => event === 'group.killed' && /did not finish within/.test(census ?? '')));
 });
 
 // proves R-STATE-12, R-STATE-19
