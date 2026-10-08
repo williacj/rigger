@@ -1,0 +1,28 @@
+# ABOUTME: Runs the original card 615 process-state file on a disposable macOS runner for safe evidence.
+
+name: Card 615 evidence
+
+on:
+  push:
+    branches:
+      - tq/615-evidence
+
+jobs:
+  capture:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: bash .github/evidence/run.sh
+      - uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: c615-original-base-runs
+          path: ${{ runner.temp }}/c615-evidence/public
+          if-no-files-found: error

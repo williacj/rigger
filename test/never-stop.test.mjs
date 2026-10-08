@@ -234,6 +234,7 @@ test('on a start\'s kill of a recorded group, a member the census named, and one
 // proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a survivor the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '235');
   holdingTwo(directory);
   cuttingTwo(directory);
 
@@ -643,6 +644,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill f
 // proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a member no read before the kill found, which a read after it finds alive, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '644');
   holdingTwo(directory);
   hidingTwoUntilKilled(directory);
 
@@ -1023,6 +1025,7 @@ test('given a recorded dispatch\'s directory holding a process the kill does not
 // proves R-STATE-19, R-STATE-9
 test('given a dispatch\'s directory holding a process L0 may not signal, the exit cleanup\'s census records it as a process it could not end because of EPERM, and the caller ends before KILL_BOUND', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '1024');
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
@@ -1037,6 +1040,7 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
 // proves R-STATE-19, R-STATE-9
 test('given a dispatch\'s directory holding a process the kill does not end, the exit cleanup\'s census records it as a process it could not end, alive at the cleanup\'s own bound, and leaves it running', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '1038');
   const work = await workedIn(t, directory);
   holdingNone(directory);
 
@@ -1269,6 +1273,7 @@ test('given a process table that stops answering once the exit cleanup has sent 
 // proves R-STATE-19, R-STATE-9
 test('given a process table that stops answering once the exit cleanup\'s census has sent its kill to a process in the dispatch\'s directory that outlives it, the caller ends within the cleanup\'s own bound of that kill, and the process is recorded as one it could not end and not left stopped', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '1270');
   const work = await workedIn(t, directory);
   holdingNone(directory);
   hanging(directory);
@@ -1949,6 +1954,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill l
 // proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a member no read before the kill listed, which the kill leaves a zombie, is recorded as the kill of the group', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '1950');
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
   hidingTwoUntilKilled(directory);
 
@@ -2000,6 +2006,7 @@ test('on a start\'s kill of a recorded group, where every read after the kill fa
 // proves R-STATE-19, R-STATE-9
 test('on the exit cleanup, where every read after the kill fails, the kill of the group is recorded in place of what they could not list', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'c615-trace-id'), '2001');
   fixture(directory, 'command', ['echo $$ > "$here/group.pid"', leave(TAIL, 'one'), joining(directory), ': > "$here/up"', 'while [ ! -f "$here/release" ]; do :; done'].join('\n'));
   failingAfterKill(directory);
 
