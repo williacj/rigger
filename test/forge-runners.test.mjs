@@ -7,9 +7,11 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { delimiter, join, resolve } from 'node:path';
+import { closeSync, mkdirSync, openSync, readSync, symlinkSync } from 'node:fs';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { installFakeGh } from './fake-gh.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -103,18 +105,12 @@ const FLAG_IN_PATH_SLOT = [
 ];
 
 /**
- * The installed `gh`, by its absolute path: the `gh` this process's `PATH` resolves once the
- * directory `npm test` puts first on it is taken away (`test/suite.sh`). That directory holds a
- * `gh` refusing every call, which is what keeps every other test off the real forge (#276). This
- * probe is the suite's one sanctioned exception, because its request goes only to its own local
- * proxy (the architect's ruling on #276, section 4). No other test reads the variable.
- *
- * It is found as `ghOn` finds any `gh`.
+ * The installed real `gh`, by its absolute path, passing over the suite's refusing executable
+ * and the `installFakeGh` executable. This probe is the suite's one sanctioned exception: its
+ * request goes only to its local proxy (the architect's ruling on #276, section 4).
  */
 function installedGh() {
-  const refusing = process.env.RIGGER_REFUSING_GH_DIR;
-  const gh = ghOn(process.env.PATH, refusing === undefined ? null : resolve(refusing));
-  return gh ?? assert.fail('no gh is installed on this PATH, so gh cannot be asked which method it sends');
+  return realGhOnPath();
 }
 
 /**
@@ -122,16 +118,7 @@ function installedGh() {
  * or null where there is none. An empty entry is the working directory to a spawn.
  */
 function ghOn(path = '', skipping = null) {
-  for (const dir of path.split(delimiter).map((entry) => resolve(entry || '.'))) {
-    if (dir === skipping) continue;
-    try {
-      accessSync(join(dir, 'gh'), constants.X_OK);
-      return join(dir, 'gh');
-    } catch {
-      // Not here, so the next directory is where a spawn would look.
-    }
-  }
-  return null;
+  return executableOnPath('gh', path, (_, dir) => dir !== skipping);
 }
 
 test('npm test puts its refusing gh first on the path every test inherits', async () => {
@@ -159,6 +146,11 @@ async function methodGhSends(args, cwd = process.cwd()) {
     request.on('data', (chunk) => (body += chunk));
     request.on('end', () => {
       seen.push({ method: request.method, body });
+      if (process.env.RIGGER_GH_PROBE_FAILURE === 'proxy') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end('{"message":"local proxy request failed"}');
+        return;
+      }
       response.setHeader('content-type', 'application/json');
       response.end('{}');
     });
@@ -176,7 +168,8 @@ async function methodGhSends(args, cwd = process.cwd()) {
   };
   try {
     await new Promise((done, failed) => {
-      execFile(installedGh(), args, { env, cwd }, (error) => (error ? failed(error) : done()));
+      const spawnCwd = process.env.RIGGER_GH_PROBE_FAILURE === 'spawn' ? join(config, 'missing') : cwd;
+      execFile(installedGh(), args, { env, cwd: spawnCwd }, (error) => (error ? failed(new Error(`gh ${args.join(' ')}: ${error.message}`, { cause: error })) : done()));
     });
   } finally {
     proxy.close();
@@ -185,7 +178,8 @@ async function methodGhSends(args, cwd = process.cwd()) {
   return seen[0];
 }
 
-test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async () => {
+test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {
+  if (!installedGh()) return t.skip('no real gh on PATH; real-gh method/body probe not run');
   // `D16` rule 2: `gh` owns which method `gh api` sends, and the runner's rule is a copy of that
   // answer. So `gh` is asked, each run, and the relation asserted: a form the runner admits is one
   // `gh` sends as a GET carrying nothing, and a form `gh` sends any other way is one it refuses.
@@ -216,6 +210,111 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
     if (!aRead) assert.equal(admitted, false, `\`gh ${args.join(' ')}\` is sent as ${sent.method}`);
   }
 });
+
+const LIVE_GH_PROBE = 'the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body';
+
+function executableOnPath(name, path = process.env.PATH, accept = () => true) {
+  for (const entry of path.split(delimiter)) {
+    const dir = resolve(entry || '.');
+    const file = join(dir, name);
+    try {
+      accessSync(file, constants.X_OK);
+    } catch {
+      continue;
+    }
+    if (accept(file, dir)) return file;
+  }
+  return null;
+}
+
+function installedFake(gh) {
+  let file;
+  try {
+    file = openSync(gh, 'r');
+  } catch {
+    return false;
+  }
+  const bytes = Buffer.alloc(512);
+  try {
+    const count = readSync(file, bytes, 0, bytes.length, 0);
+    return bytes.toString('utf8', 0, count).includes('/test/fake-gh.mjs');
+  } finally {
+    closeSync(file);
+  }
+}
+
+function realGhOnPath() {
+  const refusing = process.env.RIGGER_REFUSING_GH_DIR;
+  return executableOnPath('gh', process.env.PATH, (gh, dir) => dir !== resolve(refusing || '.') && !installedFake(gh));
+}
+
+async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
+  const root = temporaryDirectory('rigger-gh-cell-', { context: t });
+  const tools = join(root, 'tools');
+  mkdirSync(tools);
+  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat']) {
+    const executable = name === 'node' ? process.execPath : executableOnPath(name);
+    assert.ok(executable, `${name} is needed by npm test`);
+    symlinkSync(executable, join(tools, name));
+  }
+  const fakeDir = join(root, 'fake');
+  const realDir = join(root, 'real');
+  mkdirSync(fakeDir);
+  mkdirSync(realDir);
+  const fake = installFakeGh(fakeDir, { repo: 'acme/widgets', project: 3 });
+  if (realGh) symlinkSync(realGh, join(realDir, 'gh'));
+  const path = [...entries.map((entry) => (entry === 'F' ? fakeDir : realDir)), tools].join(delimiter);
+  const env = { ...process.env, PATH: path };
+  delete env.NODE_TEST_CONTEXT;
+  if (failure) env.RIGGER_GH_PROBE_FAILURE = failure;
+  const selection = allTests ? '--test-skip-pattern=^P[1-5]-' : `--test-name-pattern=${LIVE_GH_PROBE}`;
+  const result = await new Promise((done) => {
+    execFile(process.execPath, [process.env.npm_execpath, 'test', '--', '--test-reporter=tap', selection, 'test/forge-runners.test.mjs'],
+      { env, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => done({ error, output: stdout + stderr }));
+  });
+  return { ...result, fake };
+}
+
+async function successfulGhCell(t, entries) {
+  const realGh = realGhOnPath();
+  if (!realGh) return t.skip('no installed real gh available for the cell fixture');
+  const { error, output, fake } = await runGhCell(t, entries, realGh);
+  assert.equal(error, null, output);
+  assert.match(output, /ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body/);
+  assert.deepEqual(fake.sent(), []);
+}
+
+async function failedGhCell(t, entries, failure) {
+  const realGh = realGhOnPath();
+  if (!realGh) return t.skip('no installed real gh available for the cell fixture');
+  const { error, output, fake } = await runGhCell(t, entries, realGh, failure);
+  assert.ok(error, output);
+  assert.match(output, /not ok \d+ - the read runner admits a `gh api <path>` form/);
+  assert.match(output, /api rate_limit -X GET/);
+  assert.match(output, failure === 'spawn' ? /ENOENT/ : /local proxy request failed/);
+  assert.doesNotMatch(output, /# SKIP no real gh on PATH/);
+  assert.deepEqual(fake.sent(), []);
+}
+
+async function noRealGhCell(t, entries) {
+  const { error, output, fake } = await runGhCell(t, entries, null, null, true);
+  assert.equal(error, null, output);
+  assert.match(output, /ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body # SKIP no real gh on PATH; real-gh method\/body probe not run/);
+  assert.match(output, /# fail 0/);
+  assert.deepEqual(fake.sent(), []);
+}
+
+test('P1-S: fake then real gh runs the live method and body probe through real gh', (t) => successfulGhCell(t, ['F', 'R']));
+test('P1-X: fake then real gh reports a real spawn failure without probing fake gh', (t) => failedGhCell(t, ['F', 'R'], 'spawn'));
+test('P1-Y: fake then real gh reports a failed local proxy request without probing fake gh', (t) => failedGhCell(t, ['F', 'R'], 'proxy'));
+test('P2-S: real then fake gh runs the live method and body probe through real gh', (t) => successfulGhCell(t, ['R', 'F']));
+test('P2-X: real then fake gh reports a real spawn failure without probing fake gh', (t) => failedGhCell(t, ['R', 'F'], 'spawn'));
+test('P2-Y: real then fake gh reports a failed local proxy request without probing fake gh', (t) => failedGhCell(t, ['R', 'F'], 'proxy'));
+test('P3-S: real gh alone runs the live method and body probe', (t) => successfulGhCell(t, ['R']));
+test('P3-X: real gh alone reports a spawn failure', (t) => failedGhCell(t, ['R'], 'spawn'));
+test('P3-Y: real gh alone reports a failed local proxy request', (t) => failedGhCell(t, ['R'], 'proxy'));
+test('P4-N: fake gh alone leaves the live probe skipped and the file passing', (t) => noRealGhCell(t, ['F']));
+test('P5-N: no gh after the refusing gh leaves the live probe skipped and the file passing', (t) => noRealGhCell(t, []));
 
 test('the read runner refuses `gh api <path>` in any other form, naming it, and sends nothing', async () => {
   // The defect this catches is a runner that reads `gh api <path>` as a read because no method
