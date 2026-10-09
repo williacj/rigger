@@ -1906,6 +1906,82 @@ test('without a prior post-kill state answer, a live answer persists until the d
   await postKillReadCell(t, { listing: 'omitted', first: 'failed', second: 'live', postKillCut: true });
 });
 
+// proves R-STATE-19, R-STATE-9
+test('a live answer survives a plain failure before a later no-start read cut', SETTLES_WITHIN, async (t) => {
+  await plainFailureBoundaryCell(t, { retainedLive: true, terminal: 'late' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a live answer survives a plain failure before a later started read times out', SETTLES_WITHIN, async (t) => {
+  await plainFailureBoundaryCell(t, { retainedLive: true, terminal: 'timeout' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('plain failures without an answered state precede a distinct no-start read cut', SETTLES_WITHIN, async (t) => {
+  await plainFailureBoundaryCell(t, { retainedLive: false, terminal: 'late' });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('plain failures without an answered state precede a distinct started read timeout', SETTLES_WITHIN, async (t) => {
+  await plainFailureBoundaryCell(t, { retainedLive: false, terminal: 'timeout' });
+});
+
+/** Drives a plain failed post-kill read before a distinct cut, keeping the last returned answer. */
+async function plainFailureBoundaryCell(t, { retainedLive, terminal }) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  const listed = listingOf('outside', realpathSync.native(join(work, 'sub')));
+  fixture(directory, 'lsof', [
+    'if [ -f "$here/hang" ]; then : > "$here/post-kill-omitted"; exit 1; fi',
+    listed,
+  ].join('\n'));
+  const failed = 'echo "ps: forced failure" >&2; exit 2';
+  const beforeTerminal = retainedLive ? 3 : 2;
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
+    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    `  if [ "$count" -eq 1 ]; then ${failed}; fi`,
+    ...(retainedLive ? [`  if [ "$count" -eq 2 ]; then printf '%s T\\n' '${outside}'; exit 0; fi`] : []),
+    `  if [ "$count" -eq ${beforeTerminal} ]; then ${terminal === 'late' ? ': > "$here/clock-cut"; ' : ''}${failed}; fi`,
+    '  : > "$here/state-timeout"; exec /usr/bin/tail -f "$here/hold"',
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const result = { ...await cleanedUpBy(TRACED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', ...(terminal === 'late' ? { clockCut: 20_000 } : {}) }), pairs: linesOf(directory, 'pairs'), ended: Date.now() };
+  const trace = linesOf(directory, 'control.trace.jsonl');
+  t.diagnostic(JSON.stringify({ cell: { retainedLive, terminal }, trace, events: result.events, pairs: result.pairs }));
+  assert.equal(result.status, 0, result.stderr);
+  const killed = trace.find(({ kind, target, name }) => kind === 'signal-start' && target === outside && name === 'SIGKILL')?.sequence;
+  assert.ok(killed, 'the named outside PID was not sent its kill');
+  const selected = trace.filter(({ sequence, tool, args }) => sequence > killed && tool === join(directory, 'ps') && args?.join(' ') === `-p ${outside} -o pid=,stat=`);
+  const ended = selected.filter(({ kind }) => kind === 'read-end');
+  const listing = trace.find(({ sequence, kind, tool, status, markers }) => sequence > killed && kind === 'read-end' && tool === join(directory, 'lsof') && status === 1 && markers?.listingOmitted);
+  assert.ok(listing, 'the named directory listing did not return omission');
+  assert.ok(ended[0]?.sequence < listing.sequence, 'the first failed state read did not precede the omitted listing');
+  const expected = retainedLive ? [[2, '', 'ps: forced failure\n'], [0, `${outside} T\n`, ''], [2, '', 'ps: forced failure\n']] : [[2, '', 'ps: forced failure\n'], [2, '', 'ps: forced failure\n']];
+  assert.deepEqual(ended.slice(0, expected.length).map(({ status, stdout, stderr }) => [status, stdout, stderr]), expected);
+  assert.ok(ended[1]?.sequence > listing.sequence, 'the later read did not follow the omitted listing');
+  const failure = ended.at(expected.length - 1);
+  assert.ok(failure, 'the before-bound plain failure did not return');
+  const started = selected.find(({ sequence, kind }) => sequence === failure.sequence - 1 && kind === 'read-start');
+  assert.ok(started?.remaining > 0, 'the plain failed read did not start before the bound');
+  assert.ok(trace.some(({ sequence, kind, target, name, answer }) => sequence > failure.sequence && kind === 'signal-answer' && target === outside && name === 0 && answer === true), 'the named PID did not continue answering signal 0');
+  if (terminal === 'late') {
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > failure.sequence && kind === 'read-cut' && code === 'LATE'), 'a later state read was not cut before start');
+    assert.equal(selected.some(({ sequence, kind }) => sequence > failure.sequence && kind === 'read-start'), false, 'a state read started after the pre-start cut');
+  } else {
+    const timeout = selected.find(({ sequence, kind, error }) => sequence > failure.sequence && kind === 'read-end' && error === 'ETIMEDOUT');
+    assert.ok(timeout, 'the later started read did not time out');
+    assert.ok(selected.some(({ sequence, kind, remaining }) => sequence > failure.sequence && sequence < timeout.sequence && kind === 'read-start' && remaining > 0), 'the timed-out read did not start inside the bound');
+    assert.equal(timeout.stdout, '', 'a timed-out partial output was counted as an answer');
+  }
+  assert.equal(ended.filter(({ status, stdout }) => status === 0 && stdout === `${outside} T\n`).length, retainedLive ? 1 : 0, 'the plain failure replaced or fabricated a live answer');
+  assertUnended(directory, result.events, 'survivor.unended', retainedLive ? 'still alive when L0\'s read bound ran out after its kill' : 'not shown to have ended: the process table could not be read');
+}
+
 /** Drives an omitted post-kill listing into a chosen later-read boundary. */
 async function postKillBoundaryCell(t, mode) {
   const directory = holding(t);
@@ -2131,6 +2207,38 @@ test('a second live answer followed by plain failed reads records an unread proc
     assert.ok(trace.some(({ kind, branch }) => kind === 'bound-evaluated' && branch === 'plain-failure'));
     assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended 1000 ms after L0\'s kill: the process table could not be read');
   } });
+});
+
+/** Proves a started plain failure reaches the terminal bound after the chosen answer history. */
+async function plainTerminalBoundaryCell(t, retainedLive) {
+  await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: retainedLive ? 'live' : 'failed', ...(retainedLive ? { third: 'failed' } : {}), caller: TRACED_CALLER, clockCutAt: retainedLive ? 'thirdFailed' : 'failed', observe: ({ directory, outside, result, trace }) => {
+    const killed = trace.find(({ kind, target, name }) => kind === 'signal-start' && target === outside && name === 'SIGKILL')?.sequence;
+    assert.ok(killed, 'the named outside PID was not sent its kill');
+    const selected = trace.filter(({ sequence, tool, args }) => sequence > killed && tool === join(directory, 'ps') && args?.join(' ') === `-p ${outside} -o pid=,stat=`);
+    const ended = selected.filter(({ kind }) => kind === 'read-end');
+    const expected = retainedLive ? [[2, '', 'ps: forced failure\n'], [0, `${outside} T\n`, ''], [2, '', 'ps: forced failure\n']] : [[2, '', 'ps: forced failure\n'], [2, '', 'ps: forced failure\n']];
+    assert.deepEqual(ended.map(({ status, stdout, stderr }) => [status, stdout, stderr]), expected);
+    const listing = trace.find(({ sequence, kind, tool, status, markers }) => sequence > ended[0].sequence && kind === 'read-end' && tool === join(directory, 'lsof') && status === 1 && markers?.listingOmitted);
+    assert.ok(listing && listing.sequence < ended[1].sequence, 'the named omission did not precede the later state reads');
+    const failure = ended.at(-1);
+    assert.ok(selected.some(({ sequence, kind, remaining }) => sequence < failure.sequence && kind === 'read-start' && remaining > 0 && sequence === failure.sequence - 1), 'the terminal plain failure did not start within the read bound');
+    assert.ok(trace.some(({ sequence, kind, branch }) => sequence > failure.sequence && kind === 'bound-evaluated' && branch === 'plain-failure'), 'the plain failure was not evaluated at the terminal bound');
+    assert.equal(trace.some(({ sequence, kind }) => sequence > failure.sequence && kind === 'read-cut'), false, 'the terminal plain failure was mislabeled as a cut');
+    assert.ok(trace.some(({ sequence, kind, target, name, answer }) => sequence > ended.at(-2).sequence && sequence < failure.sequence && kind === 'signal-answer' && target === outside && name === 0 && answer === true), 'the named PID did not answer signal 0 before terminal evaluation');
+    assert.equal(alive(outside), true, 'the named PID ended before the terminal claim');
+    assert.equal(ended.filter(({ status, stdout }) => status === 0 && stdout === `${outside} T\n`).length, retainedLive ? 1 : 0);
+    assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended 1000 ms after L0\'s kill: the process table could not be read');
+  } });
+}
+
+// proves R-STATE-19, R-STATE-9
+test('a returned later live answer precedes a terminal plain state-read failure', SETTLES_WITHIN, async (t) => {
+  await plainTerminalBoundaryCell(t, true);
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a never-answered state remains unread after a terminal plain state-read failure', SETTLES_WITHIN, async (t) => {
+  await plainTerminalBoundaryCell(t, false);
 });
 
 // proves R-STATE-19, R-STATE-9
