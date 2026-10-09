@@ -44,6 +44,9 @@ const HOST = /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]*|[^/]*:)/i;
 /** The owner and name at the end of a remote's path. */
 const SLUG = /(?:^|\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/;
 
+/** Git can echo a remote URL in an error; the report keeps the cause without its userinfo. */
+const printableGitReason = (why) => why.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi, '$1<userinfo>@');
+
 /**
  * The `owner/name` git says this repository's `origin` remote points at, as `{ repo }`, or
  * `{ repo: null, why }` where git answers with nothing, `why` saying in one line what it answered
@@ -176,13 +179,13 @@ export const init = (options) => recording((opened) => forking(opened, options))
 
 /** `init`'s work, recording through the sink `opened` holds. */
 async function forking({ sink, name }, {
-  target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout,
+  target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout, ask,
 } = {}) {
   if (sameTree(target, packageRoot)) return sourceTreeRefusal('init', real(target));
   name(target);
   let read;
   try {
-    read = await repoSlug(target, { emitter: sink.emitter({ layer: 'L0' }), timeout });
+    read = await repoSlug(target, { ask, emitter: sink.emitter({ layer: 'L0' }), timeout });
   } catch (failure) {
     if (failure.code !== EVENT_REFUSED) throw failure;
     return { text: `rigger init: ${failure.message}`, code: 1 };
@@ -206,7 +209,7 @@ async function forking({ sink, name }, {
       `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
-      ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${why}.`]),
+      ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${printableGitReason(why)}.`]),
       // Said only where the config was written, because a run that skipped it would be claiming
       // something about a file that is the consumer's by then and that `init` never read.
       ...(wrote.includes(CONFIG)
