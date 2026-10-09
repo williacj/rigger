@@ -33,8 +33,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -53,13 +53,20 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    attempt at a card runs in. L0's workspace adapter, `src/substrate/worktrees.mjs`, makes and
    removes workspaces, and only L1 reaches it. L0's forge adapter gives L3 the board's items and L2
    a card's facts. It carries L2's column changes back to the board, and no
-   other layer changes a card's column. The forge adapter has three sides, and each sends only
-   through its own runner, which refuses any request outside its side. The read side changes nothing
-   on the forge, and any layer or verb may use it. The item-write side changes a board item, and
-   only L2 reaches it. The schema-write side changes the board's fields and their options and the
-   repository's labels, and only the CLI's verbs reach it, never a layer. L4 gives the layers below
-   it names, procedures and settings. If a layer needs to know something from two layers down, the
-   design is wrong; fix the boundary, do not reach through it.
+   other layer changes a card's column. The forge adapter has four sides. Each sends only through
+   its own runner, which refuses any request outside its side:
+
+   - The read side changes nothing on the forge, and any layer or verb may use it.
+   - The item-write side changes a board item, and only L2 reaches it.
+   - The schema-write side changes the board's fields and their options and the repository's
+     labels. Only the CLI's verbs reach it, never a layer.
+   - The repository-write side admits two writes, a merge of a pull request and a comment on one,
+     and only L2 reaches it.
+
+   The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
+   gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
+   know something from two layers down, the design is wrong; fix the boundary, do not reach through
+   it.
 3. **The meta loop may target the core, on conditions.** A proposal against L0 through L3 must
    cite the signal from that layer's own telemetry it would improve, must pass the budget check,
    and goes to the owner. A proposal against L4 goes to the owner. L6 changes no code itself, in
@@ -94,7 +101,7 @@ flowchart TB
   L0 -->|exit code| L1
   L0 -->|board items| L3
   L0 -->|card facts| L2
-  L2 -->|column changes| L0
+  L2 -->|column changes, merges and comments| L0
   L0 -.->|events| L5
   L1 -.->|events| L5
   L2 -.->|events| L5
@@ -137,7 +144,7 @@ workaround.
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
-| **Forge adapter** | A module implementing the board, issue, PR, and CI interface | L0 | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
+| **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
 The config file declares the rows whose v0 column says Yes. The rows marked fixed are Rigger's, and
@@ -265,21 +272,142 @@ do it are L0. A Windows equivalent arrives with native Windows, which is not in 
 
 ## The gate
 
-The gate is a git hook in the consumer's repository, under `.githooks/`, reached through
-`core.hooksPath`. `rigger init` installs it. It runs on a ref update, so it binds every route to
-the main line alike: a dispatch Rigger made, a person's own `git merge`, a second provider's
-session. Nothing reaches the main line around it, which is what `R-GATE-1` asks for and what an
-in-process check could not give.
+The gate is one L2 rule, enforced in two places: by a required check on the forge, and by the
+engine's merge decision. The rule lives in `src/workflow/gate.mjs`. It reads a card's markers, its
+kind's judges, the pull request's head, the acceptance digest and the required checks' states. It
+answers admit, or a refusal naming each missing, stale or unsound piece.
 
-It reads verdict markers and nothing else. A judge writes one marker per dispatch, naming the
-work it ruled on, the acceptance revision it ruled against, its verdict, and each acceptance item
-as met or unmet. The markers live in the consumer's repository beside the work, so a restart
-needs no state of its own to find them, and the gate needs no engine to be running.
+The rule holds no opinion. It reads no text outside the marker's schema, and it never decides which
+judges a card needs or which checks count. L4 names the judges. The forge's rules name the checks.
 
-The gate holds no opinion. It compares markers against the card's configured judges and the
-consumer's own checks, and refuses on anything missing, unreadable or stale. L2 owns the rule it
-applies; the hook is where that rule is enforced, because a rule enforced inside the engine binds
-only the engine.
+The client hooks under `.githooks/` are an early check and not the boundary, because a session can
+run code it wrote (`D23` rule 2). A hook refuses some routes early, and the required check is what
+binds.
+
+### Markers
+
+A judge's verdict is a marker: one comment the judge writes on the card's pull request. The
+comment opens with a line for the person reading the pull request. The fenced block under that line
+holds:
+
+- the card and the pull request;
+- the head SHA the judge ruled on, and the acceptance digest it ruled against;
+- the judge's role and its verdict;
+- each acceptance item, keyed by its ordinal, as met or unmet;
+- the ruling on whether the acceptance covered what the card asked (`R-LOOP-6`);
+- the dispatch id and the evidence digest, where Rigger dispatched the judge.
+
+L2 owns the one function that computes the acceptance digest from the card's acceptance items. An
+edit to the card's prose outside its acceptance therefore stales no marker. L2 also owns
+`src/workflow/marker.mjs`, which composes the judge's instruction and parses the marker back. One
+module does both, so the two cannot drift.
+
+L3 mints the dispatch id, and L2 writes it and the evidence digest into the judge's instruction.
+`report` flags an agent judge's marker that carries no dispatch id. The rule reads markers as
+follows:
+
+- The governing marker for a role is the latest by creation time at the head and the acceptance
+  digest.
+- One round is one distinct pair of head and acceptance digest.
+- The rule reads only markers written by an account with write access to the repository. A
+  marker on a pull request from a fork admits nothing.
+- The rule refuses a marker that has been edited.
+
+The owner's verdict is a marker in the same schema, with the role `owner`, and the owner writes it.
+L2 never writes it. A marker the owner writes, or one written by a judge Rigger did not dispatch,
+carries neither a dispatch id nor an evidence digest. Its writer takes the head, the acceptance
+digest and the items from the gate check's run summary.
+
+### The required check on the forge
+
+The forge requires the status `rigger/gate` before it merges a pull request into the main line.
+The forge reads the check's workflow from the default branch, whatever the pull request's base.
+The workflow runs the rule from Rigger at the commit it pins (`D7` rule 1). It never runs the rule
+from the pull request's head, nor from the default branch's own source. Changing the pin changes the
+live gate.
+
+The gate script ships under `scripts/`, beside the resolver. It reads through L0's read side, with
+the job's read-only `GITHUB_TOKEN`, and never sees the App's private key or its minted token. It
+reads:
+
+- the pull request's base from the pull request, never from `GITHUB_REF`, which names the default
+  branch even for another base;
+- the config from the base branch;
+- the card's markers and its acceptance.
+
+The script hands the rule no required checks, because the forge enforces those itself. One run of
+the script rules on one pull request. It exits 0 to admit, and prints the head SHA it read and its
+reasons. On an `issues` event the script maps the card to its open pull requests itself, because the
+event names none.
+
+The gate workflow's posting job declares `environment: gate`, which admits it only from `main`.
+Its steps run in this order:
+
+1. The gate script runs once for each pull request the event concerns. On an `issues` event, those
+   are the card's open pull requests the script mapped.
+2. An inline step, with no third-party action, mints the gate App's token.
+3. For each run of the script, a step posts `rigger/gate` on the SHA that run printed. Its state is
+   taken from that run's exit status alone.
+
+With no pull request open, the script rules on none and the workflow posts nothing. With several
+open, the workflow posts on each one's head the state of that pull request's own run.
+
+The App's private key and its minted token reach only the mint and post steps of each posting job.
+Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's.
+
+Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
+required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
+would not do: any Actions run's `GITHUB_TOKEN` satisfies it, a workflow on another branch included
+(#643, Q-a).
+
+Correctness never relies on cancellation, because a run GitHub marked cancelled still posted (#701,
+finding 6). Each posting job instead runs in a concurrency group keyed on the card, with
+`cancel-in-progress: false`. Each run reads its facts at its start, and posts on the SHA it read. One
+card's runs then execute one at a time, so the last run starts after the last event and posts last.
+That one run of a group executes at a time is GitHub's documented behaviour, not measured here. Two
+overlapping runs of one group would reverse this.
+
+The `workflows` ruleset rule is not used. #701 measured it refused on a probe repository that a
+personal account owns.
+
+### What the owner provisions
+
+The forge-side pieces other than the workflow are forge settings the owner provisions, as the
+ruleset is (`D23`):
+
+- the gate App, holding Commit statuses (write) and Metadata (read), and its installation;
+- the `gate` environment, with a deployment-branch policy admitting only `main`, and
+  `can_admins_bypass: false`;
+- the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
+- the required contexts, each pinned to the App's id.
+
+Of the gate's forge-side pieces, `init` forks only the workflow. `doctor` reads each of those
+settings through L0's read side. No verb writes one.
+
+### The engine's merge decision
+
+The engine's lane runs the rule again before it merges. There the rule takes the checks the base
+branch's effective rules require, read through L0's read side, less the gate's own context. No config
+key names them. A person's merge does not run the rule again, and the required check is what binds
+it.
+
+### What the gate cannot tell apart
+
+- A marker a session wrote with the owner's token, from one the owner wrote.
+- A card's kind changed by relabelling, from the kind its author gave it.
+
+The App design carries one named residual: it is not tested against forging (#642, P29). Either of
+two observations reverses it (#642, P26): any run off `main` obtaining the App's secret, or a job on
+a ref other than `main` admitted to the `gate` environment.
+
+The forge check carries two residuals of its own:
+
+- After an acceptance edit, the earlier status stands until the next run of the card's concurrency
+  group posts. Under `cancel-in-progress: false`, an earlier run that read the old acceptance can
+  still post after the edit.
+- An issue event whose read of the card's pull requests fails leaves the earlier status in place.
+
+Neither place stops a token that can rewrite the repository's settings (`D23` rule 3).
 
 ## Failure model
 
@@ -315,17 +443,19 @@ kill left unrecorded stops what made the call: a start at L3, as a refused start
 verb, which exits non-zero naming it.
 
 L3 then reads the board, and L2 computes each card's next action from its stage and observable
-facts. Those facts are the card's column, its pull request, that request's head SHA, the SHA and
-acceptance revision each verdict names, and the last transition the board shows. L2 derives them on
+facts. Those facts are the card's column, its pull request, that request's head SHA, the head SHA
+and acceptance digest each marker names, and the last transition the board shows. L2 derives them on
 every read, so no card state is kept. The one exception is L3's memory of the cards it does not
 pull again in one invocation, set out below, after the rule that an environment failure retries
 the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more
-things outlive a restart outside it: a card's workspace and the verdict markers in the repository.
-Nothing reads a workspace back. An attempt that starts a card's work from the beginning replaces
-it, as `R-WORK-10` and `R-WORK-13` require. Rigger writes no other state. Recovery machinery
+things outlive a restart outside it: a card's workspace, and the markers on its pull request, which
+the forge holds. Nothing reads a workspace back. An attempt that starts a card's work from the
+beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
+work, after a judge returns it to its maker, starts in a workspace at the head of the card's line of
+work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
 The result of a command is its exit code and captured output. The direct child decides the exit
@@ -354,6 +484,10 @@ An attempt at a card runs in this order, under the card's one claim and slot:
    selected steps there.
 
 A card L3 pulls from Review starts at step 4.
+
+Once L2 reads a card's pull request as merged, whoever merged it, L2 moves the card to Done. L3 then
+has L1 remove the card's directories: its workspace, and each of its roles' judge and scratch
+directories.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies four failures as
@@ -420,14 +554,14 @@ command's exit code could not be read. L3 frees a card's slot only once L1 has h
 outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
-is a pull, which claims a card, or a dispatch. L3 records each start before it acts outside
+is a pull, which claims a card, a dispatch, or a merge. L3 records each start before it acts outside
 Rigger on it, in this order:
 
 1. For a pull, L3 takes the card's claim in memory, synchronously.
 2. L3 appends the start's event to the sink. Recording a start follows the claim, and the append
    is synchronous, so no await falls between a pull and its claim.
 3. Only after the sink accepts that event does L3 act outside Rigger. It hands a pulled card to
-   L2 for the claim move, and a dispatch to L1.
+   L2 for the claim move, a dispatch to L1, and a merge to L2.
 
 A start whose event the sink refuses is not made. L3 releases any claim step 1 took, starts
 nothing, and reports the refusal to its caller. L3 also passes on to its own caller every
@@ -496,8 +630,9 @@ its own reason. Field names are not yet fixed.
 
 Each layer has a line budget, the CLI and config have one between them, and their sum is the
 package budget. The core is L1 plus L0's process adapter, so it spans two rows, and it is where a bug means a
-stray process or a lost result. The gate has a row of its own, carved from L2's, because L2 owns
-the rule and the hook enforces it.
+stray process or a lost result. The gate has a row of its own, carved from L2's, and the row counts
+`src/workflow/gate.mjs` alone. `src/workflow/marker.mjs` counts toward L2's row. The gate script
+under `scripts/` is a check Rigger ships for a consumer's CI, so the budget does not count it.
 These bound Rigger's own production code — what runs while a card is being worked. L4 has no
 production-line budget: the roles, review procedure, and provisioning steps are the consumer's, live in the
 consumer's repository, and are theirs to size. L7 is a person.

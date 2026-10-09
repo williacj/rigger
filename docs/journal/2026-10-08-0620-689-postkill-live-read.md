@@ -1,0 +1,15 @@
+<!-- ABOUTME: Records why card #689 forces the post-kill read boundary and how its distinct outcomes are proved. -->
+
+# Post-kill live read boundary
+
+The historical #615 affected-file run stopped in the named failed-first-state, omitted-listing, later-live test because its second state read had not been reached. Its runner output did not record read order or deadline state, so the failed assertion alone cannot separate a spent bound from a stand-in or scheduling delay. A passing focused retry only established that the later read can occur.
+
+The [disposable macOS capture](https://github.com/williacj/rigger/actions/runs/37783452030) measured 20 serial original-base whole-file runs at evidence head `62e0c8fa2230fc091f546def731c15a32d1e1c63` on 2026-10-08. The unchanged raw-byte and trace gates passed before the [artifact](https://github.com/williacj/rigger/actions/runs/37783452030/artifacts/11557161187) uploaded. Every named-case trace reached a failed first state read, omitted listing, and answered live later read; none reproduced the historical named assertion. Two other base controls missed a second read, in `r03` and `r11`, so the original fixture's read schedule remains a plausible cause rather than a proven L0 defect.
+
+The exit cleanup reads the state once immediately after the named kill, then performs the directory listing, then waits on that kill with its own bound. The optional failed state read yields no state answer. A deadline before the next read must therefore retain the no-answered-state reason, while an answered live read before a later cut retains the live-at-cut reason. An answered live read evaluated at the bound has a third, terminal-live reason.
+
+The test fixture now freezes the caller's logical clock after the named kill and advances it at a selected read boundary. This forces the first-failed, omitted-listing, reached-live-then-cut path and the no-later-read path without a sleep or longer bound. A separate clock edge is observed after an answered live read for the terminal-live control. A later read that never answers exercises the timeout control. The instrumented trace includes read and signal order, logical remaining bound, emitted events, and caller completion.
+
+The named-case boundary driver then measured ten consecutive focused runs against the active-base source and fixture, with only an additive case marker. All ten reached the no-later-read P2 branch and failed the protected live-answer assertion; every complete output and trace passed the unchanged credential, path, and trace checks when bound to the local scratch path. The external driver reads real stand-in answers and advances only the caller's logical read boundary. The pull request records the corresponding head runs and their full evidence.
+
+These are fixture timing controls. No L0 source behavior was changed, no read answer was substituted, and the existing 1,000 ms bound remains. The P1B answered-terminal, P3F plain-failure, P3T timed-out, and P4 ended-state controls stay separate.
