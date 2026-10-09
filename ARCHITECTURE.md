@@ -53,16 +53,20 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    attempt at a card runs in. L0's workspace adapter, `src/substrate/worktrees.mjs`, makes and
    removes workspaces, and only L1 reaches it. L0's forge adapter gives L3 the board's items and L2
    a card's facts. It carries L2's column changes back to the board, and no
-   other layer changes a card's column. The forge adapter has four sides, and each sends only
-   through its own runner, which refuses any request outside its side. The read side changes nothing
-   on the forge, and any layer or verb may use it. The item-write side changes a board item, and
-   only L2 reaches it. The schema-write side changes the board's fields and their options and the
-   repository's labels, and only the CLI's verbs reach it, never a layer. The repository-write side
-   admits two writes, a merge of a pull request and a comment on one, and only L2 reaches it. The
-   gate script reaches only the read side. The gate's workflow, which is no layer, posts the gate's
-   status. L4 gives the layers below
-   it names, procedures and settings. If a layer needs to know something from two layers down, the
-   design is wrong; fix the boundary, do not reach through it.
+   other layer changes a card's column. The forge adapter has four sides. Each sends only through
+   its own runner, which refuses any request outside its side:
+
+   - The read side changes nothing on the forge, and any layer or verb may use it.
+   - The item-write side changes a board item, and only L2 reaches it.
+   - The schema-write side changes the board's fields and their options and the repository's
+     labels. Only the CLI's verbs reach it, never a layer.
+   - The repository-write side admits two writes, a merge of a pull request and a comment on one,
+     and only L2 reaches it.
+
+   The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
+   gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
+   know something from two layers down, the design is wrong; fix the boundary, do not reach through
+   it.
 3. **The meta loop may target the core, on conditions.** A proposal against L0 through L3 must
    cite the signal from that layer's own telemetry it would improve, must pass the budget check,
    and goes to the owner. A proposal against L4 goes to the owner. L6 changes no code itself, in
@@ -331,18 +335,22 @@ reads:
 - the config from the base branch;
 - the card's markers and its acceptance.
 
-The script hands the rule no required checks, because the forge enforces those itself. It exits 0
-to admit, and prints the head SHA it read and its reasons. On an `issues` event the script maps the
-card to its open pull requests itself, because the event names none. With none open it posts
-nothing, and with several it posts on each one's head.
+The script hands the rule no required checks, because the forge enforces those itself. One run of
+the script rules on one pull request. It exits 0 to admit, and prints the head SHA it read and its
+reasons. On an `issues` event the script maps the card to its open pull requests itself, because the
+event names none.
 
 The gate workflow's posting job declares `environment: gate`, which admits it only from `main`.
 Its steps run in this order:
 
-1. The gate script runs.
+1. The gate script runs once for each pull request the event concerns. On an `issues` event, those
+   are the card's open pull requests the script mapped.
 2. An inline step, with no third-party action, mints the gate App's token.
-3. A step posts `rigger/gate` on the SHA the script printed, with its state taken from the script's
-   exit status alone.
+3. For each run of the script, a step posts `rigger/gate` on the SHA that run printed. Its state is
+   taken from that run's exit status alone.
+
+With no pull request open, the script rules on none and the workflow posts nothing. With several
+open, the workflow posts on each one's head the state of that pull request's own run.
 
 The App's private key and its minted token reach only the mint and post steps of each posting job.
 Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's.
