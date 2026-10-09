@@ -167,6 +167,26 @@ under the test above.
 | R-WORK-22 | — none of them is the worktree Rigger was handed as the repository; | the engine | the test suite | |
 | R-WORK-23 | — no other worktree of the repository lies inside it. | the engine | the test suite | |
 | R-WORK-24 | Rigger does a card in review again from the beginning where the forge holds no pull request from the card's line of work, open or merged, and not the line of work itself. The card shows coding while it is done again. | the engine | the test suite | D1 |
+| R-WORK-25 | An attempt that continues a card's work, rather than starting it from the beginning, runs in a workspace holding the card's line of work as the forge held it when the workspace was made. That workspace holds nothing an earlier attempt left that the forge does not hold. The states it covers are in `### R-WORK-25 — Continuing workspace states`. | the engine | the test suite | |
+
+### R-WORK-25 — Continuing workspace states
+
+| What is at the workspace path | Line of work on the forge | Scope |
+|---|---|---|
+| nothing | at the head L2 read | in |
+| the card's earlier worktree, clean | at the head | in |
+| the card's earlier worktree, with uncommitted changes | at the head | in: none remains |
+| the card's earlier worktree, with untracked and ignored files | at the head | in: none remains |
+| the card's earlier worktree, with local commits not on the forge | at the head | in: none remains |
+| nothing, but a local branch of the card's name holds commits not on the forge | at the head | in: none remains |
+| any | force-moved, so the earlier worktree's commits are not its ancestors | in: the workspace holds the forge's tip |
+| any | moved since L2 read the head | in: refused, naming both SHAs; nothing changed |
+| a worktree on another line of work, or a detached `HEAD` | any | in: refused under `R-WORK-13`; path named; nothing changed |
+| a directory `R-WORK-13` refuses | any | in: refused; path named; nothing changed |
+| the card's branch checked out in a worktree elsewhere | at the head | in: refused, naming that worktree |
+| any | deleted after L2 read it | in: refused, naming it |
+| any | the fetch fails, or times out | in: refused as an environment failure, path named |
+| any | deleted before L2 read it | out: the forge closes the pull request, and `R-WORK-24` answers a start from the beginning |
 
 ## R-LOOP — maker, judges, and rounds
 

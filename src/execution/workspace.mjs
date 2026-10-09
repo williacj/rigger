@@ -1,6 +1,5 @@
-// ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, and makes
-// the workspace fresh from the main line for an attempt, and each judge's directory, holding `main`
-// at the main line and `head` at the pull request's head, through L0's workspace adapter.
+// ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, makes it
+// from main or a continuing card head, and makes each judge's directory from main and PR head.
 
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -29,8 +28,9 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
 const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic, card));
 
 /**
- * Makes card `card`'s workspace fresh for an attempt that starts its work from the beginning, and
- * settles on its `path` and `branch` (`R-WORK-3`, `R-WORK-10`), the card's scratch base as
+ * Makes card `card`'s workspace fresh from main when handed the card alone, or from its forge line
+ * when handed `head` as L2 read it (`R-WORK-10`, `R-WORK-25`), and settles on its `path` and
+ * `branch` (`R-WORK-3`), the card's scratch base as
  * `scratch` (`scratchBase`), and `repository` as it was handed (the architect's ruling 21 on #467).
  *
  * `root` is the absolute root the verb resolved (the architect's ruling 3, P3, on #423), `topic`
@@ -47,9 +47,10 @@ const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic,
  * (`R-WORK-13` to `R-WORK-17`; the architect's ruling 9 on #423). Before any of that, L1 asks L0 whether git
  * accepts the card's own derived name as a literal branch name. A workspace that passes is made
  * removable, as `writable` says, and removed; where nothing is at the path, a stale registration
- * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. L0 then makes the
- * workspace on the branch at the main line's commit as `origin` holds it, resetting the branch
- * where it exists.
+ * there locked by `git worktree add` is unlocked, as `unlockedIfAdding` says. For a continuing
+ * attempt, L1 checks that the branch is checked out nowhere else and asks L0 to verify and fetch
+ * the forge head before removal. L0 then makes the workspace on the branch at main or `head`,
+ * resetting the branch where it exists.
  *
  * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
  * recorded the same. Where the sink refused any event on the way, L0's, L1's record of the
@@ -58,7 +59,7 @@ const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic,
  * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
  * owner's O4 on #423).
  */
-export async function makeWorkspace({ root, topic, card, repository, sink }) {
+export async function makeWorkspace({ root, topic, card, head, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
   const branch = topicFor(topic, card);
   const path = join(root, branch);
@@ -75,10 +76,14 @@ export async function makeWorkspace({ root, topic, card, repository, sink }) {
     if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path, and L1 is handed the root the verb resolved`);
     const { accepted, why } = await adapter.acceptsBranch(branch);
     if (!accepted) throw new Error(`card #${card}'s topic \`${topic}\` derives ${branch}, which git refuses as a branch name: ${why}`);
-    return cleared({ adapter, card, branch, path, repository });
+    if (head !== undefined) {
+      const elsewhere = (await adapter.listing()).find((each) => each.branch === branch && nearestReal(each.at) !== nearestReal(path));
+      if (elsewhere !== undefined) throw new Error(`${branch} is checked out at ${elsewhere.at}, not ${path}`);
+    }
+    return cleared({ adapter, card, branch, path, repository }, head === undefined ? undefined : () => adapter.fetchLineAt(branch, head));
   });
   if (removed !== undefined) recorded(events, card, 'workspace.removed', { path: removed });
-  await step(() => adapter.make(path, branch));
+  await step(() => head === undefined ? adapter.make(path, branch) : adapter.makeAt(path, branch, head));
   recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch, scratch: scratchBase(root, topic, card), repository };
 }
@@ -414,8 +419,9 @@ async function judgeCleared(adapter, { real, present: there, trees, unlocking })
  * them, since the root reaches L1 in whatever case its caller spelled it and git prints paths in
  * the case the disk holds.
  */
-async function cleared({ adapter, card, branch, path, repository }) {
+async function cleared({ adapter, card, branch, path, repository }, beforeRemove = async () => {}) {
   if (!present(path)) {
+    await beforeRemove();
     await unlockedIfAdding(adapter, path, branch);
     return undefined;
   }
@@ -435,6 +441,7 @@ async function cleared({ adapter, card, branch, path, repository }) {
   if (nested !== undefined) {
     throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
+  await beforeRemove();
   writable(real);
   await adapter.remove(real);
   // A workspace named through a symbolic link leaves the link behind, pointing at nothing.
@@ -458,8 +465,8 @@ function recorded(events, card, event, fields) {
 
 /**
  * Builds L1's workspace handle over `root` and `topic` for the repository at `repository`: the
- * function L3 is handed, which makes a card's workspace as `makeWorkspace` does (the architect's
- * ruling 5, P4, on #423).
+ * function L3 is handed. It makes from main with the card alone, or from the card's forge line
+ * when also handed the head L2 read, as `makeWorkspace` does (the architect's ruling 5, P4, on #423).
  *
  * Building it asks L0 whether git accepts the name the topic derives for card 1 as a literal
  * branch name, and rejects naming the topic and why where it does not, before any directory is
@@ -472,7 +479,7 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
   const name = topicFor(topic, 1);
   const { accepted, why } = await workspaces({ repository, emitter: sink.emitter({ layer: 'L0' }) }).acceptsBranch(name);
   if (!accepted) throw new Error(`the worktree topic \`${topic}\` derives ${name} for card #1, which git refuses as a branch name: ${why}`);
-  return (card) => makeWorkspace({ root, topic, card, repository, sink });
+  return (card, head) => makeWorkspace({ root, topic, card, head, repository, sink });
 }
 
 /**
