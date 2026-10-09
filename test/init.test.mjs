@@ -14,9 +14,11 @@ import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
 import { OUTLIVED, TAIL, UNKILLED, alive, childrenIn, fixture, gitCalls, gitHanging, gitLeavingChild, gitRecording, gone, holding, leave, read, ready, withFirstOnPath } from './process-fixtures.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
+import { NOT_STARTED } from '../src/substrate/process.mjs';
 import riggerConfig from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { installFromTarball } from './installed-rigger.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -503,6 +505,25 @@ test('the command forks the assets into the repository it is run in, from the pa
   }
 });
 
+// proves R-SAFE-1
+test('the installed init bin keeps credential userinfo out of stdout and stderr', () => {
+  const secret = 's3cret-token';
+  const userinfo = `user:${secret}`;
+  const consumer = repository(`https://${userinfo}@github.com/acme/widgets.git`);
+  const install = installFromTarball(root, temporaryDirectory('rigger-init-bin-'));
+  assert.ok(!consumer.includes(secret), 'the target path overlaps the credential fixture');
+
+  const ran = spawnSync(install.rigger, ['init'], {
+    cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: install.path },
+  });
+
+  assert.equal(ran.error, undefined, 'the installed bin did not start');
+  assert.equal(ran.status, 0, 'the installed bin failed');
+  assert.ok(!ran.stdout.includes(userinfo) && !ran.stdout.includes(secret), 'stdout contains credential material');
+  assert.ok(!ran.stderr.includes(userinfo) && !ran.stderr.includes(secret), 'stderr contains credential material');
+  assert.ok(readFileSync(join(consumer, CONFIG), 'utf8').includes("repo: 'acme/widgets'"), 'the config lacks the expected repo');
+});
+
 test('a second run leaves an edited template alone, and names everything it skipped', async () => {
   // Measured by running it twice with an edit in between rather than argued from the code. The
   // defect this catches is the fork a consumer cannot trust: `init` run again — by a person, or
@@ -692,10 +713,9 @@ test('given an origin remote carrying a credential and ending in no owner and na
  * `init` run over a repository whose `origin` is `url`, as the report it printed, the text of the
  * config it wrote, and the `repo` that config names once loaded.
  */
-async function initOver(url) {
-  const consumer = repository(url);
+async function initOver(url, consumer = repository(url)) {
   const ran = await init({ target: consumer, packageRoot: elsewhere() });
-  assert.equal(ran.code, 0, ran.text);
+  assert.equal(ran.code, 0, 'init failed');
   const path = join(consumer, CONFIG);
   return { ran, text: readFileSync(path, 'utf8'), repo: (await import(pathToFileURL(path))).default.repo };
 }
@@ -709,7 +729,15 @@ async function initOver(url) {
  * prints only the redacted name, never what was read.
  */
 async function initKeepsOut(url, expected, credentials) {
-  const { ran, text, repo } = await initOver(url);
+  const consumer = repository(null);
+  const component = credentials.at(-1);
+  let disjoint = component;
+  while (consumer.includes(disjoint)) disjoint += 'x';
+  url = url.replaceAll(component, disjoint);
+  gitIn(consumer, 'remote', 'add', 'origin', url);
+  credentials = credentials.map((credential) => credential.replaceAll(component, disjoint));
+  assert.ok(credentials.every((credential) => !consumer.includes(credential)), 'the target path overlaps the credential fixture');
+  const { ran, text, repo } = await initOver(url, consumer);
   const redacted = credentials.reduce((name, credential) => name.replaceAll(credential, '<credential>'), repo);
 
   assert.ok(repo === expected, `the config names \`${redacted}\``);
@@ -738,8 +766,195 @@ test('given an origin remote whose userinfo is a user and a token, ahead of two 
 });
 
 // proves R-SAFE-1
+test('an overlapping target path does not turn the credential helper into a report-path failure', async () => {
+  const overlapping = temporaryDirectory('rigger-overlap-tok-');
+  const former = process.env.TMPDIR;
+  process.env.TMPDIR = overlapping;
+  try {
+    await initKeepsOut('https://user:tok@github.com/acme/widgets.git', 'acme/widgets', ['user:tok', 'tok']);
+  } finally {
+    process.env.TMPDIR = former;
+  }
+});
+
+/** A target whose name alone contains the short component, independent of git's answer. */
+function targetWithComponent(url) {
+  const directory = temporaryDirectory('rigger-target-tok-');
+  const consumer = repositoryAt(join(directory, 'consumer'));
+  gitIn(consumer, 'remote', 'add', 'origin', url);
+  return consumer;
+}
+
+// proves R-SAFE-1
+test('a credential-bearing remote can have a legitimate target-only component match in the report', async () => {
+  const component = 'tok';
+  const consumer = targetWithComponent(`https://user:${component}@github.com/acme/widgets.git`);
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+  const config = readFileSync(join(consumer, CONFIG), 'utf8');
+  const [header, ...otherFields] = ran.text.split('\n');
+
+  assert.equal(ran.code, 0, 'init failed');
+  assert.ok(header.includes(component), 'the target field did not contain the controlled component');
+  assert.ok(!otherFields.join('\n').includes(component), 'a non-target field contains the component');
+  assert.ok(config.includes("repo: 'acme/widgets'"), 'the config lacks the expected repo');
+  assert.ok(!config.includes(component), 'the config contains the credential component');
+});
+
+// proves R-SAFE-1
+test('a credential-free remote with the same target substring prints only the legitimate target match', async () => {
+  const component = 'tok';
+  const consumer = targetWithComponent('https://github.com/acme/widgets.git');
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+  const [header, ...otherFields] = ran.text.split('\n');
+
+  assert.equal(ran.code, 0, 'init failed');
+  assert.ok(header.includes(component), 'the target field did not contain the controlled substring');
+  assert.ok(!otherFields.join('\n').includes(component), 'a non-target field contains the substring');
+  assert.ok(readFileSync(join(consumer, CONFIG), 'utf8').includes("repo: 'acme/widgets'"), 'the config lacks the expected repo');
+});
+
+// proves R-SAFE-1
+test('init skips existing config bytes without reporting credential-bearing remote userinfo', async () => {
+  const secret = 's3cret-token';
+  const consumer = repository(`https://user:${secret}@github.com/acme/widgets.git`);
+  assert.ok(!consumer.includes(secret), 'the target path overlaps the credential fixture');
+  const configPath = join(consumer, CONFIG);
+  const before = '// ABOUTME: Existing consumer config.\nexport default {};\n';
+  writeFileSync(configPath, before);
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, 'init failed');
+  assert.equal(readFileSync(configPath, 'utf8'), before, 'init rewrote the existing config');
+  assert.ok(ran.text.includes(`left these`) && ran.text.includes(CONFIG), 'the report did not name the skipped config');
+  assert.ok(!ran.text.includes(`user:${secret}`) && !ran.text.includes(secret), 'the report contains credential userinfo');
+});
+
+// proves R-SAFE-1
 test('given an origin remote whose userinfo is a token alone, ahead of two path segments, init writes acme/widgets, without the token', async () => {
   await initKeepsOut('https://tok@github.com/acme/widgets.git', 'acme/widgets', ['tok']);
+});
+
+// proves R-SAFE-1
+test('a nonzero origin read with credential-bearing partial stdout keeps the credential out of the init report', async (t) => {
+  const directory = holding(t);
+  const secret = 's3cret-token';
+  const userinfo = `user:${secret}`;
+  fixture(directory, 'git', `printf '%s\\n' 'https://${userinfo}@github.com/acme/widgets.git'; exit 7`);
+  const consumer = repository(null);
+  const packageRoot = elsewhere();
+  assert.ok(!consumer.includes(secret), 'the target path overlaps the credential fixture');
+
+  const ran = await withFirstOnPath(directory, () => init({ target: consumer, packageRoot }));
+  const config = readFileSync(join(consumer, CONFIG), 'utf8');
+
+  assert.equal(ran.code, 0, 'init failed');
+  assert.ok(ran.text.includes('exited 7'), 'the report did not classify the nonzero answer');
+  assert.ok(config.includes(PLACEHOLDER.repo), 'the config lacks the placeholder');
+  assert.ok(!config.includes(userinfo) && !config.includes(secret), 'the config carries a credential');
+  assert.ok(!ran.text.includes(userinfo) && !ran.text.includes(secret), 'the report carries a credential');
+});
+
+// proves R-SAFE-1
+test('a git read that did not start keeps userinfo in its failure message out of the init report', async () => {
+  const secret = 's3cret-token';
+  const userinfo = `user:${secret}`;
+  const consumer = repository(null);
+  const failure = Object.assign(new Error(`https://${userinfo}@github.com/acme/widgets.git`), { code: NOT_STARTED });
+  const ask = async () => { throw failure; };
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere(), ask });
+  const config = readFileSync(join(consumer, CONFIG), 'utf8');
+
+  assert.equal(ran.code, 0, 'init failed');
+  assert.ok(ran.text.includes('could not be run here'), 'the report did not classify a not-started read');
+  assert.ok(config.includes(PLACEHOLDER.repo), 'the config lacks the placeholder');
+  assert.ok(!ran.text.includes(userinfo) && !ran.text.includes(secret), 'the report carries a credential');
+});
+
+/** One controlled answer to init's origin read, with the target and the package made by real git. */
+async function initFromAnswer(answer) {
+  const consumer = repository(null);
+  const packageRoot = elsewhere();
+  let calls = 0;
+  const ask = async (command, args) => {
+    calls += 1;
+    assert.equal(command, 'git', 'init asked a different command');
+    assert.deepEqual(args.slice(-3), ['remote', 'get-url', 'origin'], 'init asked a different git question');
+    return answer;
+  };
+  const ran = await init({ target: consumer, packageRoot, ask });
+  assert.equal(calls, 1, 'init did not make exactly one origin read');
+  return { ran, config: readFileSync(join(consumer, CONFIG), 'utf8'), consumer };
+}
+
+/** The common placeholder and report result, checked without exposing either text on failure. */
+function safePlaceholder({ ran, config }, reason, credentials = []) {
+  assert.equal(ran.code, 0, 'init failed');
+  assert.ok(config.includes(PLACEHOLDER.repo), 'the config lacks the placeholder');
+  assert.ok(ran.text.includes(reason), 'the report omitted the result class');
+  for (const credential of credentials) {
+    assert.ok(!config.includes(credential), 'the config contains credential material');
+    assert.ok(!ran.text.includes(credential), 'the report contains credential material');
+  }
+}
+
+// proves R-SAFE-1
+test('a successful empty origin answer is unusable without being a git failure', async () => {
+  safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: '', stderr: '' }), 'ends in no owner and name');
+});
+
+// proves R-SAFE-1
+test('a successful whitespace origin answer is unusable without being a git failure', async () => {
+  safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: ' \n\t ', stderr: '' }), 'ends in no owner and name');
+});
+
+// proves R-SAFE-1
+test('a successful HTTPS origin answer with no owner and name keeps the placeholder', async () => {
+  safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: 'https://github.com/widgets.git\n', stderr: '' }), 'ends in no owner and name');
+});
+
+// proves R-SAFE-1
+test('an absent origin is reported as a nonzero git answer with credential-free stderr', async () => {
+  const consumer = repository(null);
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+  safePlaceholder({ ran, config: readFileSync(join(consumer, CONFIG), 'utf8') }, 'No such remote');
+});
+
+// proves R-SAFE-1
+test('a nonzero git answer with credential-free partial stdout and stderr names its exit', async () => {
+  safePlaceholder(await initFromAnswer({ status: 7, timedOut: false, stdout: 'partial answer\n', stderr: 'diagnostic\n' }), 'exited 7');
+});
+
+// proves R-SAFE-1
+test('a nonzero git answer with credential-bearing stderr omits the userinfo', async () => {
+  const secret = 's3cret-token';
+  const userinfo = `user:${secret}`;
+  const answer = { status: 7, timedOut: false, stdout: '', stderr: `https://${userinfo}@github.com/acme/widgets.git\n` };
+  safePlaceholder(await initFromAnswer(answer), 'exited 7', [userinfo, secret]);
+});
+
+// proves R-SAFE-1
+test('a credential-free not-started git message keeps the placeholder', async () => {
+  const consumer = repository(null);
+  const failure = Object.assign(new Error('git is unavailable'), { code: NOT_STARTED });
+  const ran = await init({ target: consumer, packageRoot: elsewhere(), ask: async () => { throw failure; } });
+  safePlaceholder({ ran, config: readFileSync(join(consumer, CONFIG), 'utf8') }, 'could not be run here');
+});
+
+// proves R-SAFE-1
+test('a timeout with credential-free partial stdout and stderr reports the timeout', async () => {
+  const answer = { status: 1, timedOut: true, stdout: 'partial answer\n', stderr: 'diagnostic\n' };
+  safePlaceholder(await initFromAnswer(answer), 'timeout');
+});
+
+// proves R-SAFE-1
+test('a timeout with credential-bearing partial stdout and stderr omits the userinfo', async () => {
+  const secret = 's3cret-token';
+  const userinfo = `user:${secret}`;
+  const partial = `https://${userinfo}@github.com/acme/widgets.git\n`;
+  const answer = { status: 1, timedOut: true, stdout: partial, stderr: partial };
+  safePlaceholder(await initFromAnswer(answer), 'timeout', [userinfo, secret]);
 });
 
 // proves R-SAFE-1
