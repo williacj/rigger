@@ -800,7 +800,6 @@ test('a credential-bearing remote can have a legitimate target-only component ma
   assert.ok(!config.includes(component), 'the config contains the credential component');
 });
 
-// proves R-SAFE-1
 test('a credential-free remote with the same target substring prints only the legitimate target match', async () => {
   const component = 'tok';
   const consumer = targetWithComponent('https://github.com/acme/widgets.git');
@@ -899,29 +898,24 @@ function safePlaceholder({ ran, config }, reason, credentials = []) {
   }
 }
 
-// proves R-SAFE-1
 test('a successful empty origin answer is unusable without being a git failure', async () => {
   safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: '', stderr: '' }), 'ends in no owner and name');
 });
 
-// proves R-SAFE-1
 test('a successful whitespace origin answer is unusable without being a git failure', async () => {
   safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: ' \n\t ', stderr: '' }), 'ends in no owner and name');
 });
 
-// proves R-SAFE-1
 test('a successful HTTPS origin answer with no owner and name keeps the placeholder', async () => {
   safePlaceholder(await initFromAnswer({ status: 0, timedOut: false, stdout: 'https://github.com/widgets.git\n', stderr: '' }), 'ends in no owner and name');
 });
 
-// proves R-SAFE-1
 test('an absent origin is reported as a nonzero git answer with credential-free stderr', async () => {
   const consumer = repository(null);
   const ran = await init({ target: consumer, packageRoot: elsewhere() });
   safePlaceholder({ ran, config: readFileSync(join(consumer, CONFIG), 'utf8') }, 'No such remote');
 });
 
-// proves R-SAFE-1
 test('a nonzero git answer with credential-free partial stdout and stderr names its exit', async () => {
   safePlaceholder(await initFromAnswer({ status: 7, timedOut: false, stdout: 'partial answer\n', stderr: 'diagnostic\n' }), 'exited 7');
 });
@@ -934,7 +928,6 @@ test('a nonzero git answer with credential-bearing stderr omits the userinfo', a
   safePlaceholder(await initFromAnswer(answer), 'exited 7', [userinfo, secret]);
 });
 
-// proves R-SAFE-1
 test('a credential-free not-started git message keeps the placeholder', async () => {
   const consumer = repository(null);
   const failure = Object.assign(new Error('git is unavailable'), { code: NOT_STARTED });
@@ -942,7 +935,6 @@ test('a credential-free not-started git message keeps the placeholder', async ()
   safePlaceholder({ ran, config: readFileSync(join(consumer, CONFIG), 'utf8') }, 'could not be run here');
 });
 
-// proves R-SAFE-1
 test('a timeout with credential-free partial stdout and stderr reports the timeout', async () => {
   const answer = { status: 1, timedOut: true, stdout: 'partial answer\n', stderr: 'diagnostic\n' };
   safePlaceholder(await initFromAnswer(answer), 'timeout');
