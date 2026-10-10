@@ -10,8 +10,9 @@ import { gitIn } from './git-repository.mjs';
  * where none is given, and `merged` whether it was merged, where it is open otherwise. `diff` is
  * the text the forge serves as its diff, empty where none is given; `declined` is the reason the
  * forge gives where it declines to serve one. `mergeBase` is the commit the forge compares its head
- * with, where none is given one the forge cannot answer. `comments` are `{ body, createdAt }`, oldest
- * first. `from` names another repository a fork's pull request is from, and is null for this
+ * with, where none is given one the forge cannot answer. `comments` carry body, creation time,
+ * identity, author and edit fields, oldest first. `from` names another repository a fork's pull
+ * request is from, and is null for this
  * repository's own. `title` and `body` are what it was opened with.
  */
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body'];

@@ -447,5 +447,14 @@ export async function repositoryWriteRunner(args, { send = throughL0, emitter, t
     && method === '-X' && verb === 'POST' && field === '-f' && value?.startsWith('body=')
     && option === undefined && extra.length === 0;
   if (!merge && !comment) refuse('repository-write', spelled(args));
+  if (comment) {
+    const pullPath = path.replace('/issues/', '/pulls/').replace(/\/comments$/, '');
+    const number = path.split('/').at(-2);
+    const said = await readRunner(['api', pullPath, '-X', 'GET'], { send, emitter, timeout });
+    if (said.status !== 0 || said.timedOut) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm: ${firstLine(said)}`);
+    let pull;
+    try { pull = JSON.parse(said.stdout); } catch { /* An unreadable response cannot confirm a PR. */ }
+    if (!pull?.head?.sha) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm`);
+  }
   return send(FORGE, args, { emitter, timeout });
 }

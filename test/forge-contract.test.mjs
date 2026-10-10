@@ -11,7 +11,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
-import { repositoryWriteRunner } from '../src/substrate/forge/runners.mjs';
+import { readRunner, repositoryWriteRunner } from '../src/substrate/forge/runners.mjs';
 
 const BOARD = { repo: 'williacj/rigger', project: 6 };
 const SHA = 'a'.repeat(40);
@@ -117,6 +117,51 @@ for (const [title, seed, expected] of [
   });
 }
 
+test('a ruleset pin survives classic protection allowing any App for the same context', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('gate', 991)] }, protections: { main: protection('gate') } });
+  assert.deepEqual(await onFake(fake, () => reads().readEffectiveRules('main')), [{ context: 'gate', integration_id: 991 }]);
+});
+
+test('a passing run from another App cannot satisfy an overlapping ruleset pin', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('gate', 991)] }, protections: { main: protection('gate') }, checks: { [SHA]: [{ id: 1, name: 'gate', status: 'completed', conclusion: 'success', app: { id: 55 } }] } });
+  const required = await onFake(fake, () => reads().readEffectiveRules('main'));
+  assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).gate.state, 'absent');
+});
+
+test('a pinned classic check carries its App id', async () => {
+  const fake = fakeWith({ protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: 15368 }], contexts: ['ci'] } } } });
+  assert.deepEqual(await onFake(fake, () => reads().readEffectiveRules('main')), [{ context: 'ci', integration_id: 15368 }]);
+});
+
+test('classic app id -1 means any App and admits a successful run from an App', async () => {
+  const fake = fakeWith({ protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: -1 }], contexts: ['ci'] } } }, checks: { [SHA]: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', app: { id: 15368 } }] } });
+  const required = await onFake(fake, () => reads().readEffectiveRules('main'));
+  assert.deepEqual(required, [{ context: 'ci', integration_id: null }]);
+  assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).ci.state, 'passed');
+});
+
+test('different ruleset and classic App pins for one context are both required', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('ci', 991)] }, protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: 15368 }], contexts: ['ci'] } } }, checks: { [SHA]: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', app: { id: 15368 } }] } });
+  const required = await onFake(fake, () => reads().readEffectiveRules('main'));
+  assert.deepEqual(required, [{ context: 'ci', integration_id: 991 }, { context: 'ci', integration_id: 15368 }]);
+  assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).ci.state, 'absent');
+});
+
+test('different App pins for one context pass when both matching runs pass', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('ci', 991)] }, protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: 15368 }] } } }, checks: { [SHA]: [
+    { id: 1, name: 'ci', status: 'completed', conclusion: 'success', app: { id: 991 } },
+    { id: 2, name: 'ci', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] } });
+  const required = await onFake(fake, () => reads().readEffectiveRules('main'));
+  assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).ci.state, 'passed');
+});
+
+test('the fake effective-rules answer omits enforcement and non-active rules', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('active'), requiredRule('evaluate', null, 'evaluate'), requiredRule('disabled', null, 'disabled')] } });
+  const said = await onFake(fake, () => readRunner(['api', 'repos/williacj/rigger/rules/branches/main?per_page=100&page=1', '-X', 'GET'], { emitter: UNKILLED }));
+  assert.deepEqual(JSON.parse(said.stdout), [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'active' }] } }]);
+});
+
 for (const status of ['403', '404']) {
   test(`effective rules rejects the rules read's HTTP ${status} answer`, async () => {
     const fake = fakeWith({ ruleFailures: { main: { status, message: 'Rules unavailable' } } });
@@ -148,6 +193,14 @@ for (const permission of ['admin', 'maintain', 'write', 'triage', 'read']) {
     const fake = fakeWith({ pullRequests: [pull({ comments: [comment()] })], permissions: { writer: permission } });
     const [read] = await onFake(fake, () => reads().readComments(12));
     assert.deepEqual(read, { body: 'marker', createdAt: '2026-10-09T10:00:00Z', id: 'IC_1', author: 'writer', permission, edited: false });
+  });
+}
+
+for (const [role, legacy] of [['maintain', 'write'], ['triage', 'read']]) {
+  test(`the fake permission answer gives role_name ${role} beside legacy permission ${legacy}`, async () => {
+    const fake = fakeWith({ permissions: { writer: role } });
+    const said = await onFake(fake, () => readRunner(['api', 'repos/williacj/rigger/collaborators/writer/permission', '-X', 'GET'], { emitter: UNKILLED }));
+    assert.deepEqual(JSON.parse(said.stdout), { permission: legacy, role_name: role });
   });
 }
 
@@ -194,6 +247,7 @@ test('a permission read failure rejects naming the read and the forge answer', a
   await assert.rejects(onFake(fake, () => reads().readComments(12)), /readComments.*permission for writer.*HTTP 403/);
 });
 
+// Behind, method and closed 405 messages are unmeasured examples, not #643 Q-f captures.
 const refusedMerge = [
   ['conflict', 'Pull Request has merge conflicts', 'conflict'],
   ['failing check', 'Repository rule violations found\n\nRequired status check "ci" is failing.', 'failing'],
@@ -203,6 +257,7 @@ const refusedMerge = [
   ['base modified', 'Base branch was modified. Review and try the merge again.', 'base modified'],
   ['behind base', 'Head branch is out of date', 'behind'],
   ['method', 'Merge commit is not allowed', 'method'],
+  ['closed', 'Pull Request is closed', 'closed'],
 ];
 
 for (const [title, message, reason] of refusedMerge) {
@@ -260,9 +315,9 @@ test('a closed pull request is refused without changing main', async () => {
   assert.deepEqual(mergeSent(fake), []);
 });
 
-test('an unnamed merge refusal rejects quoting the HTTP status and message', async () => {
+test('an unknown 405 answers an unclassified refusal without changing main', async () => {
   const fake = fakeWith({ mainSha: BASE, pullRequests: [pull()], mergeReplies: { 12: { status: '405', message: 'An answer the adapter does not know' } } });
-  await assert.rejects(onFake(fake, () => writes().mergePullRequest(12, SHA)), /HTTP 405 An answer the adapter does not know/);
+  assert.deepEqual(await onFake(fake, () => writes().mergePullRequest(12, SHA)), { outcome: 'refused', reason: 'unclassified', status: 405, message: 'An answer the adapter does not know' });
   assert.equal(held(fake).mainSha, BASE);
   assert.deepEqual(mergeSent(fake), [expectedMerge]);
 });
@@ -298,6 +353,23 @@ test('repository-write refuses a comment target that is not a pull request', asy
   await assert.rejects(onFake(fake, () => writes().postComment(12, 'Review complete')), /pull request #12.*Not Found/);
   assert.deepEqual(commentSent(fake), []);
 });
+
+test('repository-write runner directly refuses an issue comment without sending a write', async () => {
+  const fake = fakeWith();
+  const args = expectedComment('Review complete');
+  await assert.rejects(onFake(fake, () => repositoryWriteRunner(args, { emitter: UNKILLED })), /repository-write runner refuses.*pull request #12/);
+  assert.deepEqual(commentSent(fake), []);
+  assert.deepEqual(fake.sent(), [['api', 'repos/williacj/rigger/pulls/12', '-X', 'GET']]);
+});
+
+for (const sha of ['', 'main', 'HEAD']) {
+  test(`repository-write runner refuses sha=${sha || '(empty)'} despite the merge argument positions`, async () => {
+    const fake = fakeWith();
+    const args = ['api', 'repos/williacj/rigger/pulls/12/merge', '-X', 'PUT', '-f', `sha=${sha}`, '-f', 'merge_method=merge'];
+    await assert.rejects(onFake(fake, () => repositoryWriteRunner(args, { emitter: UNKILLED })), /repository-write runner refuses/);
+    assert.deepEqual(fake.sent(), []);
+  });
+}
 
 test('a refused comment rejects naming the forge reason', async () => {
   const fake = fakeWith({ pullRequests: [pull()], commentReplies: { 12: { status: '403', message: 'Resource not accessible by integration' } } });

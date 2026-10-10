@@ -460,9 +460,9 @@ const COMMANDS = {
     const login = decodeURIComponent(path.split('/')[1]);
     const refused = state.repository?.permissionFailures?.[login];
     if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
-    const permission = state.repository?.permissions?.[login] ?? (state.repository?.permissions ? null : 'write');
-    if (permission === null) throw notFound('https://docs.github.com/rest/collaborators/collaborators#get-repository-permissions-for-a-user');
-    return JSON.stringify({ permission });
+    const role = state.repository?.permissions?.[login] ?? (state.repository?.permissions ? null : 'write');
+    if (role === null) throw notFound('https://docs.github.com/rest/collaborators/collaborators#get-repository-permissions-for-a-user');
+    return JSON.stringify({ permission: { maintain: 'write', triage: 'read' }[role] ?? role, role_name: role });
   },
   [commandOf(['api', 'repos/_/_/commits/_/check-runs?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
     const path = pathIn(state, args);
@@ -485,7 +485,8 @@ const COMMANDS = {
     const refused = state.repository?.ruleFailures?.[branch];
     if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
     const pageNumber = Number(new URLSearchParams(path.split('?')[1]).get('page'));
-    return JSON.stringify((state.repository?.rules?.[branch] ?? []).slice((pageNumber - 1) * 100, pageNumber * 100));
+    const active = (state.repository?.rules?.[branch] ?? []).filter((rule) => rule.enforcement === undefined || rule.enforcement === 'active');
+    return JSON.stringify(active.slice((pageNumber - 1) * 100, pageNumber * 100).map(({ enforcement, ...rule }) => rule));
   },
   [commandOf(['api', 'repos/_/_/branches/_/protection', '-X', 'GET'])]: async (board, state, args) => {
     const branch = decodeURIComponent(pathIn(state, args).split('/')[1]);

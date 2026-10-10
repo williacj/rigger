@@ -967,7 +967,7 @@ test("the repository read answers #497's merge base from the comparison gh answe
 
 test('given a pull request number, the repository read answers every comment on it with its body and time, across more than one page', async () => {
   const comments = Array.from({ length: 101 }, (_, i) => ({ body: `Comment ${i + 1}`, createdAt: `2026-10-01T10:${String(i % 60).padStart(2, '0')}:00Z` }));
-  const send = repositoryForge({ comments: { paged: { null: commentPage(commentNodes(comments.slice(0, 100)), 'Y3Vyc29yOnYyOpHPAAA'), Y3Vyc29yOnYyOpHPAAA: commentPage(commentNodes(comments.slice(100))) } }, 'repos/williacj/rigger/collaborators/williacj/permission': { permission: 'admin' } });
+  const send = repositoryForge({ comments: { paged: { null: commentPage(commentNodes(comments.slice(0, 100)), 'Y3Vyc29yOnYyOpHPAAA'), Y3Vyc29yOnYyOpHPAAA: commentPage(commentNodes(comments.slice(100))) } }, 'repos/williacj/rigger/collaborators/williacj/permission': { permission: 'admin', role_name: 'admin' } });
 
   const read = await repositoryReads(BOARD, { send }).readComments(12);
 

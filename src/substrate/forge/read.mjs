@@ -335,7 +335,10 @@ async function checkStates(board, via, sha, required, addressed) {
       : status.state === 'pending' ? 'pending' : 'failed';
     const states = [runState, statusState];
     const state = states.includes('failed') ? 'failed' : states.includes('pending') ? 'pending' : states.includes('passed') ? 'passed' : 'absent';
-    result[context] = { state, creator: status ? { login: status.creator?.login ?? null, id: status.creator?.id ?? null } : null };
+    const prior = result[context]?.state;
+    const combined = [prior, state].includes('failed') ? 'failed' : [prior, state].includes('pending') ? 'pending'
+      : [prior, state].includes('absent') ? 'absent' : 'passed';
+    result[context] = { state: combined, creator: status ? { login: status.creator?.login ?? null, id: status.creator?.id ?? null } : null };
   }
   return result;
 }
@@ -343,14 +346,24 @@ async function checkStates(board, via, sha, required, addressed) {
 /** Required contexts enforced on `branch` by active rulesets and classic protection. */
 async function effectiveRules(board, via, branch, addressed) {
   const checks = new Map();
+  const requireCheck = (context, integration) => {
+    const pin = integration === -1 ? null : integration ?? null;
+    const held = checks.get(context) ?? new Set();
+    if (pin === null && held.size === 0) held.add(null);
+    if (pin !== null) {
+      held.delete(null);
+      held.add(pin);
+    }
+    checks.set(context, held);
+  };
   for (let page = 1;; page += 1) {
     const path = `rules/branches/${encodeURIComponent(branch)}?per_page=${PAGE}&page=${page}`;
     const rules = JSON.parse(await restRead('readEffectiveRules', board, via, path, [], addressed));
     if (!Array.isArray(rules)) fail('readEffectiveRules', board, `${addressed}gh answered no rules`);
     for (const rule of rules) {
-      if (rule.type !== 'required_status_checks' || (rule.enforcement && rule.enforcement !== 'active')) continue;
+      if (rule.type !== 'required_status_checks') continue;
       for (const check of rule.parameters?.required_status_checks ?? []) {
-        checks.set(check.context, { context: check.context, integration_id: check.integration_id ?? null });
+        requireCheck(check.context, check.integration_id);
       }
     }
     if (rules.length < PAGE) break;
@@ -363,13 +376,13 @@ async function effectiveRules(board, via, branch, addressed) {
   if (said.status === 0) {
     const classic = JSON.parse(said.stdout).required_status_checks;
     for (const check of classic?.checks ?? []) {
-      checks.set(check.context, { context: check.context, integration_id: check.app_id ?? null });
+      requireCheck(check.context, check.app_id);
     }
     for (const context of classic?.contexts ?? []) {
-      if (!checks.has(context)) checks.set(context, { context, integration_id: null });
+      requireCheck(context, null);
     }
   }
-  return [...checks.values()];
+  return [...checks].flatMap(([context, pins]) => [...pins].map((integration_id) => ({ context, integration_id })));
 }
 
 /**
@@ -487,7 +500,9 @@ const REPOSITORY_READS = {
               if (/\b404\b/.test(firstLine(said))) return 'none';
               fail('readComments', board, `${addressed}permission for ${author}: ${firstLine(said)}`);
             }
-            return JSON.parse(said.stdout).permission;
+            const role = JSON.parse(said.stdout).role_name;
+            if (typeof role !== 'string') fail('readComments', board, `${addressed}permission for ${author}: gh answered no role_name`);
+            return role;
           })());
         }
         return permissions.get(author);

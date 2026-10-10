@@ -29,7 +29,7 @@ function mergeRefusal(status, message) {
   return null;
 }
 
-/** Only a pull request may be written; the read gives its state and head before either write. */
+/** The read gives a pull request's state and head before a merge. */
 async function pullOf(board, number, via) {
   if (!Number.isInteger(number) || number < 1) throw new Error(`pull request #${number} is not a pull request number`);
   const said = await readRunner(['api', `repos/${board.repo}/pulls/${number}`, '-X', 'GET'], via);
@@ -58,11 +58,11 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       const { status, message } = refusal(said);
       const mapped = mergeRefusal(status, message);
       if (mapped) return { outcome: 'refused', ...mapped };
+      if (status === 405) return { outcome: 'refused', reason: 'unclassified', status, message };
       throw new Error(`mergePullRequest #${number} failed: ${Number.isFinite(status) ? `HTTP ${status} ` : ''}${message}`);
     },
     /** Post `body` on a pull request, refusing an issue number that is not a pull request. */
     postComment: async (number, body) => {
-      await pullOf(board, number, via);
       const args = ['api', `repos/${board.repo}/issues/${number}/comments`, '-X', 'POST', '-f', `body=${body}`];
       const said = await repositoryWriteRunner(args, via);
       if (said.status !== 0 || said.timedOut) throw new Error(`postComment on pull request #${number} failed: ${firstLine(said)}`);
