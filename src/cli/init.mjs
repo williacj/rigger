@@ -212,6 +212,11 @@ async function forking({ sink, name }, {
   target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout, ask,
 } = {}) {
   if (sameTree(target, packageRoot)) return sourceTreeRefusal('init', real(target));
+  for (const hookPath of ['.githooks', '.githooks/pre-push']) {
+    if (lstatSync(join(target, hookPath), { throwIfNoEntry: false })?.isSymbolicLink()) {
+      return { text: `rigger init: ${hookPath} is a symlink; refusing to write hooks.`, code: 1 };
+    }
+  }
   name(target);
   let read;
   try {

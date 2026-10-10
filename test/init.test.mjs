@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { chmodSync, realpathSync, statSync } from 'node:fs';
+import { chmodSync, lstatSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -485,6 +485,72 @@ test('init preserves an existing push hook and names it as the consumer’s', as
   assert.equal(readFileSync(hook, 'utf8'), content);
   assert.match(ran.text, /\.githooks\/pre-push.*not Rigger.s/s);
   assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
+});
+
+test('init refuses a dangling push-hook symlink without writing its target', async () => {
+  const directory = temporaryDirectory('rigger-dangling-hook-');
+  const consumer = repositoryAt(join(directory, 'consumer'));
+  const outside = join(directory, 'outside-hook');
+  const hooks = join(consumer, '.githooks');
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-push');
+  symlinkSync(outside, hook);
+  const entries = readdirSync(consumer).sort();
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.equal(existsSync(outside), false, 'init wrote through the dangling hook symlink');
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks\/pre-push.*symlink/i);
+  assert.ok(lstatSync(hook).isSymbolicLink());
+  assert.deepEqual(readdirSync(consumer).sort(), entries);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+});
+
+test('init refuses a push-hook symlink to a file outside the repository', async () => {
+  const directory = temporaryDirectory('rigger-external-hook-');
+  const consumer = repositoryAt(join(directory, 'consumer'));
+  const outside = join(directory, 'outside-hook');
+  writeFileSync(outside, 'outside hook stays here\n');
+  const content = readFileSync(outside);
+  const hooks = join(consumer, '.githooks');
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-push');
+  symlinkSync(outside, hook);
+  const entries = readdirSync(consumer).sort();
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.deepEqual(readFileSync(outside), content);
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks\/pre-push.*symlink/i);
+  assert.ok(lstatSync(hook).isSymbolicLink());
+  assert.deepEqual(readdirSync(consumer).sort(), entries);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+});
+
+test('init refuses a .githooks directory symlink without writing outside the repository', async () => {
+  const directory = temporaryDirectory('rigger-external-hooks-');
+  const consumer = repositoryAt(join(directory, 'consumer'));
+  const outside = join(directory, 'outside-hooks');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'marker'), 'keep\n');
+  const hooks = join(consumer, '.githooks');
+  symlinkSync(outside, hooks);
+  const entries = readdirSync(consumer).sort();
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.deepEqual(readdirSync(outside), ['marker'], 'init wrote through the hooks directory symlink');
+  assert.equal(readFileSync(join(outside, 'marker'), 'utf8'), 'keep\n');
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks.*symlink/i);
+  assert.ok(lstatSync(hooks).isSymbolicLink());
+  assert.deepEqual(readdirSync(consumer).sort(), entries);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
 });
 
 test('init names an existing nonexecutable push hook that Git will not run', async () => {
