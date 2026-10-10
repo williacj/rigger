@@ -3783,9 +3783,9 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
-  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST';
+  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
-  const heldPerPid = answer === 'PF' || answer === 'PT';
+  const heldPerPid = answer === 'PF' || answer === 'PT' || answer === 'EHPF';
   const heldOmitted = answer === 'HO';
   const heldZombie = answer === 'HZ';
   const heldRead = heldState || heldListing || heldPerPid || heldOmitted || heldZombie;
@@ -3803,7 +3803,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3994,7 +3994,7 @@ async function firstDirectoryListing(t, answer) {
       'if [ -f "$here/first-listing-entered" ]; then',
       `  printf "%s\\n" "$@" > "$here/${heldPerPid ? 'per-pid-listing' : 'later-listing'}-argv"`,
       `  : > "$here/${heldPerPid ? 'per-pid-listing' : 'later-listing'}-entered"`,
-      answer === 'LF' || answer === 'PF' || answer === 'EHF' ? `  echo "lsof: forced ${heldPerPid ? 'per-PID' : 'later-listing'} failure" >&2; exit 2` : '  exec /usr/bin/tail -f "$here/hold"',
+      answer === 'LF' || answer === 'PF' || answer === 'EHF' || answer === 'EHPF' ? `  echo "lsof: forced ${heldPerPid ? 'per-PID' : 'later-listing'} failure" >&2; exit 2` : '  exec /usr/bin/tail -f "$here/hold"',
       'fi',
       ': > "$here/first-listing-entered"',
       listingOf('outside', realpathSync.native(sub)),
@@ -4192,7 +4192,7 @@ async function firstDirectoryListing(t, answer) {
       assert.equal(existsSync(join(directory, 'per-pid-listing-entered')), true, 'the per-PID listing did not enter its stand-in');
       assert.deepEqual(readFileSync(join(directory, 'per-pid-listing-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the per-PID stand-in received the wrong target or argv');
       assert.equal(trace.some(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > stateEnd.sequence), false, 'a second full listing preceded the per-PID failure');
-      if (answer === 'PF') {
+      if (answer === 'PF' || answer === 'EHPF') {
         assert.equal(perPidEnd.status, 2, 'the per-PID F did not return its plain failure');
         assert.equal(perPidEnd.stdout, '', 'the per-PID F returned an answered listing');
         assert.equal(perPidEnd.stderr, 'lsof: forced per-PID failure\n', 'the per-PID F lost its exact failure cause');
@@ -4218,7 +4218,7 @@ async function firstDirectoryListing(t, answer) {
     assert.ok(resumed && unread, 'the failed held read did not resume H before its directory.unread event');
     assert.deepEqual(pairs.filter(([target]) => target === pid).map(([, signal]) => signal), ['SIGSTOP', 'SIGCONT'], 'the held PID received an invented kill or failed resume');
     assert.deepEqual(directoryEvents.map(({ event, pid: named, killed }) => ({ event, pid: named, killed })), [{ event: 'directory.unread', pid: undefined, killed: undefined }], 'the held failure invented a named PID or kill');
-    assert.equal(directoryEvents[0].census, answer === 'SF' || answer === 'EHSF' ? 'the process-table read failed: ps: forced held-state failure' : answer === 'LF' || answer === 'EHF' ? 'the process-table read failed: lsof: forced later-listing failure' : answer === 'PF' ? 'the process-table read failed: lsof: forced per-PID failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held read');
+    assert.equal(directoryEvents[0].census, answer === 'SF' || answer === 'EHSF' ? 'the process-table read failed: ps: forced held-state failure' : answer === 'LF' || answer === 'EHF' ? 'the process-table read failed: lsof: forced later-listing failure' : answer === 'PF' || answer === 'EHPF' ? 'the process-table read failed: lsof: forced per-PID failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held read');
     assert.deepEqual(events.filter(({ pid: named }) => named === pid), [], 'the held PID acquired an invented named event');
     if (coListedRefusal) {
       assert.deepEqual(events.filter(({ pid: named }) => named === refusedBirth.pid), [], 'the EPERM PID acquired an invented described event before settlement');
@@ -4594,4 +4594,9 @@ test('C615 D8 co-listed EPERM and H intervening ps state F report unread without
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D8 co-listed EPERM and H intervening ps state T report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'EHST');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D8 co-listed EPERM and H per-PID lsof F report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'EHPF');
 });
