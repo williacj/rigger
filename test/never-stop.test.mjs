@@ -3793,7 +3793,8 @@ async function firstDirectoryListing(t, answer) {
   const ownedPerPid = answer === 'OPF' || answer === 'OPT';
   const ownedOmitted = answer === 'OO';
   const ownedLive = answer === 'OLS';
-  const ownedRead = ownedListing || ownedState || ownedPerPid || ownedOmitted || ownedLive;
+  const ownedZombie = answer === 'OZ';
+  const ownedRead = ownedListing || ownedState || ownedPerPid || ownedOmitted || ownedLive || ownedZombie;
   assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the first-listing control needs external TMPDIR and a private evidence root before fixtures start');
   const checkout = realpathSync.native(process.cwd());
   const scratchRoot = realpathSync.native(process.env.TMPDIR);
@@ -3801,7 +3802,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3899,7 +3900,14 @@ async function firstDirectoryListing(t, answer) {
         ...(ownedOmitted ? [] : [`  ${listingOf('outside', realpathSync.native(sub))}`]),
         '  exit 0',
         'fi',
-        ...(ownedLive ? [
+        ...(ownedLive || ownedZombie ? [
+          ...(ownedZombie ? [
+            'if [ ! -f "$here/owned-zombie-per-pid-answered" ]; then',
+            '  printf "%s\\n" "$@" > "$here/owned-zombie-per-pid-argv"',
+            '  : > "$here/owned-zombie-per-pid-answered"',
+            '  exit 0',
+            'fi',
+          ] : []),
           'if [ ! -f "$here/owned-retry-full-answered" ]; then',
           '  printf "%s\\n" "$@" > "$here/owned-retry-full-argv"',
           '  : > "$here/owned-retry-full-answered"',
@@ -4012,7 +4020,13 @@ async function firstDirectoryListing(t, answer) {
         '  printf "%s\\n" "$@" > "$here/owned-next-state-argv"',
         '  /bin/ps -p "$pid" -o stat= > "$here/owned-next-state-actual"',
         '  : > "$here/owned-next-state-entered"',
-        ownedLive ? '  printf "%s S\\n" "$pid"; exit 0' : ownedState ? answer === 'OSF' ? '  echo "ps: forced owned-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"' : '  exec /bin/ps "$@"',
+        ownedLive || ownedZombie ? `  printf "%s ${ownedZombie ? 'Z' : 'S'}\\n" "$pid"; exit 0` : ownedState ? answer === 'OSF' ? '  echo "ps: forced owned-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"' : '  exec /bin/ps "$@"',
+        'fi',
+      ] : []),
+      ...(ownedZombie ? [
+        'if [ -f "$here/owned-zombie-per-pid-answered" ] && [ ! -f "$here/owned-zombie-after-entered" ] && [ "$*" = "-p $pid -o pid=,stat=" ]; then',
+        '  : > "$here/owned-zombie-after-entered"',
+        '  printf "%s S\\n" "$pid"; exit 0',
         'fi',
       ] : []),
       'exec /bin/ps "$@"',
@@ -4201,16 +4215,30 @@ async function firstDirectoryListing(t, answer) {
     const laterStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence);
     const later = read(lsof, firstArgs, laterStart?.sequence);
     assert.ok(laterStart && later, 'the owned PID did not reach a later full lsof');
-    assert.equal(trace.filter(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence).length, ownedLive ? 3 : ownedOmitted ? 2 : 1, 'the owned path started an unexpected number of later full listings');
+    assert.equal(trace.filter(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence).length, ownedLive || ownedZombie ? 3 : ownedOmitted ? 2 : 1, 'the owned path started an unexpected number of later full listings');
     assert.equal(existsSync(join(directory, 'owned-later-entered')), true, 'the later full lsof did not start its stand-in');
     assert.deepEqual(readFileSync(join(directory, 'owned-later-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the later read was not a full lsof');
-    if (ownedLive) {
+    if (ownedLive || ownedZombie) {
       assert.ok(later.status === 0 && later.stdout === first.stdout && later.stderr === '' && !later.error, 'the later full listing did not retain the owned PID');
       const nextState = read(ps, stateArgs, later.sequence);
-      assert.ok(nextState && nextState.status === 0 && nextState.stdout === `${pid} S\n` && nextState.stderr === '' && !nextState.error, 'the intervening state did not answer live for O');
-      assert.deepEqual(readFileSync(join(directory, 'owned-next-state-argv'), 'utf8').trimEnd().split('\n'), stateArgs, 'the live state targeted the wrong PID');
-      assert.match(readFileSync(join(directory, 'owned-next-state-actual'), 'utf8').trim(), /^T/, 'the directly owned fixture was not stopped at the synthetic live answer');
-      const retryFull = read(lsof, firstArgs, nextState.sequence);
+      assert.ok(nextState && nextState.status === 0 && nextState.stdout === `${pid} ${ownedZombie ? 'Z' : 'S'}\n` && nextState.stderr === '' && !nextState.error, 'the intervening state did not answer the chosen O row');
+      assert.deepEqual(readFileSync(join(directory, 'owned-next-state-argv'), 'utf8').trimEnd().split('\n'), stateArgs, 'the answered O state targeted the wrong PID');
+      assert.match(readFileSync(join(directory, 'owned-next-state-actual'), 'utf8').trim(), /^T/, 'the directly owned fixture was not stopped at the synthetic answered state');
+      let retryAfter = nextState.sequence;
+      if (ownedZombie) {
+        const zombiePerPid = read(lsof, perPidArgs, nextState.sequence);
+        const zombieName = read(ps, ['-p', String(pid), '-o', 'ucomm='], zombiePerPid?.sequence);
+        const zombieCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], zombieName?.sequence);
+        const zombieAfter = read(ps, stateArgs, zombieCommand?.sequence);
+        assert.ok(zombiePerPid && zombieName && zombieCommand && zombieAfter, 'the answered Z row did not reach its later per-PID, identity and final-state reads');
+        assert.deepEqual(readFileSync(join(directory, 'owned-zombie-per-pid-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the zombie per-PID read targeted the wrong identity');
+        assert.ok(zombiePerPid.status === 0 && zombiePerPid.stdout === '' && zombiePerPid.stderr === '' && !zombiePerPid.error, 'the zombie per-PID read did not answer an omission');
+        assert.ok(zombieName.status === 0 && !zombieName.error && zombieCommand.status === 0 && !zombieCommand.error, 'the reached zombie identity reads did not answer');
+        assert.ok(zombieAfter.status === 0 && zombieAfter.stdout === `${pid} S\n` && !zombieAfter.error, 'the zombie round did not answer a non-stopped final state');
+        assert.equal(existsSync(join(directory, 'owned-zombie-after-entered')), true, 'the zombie final state did not reach its stand-in');
+        retryAfter = zombieAfter.sequence;
+      }
+      const retryFull = read(lsof, firstArgs, retryAfter);
       const retryStop = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGSTOP' && result === true && sequence > retryFull?.sequence);
       const retryBefore = read(ps, stateArgs, retryStop?.sequence);
       const retryPerPid = read(lsof, perPidArgs, retryBefore?.sequence);
@@ -4498,4 +4526,9 @@ test('C615 D6 answered zombie state and per-PID omission resume H without a name
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D6 answered live state retries O as H without a named event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OLS');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D6 answered zombie state retries O as H without a named event', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OZ');
 });
