@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { chmodSync, lstatSync, realpathSync, statSync, symlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, readlinkSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -487,7 +487,7 @@ test('init preserves an existing push hook and names it as the consumer’s', as
   assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
 });
 
-test('init refuses a dangling push-hook symlink without writing its target', async () => {
+test('init preserves a dangling push-hook symlink without writing its target', async () => {
   const directory = temporaryDirectory('rigger-dangling-hook-');
   const consumer = repositoryAt(join(directory, 'consumer'));
   const outside = join(directory, 'outside-hook');
@@ -495,40 +495,72 @@ test('init refuses a dangling push-hook symlink without writing its target', asy
   mkdirSync(hooks);
   const hook = join(hooks, 'pre-push');
   symlinkSync(outside, hook);
-  const entries = readdirSync(consumer).sort();
-  const config = readFileSync(join(consumer, '.git', 'config'));
+  const link = readlinkSync(hook);
 
   const ran = await init({ target: consumer, packageRoot: elsewhere() });
 
   assert.equal(existsSync(outside), false, 'init wrote through the dangling hook symlink');
-  assert.notEqual(ran.code, 0, ran.text);
-  assert.match(ran.text, /\.githooks\/pre-push.*symlink/i);
+  assert.equal(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks\/pre-push.*not Rigger.s hook/s);
+  assert.match(ran.text, /\.githooks\/pre-push.*not executable; git will not run it/s);
   assert.ok(lstatSync(hook).isSymbolicLink());
-  assert.deepEqual(readdirSync(consumer).sort(), entries);
-  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  assert.equal(readlinkSync(hook), link);
+  assert.ok(existsSync(join(consumer, CONFIG)));
+  assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
 });
 
-test('init refuses a push-hook symlink to a file outside the repository', async () => {
+test('init preserves a push-hook symlink to an executable file outside the repository', async () => {
   const directory = temporaryDirectory('rigger-external-hook-');
   const consumer = repositoryAt(join(directory, 'consumer'));
   const outside = join(directory, 'outside-hook');
   writeFileSync(outside, 'outside hook stays here\n');
+  chmodSync(outside, 0o755);
   const content = readFileSync(outside);
+  const mode = statSync(outside).mode & 0o777;
   const hooks = join(consumer, '.githooks');
   mkdirSync(hooks);
   const hook = join(hooks, 'pre-push');
   symlinkSync(outside, hook);
-  const entries = readdirSync(consumer).sort();
-  const config = readFileSync(join(consumer, '.git', 'config'));
+  const link = readlinkSync(hook);
 
   const ran = await init({ target: consumer, packageRoot: elsewhere() });
 
   assert.deepEqual(readFileSync(outside), content);
-  assert.notEqual(ran.code, 0, ran.text);
-  assert.match(ran.text, /\.githooks\/pre-push.*symlink/i);
+  assert.equal(statSync(outside).mode & 0o777, mode);
+  assert.equal(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks\/pre-push.*not Rigger.s hook/s);
+  assert.doesNotMatch(ran.text, /\.githooks\/pre-push.*not executable; git will not run it/s);
   assert.ok(lstatSync(hook).isSymbolicLink());
-  assert.deepEqual(readdirSync(consumer).sort(), entries);
-  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  assert.equal(readlinkSync(hook), link);
+  assert.ok(existsSync(join(consumer, CONFIG)));
+  assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
+});
+
+test('init preserves a push-hook symlink inside the repository and reports its target is not executable', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const tools = join(consumer, 'tools');
+  mkdirSync(tools);
+  const target = join(tools, 'pre-push');
+  writeFileSync(target, '#!/bin/sh\n# ABOUTME: Consumer hook.\nexit 0\n');
+  chmodSync(target, 0o644);
+  const content = readFileSync(target);
+  const hooks = join(consumer, '.githooks');
+  mkdirSync(hooks);
+  const hook = join(hooks, 'pre-push');
+  symlinkSync('../tools/pre-push', hook);
+  const link = readlinkSync(hook);
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks\/pre-push.*not Rigger.s hook/s);
+  assert.match(ran.text, /\.githooks\/pre-push.*not executable; git will not run it/s);
+  assert.ok(lstatSync(hook).isSymbolicLink());
+  assert.equal(readlinkSync(hook), link);
+  assert.deepEqual(readFileSync(target), content);
+  assert.equal(statSync(target).mode & 0o111, 0);
+  assert.ok(existsSync(join(consumer, CONFIG)));
+  assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
 });
 
 test('init refuses a .githooks directory symlink without writing outside the repository', async () => {

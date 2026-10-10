@@ -212,10 +212,8 @@ async function forking({ sink, name }, {
   target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout, ask,
 } = {}) {
   if (sameTree(target, packageRoot)) return sourceTreeRefusal('init', real(target));
-  for (const hookPath of ['.githooks', '.githooks/pre-push']) {
-    if (lstatSync(join(target, hookPath), { throwIfNoEntry: false })?.isSymbolicLink()) {
-      return { text: `rigger init: ${hookPath} is a symlink; refusing to write hooks.`, code: 1 };
-    }
+  if (lstatSync(join(target, '.githooks'), { throwIfNoEntry: false })?.isSymbolicLink()) {
+    return { text: 'rigger init: .githooks is a symlink; refusing to write hooks.', code: 1 };
   }
   name(target);
   let read;
@@ -289,7 +287,9 @@ async function forking({ sink, name }, {
   const skipped = [];
   for (const file of files) {
     const path = join(target, file.path);
-    if (existsSync(path)) {
+    if (file.path === '.githooks/pre-push'
+      ? lstatSync(path, { throwIfNoEntry: false })
+      : existsSync(path)) {
       skipped.push(file.path);
       continue;
     }
@@ -302,15 +302,18 @@ async function forking({ sink, name }, {
     if (configured.why !== undefined) return { text: `rigger init: ${configured.why}`, code: 1 };
   }
   const skippedHook = skipped.includes('.githooks/pre-push');
-  const matchesHook = skippedHook && readFileSync(join(target, '.githooks/pre-push'), 'utf8')
+  const hook = join(target, '.githooks/pre-push');
+  const hookStats = skippedHook ? statSync(hook, { throwIfNoEntry: false }) : null;
+  const matchesHook = hookStats?.isFile() && readFileSync(hook, 'utf8')
     === files.find((file) => file.path === '.githooks/pre-push').content;
+  const executableHook = hookStats?.isFile() && Boolean(hookStats.mode & 0o111);
   return {
     text: [
       `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
       ...(skippedHook ? [`\`.githooks/pre-push\` ${matchesHook ? 'matches Rigger\'s hook' : 'is not Rigger\'s hook'}; it was left in place.`] : []),
-      ...(skippedHook && !(statSync(join(target, '.githooks/pre-push')).mode & 0o111)
+      ...(skippedHook && !executableHook
         ? ['`.githooks/pre-push` is not executable; git will not run it.'] : []),
       ...(found.root === null ? [`did not set core.hooksPath because ${found.why}.`] : []),
       ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${printableGitReason(why)}.`]),
