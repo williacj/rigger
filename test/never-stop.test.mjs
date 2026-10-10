@@ -3783,13 +3783,13 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
-  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT';
+  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
   const heldPerPid = answer === 'PF' || answer === 'PT' || answer === 'EHPF' || answer === 'EHPT';
   const heldOmitted = answer === 'HO';
   const heldZombie = answer === 'HZ';
   const heldRead = heldState || heldListing || heldPerPid || heldOmitted || heldZombie;
-  const ownedListing = answer === 'OF' || answer === 'OT';
+  const ownedListing = answer === 'OF' || answer === 'OT' || answer === 'EOF';
   const ownedState = answer === 'OSF' || answer === 'OST';
   const ownedPerPid = answer === 'OPF' || answer === 'OPT';
   const ownedOmitted = answer === 'OO';
@@ -3803,7 +3803,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3911,6 +3911,7 @@ async function firstDirectoryListing(t, answer) {
     : ownedRead ? [
       'if [ ! -f "$here/first-listing-entered" ]; then : > "$here/first-listing-entered";',
       `  ${listingOf('outside', realpathSync.native(sub))}`,
+      ...(coListedRefusal ? [`  ${listingOf('refused', realpathSync.native(refusedSub))}`] : []),
       '  exit 0',
       'fi',
       'if [ ! -f "$here/owned-per-pid-answered" ]; then',
@@ -3964,7 +3965,7 @@ async function firstDirectoryListing(t, answer) {
       ] : [
       'printf "%s\\n" "$@" > "$here/owned-later-argv"',
       ': > "$here/owned-later-entered"',
-      answer === 'OF' ? 'echo "lsof: forced owned-listing failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
+      answer === 'OF' || answer === 'EOF' ? 'echo "lsof: forced owned-listing failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
       ]),
     ].join('\n')
     : heldZombie ? [
@@ -4243,10 +4244,17 @@ async function firstDirectoryListing(t, answer) {
     const priorCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], priorName?.sequence);
     const after = read(ps, stateArgs, priorCommand?.sequence);
     assert.ok(first && stop && before && second && priorName && priorCommand && after, 'the first round did not reach a twice-listed, stopped PID before the owned-state answer');
-    assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the first full listing did not name the recorded fixture');
+    const outsideListing = `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
+    const refusedListing = coListedRefusal ? `p${refusedBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(refusedSub)}\n` : '';
+    assert.equal(first.stdout, outsideListing + refusedListing, 'the first full listing did not name the recorded fixtures');
+    if (coListedRefusal) {
+      const forbidden = trace.find(({ kind, target, name, error, sequence }) => kind === 'signal-answer' && target === refusedBirth.pid && name === 'SIGSTOP' && error === 'EPERM' && sequence > stop.sequence);
+      assert.ok(forbidden && forbidden.sequence < before.sequence, 'the co-listed PID did not answer EPERM before O was confirmed');
+      assert.equal(startOf(refusedBirth.pid), refusedBirth.started, 'the refused PID changed birth identity during the census');
+    }
     assert.match(before.stdout, new RegExp(`^\\s*${pid}\\s+T`, 'm'), 'the PID was not H before its second listing');
     assert.equal(second.status, 0, 'the owned PID was not listed a second time');
-    assert.equal(second.stdout, first.stdout, 'the second listing did not again name the stopped PID in its directory');
+    assert.equal(second.stdout, outsideListing, 'the second listing did not again name the stopped PID in its directory');
     assert.ok(priorName.status === 0 && priorName.stdout.trim() && priorCommand.status === 0 && priorCommand.stdout.includes(String(pid)), 'the owned round did not answer its name and command reads');
     assert.deepEqual(readFileSync(join(directory, 'owned-per-pid-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the second listing did not target the owned PID');
     assert.match(readFileSync(join(directory, 'owned-state-actual'), 'utf8').trim(), /^T/, 'the fixture was not actually stopped at its final-state read');
@@ -4343,8 +4351,8 @@ async function firstDirectoryListing(t, answer) {
     let unreadCause;
     if (ownedListing) {
       failedRead = later;
-      unreadCause = answer === 'OF' ? 'the process-table read failed: lsof: forced owned-listing failure' : 'the process-table read timed out after 1000 ms';
-      if (answer === 'OF') {
+      unreadCause = answer === 'OF' || answer === 'EOF' ? 'the process-table read failed: lsof: forced owned-listing failure' : 'the process-table read timed out after 1000 ms';
+      if (answer === 'OF' || answer === 'EOF') {
         assert.equal(later.status, 2, 'the owned later-listing F did not return its failure');
         assert.equal(later.stderr, 'lsof: forced owned-listing failure\n', 'the owned later-listing F lost its exact cause');
         assert.equal(later.error, undefined, 'the owned later-listing F timed out');
@@ -4425,6 +4433,11 @@ async function firstDirectoryListing(t, answer) {
     assert.equal(directoryEvents[0].killed, undefined, 'the unended PID was incorrectly recorded as killed');
     assert.deepEqual({ pid: directoryEvents[1].pid, name: directoryEvents[1].name, cmd: directoryEvents[1].cmd }, { pid, name: 'fresh-owned-name', cmd: 'fresh-owned-command' }, 'the unended result invented or reused an old name');
     assert.match(directoryEvents[1].reason, /^still alive (?:when L0's read bound ran out after its kill|1000 ms after L0's kill)$/, 'the post-kill unended reason did not follow the read');
+    if (coListedRefusal) {
+      assert.deepEqual(events.filter(({ pid: named }) => named === refusedBirth.pid), [], 'the EPERM PID acquired an invented described event before settlement');
+      assert.deepEqual(pairs.filter(([target]) => target === refusedBirth.pid).map(([, signal]) => signal), ['SIGSTOP'], 'the refused PID received an invented signal after EPERM');
+      assert.ok(!d2HasEnded(refused) && startOf(refusedBirth.pid) === refusedBirth.started, 'the unread result ended the EPERM fixture');
+    }
     assert.equal(trace.some(({ kind, event, sequence }) => kind === 'event' && event === 'directory.unread' && sequence > resumed.sequence), true, 'the unread event preceded the post-kill disposition');
     return;
   }
@@ -4604,4 +4617,9 @@ test('C615 D8 co-listed EPERM and H per-PID lsof F report unread without describ
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D8 co-listed EPERM and H per-PID lsof T report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'EHPT');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D8 co-listed EPERM and O later full lsof F report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'EOF');
 });
