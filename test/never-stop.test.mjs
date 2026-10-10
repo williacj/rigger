@@ -3853,7 +3853,8 @@ async function firstDirectoryListing(t, answer) {
   const groupC2Timeout = answer === 'G2C2T';
   const groupC2Failure = answer === 'G4C2F';
   const groupC1Failure = answer === 'G4C1F';
-  const groupC2Read = groupC2Timeout || groupC2Failure;
+  const groupC3Failure = answer === 'G4C3F';
+  const groupC2Read = groupC2Timeout || groupC2Failure || groupC3Failure;
   const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT' || answer === 'D9NU' || answer === 'D9CF' || answer === 'D9CT' || groupC1Failure || groupC2Read;
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
   const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF' || answer === 'EOPT';
@@ -3876,7 +3877,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'G2C2T' ? 'g2-c2-timeout' : answer === 'G4C2F' ? 'g4-c2-failure' : answer === 'G4C1F' ? 'g4-c1-failure' : answer === 'D9NU' ? 'd9-name-cached' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'G2C2T' ? 'g2-c2-timeout' : answer === 'G4C2F' ? 'g4-c2-failure' : answer === 'G4C1F' ? 'g4-c1-failure' : answer === 'G4C3F' ? 'g4-c3-failure' : answer === 'D9NU' ? 'd9-name-cached' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -4096,12 +4097,19 @@ async function firstDirectoryListing(t, answer) {
     'fi',
     ...(groupC2Read ? [
       groupC2Failure ? 'if [ "$*" = "-ww -g $group -o pid=,command=" ] && [ ! -f "$here/d9-prior-entered" ]; then' : 'if [ "$*" = "-ww -g $group -o pid=,command=" ]; then',
-      '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
-      '  : > "$here/d9-prior-entered"',
-      groupC2Timeout ? '  exec /usr/bin/tail -f "$here/hold"' : '  echo "ps: forced group command failure" >&2; exit 2',
+      groupC3Failure ? '  : > "$here/group-c2-answered"' : '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
+      ...(!groupC3Failure ? ['  : > "$here/d9-prior-entered"'] : []),
+      groupC3Failure ? '  exec /bin/ps "$@"' : groupC2Timeout ? '  exec /usr/bin/tail -f "$here/hold"' : '  echo "ps: forced group command failure" >&2; exit 2',
       'fi',
     ] : []),
-    groupC1Failure || groupC2Failure ? 'exec /bin/ps "$@"' : 'echo "ps: an unexpected read spawned after the cached refusal" >&2; exit 3',
+    ...(groupC3Failure ? [
+      'if [ "$*" = "-p $group -o ucomm=" ]; then',
+      '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
+      '  : > "$here/d9-prior-entered"',
+      '  echo "ps: forced group name failure" >&2; exit 2',
+      'fi',
+    ] : []),
+    groupC1Failure || groupC2Failure || groupC3Failure ? 'exec /bin/ps "$@"' : 'echo "ps: an unexpected read spawned after the cached refusal" >&2; exit 3',
   ].join('\n'));
   else if (d9Read) fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
@@ -4203,15 +4211,20 @@ async function firstDirectoryListing(t, answer) {
     const lsof = join(directory, 'lsof');
     const pid = outsideBirth.pid;
     const firstGroupArgs = ['-ww', '-g', String(group), '-o', 'pid=,stat='];
-    const priorArgs = groupC2Read ? ['-ww', '-g', String(group), '-o', 'pid=,command='] : firstGroupArgs;
+    const secondGroupArgs = ['-ww', '-g', String(group), '-o', 'pid=,command='];
+    const priorArgs = groupC3Failure ? ['-p', String(group), '-o', 'ucomm='] : groupC2Read ? secondGroupArgs : firstGroupArgs;
     const firstGroupStart = groupC2Read && trace.find(({ kind, tool, args }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(firstGroupArgs));
     const firstGroup = groupC2Read && trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && JSON.stringify(args) === JSON.stringify(firstGroupArgs) && sequence > firstGroupStart?.sequence);
     if (groupC2Read) assert.ok(firstGroupStart && firstGroup && firstGroup.status === 0 && firstGroup.error === undefined && firstGroup.stderr === '' && firstGroup.stdout.split('\n').some((row) => new RegExp(`^\\s*${group}\\s+`).test(row)), 'C1 did not answer with the recorded group before C2');
+    const secondGroupStart = groupC3Failure && trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(secondGroupArgs) && sequence > firstGroup?.sequence);
+    const secondGroup = groupC3Failure && trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && JSON.stringify(args) === JSON.stringify(secondGroupArgs) && sequence > secondGroupStart?.sequence);
+    if (groupC3Failure) assert.ok(secondGroupStart && secondGroup && secondGroup.status === 0 && secondGroup.error === undefined && secondGroup.stderr === '' && secondGroup.stdout.split('\n').some((row) => new RegExp(`^\\s*${group}\\s+`).test(row)) && existsSync(join(directory, 'group-c2-answered')), 'C2 did not answer with the recorded group before C3');
     const priorStart = trace.find(({ kind, tool, args }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(priorArgs));
     const prior = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && JSON.stringify(args) === JSON.stringify(priorArgs) && sequence > priorStart?.sequence);
-    assert.ok(priorStart && prior && (!groupC2Read || priorStart.sequence > firstGroup.sequence), 'the group census did not start and close its cache-seeding read after the answered C1');
+    assert.ok(priorStart && prior && (!groupC2Read || priorStart.sequence > (groupC3Failure ? secondGroup.sequence : firstGroup.sequence)), 'the group census did not start and close its forced read after the preceding answers');
     if (groupC1Failure) assert.ok(priorStart.remaining > 0 && prior.error === undefined && prior.status === 2 && prior.stdout === '' && prior.stderr === 'ps: forced group state failure\n', 'the C1 group state failure did not return its complete error');
     else if (groupC2Failure) assert.ok(priorStart.remaining > 0 && prior.error === undefined && prior.status === 2 && prior.stdout === '' && prior.stderr === 'ps: forced group command failure\n', 'the C2 group command failure did not return its complete error');
+    else if (groupC3Failure) assert.ok(priorStart.remaining > 0 && prior.error === undefined && prior.status === 2 && prior.stdout === '' && prior.stderr === 'ps: forced group name failure\n', 'the C3 group name failure did not return its complete error');
     else assert.ok(priorStart.remaining > 0 && prior.error === 'ETIMEDOUT' && prior.status === null && prior.stdout === '' && prior.stderr === '', 'the prior group read did not time out after starting');
     assert.equal(existsSync(join(directory, 'd9-prior-entered')), true, 'the prior group ps stand-in never started');
     assert.deepEqual(readFileSync(join(directory, 'd9-prior-argv'), 'utf8').trimEnd().split('\n'), priorArgs, 'the cache-seeding group read had the wrong argv');
@@ -4230,6 +4243,13 @@ async function firstDirectoryListing(t, answer) {
       assert.deepEqual(events.filter(({ event: type, pid: target }) => type === 'survivor.killed' && target === group), [], 'the failed C2 invented a named group member');
       assert.deepEqual(events.filter(({ event: type, group: target }) => type === 'group.killed' && target === group).map(({ census }) => census), ['the process-table read failed: ps: forced group command failure'], 'the failed C2 lost its exact unnamed group reason');
       assert.ok(trace.some(({ kind, event: type, group: target, sequence }) => kind === 'event' && type === 'group.killed' && target === group && sequence > probe.sequence), 'the failed C2 group result did not follow its reached post-kill probe');
+      return;
+    }
+    if (groupC3Failure) {
+      assert.deepEqual(trace.filter(({ kind, tool, sequence }) => kind === 'read-start' && tool === ps && sequence < groupKill.sequence).map(({ args }) => args), [firstGroupArgs, secondGroupArgs, priorArgs], 'C4 or C5 spawned after the failed C3 before group kill');
+      assert.deepEqual(events.filter(({ event: type, pid: target }) => type === 'survivor.killed' && target === group), [], 'the failed C3 invented a named group member');
+      assert.deepEqual(events.filter(({ event: type, group: target }) => type === 'group.killed' && target === group).map(({ census }) => census), ['the process-table read failed: ps: forced group name failure'], 'the failed C3 lost its exact unnamed group reason');
+      assert.ok(trace.some(({ kind, event: type, group: target, sequence }) => kind === 'event' && type === 'group.killed' && target === group && sequence > probe.sequence), 'the failed C3 group result did not follow its reached post-kill probe');
       return;
     }
     const firstStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > groupKill?.sequence);
@@ -4937,6 +4957,11 @@ test('C615 G4 no-last C2 command failure records only the unnamed group kill', S
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 G4 no-last C1 state failure records only the unnamed group kill', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'G4C1F');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 G4 no-last C3 first name failure records only the unnamed group kill', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'G4C3F');
 });
 
 // proves R-STATE-19, R-STATE-9, R-STATE-26
