@@ -140,11 +140,30 @@ const CALLER = [
   `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
   `import { signalStandIn } from ${JSON.stringify(new URL('./signal-stand-in.mjs', import.meta.url).href)};`,
   "import { appendFileSync, existsSync, readFileSync } from 'node:fs';",
+  "import { mkdirSync as sightingMkdir, writeFileSync as sightingWrite } from 'node:fs';",
+  "import { createHash as sightingHash } from 'node:crypto';",
   "import child from 'node:child_process';",
   "import { syncBuiltinESMExports as syncPostKillBuiltinESMExports } from 'node:module';",
   "import { join } from 'node:path';",
   'const here = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
+  "if (process.env.C615_SIGHTING_EVIDENCE_ROOT && options.ps === 'ps-sighted') {",
+  "  const reads = join(here, 'sighting-reads'); sightingMkdir(reads, { mode: 0o700 });",
+  "  const attempt = readFileSync(join(here, 'sighting-attempt'), 'utf8');",
+  "  const originalRead = child.spawnSync; let serial = 0;",
+  "  const note = (row) => { try { appendFileSync(join(reads, 'trace.jsonl'), JSON.stringify({ attempt, ...row }) + '\\n'); } catch {} };",
+  "  const encode = (value) => typeof value === 'number' && !Number.isFinite(value) ? { type: 'number', value: String(value) } : value === undefined ? { type: 'undefined' } : value;",
+  "  const stream = (result, name, id) => { const present = Object.hasOwn(result, name); const value = result[name]; const type = !present ? 'absent' : value === null ? 'null' : typeof value; if (type !== 'string') return { present, type, file: null }; const file = `${id}.${name}.utf8`; const bytes = Buffer.from(value, 'utf8'); sightingWrite(join(reads, file), bytes, { flag: 'wx', mode: 0o600 }); return { present, type, file, bytes: bytes.length, sha256: sightingHash('sha256').update(bytes).digest('hex') }; };",
+  "  child.spawnSync = function observedSighting(tool, argv, settings) {",
+  "    if (tool !== join(here, 'ps-sighted')) return originalRead.apply(this, arguments);",
+  "    const id = `r${String(++serial).padStart(6, '0')}`; const startedNs = process.hrtime.bigint().toString();",
+  "    try { note({ kind: 'start', id, startedNs, tool, argv, options: Object.fromEntries(Object.entries(settings ?? {}).map(([key, value]) => [key, encode(value)])), remainingMs: settings?.timeout, callerExitMarked: existsSync(join(here, 'exiting')) }); } catch { note({ kind: 'observer-error', id, stage: 'start' }); }",
+  "    let result; try { result = originalRead.apply(this, arguments); } catch (error) { note({ kind: 'threw', id, endedNs: process.hrtime.bigint().toString(), error: { name: error.name, message: error.message, code: error.code ?? null } }); throw error; }",
+  "    try { note({ kind: 'end', id, endedNs: process.hrtime.bigint().toString(), status: encode(result.status), signal: encode(result.signal), error: result.error ? { name: result.error.name, message: result.error.message, code: result.error.code ?? null, errno: result.error.errno ?? null, syscall: result.error.syscall ?? null, path: result.error.path ?? null, spawnargs: result.error.spawnargs ?? null } : null, returnedStreams: result.error || result.signal ? 'partial-possible' : 'settled-return', stdout: stream(result, 'stdout', id), stderr: stream(result, 'stderr', id) }); } catch (error) { note({ kind: 'observer-error', id, stage: 'return', code: error.code ?? error.name }); }",
+  "    return result;",
+  "  };",
+  "  syncPostKillBuiltinESMExports();",
+  "}",
   "globalThis.trace = (operation, fields = {}) => { if (options.postKillTrace) appendFileSync(join(here, 'post-kill-trace'), `${JSON.stringify({ at: new Date().getTime(), operation, ...fields })}\\n`); };",
   "if (options.postKillTrace) {",
   "  const originalRead = child.spawnSync;",
@@ -193,6 +212,93 @@ const CALLER = [
   'process.exit(0);',
 ].join('\n');
 
+const sightingAttempts = new Map();
+
+/** Retains one conditional exit-sighting attempt outside the suite scratch. */
+function sightingObservation(directory, options) {
+  const requested = process.env.C615_SIGHTING_EVIDENCE_ROOT;
+  if (!requested || options.ps !== 'ps-sighted') return null;
+  assert.ok(lstatSync(requested).isDirectory() && !lstatSync(requested).isSymbolicLink(), 'the sighting evidence root is unsafe');
+  const root = realpathSync.native(requested);
+  const checkout = realpathSync.native(process.cwd());
+  const scratch = realpathSync.native(process.env.TMPDIR);
+  assert.ok(root !== checkout && !root.startsWith(`${checkout}/`) && root !== scratch && !root.startsWith(`${scratch}/`) && (lstatSync(root).mode & 0o077) === 0, 'the sighting evidence root must be private and outside checkout and suite scratch');
+  const id = randomUUID();
+  const target = join(root, `attempt-${id}`);
+  mkdirSync(target, { mode: 0o700 });
+  writeFileSync(join(directory, 'sighting-attempt'), id, { flag: 'wx', mode: 0o600 });
+  const observation = { id, target, stderr: [], exit: { state: 'not-observed' }, close: { state: 'not-observed' }, finalSnapshot: false };
+  sightingAttempts.set(directory, observation);
+  return observation;
+}
+
+/** Inventories every regular original without following a link. */
+function sightingFiles(directory) {
+  const files = [];
+  const visit = (path, prefix = '') => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const name = `${prefix}${entry.name}`;
+      const file = join(path, entry.name);
+      assert.ok(!entry.isSymbolicLink(), 'the sighting snapshot contains a link');
+      if (entry.isDirectory()) visit(file, `${name}/`);
+      else {
+        assert.ok(entry.isFile(), 'the sighting snapshot contains a special file');
+        const bytes = readFileSync(file);
+        files.push({ name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+      }
+    }
+  };
+  visit(directory);
+  return files.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Copies produced bytes even when the caller or an outer read is unresolved. */
+function retainSighting(observation, directory, phase) {
+  const output = join(observation.target, phase);
+  mkdirSync(output, { mode: 0o700 });
+  const report = { attempt: observation.id, phase, callerPid: observation.callerPid ?? null, exit: observation.exit, close: observation.close, finalizer: 'pending', source: [], copied: [], producedThenLost: [], expected: [], copy: 'partial', reads: 'unknown', writer: 'unknown', errors: [] };
+  const stderrBytes = Buffer.concat(observation.stderr);
+  report.stderr = { state: observation.close.state === 'closed' ? stderrBytes.length ? 'produced' : 'produced-empty' : 'partial-produced', bytes: stderrBytes.length, sha256: createHash('sha256').update(stderrBytes).digest('hex') };
+  try { writeFileSync(join(output, 'caller.stderr'), stderrBytes, { flag: 'wx', mode: 0o600 }); }
+  catch (error) { report.stderr.state = 'produced-then-lost'; report.errors.push({ stage: 'stderr', code: error.code ?? error.name }); }
+  try { report.source = sightingFiles(directory); }
+  catch (error) { report.errors.push({ stage: 'source-inventory', code: error.code ?? error.name }); }
+  try { cpSync(directory, join(output, 'fixture'), { recursive: true, force: false, errorOnExist: true }); }
+  catch (error) { report.errors.push({ stage: 'fixture-copy', code: error.code ?? error.name }); }
+  try { report.copied = sightingFiles(join(output, 'fixture')); }
+  catch (error) { report.errors.push({ stage: 'copy-inventory', code: error.code ?? error.name }); }
+  if (!report.errors.length && JSON.stringify(report.source) === JSON.stringify(report.copied)) report.copy = 'byte-complete-at-snapshot';
+  else report.copy = 'partial-or-changed';
+  try {
+    const trace = join(output, 'fixture', 'sighting-reads', 'trace.jsonl');
+    if (existsSync(trace)) {
+      const records = readFileSync(trace, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      const starts = records.filter((row) => row.kind === 'start');
+      const ends = records.filter((row) => row.kind === 'end' || row.kind === 'threw');
+      const settled = records.every((row) => ['start', 'end', 'threw'].includes(row.kind)) && starts.length === ends.length && starts.every((start) => ends.filter((end) => end.id === start.id).length === 1);
+      const streams = ends.filter((row) => row.kind === 'end').flatMap((row) => [row.stdout, row.stderr]).filter((value) => value?.type === 'string');
+      const complete = streams.every((value) => {
+        const found = report.copied.find((row) => row.name === `sighting-reads/${value.file}`);
+        return found && found.bytes === value.bytes && found.sha256 === value.sha256;
+      });
+      report.reads = !starts.length ? 'no-observed-spawn-reason-unknown' : settled && complete ? 'settled-returned-originals' : 'partial-or-unresolved';
+      report.writer = observation.close.state === 'closed' && starts.length > 0 && settled && complete ? 'caller-and-observed-reads-settled-other-writers-unconfirmed' : 'unknown';
+    } else report.reads = 'no-observed-spawn-reason-unknown';
+  } catch (error) { report.errors.push({ stage: 'read-trace', code: error.code ?? error.name }); }
+  if (!report.errors.some((error) => error.stage === 'source-inventory' || error.stage === 'copy-inventory')) report.producedThenLost = report.source.filter((row) => !report.copied.some((copy) => copy.name === row.name));
+  report.expected = ['sighting-attempt', 'caller.mjs', 'command', 'ps-sighted', 'sighting-reads/trace.jsonl', 'sighted-ps.log', 'sighted-live', 'pairs', 'events', 'ending', 'exiting'].map((name) => {
+    const source = report.source.find((row) => row.name === name);
+    const copied = report.copied.find((row) => row.name === name);
+    const state = report.errors.some((error) => error.stage === 'source-inventory') ? 'unknown-source-inventory'
+      : !source ? 'not-present-at-snapshot'
+        : report.errors.some((error) => error.stage === 'copy-inventory') ? 'unknown-copy-inventory'
+          : !copied ? 'produced-then-lost' : copied.bytes ? 'produced' : 'produced-empty';
+    return { name, state };
+  });
+  writeFileSync(join(output, 'inventory.json'), JSON.stringify(report) + '\n', { flag: 'wx', mode: 0o600 });
+  return report;
+}
+
 /** Lines of JSON a caller in `directory` appended to `name`, each parsed, or none. */
 const linesOf = (directory, name) => (existsSync(join(directory, name)) ? readFileSync(join(directory, name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
 
@@ -201,14 +307,32 @@ const linesOf = (directory, name) => (existsSync(join(directory, name)) ? readFi
  * its events, the signals it sent, and when it began to exit and when it had ended.
  */
 async function cleanedUp(directory, options) {
+  const observation = sightingObservation(directory, options);
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
   const run = spawn(process.execPath, [caller, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'] });
+  if (observation) observation.callerPid = run.pid ?? null;
   let stderr = '';
   run.stderr.on('data', (chunk) => { stderr += chunk; });
+  if (observation) {
+    run.stderr.on('data', (chunk) => { observation.stderr.push(Buffer.from(chunk)); });
+    run.once('exit', (code, signal) => { observation.exit = { state: 'observed', code, signal }; });
+    run.once('error', (error) => { observation.exit = { state: 'error', code: error.code ?? error.name }; });
+    observation.closed = new Promise((resolveClose) => run.once('close', (code, signal) => { observation.close = { state: 'closed', code, signal }; resolveClose(); }));
+  }
+  try {
   const [status] = await once(run, 'exit');
   const ended = Date.now();
   return { status, stderr, events: linesOf(directory, 'events'), pairs: linesOf(directory, 'pairs'), exiting: Number(read(directory, 'exiting')), ended };
+  } finally {
+    if (observation) {
+      let timer;
+      await Promise.race([observation.closed, new Promise((resolveClose) => { timer = setTimeout(resolveClose, 2_000); })]);
+      clearTimeout(timer);
+      try { const retained = retainSighting(observation, directory, 'settled'); observation.finalSnapshot = true; observation.snapshotResult = retained.copy; }
+      catch (error) { observation.snapshotError = error.code ?? error.name; }
+    }
+  }
 }
 
 /** The `[target, signal]` of each pair in `pairs` that sends `SIGSTOP` to a process group. */
@@ -367,6 +491,23 @@ async function censusCall(t, cell, afterKill = 'omit') {
 /** Runs the same stand-in through synchronous exit containment. */
 async function censusExit(t, cell, afterKill = 'omit') {
   const directory = holding(t);
+  if (process.env.C615_SIGHTING_EVIDENCE_ROOT) {
+    t.signal.addEventListener('abort', () => {
+      const observation = sightingAttempts.get(directory);
+      if (observation && !observation.finalSnapshot) {
+        try { retainSighting(observation, directory, 'unsettled'); }
+        catch (error) { observation.snapshotError = error.code ?? error.name; }
+      }
+    }, { once: true });
+    t.after(() => {
+      t.after(() => {
+        const observation = sightingAttempts.get(directory);
+        if (!observation) return;
+        writeFileSync(join(observation.target, 'finalizer.json'), JSON.stringify({ attempt: observation.id, outcome: existsSync(directory) ? 'unknown-scratch-present' : 'holding-teardown-removed-scratch', snapshot: observation.snapshotResult ?? 'unresolved', snapshotError: observation.snapshotError ?? null }) + '\n', { flag: 'wx', mode: 0o600 });
+        sightingAttempts.delete(directory);
+      });
+    });
+  }
   if (cell === 'X') reapingCommand(directory, true);
   else if (afterKill === 'zombie') joinedLate(directory);
   else holdingTwo(directory);
@@ -1745,9 +1886,27 @@ function assertReturnedToolOriginals(directory, trace) {
   return { traceEnds };
 }
 
+/** Refuses a focused Mac control before fixtures when its runner has closed admission. */
+function assertFocusedAdmission() {
+  const deadlineText = process.env.C615_WORK_DEADLINE_NS;
+  const markerText = process.env.C615_STOP_MARKER;
+  if (deadlineText === undefined && markerText === undefined) return;
+  assert.ok(deadlineText !== undefined && markerText !== undefined, 'the focused admission contract is incomplete');
+  assert.match(deadlineText, /^[1-9]\d*$/, 'the focused work deadline is invalid');
+  assert.ok(process.env.C615_EVIDENCE_ROOT, 'the focused stop marker has no private evidence root');
+  const root = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  const checkout = realpathSync.native(process.cwd());
+  assert.ok(root !== checkout && !root.startsWith(`${checkout}/`) && (lstatSync(root).mode & 0o077) === 0, 'the focused admission root is not external and private');
+  assert.equal(markerText, join(root, 'stop-new-work'), 'the focused stop marker escaped its private root');
+  let stopped = false;
+  try { lstatSync(markerText); stopped = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  assert.ok(!stopped && process.hrtime.bigint() < BigInt(deadlineText), 'the focused runner closed new test work before fixture start');
+}
+
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('this real lsof/ps control requires macOS');
+  assertFocusedAdmission();
   let directory;
   let evidenceRoot;
   let tail;
@@ -1861,6 +2020,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   assert.ok(privateRoot.startsWith(`${outerRoot}/`), 'the directory evidence child escaped its private outer root');
   assert.equal(readdirSync(privateRoot).length, 0, 'the directory evidence child was not empty before the attempt');
   evidenceRoot = privateRoot;
+  assertFocusedAdmission();
   directory = realpathSync(temporaryDirectory('c615-mac-directory-', {
     context: t,
     beforeRemoval: () => assert.ok(finalized && copied, 'finalization or private copy is incomplete; keep the fixture scratch'),
@@ -1870,6 +2030,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   writeFileSync(join(directory, 'hold'), '');
   fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
 
+  assertFocusedAdmission();
   tail = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { cwd: work, detached: true, stdio: 'ignore' });
   bodyStage = 'tail-started';
   tail.on('error', (error) => { tailError = error; });
@@ -1885,6 +2046,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   writeFileSync(callerPath, source);
   const callerStderr = openSync(join(evidenceRoot, 'caller.stderr'), 'wx', 0o600);
   try {
+    assertFocusedAdmission();
     caller = spawn(process.execPath, [callerPath, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, directory: work })], { stdio: ['ignore', 'ignore', callerStderr] });
     bodyStage = 'caller-started';
   } finally {
@@ -1944,6 +2106,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
 // proves R-STATE-19, R-STATE-26
 test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('this real ps control requires macOS');
+  assertFocusedAdmission();
   let directory;
   let evidenceRoot;
   let caller;
@@ -2053,6 +2216,7 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   evidenceRoot = realpathSync.native(groupRoot);
   assert.ok(evidenceRoot.startsWith(`${outerRoot}/`), 'the group evidence child escaped its private outer root');
   assert.equal(readdirSync(evidenceRoot).length, 0, 'the group evidence child was not empty before the attempt');
+  assertFocusedAdmission();
   directory = realpathSync(temporaryDirectory('c615-mac-group-', { context: t, beforeRemoval: () => assert.ok(finalized && copied, 'finalization or private copy is incomplete; keep the group fixture scratch') }));
   const fixturePath = join(directory, 'fixture.mjs');
   writeFileSync(fixturePath, [
@@ -2097,6 +2261,7 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   ].join('\n'));
   const callerStderr = openSync(join(evidenceRoot, 'caller.stderr'), 'wx', 0o600);
   try {
+    assertFocusedAdmission();
     caller = spawn(process.execPath, [callerPath, directory, nonce], { stdio: ['ignore', 'ignore', callerStderr] });
     bodyStage = 'caller-started';
   } finally {
