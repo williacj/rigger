@@ -3782,8 +3782,8 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
-  const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF';
-  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF';
+  const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
+  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
   const heldPerPid = answer === 'PF' || answer === 'PT';
   const heldOmitted = answer === 'HO';
@@ -3803,7 +3803,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -4018,7 +4018,7 @@ async function firstDirectoryListing(t, answer) {
     'exec /bin/ps "$@"',
   ].join('\n'));
   else if (heldRead) {
-    if (answer === 'ST' || answer === 'LT' || answer === 'PT' || answer === 'EHT') writeFileSync(join(directory, 'hold'), '');
+    if (answer === 'ST' || answer === 'LT' || answer === 'PT' || answer === 'EHT' || answer === 'EHST') writeFileSync(join(directory, 'hold'), '');
     fixture(directory, 'ps', [
       'pid=$(/bin/cat "$here/outside.pid")',
       'if [ "$*" = "-p $pid -o pid=,stat=" ]; then',
@@ -4589,4 +4589,9 @@ test('C615 D8 co-listed EPERM and H later full lsof T report unread without desc
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D8 co-listed EPERM and H intervening ps state F report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'EHSF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D8 co-listed EPERM and H intervening ps state T report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'EHST');
 });
