@@ -732,7 +732,8 @@ const PRINTED_REPOSITORY = Object.fromEntries(
     ['branches', 'rigger-branches-2026-10-01.json'],
     ['edited', 'rigger-issue-edited-2026-10-01.json'],
     ['head', 'rigger-pull-request-head-2026-10-01.json'],
-    ['comments', 'rigger-pull-request-comments-2026-10-01.json'],
+    ['mergeable', 'rigger-pull-request-mergeable-2026-10-09.json'],
+    ['comments', 'rigger-pull-request-comments-2026-10-09.json'],
     ['compare', 'rigger-compare-2026-10-01.json'],
   ].map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
@@ -771,6 +772,9 @@ function repositoryForge(answers = {}) {
       assert.ok(held !== undefined, `the test forge does not answer ${args.join(' ')}`);
       if (said(held)) return held;
       if (typeof held === 'string') return { status: 0, stdout: held, stderr: '' };
+      if (args[1].includes('/commits/')) return { status: 0, stdout: JSON.stringify(held), stderr: '' };
+      if (args[1].includes('/rules/') || args[1].includes('/protection')) return { status: 0, stdout: JSON.stringify(held), stderr: '' };
+      if (args[1].includes('/collaborators/')) return { status: 0, stdout: JSON.stringify(held), stderr: '' };
       assert.deepEqual([...pathsOf(held)].filter((path) => !PRINTED_REPOSITORY.compare.has(path)), [], 'the compare answer is not shaped as gh prints it');
       return { status: 0, stdout: JSON.stringify(held), stderr: '' };
     }
@@ -778,6 +782,7 @@ function repositoryForge(answers = {}) {
     for (const kind of ['pullRequests(', 'refs(', 'issue(', 'comments(']) {
       if (document.includes(kind)) return answer({ 'pullRequests(': 'pull requests', 'refs(': 'branches', 'issue(': 'edited', 'comments(': 'comments' }[kind], document);
     }
+    if (document.includes('mergeable')) return answer('mergeable', document);
     if (document.includes('pullRequest(')) return answer('head', document);
     throw new Error(`the test forge does not answer ${document}`);
   };
@@ -798,6 +803,9 @@ const branchPage = (names, next = null) => ({ repository: { refs: { pageInfo: { 
 
 /** The comment read's answer: `comments`, pointing on to the page `next` when there is one. */
 const commentPage = (comments, next = null) => ({ repository: { pullRequest: { comments: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'Y3Vy' }, nodes: comments } } } });
+
+/** The comment fields selected by the read, with every body and creation time kept from `comments`. */
+const commentNodes = (comments) => comments.map((comment, index) => ({ ...comment, id: `IC_${index}`, author: { login: 'williacj' }, lastEditedAt: null, includesCreatedEdit: false }));
 
 /** The pull requests a read answers, one page of them. */
 const pulls = (...nodes) => ({ paged: { null: pullPage(nodes.map(pullNode)) } });
@@ -959,23 +967,25 @@ test("the repository read answers #497's merge base from the comparison gh answe
 
 test('given a pull request number, the repository read answers every comment on it with its body and time, across more than one page', async () => {
   const comments = Array.from({ length: 101 }, (_, i) => ({ body: `Comment ${i + 1}`, createdAt: `2026-10-01T10:${String(i % 60).padStart(2, '0')}:00Z` }));
-  const send = repositoryForge({ comments: { paged: { null: commentPage(comments.slice(0, 100), 'Y3Vyc29yOnYyOpHPAAA'), Y3Vyc29yOnYyOpHPAAA: commentPage(comments.slice(100)) } } });
+  const send = repositoryForge({ comments: { paged: { null: commentPage(commentNodes(comments.slice(0, 100)), 'Y3Vyc29yOnYyOpHPAAA'), Y3Vyc29yOnYyOpHPAAA: commentPage(commentNodes(comments.slice(100))) } }, 'repos/williacj/rigger/collaborators/williacj/permission': { permission: 'admin', role_name: 'admin' } });
 
   const read = await repositoryReads(BOARD, { send }).readComments(12);
 
-  assert.deepEqual(read, comments);
-  assert.equal(send.sent.length, 2);
+  assert.deepEqual(read.map(({ body, createdAt }) => ({ body, createdAt })), comments);
+  assert.equal(send.sent.length, 3);
 });
 
 test("the repository read answers #503's comments as gh answered them on 2026-10-01", async () => {
   const recorded = readFileSync(join(FIXTURES, 'rigger-pull-request-comments-2026-10-01.json'), 'utf8');
-  const send = () => ({ status: 0, stdout: recorded, stderr: '' });
+  const current = readFileSync(join(FIXTURES, 'rigger-pull-request-comments-2026-10-09.json'), 'utf8');
+  const permission = readFileSync(join(FIXTURES, 'rigger-owner-permission-2026-10-09.json'), 'utf8');
+  const send = (command, args) => ({ status: 0, stdout: args[1] === 'graphql' ? current : permission, stderr: '' });
 
   const read = await repositoryReads(BOARD, { send }).readComments(503);
 
   assert.equal(read.length, 2);
   assert.ok(read[0].body.startsWith('## Engineer judge verdict, PR #503'), read[0].body.slice(0, 60));
-  assert.deepEqual(read, JSON.parse(recorded).data.repository.pullRequest.comments.nodes);
+  assert.deepEqual(read.map(({ body, createdAt }) => ({ body, createdAt })), JSON.parse(recorded).data.repository.pullRequest.comments.nodes);
 });
 
 /** Each repository read, called on what it reads, with what a failure must name of it. */
@@ -985,6 +995,9 @@ const REPOSITORY_READS = {
   readEditedAt: { call: (reads) => reads.readEditedAt(214), names: 'issue #214' },
   readDiff: { call: (reads) => reads.readDiff(12), names: 'pull request #12' },
   readMergeBase: { call: (reads) => reads.readMergeBase(12), names: 'pull request #12' },
+  readMergeable: { call: (reads) => reads.readMergeable(12), names: 'pull request #12' },
+  readCheckStates: { call: (reads) => reads.readCheckStates('a'.repeat(40), []), names: 'checks' },
+  readEffectiveRules: { call: (reads) => reads.readEffectiveRules('main'), names: 'effective rules' },
   readComments: { call: (reads) => reads.readComments(12), names: 'pull request #12' },
 };
 
@@ -1030,10 +1043,15 @@ test('every request a full repository read issues reaches the spawn through the 
     branches: { paged: { null: branchPage(['main']) } },
     edited: { repository: { issue: { lastEditedAt: null } } },
     head: { repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } },
+    mergeable: { repository: { pullRequest: { mergeable: 'MERGEABLE' } } },
     comments: { paged: { null: commentPage([]) } },
     'repos/williacj/rigger/pulls/12': DIFF,
     'repos/williacj/rigger/pulls/214': DIFF,
     [`repos/williacj/rigger/compare/main...${head}`]: { merge_base_commit: { sha: head } },
+    [`repos/williacj/rigger/commits/${'a'.repeat(40)}/check-runs?per_page=100&page=1`]: { total_count: 0, check_runs: [] },
+    [`repos/williacj/rigger/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`]: [],
+    'repos/williacj/rigger/rules/branches/main?per_page=100&page=1': [],
+    'repos/williacj/rigger/branches/main/protection': { required_status_checks: { checks: [], contexts: [] } },
   };
   const sent = [];
   const callers = [];

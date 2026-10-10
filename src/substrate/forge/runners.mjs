@@ -1,4 +1,4 @@
-// ABOUTME: The forge adapter's three runners, read, schema-write and item-write. Each admits one
+// ABOUTME: The forge adapter's four runners, read, schema-write, item-write and repository-write. Each admits one
 // operation of its own side and refuses everything else by name before anything is sent.
 
 import { gitEnvironment } from '../git-environment.mjs';
@@ -433,6 +433,28 @@ export async function itemWriteRunner(args, { send = throughL0, emitter, timeout
   const columns = await columnsField(projectId, fieldId, { send, emitter, timeout });
   if (columns.id !== fieldId) {
     refuse('item-write', `a field-value write on ${columns.target ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
+  }
+  return send(FORGE, args, { emitter, timeout });
+}
+
+/** Sends only a head-guarded merge or a pull-request comment. */
+export async function repositoryWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
+  const [api, path, method, verb, field, value, option, mergeMethod, ...extra] = args;
+  const merge = api === 'api' && /^repos\/[^/]+\/[^/]+\/pulls\/[1-9]\d*\/merge$/.test(path ?? '')
+    && method === '-X' && verb === 'PUT' && field === '-f' && /^sha=[0-9a-f]{40}$/.test(value ?? '')
+    && option === '-f' && mergeMethod === 'merge_method=merge' && extra.length === 0;
+  const comment = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/comments$/.test(path ?? '')
+    && method === '-X' && verb === 'POST' && field === '-f' && value?.startsWith('body=')
+    && option === undefined && extra.length === 0;
+  if (!merge && !comment) refuse('repository-write', spelled(args));
+  if (comment) {
+    const pullPath = path.replace('/issues/', '/pulls/').replace(/\/comments$/, '');
+    const number = path.split('/').at(-2);
+    const said = await readRunner(['api', pullPath, '-X', 'GET'], { send, emitter, timeout });
+    if (said.status !== 0 || said.timedOut) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm: ${firstLine(said)}`);
+    let pull;
+    try { pull = JSON.parse(said.stdout); } catch { /* An unreadable response cannot confirm a PR. */ }
+    if (!pull?.head?.sha) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm`);
   }
   return send(FORGE, args, { emitter, timeout });
 }
