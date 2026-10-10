@@ -341,3 +341,10 @@ test('the marker table: a marker block quoted inside a fence that opens on the c
     assert.deepEqual(parseMarker([outer, '```rigger-marker', ...fieldLines(), '```', outer].join('\n'), 2), { state: 'none' }, outer);
   }
 });
+
+test('the marker table: a card or pull too large to be a safe integer is unreadable, naming the field', () => {
+  for (const value of ['9'.repeat(400), '9007199254740993']) {
+    unreadable(parsedWith({ card: value }), /\bcard\b/);
+    unreadable(parsedWith({ pull: value }), /\bpull\b/);
+  }
+});

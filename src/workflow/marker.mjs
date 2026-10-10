@@ -44,6 +44,7 @@ const oneOf = (values) => new RegExp(`^(?:${values.join('|')})$`);
  * can write a marker.
  */
 const FIELDS = {
+  // A number field also holds a safe integer, so a value too long for one is not read as Infinity.
   card: { valid: POSITIVE, read: Number, required: true },
   pull: { valid: POSITIVE, read: Number, required: true },
   head: { valid: SHA, required: true },
@@ -167,10 +168,10 @@ export function parseMarker(body, count) {
     else if (Object.hasOwn(fields, key)) faults.push(`the field ${key} is given twice`);
     else fields[key] = value;
   }
-  for (const [key, { valid, required }] of Object.entries(FIELDS)) {
+  for (const [key, { valid, read, required }] of Object.entries(FIELDS)) {
     if (!Object.hasOwn(fields, key)) {
       if (required) faults.push(`the field ${key} is missing`);
-    } else if (!valid.test(fields[key])) faults.push(`the field ${key} holds ${JSON.stringify(fields[key])}, which is not its form`);
+    } else if (!valid.test(fields[key]) || (read === Number && !Number.isSafeInteger(Number(fields[key])))) faults.push(`the field ${key} holds ${JSON.stringify(fields[key])}, which is not its form`);
   }
   for (let ordinal = 1; ordinal <= count; ordinal += 1) if (!items.has(ordinal)) faults.push(`item ${ordinal} is missing`);
   if (fields.coverage === 'insufficient' && !Object.hasOwn(fields, 'coverageReason')) faults.push('coverage is ruled insufficient with no coverageReason');
