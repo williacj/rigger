@@ -3782,7 +3782,7 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
-  const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT' || answer === 'D9CF' || answer === 'D9CT';
+  const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT' || answer === 'D9NU' || answer === 'D9CF' || answer === 'D9CT';
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
   const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF' || answer === 'EOPT';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
@@ -3804,7 +3804,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'D9NU' ? 'd9-name-cached' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -4005,8 +4005,17 @@ async function firstDirectoryListing(t, answer) {
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub)) + (coListedRefusal ? '\n' + listingOf('refused', realpathSync.native(refusedSub)) : '');
   fixture(directory, 'lsof', lsofBody);
   if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
-  if (answer === 'D9NT' || answer === 'D9CT') writeFileSync(join(directory, 'hold'), '');
-  if (d9Read) fixture(directory, 'ps', [
+  if (answer === 'D9NT' || answer === 'D9NU' || answer === 'D9CT') writeFileSync(join(directory, 'hold'), '');
+  if (answer === 'D9NU') fixture(directory, 'ps', [
+    'group=$(/bin/cat "$here/group.pid")',
+    'if [ "$*" = "-ww -g $group -o pid=,stat=" ]; then',
+    '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
+    '  : > "$here/d9-prior-entered"',
+    '  exec /usr/bin/tail -f "$here/hold"',
+    'fi',
+    'echo "ps: an unexpected read spawned after the cached refusal" >&2; exit 3',
+  ].join('\n'));
+  else if (d9Read) fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
     'if [ "$*" = "-p $pid -o ucomm=" ]; then',
     '  printf "%s\\n" "$@" > "$here/d9-name-argv"',
@@ -4100,6 +4109,39 @@ async function firstDirectoryListing(t, answer) {
   const pairs = linesOf(directory, 'pairs');
   const directoryEvents = events.filter(({ directory: at }) => at === work);
   const firstArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
+  if (answer === 'D9NU') {
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    const ps = join(directory, 'ps');
+    const lsof = join(directory, 'lsof');
+    const pid = outsideBirth.pid;
+    const priorArgs = ['-ww', '-g', String(group), '-o', 'pid=,stat='];
+    const priorStart = trace.find(({ kind, tool, args }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(priorArgs));
+    const prior = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && JSON.stringify(args) === JSON.stringify(priorArgs) && sequence > priorStart?.sequence);
+    assert.ok(priorStart && prior, 'the group census did not start and close its cache-seeding read');
+    assert.ok(priorStart.remaining > 0 && prior.error === 'ETIMEDOUT' && prior.status === null && prior.stdout === '' && prior.stderr === '', 'the prior group read did not time out after starting');
+    assert.equal(existsSync(join(directory, 'd9-prior-entered')), true, 'the prior group ps stand-in never started');
+    assert.deepEqual(readFileSync(join(directory, 'd9-prior-argv'), 'utf8').trimEnd().split('\n'), priorArgs, 'the cache-seeding group read had the wrong argv');
+    const groupKill = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === -group && name === 'SIGKILL' && result === true && sequence > prior.sequence);
+    const firstStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > groupKill?.sequence);
+    const first = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > firstStart?.sequence);
+    const refusal = trace.find(({ kind, target, name, error, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGSTOP' && error === 'EPERM' && sequence > first?.sequence);
+    const event = trace.find(({ kind, event: type, pid: target, sequence }) => kind === 'event' && type === 'survivor.unended' && target === pid && sequence > refusal?.sequence);
+    assert.ok(groupKill && firstStart && first && refusal && event, 'the timeout, group kill, answered directory listing, EPERM and PID result did not occur in order');
+    assert.equal(first.status, 0, 'the directory listing did not answer after the group timeout');
+    assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the directory listing did not return the refused fixture');
+    assert.ok(first.error === undefined && first.stderr === '', 'the directory listing reported a failure instead of an answer');
+    assert.ok(event.at >= firstStart.at && event.at - firstStart.at < CLEANUP_BOUND, 'the directory description could have been cut by its own deadline rather than the prior cache');
+    assert.deepEqual(trace.filter(({ kind, tool }) => kind === 'read-start' && tool === ps).map(({ args }) => args), [priorArgs], 'another ps spawned after the earlier timeout instead of refusing its cached read');
+    assert.equal(existsSync(join(directory, 'd9-name-argv')), false, 'a name stand-in ran despite the cached refusal');
+    assert.equal(existsSync(join(directory, 'd9-command-argv')), false, 'a command stand-in ran without a returned name');
+    assert.deepEqual(events.filter(({ event: type, group: target }) => type === 'group.killed' && target === group).map(({ census }) => census), ['the process-table read timed out after 1000 ms'], 'the timed-out group census lost its reason or invented members');
+    assert.deepEqual(directoryEvents.map(({ event: type, pid: target, name, cmd, reason }) => ({ event: type, pid: target, name, cmd, reason })), [
+      { event: 'survivor.unended', pid, name: undefined, cmd: undefined, reason: 'EPERM' },
+    ], 'the cached name refusal invented identity fields or lost the known PID and reason');
+    assert.deepEqual(pairs.filter(([target]) => target === pid).map(([, signal]) => signal), ['SIGSTOP'], 'the refused PID received an invented signal');
+    assert.ok(!d2HasEnded(outside) && startOf(pid) === outsideBirth.started, 'the refused fixture ended or changed identity before finalization');
+    return;
+  }
   if (heldRead) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const pid = outsideBirth.pid;
@@ -4763,6 +4805,11 @@ test('C615 D9 EPERM name F leaves only PID and reason without a command read', S
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D9 EPERM name T leaves only PID and reason without a command read', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'D9NT');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D9 EPERM name U after group timeout spawns no description read', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'D9NU');
 });
 
 // proves R-STATE-19, R-STATE-9, R-STATE-26
