@@ -475,6 +475,31 @@ test('a continuing attempt refuses a forge line moved since L2 read it, naming b
   assert.equal(headOf(first.path), readHead);
 });
 
+// proves R-WORK-25
+test('a continuing attempt refuses when the forge moves during its fetch', async (t) => {
+  const here = world(t);
+  const readHead = publishCard(here, 'first work\n');
+  const first = await here.make(42, { head: readHead });
+  writeFileSync(join(first.path, 'uncommitted'), 'kept\n');
+  const before = contents(first.path);
+  gitIn(here.source, 'commit', '-q', '--allow-empty', '-m', 'later work');
+  const movedHead = headOf(here.source);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = fetch ]; then',
+    `  '${GIT}' -C '${here.source}' push -q '${here.origin}' HEAD:refs/heads/rigger-42 || exit $?`,
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head: readHead }), first.path));
+
+  assert.ok(failure.message.includes(readHead) && failure.message.includes(movedHead), failure.message);
+  assert.equal(branchAt(here.origin, 'rigger-42'), movedHead);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), readHead);
+});
+
 // proves R-WORK-25, R-WORK-13
 test('a continuing attempt refuses a different branch or detached HEAD at its path without changing the directory', async (t) => {
   for (const kind of ['other branch', 'detached HEAD']) {
