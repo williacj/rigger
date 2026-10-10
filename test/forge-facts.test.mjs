@@ -237,7 +237,7 @@ test('L2\'s facts call answers a Review card\'s one open pull request as its num
   assert.deepEqual({ pull, diff, comments: read, editedAt }, {
     pull: { status: 'fulfilled', value: { number: 221, base: BASE, head: pullFrom(22, 221).sha } },
     diff: { status: 'fulfilled', value: DIFF },
-    comments: { status: 'fulfilled', value: comments },
+    comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_221_1', author: 'rigger-fake', permission: 'write', edited: false }] },
     editedAt: { status: 'fulfilled', value: '2026-10-02T08:00:00Z' },
   });
 });

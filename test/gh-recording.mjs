@@ -7,6 +7,7 @@ import { register } from 'node:module';
 // Called by name, not as a namespace's members, so a request still reaches the spawn from the
 // runner itself, which `forge-read.test.mjs` reads off the stack.
 import { itemWriteRunner as itemWrite, readRunner as read, schemaWriteRunner as schemaWrite } from '../src/substrate/forge/runners.mjs';
+import { repositoryWriteRunner as repositoryWrite } from '../src/substrate/forge/runners.mjs';
 
 export * from '../src/substrate/forge/runners.mjs';
 
@@ -39,6 +40,9 @@ export const schemaWriteRunner = recordingSends(schemaWrite);
 
 /** The item-write runner, recording each move and its read of which field holds the columns. */
 export const itemWriteRunner = recordingSends(itemWrite);
+
+/** The repository-write runner, with the head-guarded write recorded. */
+export const repositoryWriteRunner = recordingSends(repositoryWrite);
 
 // Run as `node --import gh-recording.mjs <test file> <record path>`. `node --test` also runs this
 // file, as it runs every module under test/, and names no record path, so it records nothing.

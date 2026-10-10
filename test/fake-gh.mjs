@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createFakeBoard } from './fake-board.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
-import { branchesIn, checkedOut, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
+import { branchesIn, checkedOut, commentOf, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
@@ -34,7 +34,11 @@ function shapeOf(document) {
  */
 export function commandOf(args) {
   const [subcommand, endpoint, flag, query, ...rest] = args;
-  if (subcommand === 'api' && endpoint?.startsWith('repos/')) return spelled(['api', pathShapeOf(endpoint), ...args.slice(2)]);
+  if (subcommand === 'api' && endpoint?.startsWith('repos/')) {
+    const path = pathShapeOf(endpoint);
+    const fields = args.slice(2).map((word) => path.endsWith('/merge') && word.startsWith('sha=') ? 'sha=_' : path.endsWith('/comments') && word.startsWith('body=') ? 'body=_' : word);
+    return spelled(['api', path, ...fields]);
+  }
   if (subcommand !== 'api' || endpoint !== 'graphql' || flag !== '-f' || !query?.startsWith('query=') || rest.length > 0) {
     return spelled(args);
   }
@@ -55,6 +59,10 @@ class GhFailure extends Error {}
  */
 function pathShapeOf(path) {
   const tail = path.split('/').slice(3).join('/');
+  if (/^rules\/branches\/[^?]+\?per_page=100&page=\d+$/.test(tail)) return 'repos/_/_/rules/branches/_?per_page=100&page=_';
+  if (/^branches\/[^/]+\/protection$/.test(tail)) return 'repos/_/_/branches/_/protection';
+  if (/^commits\/[^/]+\/(check-runs|statuses)\?per_page=100&page=\d+$/.test(tail)) return `repos/_/_/commits/_/${tail.split('/')[2].replace(/page=\d+$/, 'page=_')}`;
+  if (/^collaborators\/[^/]+\/permission$/.test(tail)) return 'repos/_/_/collaborators/_/permission';
   if (tail.startsWith('compare/') && tail.includes('...')) return 'repos/_/_/compare/_..._';
   return `repos/_/_/${tail.split('/').map((segment) => (/^\d+$/.test(segment) ? '_' : segment)).join('/')}`;
 }
@@ -287,12 +295,13 @@ function pullNamed(state, operation) {
 }
 
 /** What the comment read selects of a page of comments. */
-const COMMENTS = 'pageInfo { hasNextPage endCursor } nodes { body createdAt }';
+const COMMENTS = 'pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit }';
 
 /** Answers a page of a pull request's comments, oldest first. */
 async function comments(board, state, operation) {
   inTheRepository(state, operation);
-  return { repository: { pullRequest: { comments: page(pullNamed(state, operation).comments, fieldIn(operation.selections, 'comments')) } } };
+  const pull = pullNamed(state, operation);
+  return { repository: { pullRequest: { comments: page(pull.comments.map((comment, index) => commentOf(comment, pull.number, index)), fieldIn(operation.selections, 'comments')) } } };
 }
 
 /** What GitHub answers over REST for a path it holds nothing at, as `gh` reports it. */
@@ -425,6 +434,11 @@ const COMMANDS = {
     const { base, sha } = pullNamed(state, operation);
     return { repository: { pullRequest: { baseRefName: base, headRefOid: sha } } };
   },
+  [graphql(repositoryShape('pullRequest(number: _) { mergeable }'))]: async (board, state, operation) => {
+    inTheRepository(state, operation);
+    const pull = pullNamed(state, operation);
+    return { repository: { pullRequest: { mergeable: state.repository?.mergeable?.[pull.number] ?? 'UNKNOWN' } } };
+  },
   // A pull request's diff, or the forge's refusal to serve it, which GitHub gives as HTTP 406.
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'])]: async (board, state, args) => {
     const pull = repositoryOf(state).pull(Number(pathIn(state, args).split('/')[1]));
@@ -440,6 +454,75 @@ const COMMANDS = {
     const mergeBase = held?.mergeBase ?? (state.origin ? comparedIn(state.origin, base, head).mergeBase : null);
     if (!mergeBase) throw notFound('https://docs.github.com/rest/commits/commits#compare-two-commits');
     return JSON.stringify({ merge_base_commit: { sha: mergeBase } });
+  },
+  [commandOf(['api', 'repos/_/_/collaborators/_/permission', '-X', 'GET'])]: async (board, state, args) => {
+    const path = pathIn(state, args);
+    const login = decodeURIComponent(path.split('/')[1]);
+    const refused = state.repository?.permissionFailures?.[login];
+    if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+    const role = state.repository?.permissions?.[login] ?? (state.repository?.permissions ? null : 'write');
+    if (role === null) throw notFound('https://docs.github.com/rest/collaborators/collaborators#get-repository-permissions-for-a-user');
+    return JSON.stringify({ permission: { maintain: 'write', triage: 'read' }[role] ?? role, role_name: role });
+  },
+  [commandOf(['api', 'repos/_/_/commits/_/check-runs?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
+    const path = pathIn(state, args);
+    const [, sha, endpoint] = path.split('/');
+    const refused = state.repository?.checkFailures?.[sha];
+    if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+    const pageNumber = Number(new URLSearchParams(endpoint.split('?')[1]).get('page'));
+    const all = state.repository?.checks?.[sha] ?? [];
+    return JSON.stringify({ total_count: all.length, check_runs: all.slice((pageNumber - 1) * 100, pageNumber * 100) });
+  },
+  [commandOf(['api', 'repos/_/_/commits/_/statuses?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
+    const path = pathIn(state, args);
+    const [, sha, endpoint] = path.split('/');
+    const pageNumber = Number(new URLSearchParams(endpoint.split('?')[1]).get('page'));
+    return JSON.stringify((state.repository?.statuses?.[sha] ?? []).slice((pageNumber - 1) * 100, pageNumber * 100));
+  },
+  [commandOf(['api', 'repos/_/_/rules/branches/_?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
+    const path = pathIn(state, args);
+    const branch = decodeURIComponent(path.split('/')[2].split('?')[0]);
+    const refused = state.repository?.ruleFailures?.[branch];
+    if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+    const pageNumber = Number(new URLSearchParams(path.split('?')[1]).get('page'));
+    const active = (state.repository?.rules?.[branch] ?? []).filter((rule) => rule.enforcement === undefined || rule.enforcement === 'active');
+    return JSON.stringify(active.slice((pageNumber - 1) * 100, pageNumber * 100).map(({ enforcement, ...rule }) => rule));
+  },
+  [commandOf(['api', 'repos/_/_/branches/_/protection', '-X', 'GET'])]: async (board, state, args) => {
+    const branch = decodeURIComponent(pathIn(state, args).split('/')[1]);
+    const protection = state.repository?.protections?.[branch];
+    if (protection === undefined) throw new GhPrinted('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected', status: '404' }));
+    return JSON.stringify(protection);
+  },
+  [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const pull = repositoryOf(state).pull(number);
+    if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#get-a-pull-request');
+    return JSON.stringify({ state: state.repository?.pullStates?.[number] ?? (pull.merged ? 'closed' : 'open'), merged: pull.merged, mergeable: state.repository?.mergeable && Object.hasOwn(state.repository.mergeable, number) ? state.repository.mergeable[number] : true, head: { sha: pull.sha }, merge_commit_sha: state.repository?.mainSha ?? null });
+  },
+  [commandOf(['api', 'repos/_/_/pulls/_/merge', '-X', 'PUT', '-f', 'sha=_', '-f', 'merge_method=merge'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const pull = state.repository?.pullRequests?.find((candidate) => candidate.number === number);
+    if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#merge-a-pull-request');
+    const expected = args[5].slice('sha='.length);
+    if (pull.sha !== expected) throw new GhPrinted('gh: Conflict (HTTP 409)', JSON.stringify({ status: '409', message: 'Head branch was modified. Review and try the merge again.' }));
+    if (pull.merged) return JSON.stringify({ sha: state.repository.mainSha, merged: true, message: 'Pull Request successfully merged' });
+    const reply = state.repository?.mergeReplies?.[number];
+    if (reply) throw new GhPrinted(`gh: Method Not Allowed (HTTP ${reply.status})`, JSON.stringify(reply));
+    pull.merged = true;
+    state.repository.mainSha = 'm'.repeat(40);
+    return JSON.stringify({ sha: state.repository.mainSha, merged: true, message: 'Pull Request successfully merged' });
+  },
+  [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const pull = state.repository?.pullRequests?.find((candidate) => candidate.number === number);
+    if (!pull) throw notFound('https://docs.github.com/rest/issues/comments#create-an-issue-comment');
+    const refused = state.repository?.commentReplies?.[number];
+    if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+    const body = args[5].slice('body='.length);
+    pull.comments ??= [];
+    pull.comments.push({ body, createdAt: now() });
+    return JSON.stringify({ id: pull.comments.length, body });
   },
 };
 

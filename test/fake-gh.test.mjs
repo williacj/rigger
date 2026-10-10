@@ -19,6 +19,7 @@ import { AGENT_ANSWERED, seedRepository } from './fake-gh.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
 import { writeFileSync } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -75,6 +76,67 @@ test('the real adapter reads cards, columns, fields and labels through the fake 
     fields: [{ name: 'Priority', options: ['P1', 'P0', 'P2'] }],
     labels: ['type:change', 'type:spec'],
   });
+});
+
+test('the repository read answers a pull request mergeable state through the fake gh', async () => {
+  const fake = installed();
+  seedRepository(fake, { pullRequests: [{ number: 12, head: 'topic', sha: 'a'.repeat(40) }], mergeable: { 12: 'MERGEABLE' } });
+
+  const state = await onPath(fake, () => repositoryReads(BOARD, { emitter: UNKILLED }).readMergeable(12));
+
+  assert.equal(state, 'mergeable');
+});
+
+test('the repository read answers comment identity, author permission and edit, reading one author once', async () => {
+  const fake = installed();
+  seedRepository(fake, {
+    pullRequests: [{ number: 12, head: 'topic', sha: 'a'.repeat(40), comments: [
+      { id: 'IC_1', body: 'one', createdAt: '2026-10-09T10:00:00Z', author: { login: 'alex' }, lastEditedAt: null, includesCreatedEdit: false },
+      { id: 'IC_2', body: 'two', createdAt: '2026-10-09T10:01:00Z', author: { login: 'alex' }, lastEditedAt: '2026-10-09T11:00:00Z', includesCreatedEdit: true },
+    ] }],
+    permissions: { alex: 'maintain' },
+  });
+
+  const comments = await onPath(fake, () => repositoryReads(BOARD, { emitter: UNKILLED }).readComments(12));
+
+  assert.deepEqual(comments, [
+    { body: 'one', createdAt: '2026-10-09T10:00:00Z', id: 'IC_1', author: 'alex', permission: 'maintain', edited: false },
+    { body: 'two', createdAt: '2026-10-09T10:01:00Z', id: 'IC_2', author: 'alex', permission: 'maintain', edited: true },
+  ]);
+  assert.equal(fake.sent().filter((args) => args[1]?.includes('/collaborators/alex/permission')).length, 1);
+});
+
+test('a completed successful check run answers passed through the fake forge', async () => {
+  const fake = installed();
+  const sha = 'a'.repeat(40);
+  seedRepository(fake, { checks: { [sha]: [{ name: 'ci', status: 'completed', conclusion: 'success', app: { id: 15368 } }] } });
+
+  const states = await onPath(fake, () => repositoryReads(BOARD, { emitter: UNKILLED }).readCheckStates(sha, [{ context: 'ci', integration_id: 15368 }]));
+
+  assert.deepEqual(states, { ci: { state: 'passed', creator: null } });
+});
+
+test('active ruleset checks answer as the branch effective rules through the fake forge', async () => {
+  const fake = installed();
+  seedRepository(fake, { rules: { main: [{ type: 'required_status_checks', enforcement: 'active', parameters: { required_status_checks: [{ context: 'ci', integration_id: 15368 }] } }] } });
+
+  const rules = await onPath(fake, () => repositoryReads(BOARD, { emitter: UNKILLED }).readEffectiveRules('main'));
+
+  assert.deepEqual(rules, [{ context: 'ci', integration_id: 15368 }]);
+});
+
+test('repository-write merges a pull request at the handed head by merge commit', async () => {
+  const fake = installed();
+  const sha = 'a'.repeat(40);
+  seedRepository(fake, { mainSha: 'b'.repeat(40), pullRequests: [{ number: 12, head: 'topic', sha }] });
+
+  const answer = await onPath(fake, () => repositoryWriteSide(BOARD, { emitter: UNKILLED }).mergePullRequest(12, sha));
+
+  assert.deepEqual(answer, { outcome: 'merged', sha: 'm'.repeat(40) });
+  const held = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8')).repository;
+  assert.equal(held.mainSha, 'm'.repeat(40));
+  assert.equal(held.pullRequests[0].merged, true);
+  assert.deepEqual(fake.sent().find((args) => args[1]?.endsWith('/merge')), ['api', 'repos/williacj/rigger/pulls/12/merge', '-X', 'PUT', '-f', `sha=${sha}`, '-f', 'merge_method=merge']);
 });
 
 test('the fake gh answers a board past one page, and its drafts, pull requests and other repositories\' issues, as GitHub does', async () => {
@@ -419,7 +481,7 @@ test("the repository reads through the fake gh answer a seeded pull request's di
   await onPath(fake, async () => {
     assert.equal(Buffer.compare(Buffer.from(await reads().readDiff(301)), Buffer.from(diff)), 0);
     assert.deepEqual(await reads().readMergeBase(301), { base: 'main', head: sha(301), mergeBase: sha(1) });
-    assert.deepEqual(await reads().readComments(301), comments);
+    assert.deepEqual((await reads().readComments(301)).map(({ body, createdAt }) => ({ body, createdAt })), comments);
   });
 });
 

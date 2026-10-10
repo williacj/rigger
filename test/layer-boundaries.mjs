@@ -15,10 +15,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
  * The forge adapter's sides (`ARCHITECTURE.md`, boundary rule 2). Each side is its own module in
  * the adapter's directory, together with its runner, which lives in the one module holding all
- * three and is named for its side: the item-write side's is `itemWriteRunner`.
+ * four and is named for its side: the item-write side's is `itemWriteRunner`.
  */
 const FORGE = 'src/substrate/forge';
-const SIDES = ['read', 'schema-write', 'item-write'];
+const SIDES = ['read', 'schema-write', 'item-write', 'repository-write'];
 const RUNNERS = `${FORGE}/runners.mjs`;
 const sideModule = (side) => `${FORGE}/${side}.mjs`;
 const runnerOf = (side) => `${side.replace(/-(\w)/g, (_, letter) => letter.toUpperCase())}Runner`;
@@ -29,8 +29,8 @@ const runnerOf = (side) => `${side.replace(/-(\w)/g, (_, letter) => letter.toUpp
  * runners module, and neither is held to its side's rule.
  */
 const IMPORTERS = [
-  { rule: 'rule 1', sides: ['schema-write', 'item-write'], barred: (file) => file.startsWith('src/scheduling/'), says: 'src/scheduling/ imports the read side only' },
-  { rule: 'rule 5', sides: ['item-write'], barred: (file) => !file.startsWith('src/workflow/'), says: 'only src/workflow/ imports the item-write side' },
+  { rule: 'rule 1', sides: ['schema-write', 'item-write', 'repository-write'], barred: (file) => file.startsWith('src/scheduling/'), says: 'src/scheduling/ imports the read side only' },
+  { rule: 'rule 5', sides: ['item-write', 'repository-write'], barred: (file) => !file.startsWith('src/workflow/'), says: 'only src/workflow/ imports the item-write or repository-write side' },
   { rule: 'rule 6', sides: ['schema-write'], barred: (file) => !file.startsWith('src/cli/'), says: 'only src/cli/ imports the schema-write side' },
 ];
 
@@ -43,7 +43,7 @@ const IMPORTERS = [
 const WORKSPACES = { rule: 'rule 10', file: 'src/substrate/worktrees.mjs', importer: 'src/execution/' };
 
 /** The write sides a module may never hand on, whichever directory it is in. */
-const GUARDED = ['schema-write', 'item-write'];
+const GUARDED = ['schema-write', 'item-write', 'repository-write'];
 
 /** The names a layer may not touch in code, as a name or as a string, and the rule barring each. */
 const NAMES = [

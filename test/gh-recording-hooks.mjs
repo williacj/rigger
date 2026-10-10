@@ -3,6 +3,7 @@
 
 /** The forge adapter's sides, which reach `gh` only through the runners. */
 const SIDES = ['read.mjs', 'item-write.mjs', 'schema-write.mjs'].map((file) => `/src/substrate/forge/${file}`);
+SIDES.push('/src/substrate/forge/repository-write.mjs');
 
 const RUNNERS = '/src/substrate/forge/runners.mjs';
 

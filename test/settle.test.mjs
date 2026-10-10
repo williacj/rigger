@@ -202,7 +202,7 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
     merged: [],
     pull: { status: 'fulfilled', value: { number: 130, base, head: pullFrom(13, 130).sha } },
     diff: { status: 'fulfilled', value: 'diff --git a/x b/x\n' },
-    comments: { status: 'fulfilled', value: comments },
+    comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_130_1', author: 'rigger-fake', permission: 'write', edited: false }] },
     editedAt: { status: 'fulfilled', value: '2026-10-02T08:00:00Z' },
   });
 });

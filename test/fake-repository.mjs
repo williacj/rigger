@@ -10,11 +10,24 @@ import { gitIn } from './git-repository.mjs';
  * where none is given, and `merged` whether it was merged, where it is open otherwise. `diff` is
  * the text the forge serves as its diff, empty where none is given; `declined` is the reason the
  * forge gives where it declines to serve one. `mergeBase` is the commit the forge compares its head
- * with, where none is given one the forge cannot answer. `comments` are `{ body, createdAt }`, oldest
- * first. `from` names another repository a fork's pull request is from, and is null for this
+ * with, where none is given one the forge cannot answer. `comments` carry body, creation time,
+ * identity, author and edit fields, oldest first. `from` names another repository a fork's pull
+ * request is from, and is null for this
  * repository's own. `title` and `body` are what it was opened with.
  */
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body'];
+
+/** The fields a comment read selects, filled as the fake forge gives an agent's comment. */
+export function commentOf(comment, number, index) {
+  return {
+    body: comment.body,
+    createdAt: comment.createdAt,
+    id: comment.id ?? `IC_${number}_${index + 1}`,
+    author: comment.author === undefined ? { login: 'rigger-fake' } : comment.author,
+    lastEditedAt: comment.lastEditedAt ?? null,
+    includesCreatedEdit: comment.includesCreatedEdit ?? false,
+  };
+}
 
 /** A pull request as the fake holds it, with every fact it was not given at its default. */
 function heldPull(pull) {
@@ -60,7 +73,13 @@ export function createFakeRepository({ branches = [], pullRequests = [], edited 
       if (mergeBase === null) throw new Error(`the fake repository holds no merge base for pull request #${number}`);
       return { base, head: sha, mergeBase };
     },
-    readComments: async (number) => structuredClone(known('readComments', number).comments),
+    readMergeable: async (number) => known('readMergeable', number).mergeable ?? 'unknown',
+    readCheckStates: async (sha, required) => Object.fromEntries(required.map(({ context }) => [context, { state: 'absent', creator: null }])),
+    readEffectiveRules: async () => [],
+    readComments: async (number) => structuredClone(known('readComments', number).comments.map((comment, index) => {
+      const node = commentOf(comment, number, index);
+      return { body: node.body, createdAt: node.createdAt, id: node.id, author: node.author?.login ?? null, permission: 'write', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
+    })),
   };
   return {
     operations,

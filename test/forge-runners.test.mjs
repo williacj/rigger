@@ -1,4 +1,4 @@
-// ABOUTME: Tests the forge adapter's three runners: what each admits from its own side, what it
+// ABOUTME: Tests the forge adapter's four runners: what each admits from its own side, what it
 // refuses by name, and that a refused request sends nothing.
 
 import { test } from 'node:test';

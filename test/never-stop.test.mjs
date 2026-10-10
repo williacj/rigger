@@ -139,6 +139,7 @@ async function startKilled(started, options) {
 const CALLER = [
   `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
   `import { signalStandIn } from ${JSON.stringify(new URL('./signal-stand-in.mjs', import.meta.url).href)};`,
+  `import { prepareSighting } from ${JSON.stringify(new URL('./census-sightings.mjs', import.meta.url).href)};`,
   "import { appendFileSync, existsSync, readFileSync } from 'node:fs';",
   "import { mkdirSync as sightingMkdir, writeFileSync as sightingWrite } from 'node:fs';",
   "import { createHash as sightingHash } from 'node:crypto';",
@@ -208,15 +209,17 @@ const CALLER = [
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
   "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
+  "prepareSighting(here);",
   "appendFileSync(join(here, 'exiting'), String(Date.now()));",
   'process.exit(0);',
 ].join('\n');
 
+const sightingEvidenceRoot = () => process.env.C615_SIGHTING_EVIDENCE_ROOT ?? process.env.C615_EVIDENCE_ROOT;
+
 const sightingAttempts = new Map();
 
 /** Retains one conditional exit-sighting attempt outside the suite scratch. */
-function sightingObservation(directory, options) {
-  const requested = process.env.C615_SIGHTING_EVIDENCE_ROOT;
+function sightingObservation(directory, options, requested = sightingEvidenceRoot()) {
   if (!requested || options.ps !== 'ps-sighted') return null;
   assert.ok(lstatSync(requested).isDirectory() && !lstatSync(requested).isSymbolicLink(), 'the sighting evidence root is unsafe');
   const root = realpathSync.native(requested);
@@ -227,7 +230,7 @@ function sightingObservation(directory, options) {
   const target = join(root, `attempt-${id}`);
   mkdirSync(target, { mode: 0o700 });
   writeFileSync(join(directory, 'sighting-attempt'), id, { flag: 'wx', mode: 0o600 });
-  const observation = { id, target, stderr: [], exit: { state: 'not-observed' }, close: { state: 'not-observed' }, finalSnapshot: false };
+  const observation = { id, root, target, stderr: [], exit: { state: 'not-observed' }, close: { state: 'not-observed' }, finalSnapshot: false };
   sightingAttempts.set(directory, observation);
   return observation;
 }
@@ -307,10 +310,10 @@ const linesOf = (directory, name) => (existsSync(join(directory, name)) ? readFi
  * its events, the signals it sent, and when it began to exit and when it had ended.
  */
 async function cleanedUp(directory, options) {
-  const observation = sightingObservation(directory, options);
+  const observation = sightingAttempts.get(directory) ?? sightingObservation(directory, options);
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
-  const run = spawn(process.execPath, [caller, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const run = spawn(process.execPath, [caller, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'], ...(observation ? { env: { ...process.env, C615_SIGHTING_EVIDENCE_ROOT: observation.root } } : {}) });
   if (observation) observation.callerPid = run.pid ?? null;
   let stderr = '';
   run.stderr.on('data', (chunk) => { stderr += chunk; });
@@ -329,7 +332,7 @@ async function cleanedUp(directory, options) {
       let timer;
       await Promise.race([observation.closed, new Promise((resolveClose) => { timer = setTimeout(resolveClose, 2_000); })]);
       clearTimeout(timer);
-      try { const retained = retainSighting(observation, directory, 'settled'); observation.finalSnapshot = true; observation.snapshotResult = retained.copy; }
+      try { const retained = retainSighting(observation, directory, 'settled'); observation.finalSnapshot = true; observation.snapshotResult = retained.copy; observation.snapshotReport = retained; }
       catch (error) { observation.snapshotError = error.code ?? error.name; }
     }
   }
@@ -490,8 +493,12 @@ async function censusCall(t, cell, afterKill = 'omit') {
 
 /** Runs the same stand-in through synchronous exit containment. */
 async function censusExit(t, cell, afterKill = 'omit') {
+  const prepared = ['B', 'A', 'U2'].includes(cell);
+  const selectedRoot = sightingEvidenceRoot();
+  if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
   const directory = holding(t);
-  if (process.env.C615_SIGHTING_EVIDENCE_ROOT) {
+  if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+  if (selectedRoot) {
     t.signal.addEventListener('abort', () => {
       const observation = sightingAttempts.get(directory);
       if (observation && !observation.finalSnapshot) {
@@ -500,6 +507,11 @@ async function censusExit(t, cell, afterKill = 'omit') {
       }
     }, { once: true });
     t.after(() => {
+      const unfinished = sightingAttempts.get(directory);
+      if (unfinished && !unfinished.finalSnapshot) {
+        try { const retained = retainSighting(unfinished, directory, 'teardown'); unfinished.finalSnapshot = true; unfinished.snapshotResult = retained.copy; unfinished.snapshotReport = retained; }
+        catch (error) { unfinished.snapshotError = error.code ?? error.name; }
+      }
       t.after(() => {
         const observation = sightingAttempts.get(directory);
         if (!observation) return;
@@ -511,8 +523,15 @@ async function censusExit(t, cell, afterKill = 'omit') {
   if (cell === 'X') reapingCommand(directory, true);
   else if (afterKill === 'zombie') joinedLate(directory);
   else holdingTwo(directory);
-  sightingPs(directory, { cell, afterKill });
+  sightingPs(directory, { cell, afterKill, prepared });
   const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
+  if (prepared) {
+    const retained = sightingAttempts.get(directory)?.snapshotReport;
+    assert.equal(retained?.close.state, 'closed', 'the exit caller did not close before private retention');
+    assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
+    assert.equal(retained.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
+    assert.deepEqual(retained.errors, [], 'private retention reported an error');
+  }
   const group = pidIn(directory, 'group');
   const two = pidIn(directory, 'two');
   const trace = read(directory, 'sighted-ps.log');
@@ -520,6 +539,14 @@ async function censusExit(t, cell, afterKill = 'omit') {
   assert.ok(existsSync(join(directory, 'sighted-first-stat')), 'the first census state read did not happen');
   if (cell !== 'X') assert.ok(existsSync(join(directory, 'sighted-live')), 'the last read before the kill did not find the member alive');
   assert.ok(groupKills(pairs, group) > 0, 'no group kill was sent');
+  if (prepared) {
+    const before = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat='], 'before-kill');
+    const after = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat=,xstat='], 'after-kill');
+    assert.ok(BigInt(after.start.startedNs) > BigInt(before.end.endedNs), 'the post-kill outer read preceded the before-kill answer');
+    const shown = new RegExp(`^\\s*${two} Z`, 'm');
+    if (afterKill === 'zombie') assert.match(after.stdout, shown, 'the answered post-kill read did not show the zombie');
+    else assert.doesNotMatch(after.stdout, new RegExp(`^\\s*${two} `, 'm'), 'the answered post-kill read named the omitted member');
+  }
   const mark = cell === 'X' ? 'reaped-two:' + existsSync(join(directory, 'reaped-two'))
     : afterKill === 'zombie' ? 'state:' + processState(two)
       : 'live-before-kill:' + existsSync(join(directory, 'sighted-live'));
@@ -534,6 +561,47 @@ function sightingReads(trace) {
     const [first, ...rows] = block.trimEnd().split('\n');
     return { args: first.slice(5), rows };
   });
+}
+
+/** Requires one settled outer answer with the exact read ID, argv and returned strings. */
+function answeredSightingRead(directory, trace, argv, phase) {
+  const records = linesOf(directory, 'sighting-reads/trace.jsonl');
+  const tool = join(directory, 'ps-sighted');
+  const matches = sightingReads(trace).filter((row) => row.args === argv.join(' ') && row.rows.includes(`PHASE ${phase}`));
+  assert.equal(matches.length, 1, `expected one ${phase} fixture response with exact argv`);
+  const expected = matches[0].rows.filter((row) => row.startsWith('ROW ')).map((row) => row.slice(4)).join('\n') + '\n';
+  const starts = records.filter((row) => {
+    if (row.kind !== 'start' || row.tool !== tool || JSON.stringify(row.argv) !== JSON.stringify(argv)) return false;
+    const end = records.find((answer) => answer.kind === 'end' && answer.id === row.id);
+    return end?.stdout?.type === 'string' && readFileSync(join(directory, 'sighting-reads', end.stdout.file), 'utf8') === expected;
+  });
+  assert.equal(starts.length, 1, `expected one answered outer ${phase} read matching the fixture response`);
+  const [start] = starts;
+  assert.equal(start.callerExitMarked, true, 'the sighting read began before caller exit');
+  const ends = records.filter((row) => row.id === start.id && row.kind !== 'start');
+  assert.equal(ends.length, 1, `outer read ${start.id} did not settle exactly once`);
+  const [end] = ends;
+  assert.equal(end.kind, 'end');
+  assert.equal(end.status, 0);
+  assert.equal(end.error, null);
+  assert.equal(end.signal, null);
+  assert.equal(end.returnedStreams, 'settled-return');
+  assert.ok(BigInt(end.endedNs) >= BigInt(start.startedNs), 'the outer read ended before it started');
+  const returned = (name) => {
+    const value = end[name];
+    assert.equal(value?.present, true);
+    assert.equal(value.type, 'string');
+    assert.ok(typeof value.file === 'string');
+    const bytes = readFileSync(join(directory, 'sighting-reads', value.file));
+    assert.equal(bytes.length, value.bytes, `outer read ${start.id} ${name} byte count changed`);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), value.sha256, `outer read ${start.id} ${name} digest changed`);
+    return bytes.toString('utf8');
+  };
+  const stdout = returned('stdout');
+  assert.ok(stdout.length > 0, `outer read ${start.id} returned no state rows`);
+  assert.equal(returned('stderr'), '', `outer read ${start.id} returned stderr`);
+  assert.equal(stdout, expected, `outer read ${start.id} differs from the completed fixture response`);
+  return { start, end, stdout };
 }
 
 /** Requires an answered post-kill read that omitted the target, not just a fixture label. */

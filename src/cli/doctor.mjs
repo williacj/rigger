@@ -133,8 +133,8 @@ export function sameTree(target, packageRoot = PACKAGE) {
  * `ask` stands in for that in tests. A kill the sink refused rejects, as the adapter rejects.
  */
 export async function repoRoot(dir, options = {}) {
-  const { stdout, why } = await gitAnswer(['-C', dir, 'rev-parse', '--show-toplevel'], options);
-  return why === undefined ? { root: real(stdout.trim()) } : { root: null, why };
+  const { stdout, why, status } = await gitAnswer(['-C', dir, 'rev-parse', '--show-toplevel'], options);
+  return why === undefined ? { root: real(stdout.trim()) } : { root: null, why, status };
 }
 
 /**
@@ -155,7 +155,7 @@ export async function gitAnswer(args, { ask = asked, emitter, timeout = CALL_TIM
     return { why: `${spelled} could not be run here: ${oneLine(failure.message)}` };
   }
   if (said.timedOut) return { why: `the timeout of ${timeout} ms ended ${spelled}` };
-  if (said.status !== 0) return { why: `${spelled} exited ${said.status}: ${firstLine(said)}` };
+  if (said.status !== 0) return { why: `${spelled} exited ${said.status}: ${firstLine(said)}`, status: said.status };
   return { stdout: said.stdout };
 }
 
