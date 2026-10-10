@@ -142,7 +142,7 @@ test('given a Review card with one open pull request from its line of work, L2 a
   const [next] = await decided([cardIn(7, columns.review)], readsOver({ pullRequests: [{ ...pullFrom(7, 71), diff: DIFF, mergeBase: BASE }] }).reads);
 
   assert.equal(next.action, 'judge', JSON.stringify(next));
-  assert.deepEqual(next.judges.map(({ role, facts }) => ({ role, facts })), [{ role: 'reviewer', facts: { card: 7, revision: null, pull: 71, base: BASE, head: pullFrom(7, 71).sha } }]);
+  assert.deepEqual(next.judges.map(({ role, facts }) => ({ role, facts })), [{ role: 'reviewer', facts: { card: 7, revision: 'e8328625667a5f466d3cae9f480e1f4b22b17b98d8d0736d99ad445226be38e5', pull: 71, base: BASE, head: pullFrom(7, 71).sha } }]);
 });
 
 // proves R-WORK-24
@@ -204,7 +204,7 @@ test('given a Review card with one open pull request from its line of work and a
   assert.deepEqual(next, { action: 'ignore' });
 });
 
-test('L2\'s facts call reads, for each Review card holding exactly one open pull request from its line of work, that pull request, its diff, its comments and the acceptance\'s revision, and reads none of them for any other card', async () => {
+test('L2\'s facts call reads, for each Review card holding exactly one open pull request from its line of work, that pull request, its diff and its comments, and reads none of them for any other card', async () => {
   const seed = {
     pullRequests: [
       { ...pullFrom(17, 171), diff: DIFF, mergeBase: BASE },
@@ -219,12 +219,12 @@ test('L2\'s facts call reads, for each Review card holding exactly one open pull
   await factsCall({ config, reads, decide: () => ({ action: 'ignore' }) })(cards);
 
   const reviewReads = made.filter(([operation]) => !['readPullRequests', 'readBranches'].includes(operation));
-  assert.deepEqual(reviewReads.sort(), [['readComments', 171], ['readDiff', 171], ['readEditedAt', 17], ['readMergeBase', 171]]);
+  assert.deepEqual(reviewReads.sort(), [['readComments', 171], ['readDiff', 171], ['readMergeBase', 171]]);
 });
 
-test('L2\'s facts call answers a Review card\'s one open pull request as its number, the merge base its diff is taken from and its head, beside its diff, comments and revision, each as the read settled', async () => {
+test('L2\'s facts call answers a Review card\'s one open pull request as its number, the merge base its diff is taken from and its head, beside its diff and comments, each as the read settled', async () => {
   const comments = [{ body: 'Findings at x by reviewer', createdAt: '2026-10-03T09:00:00Z' }];
-  const seed = { pullRequests: [{ ...pullFrom(22, 221), diff: DIFF, mergeBase: BASE, comments }], edited: { 22: '2026-10-02T08:00:00Z' } };
+  const seed = { pullRequests: [{ ...pullFrom(22, 221), diff: DIFF, mergeBase: BASE, comments }] };
   let forge;
   const decide = (card) => {
     forge = card.forge;
@@ -233,11 +233,10 @@ test('L2\'s facts call answers a Review card\'s one open pull request as its num
 
   (await factsCall({ config, reads: readsOver(seed).reads, decide })([cardIn(22, columns.review)]))(cardIn(22, columns.review));
 
-  const { pull, diff, comments: read, editedAt } = forge;
-  assert.deepEqual({ pull, diff, comments: read, editedAt }, {
+  const { pull, diff, comments: read } = forge;
+  assert.deepEqual({ pull, diff, comments: read }, {
     pull: { status: 'fulfilled', value: { number: 221, base: BASE, head: pullFrom(22, 221).sha } },
     diff: { status: 'fulfilled', value: DIFF },
     comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_221_1', author: 'rigger-fake', permission: 'write', edited: false }] },
-    editedAt: { status: 'fulfilled', value: '2026-10-02T08:00:00Z' },
   });
 });

@@ -722,15 +722,13 @@ test("where the repository's owner and the declared board owner each hold a boar
 
 /**
  * The key paths gh printed on 2026-10-01, with gh 2.99.0, for each of the repository reads'
- * requests on this repository: the pull requests from a branch, its branches, an issue's last
- * edit, a pull request's base and head, its comments, and the comparison its merge base is read
- * from. A constructed answer holding any other path carries a field the request does not select.
+ * requests on this repository: the pull requests from a branch, its branches, a pull request's
+ * base and head, its comments, and the comparison its merge base is read from. A constructed answer holding any other path carries a field the request does not select.
  */
 const PRINTED_REPOSITORY = Object.fromEntries(
   [
     ['pull requests', 'rigger-pull-requests-2026-10-01.json'],
     ['branches', 'rigger-branches-2026-10-01.json'],
-    ['edited', 'rigger-issue-edited-2026-10-01.json'],
     ['head', 'rigger-pull-request-head-2026-10-01.json'],
     ['mergeable', 'rigger-pull-request-mergeable-2026-10-09.json'],
     ['comments', 'rigger-pull-request-comments-2026-10-09.json'],
@@ -779,8 +777,8 @@ function repositoryForge(answers = {}) {
       return { status: 0, stdout: JSON.stringify(held), stderr: '' };
     }
     const document = documentOf(args);
-    for (const kind of ['pullRequests(', 'refs(', 'issue(', 'comments(']) {
-      if (document.includes(kind)) return answer({ 'pullRequests(': 'pull requests', 'refs(': 'branches', 'issue(': 'edited', 'comments(': 'comments' }[kind], document);
+    for (const kind of ['pullRequests(', 'refs(', 'comments(']) {
+      if (document.includes(kind)) return answer({ 'pullRequests(': 'pull requests', 'refs(': 'branches', 'comments(': 'comments' }[kind], document);
     }
     if (document.includes('mergeable')) return answer('mergeable', document);
     if (document.includes('pullRequest(')) return answer('head', document);
@@ -897,26 +895,6 @@ test("the repository read answers the branches gh answered for this repository o
   assert.deepEqual(read, { main: true, 'm4/357-safe-declared-tools': true, 'm4/477-structure-deltas': false });
 });
 
-test("given an issue number, the repository read answers the time of its body's last edit, and null for a body never edited", async () => {
-  const edited = repositoryReads(BOARD, { send: repositoryForge({ edited: { repository: { issue: { lastEditedAt: '2026-10-01T13:20:50Z' } } } }) });
-  const never = repositoryReads(BOARD, { send: repositoryForge({ edited: { repository: { issue: { lastEditedAt: null } } } }) });
-
-  assert.equal(await edited.readEditedAt(479), '2026-10-01T13:20:50Z');
-  assert.equal(await never.readEditedAt(479), null);
-});
-
-test("the repository read answers #479's last edit as gh answered it on 2026-10-01", async () => {
-  const recorded = readFileSync(join(FIXTURES, 'rigger-issue-edited-2026-10-01.json'), 'utf8');
-  const sent = [];
-  const send = (command, args) => {
-    sent.push(documentOf(args));
-    return { status: 0, stdout: recorded, stderr: '' };
-  };
-
-  assert.equal(await repositoryReads(BOARD, { send }).readEditedAt(479), '2026-10-01T13:20:50Z');
-  assert.deepEqual(sent, ['query { repository(owner: "williacj", name: "rigger") { issue(number: 479) { lastEditedAt } } }']);
-});
-
 test('given a pull request number, the repository read answers its diff as the forge serves it, byte for byte', async () => {
   const send = repositoryForge({ 'repos/williacj/rigger/pulls/12': DIFF });
 
@@ -992,7 +970,6 @@ test("the repository read answers #503's comments as gh answered them on 2026-10
 const REPOSITORY_READS = {
   readPullRequests: { call: (reads) => reads.readPullRequests('rigger-214'), names: 'branch rigger-214' },
   readBranches: { call: (reads) => reads.readBranches(['rigger-214', 'rigger-215']), names: 'branches rigger-214, rigger-215' },
-  readEditedAt: { call: (reads) => reads.readEditedAt(214), names: 'issue #214' },
   readDiff: { call: (reads) => reads.readDiff(12), names: 'pull request #12' },
   readMergeBase: { call: (reads) => reads.readMergeBase(12), names: 'pull request #12' },
   readMergeable: { call: (reads) => reads.readMergeable(12), names: 'pull request #12' },
@@ -1030,7 +1007,7 @@ test('a repository read that gh answers without the repository, issue or pull re
 test('a repository read refuses a number that is not an issue or pull request number, and sends nothing', async () => {
   const sent = [];
   const reads = repositoryReads(BOARD, { send: (command, args) => sent.push(args) });
-  for (const call of [() => reads.readEditedAt('214) { id } x: issue(number: 1'), () => reads.readDiff('12/../../labels'), () => reads.readMergeBase(1.5), () => reads.readComments(null)]) {
+  for (const call of [() => reads.readDiff('12/../../labels'), () => reads.readMergeBase(1.5), () => reads.readComments(null)]) {
     await assert.rejects(call(), /not an issue or pull request number/);
   }
   assert.deepEqual(sent, []);
@@ -1041,7 +1018,6 @@ test('every request a full repository read issues reaches the spawn through the 
   const answers = {
     'pull requests': pulls({ number: 12 }),
     branches: { paged: { null: branchPage(['main']) } },
-    edited: { repository: { issue: { lastEditedAt: null } } },
     head: { repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } },
     mergeable: { repository: { pullRequest: { mergeable: 'MERGEABLE' } } },
     comments: { paged: { null: commentPage([]) } },

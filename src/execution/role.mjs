@@ -1,7 +1,6 @@
 // ABOUTME: L1's role runner: what L1's dispatching function is handed to run one role's agent CLI,
 // asked of the provider adapter L2's role answer names.
 
-import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
@@ -16,7 +15,9 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * and Q4, on #467): the command, arguments and standard input the provider adapter answers, `cwd`
  * as the agent CLI's working directory, `directory` as the dispatch's directory, which `dispatch`
  * takes as its `workspace`, the environment, and the answer's `timeout`. It also answers the
- * answer's `facts` and a digest of its `evidence`, which `dispatch.start` records. The caller adds
+ * answer's `facts` and the `digest` of its evidence L2 handed beside it, which `dispatch.start`
+ * records: L1 records the digest it is handed and computes none (the architect's r2 ruling 6 on
+ * #642). The caller adds
  * the dispatch's id, card, state directory and sink, and runs it once this has answered (ruling 5).
  *
  * L3 hands the directories beside L2's answer, which names none (ruling 3, P8): for a judge, `cwd`
@@ -28,9 +29,7 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  *
  * The environment is built in four steps (ruling 9): `env`, as L3 hands it; less every variable
  * that redirects git (`gitEnvironment`); less the variables the adapter's `unset` names; and then
- * the adapter's `env`, set over what is left. The digest is SHA-256 over `evidence` alone, so two
- * judges handed the same evidence record the same one whatever their instructions, and the
- * evidence itself reaches no event.
+ * the adapter's `env`, set over what is left. The evidence itself reaches no event.
  *
  * `scratch` is the card's scratch base, and `repository` the repository L1 made from, each of which
  * L3 hands unread from L1's make (the architect's rulings 19 and 21 on #467). Once the provider is
@@ -80,8 +79,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
   const environment = gitEnvironment(env);
   for (const name of unset) delete environment[name];
   Object.assign(environment, set);
-  const digest = createHash('sha256').update(answer.evidence, 'utf8').digest('hex');
-  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, timeout: answer.timeout, facts: answer.facts, digest };
+  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };
 }
 
 /**
