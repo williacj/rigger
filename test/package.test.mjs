@@ -201,6 +201,8 @@ test('the installed tarball runs init and then doctor in a scratch repository ou
   const init = runInstalled(['init'], scratch);
   assert.equal(init.status, 0, init.stderr);
   assert.ok(existsSync(join(scratch, 'rigger.config.mjs')), `init wrote no config:\n${init.stdout}`);
+  assert.ok(statSync(join(scratch, '.githooks', 'pre-push')).mode & 0o111, 'installed init wrote a nonexecutable hook');
+  assert.equal(gitIn(scratch, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
 
   // Doctor exits non-zero here, since the stand-in answers that no host is signed in and the
   // narrow path leaves it no agent CLI to ask, so what is held is that it reached the report: its
