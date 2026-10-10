@@ -3786,6 +3786,7 @@ async function firstDirectoryListing(t, answer) {
   const heldListing = answer === 'LF' || answer === 'LT';
   const heldPerPid = answer === 'PF' || answer === 'PT';
   const heldRead = heldState || heldListing || heldPerPid;
+  const ownedListing = answer === 'OF' || answer === 'OT';
   assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the first-listing control needs external TMPDIR and a private evidence root before fixtures start');
   const checkout = realpathSync.native(process.cwd());
   const scratchRoot = realpathSync.native(process.env.TMPDIR);
@@ -3793,7 +3794,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3872,6 +3873,21 @@ async function firstDirectoryListing(t, answer) {
   fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
   const lsofBody = answer === 'F'
     ? 'printf "%s\\n" "$@" > "$here/first-listing-argv"\n: > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2'
+    : ownedListing ? [
+      'if [ ! -f "$here/first-listing-entered" ]; then : > "$here/first-listing-entered";',
+      `  ${listingOf('outside', realpathSync.native(sub))}`,
+      '  exit 0',
+      'fi',
+      'if [ ! -f "$here/owned-per-pid-answered" ]; then',
+      '  printf "%s\\n" "$@" > "$here/owned-per-pid-argv"',
+      '  : > "$here/owned-per-pid-answered"',
+      `  ${listingOf('outside', realpathSync.native(sub))}`,
+      '  exit 0',
+      'fi',
+      'printf "%s\\n" "$@" > "$here/owned-later-argv"',
+      ': > "$here/owned-later-entered"',
+      answer === 'OF' ? 'echo "lsof: forced owned-listing failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
+    ].join('\n')
     : heldListing || heldPerPid ? [
       'if [ -f "$here/first-listing-entered" ]; then',
       `  printf "%s\\n" "$@" > "$here/${heldPerPid ? 'per-pid-listing' : 'later-listing'}-argv"`,
@@ -3897,9 +3913,25 @@ async function firstDirectoryListing(t, answer) {
       'exec /bin/ps "$@"',
     ].join('\n'));
   }
+  if (ownedListing) {
+    if (answer === 'OT') writeFileSync(join(directory, 'hold'), '');
+    fixture(directory, 'ps', [
+      'pid=$(/bin/cat "$here/outside.pid")',
+      'if [ -f "$here/hang" ]; then',
+      '  if [ "$*" = "-p $pid -o ucomm=" ]; then printf "fresh-owned-name\\n"; exit 0; fi',
+      '  if [ "$*" = "-ww -p $pid -o pid=,command=" ]; then printf "%s fresh-owned-command\\n" "$pid"; exit 0; fi',
+      'fi',
+      'if [ -f "$here/owned-per-pid-answered" ] && [ ! -f "$here/owned-state-entered" ] && [ "$*" = "-p $pid -o pid=,stat=" ]; then',
+      '  /bin/ps -p "$pid" -o stat= > "$here/owned-state-actual"',
+      '  : > "$here/owned-state-entered"',
+      '  printf "%s S\\n" "$pid"; exit 0',
+      'fi',
+      'exec /bin/ps "$@"',
+    ].join('\n'));
+  }
   const callerPath = join(directory, 'caller.mjs');
-  writeFileSync(callerPath, answer === 'A' || heldRead ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
-  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead ? { ps: 'ps' } : { refused: 'outside' }), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  writeFileSync(callerPath, answer === 'A' || heldRead || ownedListing ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedListing ? { ps: 'ps' } : { refused: 'outside' }), ...(ownedListing ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
   caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
   caller.on('error', (error) => { callerError = error; });
   callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
@@ -4006,6 +4038,68 @@ async function firstDirectoryListing(t, answer) {
     assert.deepEqual(events.filter(({ pid: named }) => named === pid), [], 'the held PID acquired an invented named event');
     return;
   }
+  if (ownedListing) {
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    const pid = outsideBirth.pid;
+    const lsof = join(directory, 'lsof');
+    const ps = join(directory, 'ps');
+    const perPidArgs = [...firstArgs.slice(0, -2), '-p', String(pid), '-F', 'pun'];
+    const stateArgs = ['-p', String(pid), '-o', 'pid=,stat='];
+    const read = (tool, args, after = 0) => trace.find(({ kind, tool: path, args: given, sequence }) => kind === 'read-end' && path === tool && JSON.stringify(given) === JSON.stringify(args) && sequence > after);
+    const first = read(lsof, firstArgs);
+    const stop = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGSTOP' && result === true && sequence > first?.sequence);
+    const before = read(ps, stateArgs, stop?.sequence);
+    const second = read(lsof, perPidArgs, before?.sequence);
+    const priorName = read(ps, ['-p', String(pid), '-o', 'ucomm='], second?.sequence);
+    const priorCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], priorName?.sequence);
+    const after = read(ps, stateArgs, priorCommand?.sequence);
+    assert.ok(first && stop && before && second && priorName && priorCommand && after, 'the first round did not reach a twice-listed, stopped PID before the owned-state answer');
+    assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the first full listing did not name the recorded fixture');
+    assert.match(before.stdout, new RegExp(`^\\s*${pid}\\s+T`, 'm'), 'the PID was not H before its second listing');
+    assert.equal(second.status, 0, 'the owned PID was not listed a second time');
+    assert.equal(second.stdout, first.stdout, 'the second listing did not again name the stopped PID in its directory');
+    assert.ok(priorName.status === 0 && priorName.stdout.trim() && priorCommand.status === 0 && priorCommand.stdout.includes(String(pid)), 'the owned round did not answer its name and command reads');
+    assert.deepEqual(readFileSync(join(directory, 'owned-per-pid-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the second listing did not target the owned PID');
+    assert.match(readFileSync(join(directory, 'owned-state-actual'), 'utf8').trim(), /^T/, 'the fixture was not actually stopped at its final-state read');
+    assert.equal(after.stdout, `${pid} S\n`, 'the answered final state did not retain the twice-listed PID for another round');
+    assert.equal(after.status, 0, 'the final state did not answer');
+    assert.equal(after.error, undefined, 'the final-state answer timed out');
+    assert.equal(trace.some(({ kind, target, name, sequence }) => kind === 'signal-start' && target === pid && name === 'SIGCONT' && sequence < after.sequence), false, 'the PID left H before the owned-state answer');
+    const laterStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence);
+    const later = read(lsof, firstArgs, laterStart?.sequence);
+    assert.ok(laterStart && later, 'the owned PID did not reach a later full lsof');
+    assert.equal(trace.filter(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence).length, 1, 'the owned failure did not start exactly one later full listing');
+    assert.equal(existsSync(join(directory, 'owned-later-entered')), true, 'the later full lsof did not start its stand-in');
+    assert.deepEqual(readFileSync(join(directory, 'owned-later-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the failed later read was not a full lsof');
+    if (answer === 'OF') {
+      assert.equal(later.status, 2, 'the owned later-listing F did not return its failure');
+      assert.equal(later.stderr, 'lsof: forced owned-listing failure\n', 'the owned later-listing F lost its exact cause');
+      assert.equal(later.error, undefined, 'the owned later-listing F timed out');
+    } else {
+      assert.ok(laterStart.remaining > 0, 'the owned later-listing T was a pre-spawn cut');
+      assert.equal(later.error, 'ETIMEDOUT', 'the owned later-listing T did not time out after starting');
+      assert.equal(later.status, null, 'the owned later-listing T returned an answer');
+    }
+    const kill = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGKILL' && result === true && sequence > later.sequence);
+    const freshName = read(ps, ['-p', String(pid), '-o', 'ucomm='], kill?.sequence);
+    const freshCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], freshName?.sequence);
+    const postKill = read(ps, stateArgs, freshCommand?.sequence);
+    const resumed = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGCONT' && result === true && sequence > postKill?.sequence);
+    assert.ok(kill && freshName && freshCommand && postKill && resumed, 'the owned unread path did not kill, reread and resume the surviving PID in order');
+    assert.ok(freshName.status === 0 && !freshName.error && freshCommand.status === 0 && !freshCommand.error && postKill.status === 0 && !postKill.error, 'the post-kill reads were not answered results');
+    assert.equal(freshName.stdout, 'fresh-owned-name\n', 'the post-kill name did not come from its fresh read');
+    assert.equal(freshCommand.stdout, `${pid} fresh-owned-command\n`, 'the post-kill command did not come from its fresh read');
+    assert.notEqual(priorName.stdout.trim(), freshName.stdout.trim(), 'the old name was not distinguishable from the post-kill read');
+    assert.match(postKill.stdout, new RegExp(`^\\s*${pid}\\s+T`, 'm'), 'the post-kill read did not find the unchanged PID alive');
+    assert.deepEqual(pairs.filter(([target, signal]) => target === pid && signal !== 0).map(([, signal]) => signal), ['SIGSTOP', 'SIGKILL', 'SIGCONT'], 'the O path sent an invented or repeated signal');
+    assert.deepEqual(directoryEvents.map(({ event }) => event), ['directory.unread', 'survivor.unended'], 'the O failure did not report unread and unended separately');
+    assert.equal(directoryEvents[0].census, answer === 'OF' ? 'the process-table read failed: lsof: forced owned-listing failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the failed O read');
+    assert.equal(directoryEvents[0].killed, undefined, 'the unended PID was incorrectly recorded as killed');
+    assert.deepEqual({ pid: directoryEvents[1].pid, name: directoryEvents[1].name, cmd: directoryEvents[1].cmd }, { pid, name: 'fresh-owned-name', cmd: 'fresh-owned-command' }, 'the unended result invented or reused an old name');
+    assert.match(directoryEvents[1].reason, /^still alive (?:when L0's read bound ran out after its kill|1000 ms after L0's kill)$/, 'the post-kill unended reason did not follow the read');
+    assert.equal(trace.some(({ kind, event, sequence }) => kind === 'event' && event === 'directory.unread' && sequence > resumed.sequence), true, 'the unread event preceded the post-kill disposition');
+    return;
+  }
   if (answer === 'A') {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const read = (tool, args, after = 0) => trace.find(({ kind, tool: path, args: given, sequence, status, error }) => kind === 'read-end' && path === tool && JSON.stringify(given) === JSON.stringify(args) && sequence > after && status === 0 && !error);
@@ -4097,4 +4191,14 @@ test('C615 D4 held directory PID per-PID lsof F resumes without a named kill', S
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D4 held directory PID per-PID lsof T resumes without a named kill', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'PT');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID later full lsof F kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID later full lsof T kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OT');
 });
