@@ -1692,12 +1692,14 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
 
 /** Counts state reads under one lock and exposes only a complete published value. */
 const stateCounter = [
-  `  count=$(/usr/bin/lockf -k "$here/state-count.lock" /bin/sh -c 'count=$(/bin/cat "$1/state-count" 2>/dev/null || printf 0); count=$((count + 1)); if [ -f "$1/counter-cut-request" ] && [ "$count" -eq 3 ]; then : > "$1/state-count.next"; : > "$1/counter-cut"; exec /usr/bin/tail -f "$1/hold"; fi; printf "%s\\n" "$count" > "$1/state-count.next" && /bin/mv -f "$1/state-count.next" "$1/state-count" || exit 1; printf "%s" "$count"' sh "$here") || exit 79`,
+  '  if [ -f "$here/first-inside" ]; then : > "$here/second-attempt"; fi',
+  `  count=$(/usr/bin/lockf -k "$here/state-count.lock" /bin/sh -c 'count=$(/bin/cat "$1/state-count" 2>/dev/null || printf 0); count=$((count + 1)); if [ -f "$1/hold-first" ] && [ "$count" -eq 1 ]; then : > "$1/first-inside"; while [ ! -f "$1/release-first" ]; do :; done; fi; if [ -f "$1/counter-cut-request" ] && [ "$count" -eq 3 ]; then : > "$1/state-count.next"; : > "$1/counter-cut"; exec /usr/bin/tail -f "$1/hold"; fi; printf "%s\\n" "$count" > "$1/state-count.next" && /bin/mv -f "$1/state-count.next" "$1/state-count" || exit 1; printf "%s" "$count"' sh "$here") || exit 79`,
 ];
 
 /** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
 async function directoryReadCell(t, { listing, first, second, third, caller, clockCutAt, observe }) {
   const directory = holding(t);
+  // A requested cut holds the third staged write so the final read must see the prior complete count.
   if (process.env.RIGGER_708_COUNTER_CUT === 'third') writeFileSync(join(directory, 'counter-cut-request'), '');
   const work = await workedIn(t, directory);
   const outside = pidIn(directory, 'outside');
@@ -1731,7 +1733,6 @@ async function directoryReadCell(t, { listing, first, second, third, caller, clo
   };
   fixture(directory, 'ps', [
     `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
-    ...(process.env.RIGGER_708_COUNTER_CUT === 'third' ? ['  echo() { if [ "$1" = 3 ]; then : > "$here/counter-cut"; exec /usr/bin/tail -f "$here/hold"; fi; /bin/echo "$@"; }'] : []),
     ...stateCounter,
     `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; ${answerFor(first, clockCutAt === 'first' || clockCutAt === 'firstTimeout')}; fi`,
     ...(third ? [`  if [ "$count" -eq 2 ]; then ${answerFor(second)}; fi`] : []),
@@ -1796,6 +1797,7 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
     '  : > "$here/post-kill-listing"',
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-start","argv":"%s"}\\n' "$*" >> "$here/post-kill-trace"`,
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-end","result":"${listing}"}\\n' >> "$here/post-kill-trace"`,
+    ...(postKillCut && first === 'failed' && second === 'failed' ? ['  : > "$here/clock-cut"'] : []),
     after,
     'fi',
     listed,
@@ -1846,29 +1848,41 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
   return result.events;
 }
 
-// proves R-STATE-19, R-STATE-9
-test('overlapping post-kill state counter calls preserve both increments before a failed read', SETTLES_WITHIN, async (t) => {
+test('two concurrent state counter calls hold one lock and preserve both increments', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  writeFileSync(join(directory, 'hold-first'), '');
   const counter = fixture(directory, 'counter', [
-    'if /bin/mkdir "$here/first-entered" 2>/dev/null; then',
-    '  while [ ! -f "$here/second-entered" ]; do :; done',
-    'else : > "$here/second-entered"; fi',
-    'echo() { if [ "$1" = 1 ]; then if /bin/mkdir "$here/first-write" 2>/dev/null; then while [ ! -f "$here/second-write" ]; do :; done; else : > "$here/second-write"; fi; fi; /bin/echo "$@"; }',
     ...stateCounter,
-    'printf "%s\\n" "$count"',
   ].join('\n'));
-  const calls = [spawn(counter, [], { stdio: 'ignore', env: {} }), spawn(counter, [], { stdio: 'ignore', env: {} })];
-  const exits = await Promise.all(calls.map((call) => once(call, 'close')));
+  const first = spawn(counter, [], { stdio: 'ignore', env: {} });
+  const firstExit = once(first, 'close');
+  let secondExit;
+  try {
+    await until(() => existsSync(join(directory, 'first-inside')), t);
+    const second = spawn(counter, [], { stdio: 'ignore', env: {} });
+    secondExit = once(second, 'close');
+    await until(() => existsSync(join(directory, 'second-attempt')), t);
+    const probe = spawnSync('/usr/bin/lockf', ['-s', '-t', '0', '-k', join(directory, 'state-count.lock'), '/usr/bin/true'], { env: {} });
+    assert.equal(probe.error, undefined, 'the lock probe could not run');
+    assert.equal(probe.status, 75, 'the first increment did not hold the lock after the second call started');
+  } finally {
+    writeFileSync(join(directory, 'release-first'), '');
+  }
+  const exits = await Promise.all([firstExit, secondExit]);
   assert.deepEqual(exits, [[0, null], [0, null]], 'both overlapping counter calls must finish');
-  assert.ok(existsSync(join(directory, 'second-entered')), 'the two counter calls did not overlap');
   assert.equal(read(directory, 'state-count'), '2', 'one overlapping state read lost its increment');
-  await postKillReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed' });
 });
 
-// proves R-STATE-19, R-STATE-9
 test('the failed-state read count still rejects a missing second state call', SETTLES_WITHIN, async (t) => {
   await assert.rejects(
     directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed', caller: TRACED_CALLER, clockCutAt: 'listing' }),
+    /the plain failed state read was not reached/,
+  );
+});
+
+test('the post-kill counter still rejects a missing second state call', SETTLES_WITHIN, async (t) => {
+  await assert.rejects(
+    postKillReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed', postKillCut: true }),
     /the plain failed state read was not reached/,
   );
 });
