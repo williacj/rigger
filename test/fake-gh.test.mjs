@@ -436,20 +436,19 @@ const CARDS = [
   { type: 'issue', repository: 'williacj/rigger', number: 215, title: 'Two', column: 'Coding' },
 ];
 
-test("a fake gh seeded with nothing answers no branch, no pull request and no edit for any card, and no pull request's comments", async () => {
+test("a fake gh seeded with nothing answers no branch and no pull request for any card, and no pull request's comments", async () => {
   const fake = installed({ columns: ['Coding', 'Review'], items: CARDS });
 
   await onPath(fake, async () => {
     for (const { number } of CARDS) {
       assert.deepEqual(await reads().readPullRequests(`rigger-${number}`), { open: [], merged: [] });
-      assert.equal(await reads().readEditedAt(number), null);
     }
     assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': false, 'rigger-215': false });
     await assert.rejects(reads().readComments(1), /Could not resolve to a PullRequest with the number of 1/);
   });
 });
 
-test("the repository reads through the fake gh answer a card's seeded branch, open and merged pull requests, and its issue's edit time", async () => {
+test("the repository reads through the fake gh answer a card's seeded branch, and its open and merged pull requests", async () => {
   const fake = installed({ columns: ['Coding', 'Review'], items: CARDS });
   seedRepository(fake, {
     branches: ['rigger-214'],
@@ -459,16 +458,12 @@ test("the repository reads through the fake gh answer a card's seeded branch, op
       { number: 299, head: 'rigger-215', sha: sha(299), merged: true },
       { number: 303, head: 'rigger-214', sha: sha(303), from: 'someone/rigger' },
     ],
-    edited: { 214: '2026-10-01T09:30:00Z' },
   });
 
   await onPath(fake, async () => {
     assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }, { number: 302, head: sha(302), base: 'release' }], merged: [] });
     assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [{ number: 299, head: sha(299), base: 'main' }] });
     assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': true, 'rigger-215': false });
-    assert.equal(await reads().readEditedAt(214), '2026-10-01T09:30:00Z');
-    assert.equal(await reads().readEditedAt(215), null);
-    await assert.rejects(reads().readEditedAt(216), /readEditedAt.*issue #216.*Could not resolve to an Issue with the number of 216/);
   });
 });
 
@@ -507,11 +502,10 @@ test('the fake repository answers in process what the fake gh answers for the sa
   const seed = {
     branches: ['rigger-214'],
     pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), diff: 'd', mergeBase: sha(1), comments: [{ body: 'x', createdAt: '2026-10-01T09:30:00Z' }] }, { number: 299, head: 'rigger-214', sha: sha(299), merged: true }],
-    edited: { 214: '2026-10-01T09:30:00Z' },
   };
   const fake = installed({ columns: ['Review'], items: CARDS });
   seedRepository(fake, seed);
-  const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readEditedAt', 214], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301]];
+  const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301]];
 
   const { operations } = createFakeRepository(seed);
   for (const [name, argument] of calls) {

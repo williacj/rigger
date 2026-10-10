@@ -440,14 +440,6 @@ const REPOSITORY_READS = {
       return Object.fromEntries(names.map((name) => [name, held.has(name)]));
     },
   },
-  /** The time issue `number`'s body was last edited, as GitHub answers it, or null for a body never edited. */
-  readEditedAt: {
-    reading: (number) => `issue #${number}`,
-    read: async (board, via, number, addressed) => {
-      const query = repositoryQuery(board, `issue(number: ${numbered('readEditedAt', board, number)}) { lastEditedAt }`);
-      return heldIn('readEditedAt', board, await asked('readEditedAt', board, query, via, addressed), 'issue', addressed).lastEditedAt;
-    },
-  },
   /**
    * Pull request `number`'s diff, as the forge serves it under the diff's media type. A diff the
    * forge declines to serve rejects with the forge's reason.

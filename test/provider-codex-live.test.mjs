@@ -17,6 +17,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import * as codex from '../src/substrate/providers/codex.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
 import { SERVER, pastRefusing, put } from './claude-live.mjs';
 import { judgeShell } from './codex-judge-shell.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
@@ -324,7 +325,7 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   seedRepository(fake, { pullRequests: [{ number: 9, head: 'rigger-1412', sha, base: 'main', diff }] });
   const card = {
     number: 1412, title: 'Plant a file only head holds', body: '## Acceptance\n\n- `only-in-head.txt` holds a marker.\n', labels: ['type:change'], column: 'Review',
-    forge: { pull: { status: 'fulfilled', value: { number: 9, base: baseSha, head: sha } }, diff: { status: 'fulfilled', value: diff }, comments: { status: 'fulfilled', value: [] }, editedAt: { status: 'fulfilled', value: null } },
+    forge: { pull: { status: 'fulfilled', value: { number: 9, base: baseSha, head: sha } }, diff: { status: 'fulfilled', value: diff }, comments: { status: 'fulfilled', value: [] } },
   };
   const state = join(base, '.rigger');
   const sink = openSink({ directory: state, run: 'r-live', now: () => Date.now() });
@@ -378,7 +379,8 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   const held = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8')).repository.pullRequests[0].comments;
   quote('fake forge comments', held);
   assert.equal(held.length, 1);
-  assert.equal(held[0].body.split('\n')[0].trim(), `Findings at ${sha} by reviewer`);
+  const parsed = parseMarker(held[0].body, 1);
+  assert.deepEqual({ state: parsed.state, head: parsed.marker?.head, role: parsed.marker?.role }, { state: 'marker', head: sha, role: 'reviewer' }, held[0].body);
   assert.match(held[0].body, /OSPREY-c489-headfile/);
   assert.match(held[0].body, /OSPREY-c489-shared-skill/);
   assert.ok(held[0].body.includes(fake.gh), `the judge's shell found a gh other than the fake forge's ${fake.gh}`);

@@ -1031,3 +1031,18 @@ test("a role's labels mapping label names to standard or high is accepted, and s
     assert.deepEqual(validate(withRole({ labels })), [], inspect(labels));
   }
 });
+
+// proves R-VERDICT-1
+test('given a config declaring a top-level verdicts key, the validator refuses it, naming the key', () => {
+  const refusals = validate({ ...rigger, verdicts: ['sound', 'needs revision', 'critical', 'approved'] });
+
+  assert.deepEqual(refusals, ['`verdicts` is not a declaration Rigger offers']);
+});
+
+// proves R-VERDICT-1
+test('given a kind declaring verdicts, the validator refuses it, naming the key', () => {
+  const [name, kind] = Object.entries(rigger.kinds)[0];
+  const refusals = validate({ ...rigger, kinds: { ...rigger.kinds, [name]: { ...kind, verdicts: ['approved'] } } });
+
+  assert.deepEqual(refusals, [`\`kinds.${name}.verdicts\` is not a declaration Rigger offers`]);
+});

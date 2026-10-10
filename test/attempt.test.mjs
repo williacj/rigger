@@ -354,7 +354,7 @@ test('settled is called once for a card whose maker the stand-in ran', async () 
 /**
  * What L2's settle answers for card 1 in `attemptWorld` once its maker ran: the one open pull
  * request the world's forge holds from `rigger-1`, and the review reads of it from a repository
- * holding none, the card's body never edited.
+ * holding none.
  */
 const SETTLED_ONE = {
   line: 'rigger-1',
@@ -363,7 +363,6 @@ const SETTLED_ONE = {
   pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeBase has nothing to read') },
   diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readDiff has nothing to read') },
   comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readComments has nothing to read') },
-  editedAt: { status: 'fulfilled', value: null },
 };
 
 test('for a card selecting no step, L3 asks decide at the pull, after the maker outcome, and with the facts L2 settled', async () => {

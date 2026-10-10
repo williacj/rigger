@@ -1,40 +1,17 @@
-// ABOUTME: L2's judge answer for a Review card: the agent judges with no findings at its pull
-// request's head, each with its steps and the evidence they all share, and the findings format a
-// judge writes its findings in and L2 reads them back by.
+// ABOUTME: L2's judge answer for a Review card: the agent judges owed a verdict marker at its pull
+// request's head and acceptance digest, each with its steps, the evidence they all share, and the
+// instruction asking each for its marker.
 
 import { OWNER, roleTimeout, workRequires } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
+import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
 import { failed, kindOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
-
-/**
- * The findings format: the first line of the one pull request comment a judge writes its findings
- * in, naming the head SHA it ruled on and its role. The instruction L2 composes fills it in, and
- * L2 reads comments back by it, so the two cannot drift. It is an interim contract between L2 and a
- * role, which M5's markers replace (the architect's ruling 2, AQ2, on #467).
- */
-const FINDINGS = 'Findings at {head} by {role}';
-
-/** The findings format's first line for `role`'s findings at `head`. */
-const findingsLine = (head, role) => FINDINGS.replace('{head}', head).replace('{role}', role);
-
-/** `text` with every character a regular expression gives a meaning escaped. */
-const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** A first line in the findings format, capturing the head SHA and the role it names. */
-const FINDINGS_READ = new RegExp(`^${escaped(FINDINGS).replace(escaped('{head}'), '([0-9a-f]{40})').replace(escaped('{role}'), '(\\S+)')}$`);
-
-/** The head and role a comment's `body` names on its first line in the findings format, or nothing. */
-function findingsOf(body) {
-  const match = String(body).split(/\r?\n/, 1)[0].trimEnd().match(FINDINGS_READ);
-  return match === null ? undefined : { head: match[1], role: match[2] };
-}
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
   pull: 'the pull request',
   comments: 'the pull request\'s comments',
-  editedAt: 'the acceptance\'s revision, the issue body\'s last edit',
 };
 
 /**
@@ -65,19 +42,20 @@ function record(sink, card, name, fields, what) {
  * L2's judge answer for `card`, a Review card with one open pull request from its line of work,
  * under a config's `kinds` and `epicLabel`, `roles` and `provisioning`, from the `forge` facts L2's
  * facts call holds for it: `pull`, the pull request's `{ number, base, head }`, `base` and `head`
- * its SHAs; `diff`; `comments`, each `{ body }`; and `editedAt`, the issue body's last edit time,
- * null for a body never edited. Each is a read's outcome as `Promise.allSettled` records it.
+ * its SHAs; `diff`; and `comments`, each in the shape the forge's read answers, `{ body, createdAt,
+ * id, author, permission, edited }`. Each is a read's outcome as `Promise.allSettled` records it.
  *
  * A card no kind selects, or more than one does, is answered as `nextAction` answers it. A card
  * whose labels select two tiers for one of its agent judges is refused naming the role and each
  * label (`R-LOOP-13`), and one whose acceptance the form check refuses is refused with its reason,
- * the one refusal naming each that applies. A failed read of the pull request, its comments or the
- * acceptance's revision answers no action, naming the card and the read.
+ * the one refusal naming each that applies. A failed read of the pull request or its comments
+ * answers no action, naming the card and the read.
  *
- * It names every agent judge of the card's kind, in the kind's order, that has no comment whose
- * first line is in the findings format naming the pull request's head and that judge (the
- * architect's ruling 1, Q5 and Q9). The owner is never named (`R-LOOP-11`), and a comment naming
- * a role the kind does not name as a judge counts for none. With none to name it is `{ action:
+ * It names every agent judge of the card's kind, in the kind's order, that is owed a marker: one
+ * whose governing marker at the pull request's head and the card's acceptance digest, as
+ * `readMarkers` reads it, is absent, unreadable or edited (the architect's ruling R2 on #642). The
+ * owner is never named (`R-LOOP-11`), and a marker naming a role the kind does not name as a judge
+ * counts for none. With none to name it is `{ action:
  * 'ignore' }`. Otherwise it is `{ action: 'judge', kind, judges }`, each judge a role answer, as
  * `judgeOf` composes it, with `steps`, the card's selected steps for the judge's `head`, in the
  * order the kind lists them, as `nextAction` answers each.
@@ -94,7 +72,7 @@ function record(sink, card, name, fields, what) {
  * whose required step failed is not named, and L2 records a `judge.withheld` event under the card
  * naming the role, the step and the failure, classed as the environment's. The answer also names
  * each withheld role so L3 can leave the card out of later pulls in this invocation. Nothing retries it
- * within the claim: the next invocation names it again, since it still has no findings at the head
+ * within the claim: the next invocation names it again, since it still has no marker at the head
  * (the architect's ruling 2, P3). L2 keeps no memory, so it records the failure each time it is
  * handed it, and L3 hands a judge's outcomes to it once.
  */
@@ -110,18 +88,19 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   if (reasons.length > 0) return { action: 'refuse', card: card.number, reason: reasons.join('; and ') };
   const pull = held(card, 'pull');
   const comments = held(card, 'comments');
-  const revision = held(card, 'editedAt');
-  const findings = comments.map((comment) => findingsOf(comment.body)).filter((found) => found !== undefined && agents.includes(found.role));
-  const owed = agents.filter((role) => !findings.some((found) => found.head === pull.head && found.role === role));
+  const items = acceptanceItems(card.body);
+  const digest = acceptanceDigest(card.body);
+  const { governing, markers } = readMarkers(comments, { card: card.number, pull: pull.number, head: pull.head, digest, count: items.length });
+  const owed = agents.filter((role) => governing.get(role)?.state !== 'marker' || governing.get(role).edited);
   if (owed.length === 0) return { action: 'ignore' };
   if (card.forge.diff?.status !== 'fulfilled') {
     const reason = card.forge.diff?.reason?.message ?? `no outcome: ${JSON.stringify(card.forge.diff)}`;
     record(sink, card, 'diff.refused', { pull: pull.number, reason }, `pull request #${pull.number}'s diff was not served`);
     return { action: 'ignore' };
   }
-  const earlier = findings.filter((found) => found.head !== pull.head).at(-1)?.head;
-  const evidence = evidenceOf(card, pull, revision, card.forge.diff.value, earlier);
-  const facts = { card: card.number, revision, pull: pull.number, base: pull.base, head: pull.head };
+  const earlier = markers.filter((marker) => agents.includes(marker.role) && marker.head !== pull.head).at(-1)?.head;
+  const evidence = evidenceOf(card, pull, digest, card.forge.diff.value, earlier);
+  const facts = { card: card.number, revision: digest, pull: pull.number, base: pull.base, head: pull.head };
   const steps = selectedSteps(card, declared, provisioning);
   const withheldRoles = [];
   const judges = owed
@@ -131,7 +110,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
       if (missing) withheldRoles.push(role);
       return !missing;
     })
-    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, pull, evidence, facts), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
+    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   return { action: 'judge', kind, judges, ...(withheldRoles.length > 0 ? { withheld: withheldRoles } : {}) };
 }
 
@@ -167,20 +146,20 @@ function withheld(card, role, steps, outcomes, provisioning, sink) {
 
 /**
  * The evidence every judge of `card` at `pull`'s head is handed, the same bytes for each: the
- * card's number and title, its acceptance as `R-CARD-12` reads it and that acceptance's
- * `revision`, the pull request's number and its base and head SHAs, the `earlier` head the newest
- * findings at another head named where there are any, and the `diff` (`R-EVIDENCE-1`,
+ * card's number and title, its acceptance as `R-CARD-12` reads it and that acceptance's `digest`,
+ * which the marker carries, the pull request's number and its base and head SHAs, the `earlier`
+ * head the newest marker at another head named where there is one, and the `diff` (`R-EVIDENCE-1`,
  * `R-EVIDENCE-3`). It carries no comment's text and nothing of the maker's session (`R-EVIDENCE-4`).
  */
-function evidenceOf(card, pull, revision, diff, earlier) {
+function evidenceOf(card, pull, digest, diff, earlier) {
   return [
     `Card #${card.number}: ${card.title}`,
     '',
-    revision === null ? 'Acceptance, from an issue body never edited:' : `Acceptance, as the issue body was last edited at ${revision}:`,
+    `Acceptance, whose digest your marker carries, ${digest}:`,
     ...acceptanceItems(card.body).map((item) => `- ${item}`),
     '',
     `Pull request #${pull.number}, from base ${pull.base} to head ${pull.head}.`,
-    ...(earlier === undefined ? [] : [`Earlier head, which the previous findings named: ${earlier}`]),
+    ...(earlier === undefined ? [] : [`Earlier head, which the previous marker named: ${earlier}`]),
     '',
     'Diff:',
     diff,
@@ -190,10 +169,14 @@ function evidenceOf(card, pull, revision, diff, earlier) {
 /**
  * L2's answer for judge `role`, declared as `declared`, running at `tier` on `pull`: its name, agent
  * file and provider as declared, its time as `roleTimeout` answers it, `evidence` and `facts` as
- * given, and the instruction Rigger's contract with every judge composes. No directory is a field
- * of it: L1 makes the judge's directory once L2 has answered (the architect's ruling 3, P8).
+ * given, `digest`, the evidence digest L1 records at `dispatch.start`, and the instruction Rigger's
+ * contract with every judge composes, which asks for a marker ruling on each of `items` and
+ * carrying the evidence digest, and holds the slot L3 fills with the dispatch id (`dispatched`). No
+ * directory is a field of it: L1 makes the judge's directory once L2 has answered (the architect's
+ * ruling 3, P8).
  */
-function judgeOf(role, declared, tier, pull, evidence, facts) {
+function judgeOf(role, declared, tier, pull, evidence, facts, items) {
+  const digest = evidenceDigest(evidence);
   const instruction = [
     `Rigger dispatched this session, unattended, as the judge \`${role}\` of pull request #${pull.number}, at head \`${pull.head}\`.`,
     'What follows is a floor, never a limit: you may read beyond what you were given.',
@@ -203,9 +186,9 @@ function judgeOf(role, declared, tier, pull, evidence, facts) {
     'Never run git in `head`; run git commands in your working directory.',
     'Your working directory is not provisioned; never build or test there. Read a command\'s exit status from the tool\'s result.',
     'Use a separate tool call for each command, with no extra shell operations, pipes, groups, variables, or status probes such as `$?`, `${...}` or `$(...)`. Keep the `cd ../head && <command>` line by itself.',
-    `Rule on every acceptance item below, then write your findings as one comment on pull request #${pull.number}, whose first line is exactly \`${findingsLine(pull.head, role)}\`.`,
+    markerInstruction({ card: facts.card, pull: pull.number, head: pull.head, digest: facts.revision, role, items, evidence: digest }),
     '',
     '',
   ].join('\n');
-  return { role, agent: declared.agent, provider: declared.provider, tier, timeout: roleTimeout(declared), instruction, evidence, facts };
+  return { role, agent: declared.agent, provider: declared.provider, tier, timeout: roleTimeout(declared), instruction, evidence, digest, facts };
 }

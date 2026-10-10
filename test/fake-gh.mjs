@@ -413,22 +413,13 @@ const COMMANDS = {
     await board.operations.createLabel(valueOf(input, 'name'));
     return { createLabel: { label: { id: `LA_${valueOf(input, 'name')}` } } };
   },
-  // The repository reads: a card's line of work and its pull requests, and an issue's last edit.
+  // The repository reads: a card's line of work and its pull requests.
   [graphql(repositoryShape(`pullRequests(headRefName: _, states: [], first: _) { ${PULLS} }`))]: pullRequests,
   [graphql(repositoryShape(`pullRequests(headRefName: _, states: [], first: _, after: _) { ${PULLS} }`))]: pullRequests,
   [graphql(repositoryShape(`refs(refPrefix: _, first: _) { ${NAMES} }`))]: branches,
   [graphql(repositoryShape(`refs(refPrefix: _, first: _, after: _) { ${NAMES} }`))]: branches,
   [graphql(repositoryShape(`pullRequest(number: _) { comments(first: _) { ${COMMENTS} } }`))]: comments,
   [graphql(repositoryShape(`pullRequest(number: _) { comments(first: _, after: _) { ${COMMENTS} } }`))]: comments,
-  // An issue the board holds, or one whose edit the test seeded; its body never edited answers null.
-  [graphql(repositoryShape('issue(number: _) { lastEditedAt }'))]: async (board, state, operation) => {
-    inTheRepository(state, operation);
-    const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
-    const { edited } = repositoryOf(state).held();
-    const onBoard = (await board.operations.readItems()).some((item) => item.type === 'issue' && item.number === number && item.repository.toLowerCase() === state.repo.toLowerCase());
-    if (!onBoard && !Object.hasOwn(edited, number)) throw new GhFailure(`gh: Could not resolve to an Issue with the number of ${number}.`);
-    return { repository: { issue: { lastEditedAt: edited[number] ?? null } } };
-  },
   [graphql(repositoryShape('pullRequest(number: _) { baseRefName headRefOid }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const { base, sha } = pullNamed(state, operation);
@@ -791,9 +782,8 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
 
 /**
  * Seeds the repository the fake `gh` installed as `fake` answers from, as `createFakeRepository`
- * takes it: for a card, its branch, an open or merged pull request from it with its head SHA, a
- * diff and comments, and the time its issue's body was last edited. Made before the fake `gh` is
- * first run, it replaces what the repository held.
+ * takes it: for a card, its branch, and an open or merged pull request from it with its head SHA,
+ * a diff and comments. Made before the fake `gh` is first run, it replaces what the repository held.
  */
 export function seedRepository(fake, seed) {
   const statePath = join(dirname(fake.gh), 'board.json');
