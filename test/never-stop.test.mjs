@@ -2209,6 +2209,153 @@ test('a second live answer followed by plain failed reads records an unread proc
   } });
 });
 
+/** Drives the named PID through returned first-live, omitted-listing, and selected later reads. */
+async function firstLiveReadCell(t, { steps, cutAfter, boundBranch, observe }) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', [
+    'if [ -f "$here/hang" ]; then : > "$here/post-kill-listing"; : > "$here/post-kill-omitted"; exit 1; fi',
+    listingOf('outside', realpathSync.native(join(work, 'sub'))),
+  ].join('\n'));
+  const answer = (mode, number) => {
+    const marker = `: > "$here/state-${number}-${mode}"; `;
+    const cut = cutAfter === number ? ': > "$here/clock-cut"; ' : '';
+    if (mode === 'live') return `${marker}printf '%s T\\n' '${outside}'; ${cut}exit 0`;
+    if (mode === 'failed') return `${marker}echo 'ps: forced failure' >&2; ${cut}exit 2`;
+    assert.equal(mode, 'timeout');
+    return `${marker}exec /usr/bin/tail -f "$here/hold"`;
+  };
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
+    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    '  case "$count" in',
+    ...steps.map((mode, index) => `    ${index + 1}) ${answer(mode, index + 1)} ;;`),
+    '    *) echo "unexpected named state read $count" >&2; exit 2 ;;',
+    '  esac',
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const options = { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside',
+    ...(cutAfter ? { clockCut: 20_000, clockAtReaped: Boolean(boundBranch), clockBranch: boundBranch } : {}) };
+  try {
+    const result = await cleanedUpBy(TRACED_CALLER, directory, options);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(killedIn(linesOf(directory, 'pairs'), outside) !== undefined, 'the named kill did not occur');
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    return observe({ directory, outside, result, trace });
+  } finally {
+    t.diagnostic(JSON.stringify({ cell: { steps, cutAfter, boundBranch },
+      trace: existsSync(join(directory, 'control.trace.jsonl')) ? linesOf(directory, 'control.trace.jsonl') : null,
+      markers: { reads: existsSync(join(directory, 'state-count')) ? read(directory, 'state-count') : null,
+        listing: existsSync(join(directory, 'post-kill-omitted')) } }));
+  }
+}
+
+/** Verifies returned first live, answered omission, later failure and returned live in source order. */
+function firstLiveFailedThenLive({ directory, outside, trace }) {
+  const killed = trace.find(({ kind, target, name, answer }) => kind === 'signal-answer' && target === outside && name === 'SIGKILL' && answer === true)?.sequence;
+  assert.ok(killed, 'the named kill was not observed');
+  const stateRead = ({ sequence, kind, tool, args }) => sequence > killed && kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`;
+  const reads = trace.filter(stateRead);
+  assert.ok(reads.length >= 3, 'the required three returned-result operations were not reached');
+  assert.deepEqual(reads.slice(0, 3).map(({ status, stdout, stderr, error, markers }) => [status, stdout, stderr, error ?? null, markers?.stateCount]), [
+    [0, `${outside} T\n`, '', null, 1],
+    [2, '', 'ps: forced failure\n', null, 2],
+    [0, `${outside} T\n`, '', null, 3],
+  ]);
+  assert.ok(existsSync(join(directory, 'state-1-live')) && existsSync(join(directory, 'state-2-failed')) && existsSync(join(directory, 'state-3-live')), 'the selected state markers were not written');
+  const listing = trace.find(({ sequence, kind, tool, status, stdout, stderr, markers }) => sequence > reads[0].sequence && sequence < reads[1].sequence && kind === 'read-end' && tool === join(directory, 'lsof') && status === 1 && stdout === '' && stderr === '' && markers?.listingOmitted);
+  assert.ok(listing, 'the omitted listing did not return between first live and later failure');
+  const starts = trace.filter(({ sequence, kind, tool, args }) => sequence > killed && kind === 'read-start' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`);
+  assert.ok(starts.length >= 3 && starts.every(({ remaining }) => Number.isFinite(remaining) && remaining > 0), 'a named post-kill read did not start within its bound');
+  assert.ok(trace.some(({ sequence, kind, target, name, answer }) => sequence > reads[1].sequence && sequence < reads[2].sequence && kind === 'signal-answer' && target === outside && name === 0 && answer === true), 'the named PID did not continue answering signal 0 between the failed and returned live reads');
+  const terminal = trace.find(({ sequence, kind, event, pid }) => sequence > reads[2].sequence && kind === 'event' && event === 'survivor.unended' && pid === outside)?.sequence;
+  assert.ok(terminal && trace.some(({ sequence, kind }) => sequence > terminal && kind === 'caller-end'), 'the terminal event and caller end were not ordered');
+  return { reads, starts };
+}
+
+/** Returns each later named operation's result, keeping timeout separate from a returned answer. */
+const namedOutcomes = (reads) => reads.map(({ status, stdout, stderr, error }) => [status, stdout, stderr, error ?? null]);
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain a later failed then live answer through a no-start cut', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live'], cutAfter: 3, observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '3');
+    assert.equal(reads.length, 3);
+    assert.equal(starts.length, 3, 'the cut read started');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > reads[2].sequence && kind === 'read-cut' && code === 'LATE'), 'the later read was not cut before start');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain a later failed then live answer through a started timeout', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'timeout'], observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-timeout')), 'the later timeout did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[null, '', '', 'ETIMEDOUT']]);
+    assert.equal(starts.length, 4);
+    assert.ok(starts[3].sequence > reads[2].sequence && starts[3].sequence < reads[3].sequence, 'the timed-out read did not start after the returned live answer');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing evaluate the later failed then live sequence at the wait bound', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live'], cutAfter: 3, boundBranch: 'answered-live', observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '3');
+    assert.equal(reads.length, 3);
+    assert.equal(starts.length, 3);
+    assert.ok(trace.some(({ sequence, kind, branch, elapsed }) => sequence > reads[2].sequence && kind === 'bound-evaluated' && branch === 'answered-live' && elapsed >= UNREAPED_BOUND), 'the returned live answer was not evaluated at the existing wait bound');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive 1000 ms after L0\'s kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing record a later failure live failure sequence at the wait bound', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed'], cutAfter: 4, boundBranch: 'plain-failure', observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-failed')), 'the terminal plain failure did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null]]);
+    assert.equal(starts.length, 4);
+    assert.ok(trace.some(({ sequence, kind, branch, elapsed }) => sequence > reads[3].sequence && kind === 'bound-evaluated' && branch === 'plain-failure' && elapsed >= UNREAPED_BOUND), 'the terminal failure was not evaluated at the existing wait bound');
+    assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended 1000 ms after L0\'s kill: the process table could not be read');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain the later live answer across another failure and a no-start cut', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed'], cutAfter: 4, observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-failed')), 'the further plain failure did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null]]);
+    assert.equal(starts.length, 4, 'the cut read started');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > reads[3].sequence && kind === 'read-cut' && code === 'LATE'), 'the next read was not cut before start');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain the later live answer across another failure and a started timeout', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed', 'timeout'], observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '5');
+    assert.ok(existsSync(join(directory, 'state-4-failed')) && existsSync(join(directory, 'state-5-timeout')), 'the further failure and timeout did not mark separately');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null], [null, '', '', 'ETIMEDOUT']]);
+    assert.equal(starts.length, 5);
+    assert.ok(starts[4].sequence > reads[3].sequence && starts[4].sequence < reads[4].sequence, 'the timed-out read did not start after the further failure');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
 /** Proves a started plain failure reaches the terminal bound after the chosen answer history. */
 async function plainTerminalBoundaryCell(t, retainedLive) {
   await directoryReadCell(t, { listing: 'omitted', first: 'failed', second: retainedLive ? 'live' : 'failed', ...(retainedLive ? { third: 'failed' } : {}), caller: TRACED_CALLER, clockCutAt: retainedLive ? 'thirdFailed' : 'failed', observe: ({ directory, outside, result, trace }) => {
