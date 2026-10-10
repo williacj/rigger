@@ -3787,6 +3787,9 @@ async function firstDirectoryListing(t, answer) {
   const heldPerPid = answer === 'PF' || answer === 'PT';
   const heldRead = heldState || heldListing || heldPerPid;
   const ownedListing = answer === 'OF' || answer === 'OT';
+  const ownedState = answer === 'OSF' || answer === 'OST';
+  const ownedPerPid = answer === 'OPF' || answer === 'OPT';
+  const ownedRead = ownedListing || ownedState || ownedPerPid;
   assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the first-listing control needs external TMPDIR and a private evidence root before fixtures start');
   const checkout = realpathSync.native(process.cwd());
   const scratchRoot = realpathSync.native(process.env.TMPDIR);
@@ -3794,7 +3797,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3873,7 +3876,7 @@ async function firstDirectoryListing(t, answer) {
   fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
   const lsofBody = answer === 'F'
     ? 'printf "%s\\n" "$@" > "$here/first-listing-argv"\n: > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2'
-    : ownedListing ? [
+    : ownedRead ? [
       'if [ ! -f "$here/first-listing-entered" ]; then : > "$here/first-listing-entered";',
       `  ${listingOf('outside', realpathSync.native(sub))}`,
       '  exit 0',
@@ -3884,9 +3887,24 @@ async function firstDirectoryListing(t, answer) {
       `  ${listingOf('outside', realpathSync.native(sub))}`,
       '  exit 0',
       'fi',
+      ...(!ownedListing ? [
+        'if [ ! -f "$here/owned-later-full-answered" ]; then',
+        '  printf "%s\\n" "$@" > "$here/owned-later-argv"',
+        '  : > "$here/owned-later-entered"',
+        '  : > "$here/owned-later-full-answered"',
+        `  ${listingOf('outside', realpathSync.native(sub))}`,
+        '  exit 0',
+        'fi',
+        ...(ownedPerPid ? [
+          'printf "%s\\n" "$@" > "$here/owned-next-per-pid-argv"',
+          ': > "$here/owned-next-per-pid-entered"',
+          answer === 'OPF' ? 'echo "lsof: forced owned-per-PID failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
+        ] : ['echo "lsof: unexpected read after owned state" >&2; exit 3']),
+      ] : [
       'printf "%s\\n" "$@" > "$here/owned-later-argv"',
       ': > "$here/owned-later-entered"',
       answer === 'OF' ? 'echo "lsof: forced owned-listing failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
+      ]),
     ].join('\n')
     : heldListing || heldPerPid ? [
       'if [ -f "$here/first-listing-entered" ]; then',
@@ -3913,8 +3931,8 @@ async function firstDirectoryListing(t, answer) {
       'exec /bin/ps "$@"',
     ].join('\n'));
   }
-  if (ownedListing) {
-    if (answer === 'OT') writeFileSync(join(directory, 'hold'), '');
+  if (ownedRead) {
+    if (answer === 'OT' || answer === 'OST' || answer === 'OPT') writeFileSync(join(directory, 'hold'), '');
     fixture(directory, 'ps', [
       'pid=$(/bin/cat "$here/outside.pid")',
       'if [ -f "$here/hang" ]; then',
@@ -3926,12 +3944,20 @@ async function firstDirectoryListing(t, answer) {
       '  : > "$here/owned-state-entered"',
       '  printf "%s S\\n" "$pid"; exit 0',
       'fi',
+      ...(!ownedListing ? [
+        'if [ -f "$here/owned-later-full-answered" ] && [ ! -f "$here/owned-next-state-entered" ] && [ "$*" = "-p $pid -o pid=,stat=" ]; then',
+        '  printf "%s\\n" "$@" > "$here/owned-next-state-argv"',
+        '  /bin/ps -p "$pid" -o stat= > "$here/owned-next-state-actual"',
+        '  : > "$here/owned-next-state-entered"',
+        ownedState ? answer === 'OSF' ? '  echo "ps: forced owned-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"' : '  exec /bin/ps "$@"',
+        'fi',
+      ] : []),
       'exec /bin/ps "$@"',
     ].join('\n'));
   }
   const callerPath = join(directory, 'caller.mjs');
-  writeFileSync(callerPath, answer === 'A' || heldRead || ownedListing ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
-  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedListing ? { ps: 'ps' } : { refused: 'outside' }), ...(ownedListing ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  writeFileSync(callerPath, answer === 'A' || heldRead || ownedRead ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedRead ? { ps: 'ps' } : { refused: 'outside' }), ...(ownedRead ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
   caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
   caller.on('error', (error) => { callerError = error; });
   callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
@@ -4038,7 +4064,7 @@ async function firstDirectoryListing(t, answer) {
     assert.deepEqual(events.filter(({ pid: named }) => named === pid), [], 'the held PID acquired an invented named event');
     return;
   }
-  if (ownedListing) {
+  if (ownedRead) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const pid = outsideBirth.pid;
     const lsof = join(directory, 'lsof');
@@ -4065,22 +4091,83 @@ async function firstDirectoryListing(t, answer) {
     assert.equal(after.status, 0, 'the final state did not answer');
     assert.equal(after.error, undefined, 'the final-state answer timed out');
     assert.equal(trace.some(({ kind, target, name, sequence }) => kind === 'signal-start' && target === pid && name === 'SIGCONT' && sequence < after.sequence), false, 'the PID left H before the owned-state answer');
+    assert.equal(startOf(pid), outsideBirth.started, 'the owned PID changed birth identity before its later read');
     const laterStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence);
     const later = read(lsof, firstArgs, laterStart?.sequence);
     assert.ok(laterStart && later, 'the owned PID did not reach a later full lsof');
     assert.equal(trace.filter(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > after.sequence).length, 1, 'the owned failure did not start exactly one later full listing');
     assert.equal(existsSync(join(directory, 'owned-later-entered')), true, 'the later full lsof did not start its stand-in');
-    assert.deepEqual(readFileSync(join(directory, 'owned-later-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the failed later read was not a full lsof');
-    if (answer === 'OF') {
-      assert.equal(later.status, 2, 'the owned later-listing F did not return its failure');
-      assert.equal(later.stderr, 'lsof: forced owned-listing failure\n', 'the owned later-listing F lost its exact cause');
-      assert.equal(later.error, undefined, 'the owned later-listing F timed out');
+    assert.deepEqual(readFileSync(join(directory, 'owned-later-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the later read was not a full lsof');
+    let failedRead;
+    let unreadCause;
+    if (ownedListing) {
+      failedRead = later;
+      unreadCause = answer === 'OF' ? 'the process-table read failed: lsof: forced owned-listing failure' : 'the process-table read timed out after 1000 ms';
+      if (answer === 'OF') {
+        assert.equal(later.status, 2, 'the owned later-listing F did not return its failure');
+        assert.equal(later.stderr, 'lsof: forced owned-listing failure\n', 'the owned later-listing F lost its exact cause');
+        assert.equal(later.error, undefined, 'the owned later-listing F timed out');
+      } else {
+        assert.ok(laterStart.remaining > 0, 'the owned later-listing T was a pre-spawn cut');
+        assert.equal(later.error, 'ETIMEDOUT', 'the owned later-listing T did not time out after starting');
+        assert.equal(later.status, null, 'the owned later-listing T returned an answer');
+      }
     } else {
-      assert.ok(laterStart.remaining > 0, 'the owned later-listing T was a pre-spawn cut');
-      assert.equal(later.error, 'ETIMEDOUT', 'the owned later-listing T did not time out after starting');
-      assert.equal(later.status, null, 'the owned later-listing T returned an answer');
+      assert.equal(later.status, 0, 'the later full listing did not answer before the chosen owned read');
+      assert.equal(later.stdout, first.stdout, 'the later full listing did not retain the owned PID');
+      assert.equal(later.stderr, '', 'the later full listing returned stderr');
+      assert.equal(later.error, undefined, 'the later full listing was not an answered read');
+      assert.equal(existsSync(join(directory, 'owned-later-full-answered')), true, 'the later full listing did not mark its answer');
+      const nextStateStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > later.sequence);
+      const nextState = read(ps, stateArgs, nextStateStart?.sequence);
+      assert.ok(nextStateStart && nextState, 'the owned PID did not reach its next intervening state read');
+      assert.equal(existsSync(join(directory, 'owned-next-state-entered')), true, 'the next state read did not enter its stand-in');
+      assert.deepEqual(readFileSync(join(directory, 'owned-next-state-argv'), 'utf8').trimEnd().split('\n'), stateArgs, 'the next state read used the wrong PID or argv');
+      assert.match(readFileSync(join(directory, 'owned-next-state-actual'), 'utf8').trim(), /^T/, 'the owned PID was not still stopped at the chosen state read');
+      if (ownedState) {
+        failedRead = nextState;
+        unreadCause = answer === 'OSF' ? 'the process-table read failed: ps: forced owned-state failure' : 'the process-table read timed out after 1000 ms';
+        if (answer === 'OSF') {
+          assert.equal(nextState.status, 2, 'the owned state F did not return a plain failure');
+          assert.equal(nextState.stdout, '', 'the owned state F returned an answered state');
+          assert.equal(nextState.stderr, 'ps: forced owned-state failure\n', 'the owned state F lost its exact cause');
+          assert.equal(nextState.error, undefined, 'the owned state F timed out');
+        } else {
+          assert.ok(nextStateStart.remaining > 0, 'the owned state T was a pre-spawn cut');
+          assert.equal(nextState.error, 'ETIMEDOUT', 'the owned state T did not time out after starting');
+          assert.equal(nextState.status, null, 'the owned state T returned an answer');
+          assert.equal(nextState.stdout, '', 'the owned state T returned an answered state');
+          assert.equal(nextState.stderr, '', 'the owned state T returned a plain failure');
+        }
+        assert.equal(trace.some(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(perPidArgs) && sequence > nextState.sequence), false, 'a per-PID listing began after the failed owned state');
+      } else {
+        assert.equal(nextState.status, 0, 'the intervening state did not answer before the owned per-PID read');
+        assert.match(nextState.stdout, new RegExp(`^\\s*${pid}\\s+T`, 'm'), 'the intervening state did not retain the stopped owned PID');
+        assert.equal(nextState.stderr, '', 'the intervening state returned stderr');
+        assert.equal(nextState.error, undefined, 'the intervening state timed out');
+        const nextPerPidStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === lsof && JSON.stringify(args) === JSON.stringify(perPidArgs) && sequence > nextState.sequence);
+        const nextPerPid = read(lsof, perPidArgs, nextPerPidStart?.sequence);
+        assert.ok(nextPerPidStart && nextPerPid, 'the owned PID did not reach its later per-PID listing');
+        assert.equal(existsSync(join(directory, 'owned-next-per-pid-entered')), true, 'the later per-PID listing did not start its stand-in');
+        assert.deepEqual(readFileSync(join(directory, 'owned-next-per-pid-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the failed per-PID read used the wrong target or argv');
+        failedRead = nextPerPid;
+        unreadCause = answer === 'OPF' ? 'the process-table read failed: lsof: forced owned-per-PID failure' : 'the process-table read timed out after 1000 ms';
+        if (answer === 'OPF') {
+          assert.equal(nextPerPid.status, 2, 'the owned per-PID F did not return a plain failure');
+          assert.equal(nextPerPid.stdout, '', 'the owned per-PID F returned an answered listing');
+          assert.equal(nextPerPid.stderr, 'lsof: forced owned-per-PID failure\n', 'the owned per-PID F lost its exact cause');
+          assert.equal(nextPerPid.error, undefined, 'the owned per-PID F timed out');
+        } else {
+          assert.ok(nextPerPidStart.remaining > 0, 'the owned per-PID T was a pre-spawn cut');
+          assert.equal(nextPerPid.error, 'ETIMEDOUT', 'the owned per-PID T did not time out after starting');
+          assert.equal(nextPerPid.status, null, 'the owned per-PID T returned an answer');
+          assert.equal(nextPerPid.stdout, '', 'the owned per-PID T returned an answered listing');
+          assert.equal(nextPerPid.stderr, '', 'the owned per-PID T returned a plain failure');
+        }
+      }
     }
-    const kill = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGKILL' && result === true && sequence > later.sequence);
+    assert.equal(trace.some(({ kind, target, name, sequence }) => kind === 'signal-start' && target === pid && name === 'SIGCONT' && sequence > after.sequence && sequence < failedRead.sequence), false, 'the owned PID was resumed before the failed read');
+    const kill = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGKILL' && result === true && sequence > failedRead.sequence);
     const freshName = read(ps, ['-p', String(pid), '-o', 'ucomm='], kill?.sequence);
     const freshCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], freshName?.sequence);
     const postKill = read(ps, stateArgs, freshCommand?.sequence);
@@ -4093,7 +4180,7 @@ async function firstDirectoryListing(t, answer) {
     assert.match(postKill.stdout, new RegExp(`^\\s*${pid}\\s+T`, 'm'), 'the post-kill read did not find the unchanged PID alive');
     assert.deepEqual(pairs.filter(([target, signal]) => target === pid && signal !== 0).map(([, signal]) => signal), ['SIGSTOP', 'SIGKILL', 'SIGCONT'], 'the O path sent an invented or repeated signal');
     assert.deepEqual(directoryEvents.map(({ event }) => event), ['directory.unread', 'survivor.unended'], 'the O failure did not report unread and unended separately');
-    assert.equal(directoryEvents[0].census, answer === 'OF' ? 'the process-table read failed: lsof: forced owned-listing failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the failed O read');
+    assert.equal(directoryEvents[0].census, unreadCause, 'the unread cause differs from the failed O read');
     assert.equal(directoryEvents[0].killed, undefined, 'the unended PID was incorrectly recorded as killed');
     assert.deepEqual({ pid: directoryEvents[1].pid, name: directoryEvents[1].name, cmd: directoryEvents[1].cmd }, { pid, name: 'fresh-owned-name', cmd: 'fresh-owned-command' }, 'the unended result invented or reused an old name');
     assert.match(directoryEvents[1].reason, /^still alive (?:when L0's read bound ran out after its kill|1000 ms after L0's kill)$/, 'the post-kill unended reason did not follow the read');
@@ -4201,4 +4288,24 @@ test('C615 D5 owned directory PID later full lsof F kills unnamed and rereads un
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D5 owned directory PID later full lsof T kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OT');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID state F kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OSF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID state T kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OST');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID per-PID lsof F kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OPF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D5 owned directory PID per-PID lsof T kills unnamed and rereads unended', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'OPT');
 });
