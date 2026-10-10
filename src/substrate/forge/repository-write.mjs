@@ -58,7 +58,6 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       const { status, message } = refusal(said);
       const mapped = mergeRefusal(status, message);
       if (mapped) return { outcome: 'refused', ...mapped };
-      if (status === 405) return { outcome: 'refused', reason: 'unclassified', status, message };
       throw new Error(`mergePullRequest #${number} failed: ${Number.isFinite(status) ? `HTTP ${status} ` : ''}${message}`);
     },
     /** Post `body` on a pull request, refusing an issue number that is not a pull request. */

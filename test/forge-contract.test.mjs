@@ -156,6 +156,20 @@ test('different App pins for one context pass when both matching runs pass', asy
   assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).ci.state, 'passed');
 });
 
+test('a failed pinned check wins when another pinned check passes', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('ci', 991)] }, protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: 15368 }] } } }, checks: { [SHA]: [
+    { id: 1, name: 'ci', status: 'completed', conclusion: 'failure', app: { id: 991 } },
+    { id: 2, name: 'ci', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] } });
+  const required = await onFake(fake, () => reads().readEffectiveRules('main'));
+  assert.equal((await onFake(fake, () => reads().readCheckStates(SHA, required))).ci.state, 'failed');
+});
+
+test('a pinned classic check supersedes an earlier unpinned ruleset entry', async () => {
+  const fake = fakeWith({ rules: { main: [requiredRule('ci')] }, protections: { main: { required_status_checks: { checks: [{ context: 'ci', app_id: 15368 }] } } } });
+  assert.deepEqual(await onFake(fake, () => reads().readEffectiveRules('main')), [{ context: 'ci', integration_id: 15368 }]);
+});
+
 test('the fake effective-rules answer omits enforcement and non-active rules', async () => {
   const fake = fakeWith({ rules: { main: [requiredRule('active'), requiredRule('evaluate', null, 'evaluate'), requiredRule('disabled', null, 'disabled')] } });
   const said = await onFake(fake, () => readRunner(['api', 'repos/williacj/rigger/rules/branches/main?per_page=100&page=1', '-X', 'GET'], { emitter: UNKILLED }));
@@ -315,9 +329,16 @@ test('a closed pull request is refused without changing main', async () => {
   assert.deepEqual(mergeSent(fake), []);
 });
 
-test('an unknown 405 answers an unclassified refusal without changing main', async () => {
+test('an unknown 405 rejects quoting its status and message without changing main', async () => {
   const fake = fakeWith({ mainSha: BASE, pullRequests: [pull()], mergeReplies: { 12: { status: '405', message: 'An answer the adapter does not know' } } });
-  assert.deepEqual(await onFake(fake, () => writes().mergePullRequest(12, SHA)), { outcome: 'refused', reason: 'unclassified', status: 405, message: 'An answer the adapter does not know' });
+  await assert.rejects(onFake(fake, () => writes().mergePullRequest(12, SHA)), /HTTP 405 An answer the adapter does not know/);
+  assert.equal(held(fake).mainSha, BASE);
+  assert.deepEqual(mergeSent(fake), [expectedMerge]);
+});
+
+test('another unnamed merge answer rejects quoting its status and message without changing main', async () => {
+  const fake = fakeWith({ mainSha: BASE, pullRequests: [pull()], mergeReplies: { 12: { status: '422', message: 'An answer the adapter does not know' } } });
+  await assert.rejects(onFake(fake, () => writes().mergePullRequest(12, SHA)), /HTTP 422 An answer the adapter does not know/);
   assert.equal(held(fake).mainSha, BASE);
   assert.deepEqual(mergeSent(fake), [expectedMerge]);
 });
