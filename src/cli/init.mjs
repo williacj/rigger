@@ -212,8 +212,12 @@ async function forking({ sink, name }, {
   target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout, ask,
 } = {}) {
   if (sameTree(target, packageRoot)) return sourceTreeRefusal('init', real(target));
-  if (lstatSync(join(target, '.githooks'), { throwIfNoEntry: false })?.isSymbolicLink()) {
+  const hooksEntry = lstatSync(join(target, '.githooks'), { throwIfNoEntry: false });
+  if (hooksEntry?.isSymbolicLink()) {
     return { text: 'rigger init: .githooks is a symlink; refusing to write hooks.', code: 1 };
+  }
+  if (hooksEntry?.isFile()) {
+    return { text: 'rigger init: .githooks is a regular file; refusing to write hooks.', code: 1 };
   }
   name(target);
   let read;
