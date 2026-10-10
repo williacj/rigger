@@ -49,7 +49,7 @@ test('a marker composed from the instruction\'s fields, with toSound and coverag
   assert.deepEqual(parsed, { state: 'marker', marker, absent: [] });
 });
 
-// proves R-LOOP-5, R-VERDICT-5
+// proves R-VERDICT-5
 test('a composed block opens on the comment\'s second line with a rigger-marker fence, holds one key: value per line and an item line per ordinal, and closes with a bare fence', () => {
   const body = composeMarker({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', verdict: 'sound', items: ['met', 'unmet'], coverage: 'covered' }, 'Sound, by reviewer');
 
@@ -170,10 +170,12 @@ test('the marker table: a verdict outside the three values is unreadable', () =>
   for (const verdict of ['approved', 'Sound', '']) unreadable(parsedWith({ verdict, toSound: 'Exit 0.' }), /verdict/);
 });
 
+// proves R-LOOP-5
 test('the marker table: an item ordinal missing from the marker is unreadable, naming it', () => {
   unreadable(parsedWith({ 'item 2': null }), /item 2/);
 });
 
+// proves R-LOOP-5
 test('the marker table: an item ordinal given twice, or outside 1 to the item count, is unreadable, naming it', () => {
   unreadable(parseMarker(bodyOf([...fieldLines(), 'item 1: unmet']), 2), /item 1.*twice/);
   unreadable(parseMarker(bodyOf([...fieldLines(), 'item 3: met']), 2), /item 3/);
@@ -186,7 +188,6 @@ test('the marker table: no coverage ruling is unreadable', () => {
   unreadable(parsedWith({ coverage: 'mostly' }), /coverage/);
 });
 
-// proves R-LOOP-5
 test('the marker table: coverage ruled insufficient with no coverageReason is unreadable', () => {
   unreadable(parsedWith({ coverage: 'insufficient' }), /coverageReason/);
   assert.equal(parsedWith({ coverage: 'insufficient', coverageReason: 'It never names the exit code.' }).state, 'marker');
@@ -287,6 +288,7 @@ test('two markers of one role with one createdAt are ordered by comment id, the 
   }
 });
 
+// proves R-VERDICT-5
 test('a marker at another head or another digest governs nothing at the current head and digest', () => {
   assert.deepEqual(governing([markerComment('reviewer', { head: EARLIER }), markerComment('architect', { digest: EVIDENCE })]), {});
 });
@@ -322,4 +324,14 @@ test('an edited comment\'s governing marker is answered as edited', () => {
 
   assert.equal(held.state, 'marker');
   assert.equal(held.edited, true);
+});
+
+test('a later unclosed marker block whose identity is readable governs as unreadable over an earlier readable marker of its role', () => {
+  const readable = markerComment('reviewer', {}, { createdAt: '2026-10-01T11:00:00Z', id: 'IC_1' });
+  const unclosed = comment(['Sound, by reviewer', '```rigger-marker', ...fieldLines({ role: 'reviewer' })].join('\n'), { createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' });
+
+  const held = readMarkers([readable, unclosed], { card: 7, pull: 70, head: HEAD, digest: DIGEST, count: 2 }).governing.get('reviewer');
+
+  assert.equal(held.state, 'unreadable');
+  assert.match(held.reason, /never closed/);
 });

@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import config from '../rigger.config.mjs';
@@ -335,6 +336,18 @@ test('given two judges at one head, their dispatch.start events carry the same c
   assert.match(read[0].digest, /^[0-9a-f]{64}$/);
   assert.deepEqual(read[0], { card: 7, facts: { card: 7, base: BASE, head: HEAD }, digest: read[0].digest });
   assert.deepEqual(read[1], read[0]);
+});
+
+test('given a card whose maker L3 dispatches, the maker\'s dispatch.start records the SHA-256 digest of the evidence L2 composed for it', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)] });
+
+  await built.loop.pull();
+
+  const maker = built.decisions.find(({ card, answer }) => card === 3 && answer.action === 'dispatch' && answer.maker !== undefined)?.answer.maker;
+  assert.ok(maker !== undefined, 'L2 named no maker, so the test proves nothing');
+  const [l3] = recorded(built, 'L3', 'dispatch', (each) => each.card === 3 && each.role === 'engineer');
+  const start = built.events().find((each) => each.layer === 'L1' && each.event === 'dispatch.start' && each.dispatch === l3.dispatch);
+  assert.equal(start.digest, createHash('sha256').update(maker.evidence, 'utf8').digest('hex'));
 });
 
 // proves R-VERDICT-5

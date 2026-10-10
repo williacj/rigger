@@ -450,6 +450,15 @@ test('given a judge\'s marker written by an account without write access, the ju
   }
 });
 
+// proves R-VERDICT-5
 test('given a judge\'s marker at the head against another acceptance digest, the judge answer names it as owed', () => {
   assert.deepEqual(named(answer({ ...card({ comments: [verdict(HEAD, 'reviewer')] }), body: BODY.replace('exits 0', 'exits 1') })), ['reviewer', 'engineer', 'architect']);
+});
+
+test('given a judge\'s earlier readable marker at the head beside its later unclosed one, the judge answer names it as owed', () => {
+  const readable = { ...verdict(HEAD, 'reviewer'), createdAt: '2026-10-01T11:00:00Z', id: 'IC_1' };
+  const block = verdict(HEAD, 'reviewer').body.split('\n').slice(1, -2).join('\n');
+  const unclosed = { ...comment('Sound, by reviewer', block), createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' };
+
+  assert.deepEqual(named(answer(card({ comments: [readable, unclosed] }))), ['reviewer', 'engineer', 'architect']);
 });

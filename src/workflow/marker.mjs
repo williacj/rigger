@@ -134,7 +134,7 @@ export const dispatched = (answer, id) => ({ ...answer, instruction: answer.inst
  * CRLF read alike. It answers one of:
  * - `{ state: 'none' }`, where no marker block opens on the comment's second line;
  * - `{ state: 'unreadable', reason, fields }`, naming why, with `fields` the values the block gave
- *   each field it names, as written;
+ *   each field it names, as written, a block never closed read to the comment's end;
  * - `{ state: 'marker', marker, absent }`, `marker` holding each field the block gives, `card` and
  *   `pull` as numbers and `items` as each ordinal's ruling in order, and `absent` naming
  *   `dispatch` and `evidence` where the block leaves them out.
@@ -142,11 +142,11 @@ export const dispatched = (answer, id) => ({ ...answer, instruction: answer.inst
 export function parseMarker(body, count) {
   const lines = String(body).split(/\r?\n/).map((line) => line.trimEnd());
   if (lines[1] !== OPEN) return { state: 'none' };
-  const close = lines.indexOf(CLOSE, 2);
-  if (close === -1) return { state: 'unreadable', reason: 'the marker block opened on line 2 is never closed', fields: {} };
+  const closed = lines.indexOf(CLOSE, 2);
+  const close = closed === -1 ? lines.length : closed;
   const fields = {};
   const items = new Map();
-  const faults = [];
+  const faults = closed === -1 ? ['the marker block opened on line 2 is never closed'] : [];
   const second = secondBlock(lines, close + 1);
   if (second !== undefined) faults.push(`the comment holds two marker blocks, on line 2 and on line ${second + 1}`);
   for (let at = 2; at < close; at += 1) {
