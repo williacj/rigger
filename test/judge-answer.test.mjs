@@ -462,3 +462,10 @@ test('given a judge\'s earlier readable marker at the head beside its later uncl
 
   assert.deepEqual(named(answer(card({ comments: [readable, unclosed] }))), ['reviewer', 'engineer', 'architect']);
 });
+
+test('given a judge\'s marker quoted inside a fence that opens on the comment\'s first line, the judge answer names it as owed', () => {
+  const block = verdict(HEAD, 'reviewer').body.split('\n').slice(1, -1).join('\n');
+  const quoted = { ...comment('````', [block, '````'].join('\n')), createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' };
+
+  assert.deepEqual(named(answer(card({ comments: [quoted] }))), ['reviewer', 'engineer', 'architect']);
+});

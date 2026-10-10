@@ -335,3 +335,9 @@ test('a later unclosed marker block whose identity is readable governs as unread
   assert.equal(held.state, 'unreadable');
   assert.match(held.reason, /never closed/);
 });
+
+test('the marker table: a marker block quoted inside a fence that opens on the comment\'s first line is no marker', () => {
+  for (const outer of ['````', '````markdown', '~~~', '```text']) {
+    assert.deepEqual(parseMarker([outer, '```rigger-marker', ...fieldLines(), '```', outer].join('\n'), 2), { state: 'none' }, outer);
+  }
+});
