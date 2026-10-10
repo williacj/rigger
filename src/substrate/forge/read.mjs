@@ -308,6 +308,70 @@ async function restRead(operation, board, via, path, headers, addressed) {
   return said.stdout;
 }
 
+/** Every REST page of a commit's checks or statuses. */
+async function commitPages(operation, board, via, sha, kind, addressed) {
+  const records = [];
+  for (let page = 1;; page += 1) {
+    const body = JSON.parse(await restRead(operation, board, via, `commits/${encodeURIComponent(sha)}/${kind}?per_page=${PAGE}&page=${page}`, [], addressed));
+    const batch = kind === 'check-runs' ? body.check_runs : body;
+    if (!Array.isArray(batch)) fail(operation, board, `${addressed}gh answered no ${kind}`);
+    records.push(...batch);
+    if (batch.length < PAGE) return records;
+  }
+}
+
+/** GitHub's state of each required context at `sha`, with each commit status's creator. */
+async function checkStates(board, via, sha, required, addressed) {
+  const runs = await commitPages('readCheckStates', board, via, sha, 'check-runs', addressed);
+  const statuses = await commitPages('readCheckStates', board, via, sha, 'statuses', addressed);
+  const result = {};
+  for (const { context, integration_id: pin = null } of required) {
+    const matching = runs.filter((run) => run.name === context && (pin === null || run.app?.id === pin));
+    const run = matching.sort((a, b) => b.id - a.id)[0];
+    const status = statuses.find((record) => record.context === context);
+    const runState = !run ? null : run.status !== 'completed' ? 'pending'
+      : ['success', 'neutral', 'skipped'].includes(run.conclusion) ? 'passed' : 'failed';
+    const statusState = !status ? null : status.state === 'success' ? 'passed'
+      : status.state === 'pending' ? 'pending' : 'failed';
+    const states = [runState, statusState];
+    const state = states.includes('failed') ? 'failed' : states.includes('pending') ? 'pending' : states.includes('passed') ? 'passed' : 'absent';
+    result[context] = { state, creator: status ? { login: status.creator?.login ?? null, id: status.creator?.id ?? null } : null };
+  }
+  return result;
+}
+
+/** Required contexts enforced on `branch` by active rulesets and classic protection. */
+async function effectiveRules(board, via, branch, addressed) {
+  const checks = new Map();
+  for (let page = 1;; page += 1) {
+    const path = `rules/branches/${encodeURIComponent(branch)}?per_page=${PAGE}&page=${page}`;
+    const rules = JSON.parse(await restRead('readEffectiveRules', board, via, path, [], addressed));
+    if (!Array.isArray(rules)) fail('readEffectiveRules', board, `${addressed}gh answered no rules`);
+    for (const rule of rules) {
+      if (rule.type !== 'required_status_checks' || (rule.enforcement && rule.enforcement !== 'active')) continue;
+      for (const check of rule.parameters?.required_status_checks ?? []) {
+        checks.set(check.context, { context: check.context, integration_id: check.integration_id ?? null });
+      }
+    }
+    if (rules.length < PAGE) break;
+  }
+  const path = `repos/${board.repo}/branches/${encodeURIComponent(branch)}/protection`;
+  const said = await readRunner(['api', path, '-X', 'GET'], via);
+  if (said.status !== 0 && !/Branch not protected \(HTTP 404\)/.test(firstLine(said))) {
+    fail('readEffectiveRules', board, `${addressed}${firstLine(said)}`);
+  }
+  if (said.status === 0) {
+    const classic = JSON.parse(said.stdout).required_status_checks;
+    for (const check of classic?.checks ?? []) {
+      checks.set(check.context, { context: check.context, integration_id: check.app_id ?? null });
+    }
+    for (const context of classic?.contexts ?? []) {
+      if (!checks.has(context)) checks.set(context, { context, integration_id: null });
+    }
+  }
+  return [...checks.values()];
+}
+
 /**
  * What `read` answers, or a failure naming `operation`, what was `addressed` and why: a failure
  * the read gave already names them, and any other, such as a request that never reached `gh` or
@@ -395,12 +459,45 @@ const REPOSITORY_READS = {
       return { base, head, mergeBase };
     },
   },
-  /** Every comment on pull request `number`, oldest first, each as `{ body, createdAt }`. */
+  /** The forge's current mergeability answer for pull request `number`. */
+  readMergeable: {
+    reading: (number) => `pull request #${number}'s mergeability`,
+    read: async (board, via, number, addressed) => {
+      const query = repositoryQuery(board, `pullRequest(number: ${numbered('readMergeable', board, number)}) { mergeable }`);
+      const pull = heldIn('readMergeable', board, await asked('readMergeable', board, query, via, addressed), 'pullRequest', addressed);
+      const states = { MERGEABLE: 'mergeable', CONFLICTING: 'conflicting', UNKNOWN: 'unknown' };
+      if (!Object.hasOwn(states, pull.mergeable)) fail('readMergeable', board, `${addressed}gh answered mergeable ${pull.mergeable}`);
+      return states[pull.mergeable];
+    },
+  },
+  /** Every comment on pull request `number`, oldest first, with its author, edit and permission. */
   readComments: {
     reading: (number) => `pull request #${number}'s comments`,
-    read: (board, via, number, addressed) => {
-      const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt } } }`);
-      return everyPage('readComments', board, via, query, (data) => heldIn('readComments', board, data, 'pullRequest', addressed).comments, addressed);
+    read: async (board, via, number, addressed) => {
+      const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } }`);
+      const nodes = await everyPage('readComments', board, via, query, (data) => heldIn('readComments', board, data, 'pullRequest', addressed).comments, addressed);
+      const permissions = new Map();
+      const permissionOf = async (author) => {
+        if (author === null) return 'none';
+        if (!permissions.has(author)) {
+          const path = `repos/${board.repo}/collaborators/${encodeURIComponent(author)}/permission`;
+          permissions.set(author, (async () => {
+            const said = await readRunner(['api', path, '-X', 'GET'], via);
+            if (said.status !== 0) {
+              if (/\b404\b/.test(firstLine(said))) return 'none';
+              fail('readComments', board, `${addressed}permission for ${author}: ${firstLine(said)}`);
+            }
+            return JSON.parse(said.stdout).permission;
+          })());
+        }
+        return permissions.get(author);
+      };
+      const comments = [];
+      for (const node of nodes) {
+        const author = node.author?.login ?? null;
+        comments.push({ body: node.body, createdAt: node.createdAt, id: node.id, author, permission: await permissionOf(author), edited: node.lastEditedAt != null || node.includesCreatedEdit === true });
+      }
+      return comments;
     },
   },
 };
@@ -411,11 +508,20 @@ const REPOSITORY_READS = {
  */
 export function repositoryReads(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
-  return Object.fromEntries(Object.entries(REPOSITORY_READS).map(([operation, { reading: what, read }]) => [
+  const reads = Object.fromEntries(Object.entries(REPOSITORY_READS).map(([operation, { reading: what, read }]) => [
     operation,
     (target) => {
       const addressed = reading(board, what(target));
       return labelled(operation, board, addressed, () => read(board, via, target, addressed));
     },
   ]));
+  reads.readCheckStates = (sha, required) => {
+    const addressed = reading(board, `checks at ${sha}`);
+    return labelled('readCheckStates', board, addressed, () => checkStates(board, via, sha, required, addressed));
+  };
+  reads.readEffectiveRules = (branch) => {
+    const addressed = reading(board, `effective rules for branch ${branch}`);
+    return labelled('readEffectiveRules', board, addressed, () => effectiveRules(board, via, branch, addressed));
+  };
+  return reads;
 }

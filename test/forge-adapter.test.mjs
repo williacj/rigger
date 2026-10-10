@@ -9,6 +9,7 @@ import { createFakeBoard } from './fake-board.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { schemaWriteSide } from '../src/substrate/forge/schema-write.mjs';
+import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 
 /** The board every test here works: this repository's config names it the same way. */
@@ -42,6 +43,29 @@ const BOARD_READ = {
 const REFUSED = { status: 1, stdout: '{"data":{"updateProjectV2ItemFieldValue":null},"errors":[]}', stderr: "gh: Could not resolve to a node with the global id of 'PVT_doesnotexist'\n" };
 
 const ok = (data) => ({ status: 0, stdout: JSON.stringify({ data }), stderr: '' });
+
+test('repository-write sends a merge commit only with the expected head SHA', async () => {
+  const sent = [];
+  const sha = 'a'.repeat(40);
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    return { status: 0, stdout: JSON.stringify(args.includes('GET') ? { state: 'open', merged: false, mergeable: true, head: { sha } } : { merged: true, sha: 'm'.repeat(40) }), stderr: '' };
+  };
+
+  assert.deepEqual(await repositoryWriteSide(BOARD, { send }).mergePullRequest(12, sha), { outcome: 'merged', sha: 'm'.repeat(40) });
+  assert.deepEqual(sent[1], ['gh', 'api', 'repos/williacj/rigger/pulls/12/merge', '-X', 'PUT', '-f', `sha=${sha}`, '-f', 'merge_method=merge']);
+});
+
+test('repository-write posts a comment only on a pull request', async () => {
+  const sent = [];
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    return { status: 0, stdout: JSON.stringify(args.includes('GET') ? { state: 'open', merged: false, mergeable: true, head: { sha: 'a'.repeat(40) } } : { id: 1, body: 'review' }), stderr: '' };
+  };
+
+  assert.deepEqual(await repositoryWriteSide(BOARD, { send }).postComment(12, 'review'), { id: 1, body: 'review' });
+  assert.deepEqual(sent[1], ['gh', 'api', 'repos/williacj/rigger/issues/12/comments', '-X', 'POST', '-f', 'body=review']);
+});
 
 /** The document a `gh api graphql -f query=` request carries, or null for any other request. */
 const documentOf = (sent) => (sent[3]?.startsWith('query=') ? sent[3].slice('query='.length) : null);

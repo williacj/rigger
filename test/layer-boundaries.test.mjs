@@ -31,6 +31,8 @@ const ADAPTER = {
   'src/scheduling/loop.mjs': 'export function loop(deps) { return { pull: async () => deps }; }',
   'src/execution/run.mjs': 'export async function dispatch(request) { return request; }\nexport async function killRecordedGroups(options) { return options; }',
 };
+ADAPTER['src/substrate/forge/repository-write.mjs'] = "import { repositoryWriteRunner } from './runners.mjs';\nexport function writeRepository() { return repositoryWriteRunner([]); }";
+ADAPTER['src/substrate/forge/runners.mjs'] += '\nexport function repositoryWriteRunner(args) { return readRunner(args); }';
 
 /** The report on the adapter plus `modules`, a map of path to source. */
 const reportOn = (modules) => boundaryReport(new Map(Object.entries({ ...ADAPTER, ...modules })));
@@ -91,6 +93,13 @@ test('rule 5: an import of the item-write side from anywhere but src/workflow/ f
   assertBreaks({ 'src/observation/peek.mjs': "import { write } from '../substrate/forge/item-write.mjs';" }, 'src/observation/peek.mjs', 'rule 5');
   assertBreaks({ 'src/substrate/forge/read.mjs': "import { itemWriteRunner } from './runners.mjs';" }, 'src/substrate/forge/read.mjs', 'rule 5');
   assert.deepEqual(messages({ 'src/workflow/move.mjs': "import { write } from '../substrate/forge/item-write.mjs';" }), []);
+});
+
+test('rule 5: a module outside src/workflow/ importing repository-write fails', () => {
+  const tree = sourceTree();
+  tree.set('src/cli/once.mjs', `${tree.get('src/cli/once.mjs')}\nimport { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';\n`);
+  const violations = boundaryReport(tree).violations.map((violation) => violation.message);
+  assert.ok(violations.some((message) => message.includes('src/cli/once.mjs') && message.includes('rule 5')), violations.join('\n'));
 });
 
 test('rule 6: an import of the schema-write side from anywhere but src/cli/ fails, and one from src/cli/ does not', () => {

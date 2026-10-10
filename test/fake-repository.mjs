@@ -16,6 +16,18 @@ import { gitIn } from './git-repository.mjs';
  */
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body'];
 
+/** The fields a comment read selects, filled as the fake forge gives an agent's comment. */
+export function commentOf(comment, number, index) {
+  return {
+    body: comment.body,
+    createdAt: comment.createdAt,
+    id: comment.id ?? `IC_${number}_${index + 1}`,
+    author: comment.author === undefined ? { login: 'rigger-fake' } : comment.author,
+    lastEditedAt: comment.lastEditedAt ?? null,
+    includesCreatedEdit: comment.includesCreatedEdit ?? false,
+  };
+}
+
 /** A pull request as the fake holds it, with every fact it was not given at its default. */
 function heldPull(pull) {
   const unmodelled = Object.keys(pull).filter((fact) => !PULL_FACTS.includes(fact));
@@ -60,7 +72,13 @@ export function createFakeRepository({ branches = [], pullRequests = [], edited 
       if (mergeBase === null) throw new Error(`the fake repository holds no merge base for pull request #${number}`);
       return { base, head: sha, mergeBase };
     },
-    readComments: async (number) => structuredClone(known('readComments', number).comments),
+    readMergeable: async (number) => known('readMergeable', number).mergeable ?? 'unknown',
+    readCheckStates: async (sha, required) => Object.fromEntries(required.map(({ context }) => [context, { state: 'absent', creator: null }])),
+    readEffectiveRules: async () => [],
+    readComments: async (number) => structuredClone(known('readComments', number).comments.map((comment, index) => {
+      const node = commentOf(comment, number, index);
+      return { body: node.body, createdAt: node.createdAt, id: node.id, author: node.author?.login ?? null, permission: 'write', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
+    })),
   };
   return {
     operations,
