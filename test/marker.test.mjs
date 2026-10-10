@@ -348,3 +348,28 @@ test('the marker table: a card or pull too large to be a safe integer is unreada
     unreadable(parsedWith({ pull: value }), /\bpull\b/);
   }
 });
+
+test('the marker table: a role holding trailing whitespace is unreadable, naming the field', () => {
+  for (const role of ['reviewer ', 'reviewer\t']) unreadable(parsedWith({ role }), /\brole\b/);
+});
+
+test('a marker whose role holds trailing whitespace is never read as a readable marker of that role', () => {
+  const readable = markerComment('reviewer', {}, { createdAt: '2026-10-01T11:00:00Z', id: 'IC_1' });
+  const later = markerComment('reviewer ', {}, { createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' });
+
+  const read = readMarkers([later], { card: 7, pull: 70, head: HEAD, digest: DIGEST, count: 2 });
+
+  assert.notEqual(read.governing.get('reviewer')?.state, 'marker');
+  assert.deepEqual(readMarkers([readable, later], { card: 7, pull: 70, head: HEAD, digest: DIGEST, count: 2 }).markers.map((each) => each.role), ['reviewer']);
+});
+
+test('the marker table: a head, digest, evidence, card, pull, dispatch, verdict or coverage holding trailing whitespace is unreadable, naming the field', () => {
+  for (const key of ['head', 'digest', 'evidence', 'card', 'pull', 'dispatch', 'verdict', 'coverage']) {
+    const written = Object.fromEntries(fieldLines().map((line) => line.split(': ')));
+    unreadable(parsedWith({ [key]: `${written[key]} ` }), new RegExp(`\\b${key}\\b`));
+  }
+});
+
+test('the marker table: an item ruling holding trailing whitespace is unreadable, naming the item', () => {
+  unreadable(parsedWith({ 'item 2': 'met ' }), /item 2/);
+});

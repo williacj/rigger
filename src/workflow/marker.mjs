@@ -142,7 +142,10 @@ export const dispatched = (answer, id) => ({ ...answer, instruction: answer.inst
  *   `dispatch` and `evidence` where the block leaves them out.
  */
 export function parseMarker(body, count) {
-  const lines = String(body).split(/\r?\n/).map((line) => line.trimEnd());
+  const written = String(body).split(/\r?\n/);
+  // Fence lines are compared without trailing whitespace; field lines are read as written, so a
+  // value holding whitespace is refused rather than trimmed into a valid one.
+  const lines = written.map((line) => line.trimEnd());
   if (lines[1] !== OPEN || FENCE.test(lines[0])) return { state: 'none' };
   const closed = lines.indexOf(CLOSE, 2);
   const close = closed === -1 ? lines.length : closed;
@@ -152,9 +155,9 @@ export function parseMarker(body, count) {
   const second = secondBlock(lines, close + 1);
   if (second !== undefined) faults.push(`the comment holds two marker blocks, on line 2 and on line ${second + 1}`);
   for (let at = 2; at < close; at += 1) {
-    const field = FIELD.exec(lines[at]);
+    const field = FIELD.exec(written[at]);
     if (field === null) {
-      faults.push(`line ${at + 1}, ${JSON.stringify(lines[at])}, is not \`key: value\``);
+      faults.push(`line ${at + 1}, ${JSON.stringify(written[at])}, is not \`key: value\``);
       continue;
     }
     const [, key, value = ''] = field;
@@ -221,22 +224,25 @@ const before = (one, other) => {
  *
  * It answers `governing`, each role's governing marker, the latest by `createdAt` at `head` and
  * `digest`, and at one `createdAt` the later comment id: the parse's answer, with `edited` as its
- * comment's. An unreadable marker governs for the role, head and digest its block names. It also
+ * comment's. An unreadable marker governs for the card, pull request, role, head and digest its
+ * block names, each read without surrounding whitespace, so whitespace that makes a field
+ * unreadable does not also move the marker off its role. It also
  * answers `markers`, every readable marker counted, oldest first.
  */
 export function readMarkers(comments, { card, pull, head, digest, count }) {
+  const namedBy = (parsed) => parsed.marker ?? Object.fromEntries(Object.entries(parsed.fields).map(([key, value]) => [key, value.trim()]));
   const counted = comments
     .filter((comment) => comment.author !== null && WRITERS.includes(comment.permission))
     .map((comment) => ({ comment, parsed: parseMarker(comment.body, count) }))
     .filter(({ parsed }) => parsed.state !== 'none')
     .filter(({ parsed }) => {
-      const named = parsed.marker ?? parsed.fields;
+      const named = namedBy(parsed);
       return String(named.card) === String(card) && String(named.pull) === String(pull);
     })
     .sort((one, other) => (before(one.comment, other.comment) ? -1 : 1));
   const governing = new Map();
   for (const { comment, parsed } of counted) {
-    const named = parsed.marker ?? parsed.fields;
+    const named = namedBy(parsed);
     if (named.head === head && named.digest === digest) governing.set(named.role, { ...parsed, edited: comment.edited === true });
   }
   return { governing, markers: counted.filter(({ parsed }) => parsed.state === 'marker').map(({ parsed }) => parsed.marker) };

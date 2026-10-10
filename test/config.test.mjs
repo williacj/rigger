@@ -1033,16 +1033,25 @@ test("a role's labels mapping label names to standard or high is accepted, and s
 });
 
 // proves R-VERDICT-1
-test('given a config declaring a top-level verdicts key, the validator refuses it, naming the key', () => {
-  const refusals = validate({ ...rigger, verdicts: ['sound', 'needs revision', 'critical', 'approved'] });
+test('given a config declaring a top-level verdicts key, the validator refuses it, naming the key, and leaves the config unchanged', () => {
+  const config = { ...rigger, verdicts: ['sound', 'needs revision', 'critical', 'approved'] };
+  const before = structuredClone(config);
+
+  const refusals = validate(config);
 
   assert.deepEqual(refusals, ['`verdicts` is not a declaration Rigger offers']);
+  assert.deepEqual(config, before);
 });
 
 // proves R-VERDICT-1
-test('given a kind declaring verdicts, the validator refuses it, naming the key', () => {
+test('given a kind declaring verdicts, the validator refuses it, naming the key, and leaves the config and that kind unchanged', () => {
   const [name, kind] = Object.entries(rigger.kinds)[0];
-  const refusals = validate({ ...rigger, kinds: { ...rigger.kinds, [name]: { ...kind, verdicts: ['approved'] } } });
+  const config = { ...rigger, kinds: { ...rigger.kinds, [name]: { ...kind, verdicts: ['approved'] } } };
+  const before = structuredClone(config);
+
+  const refusals = validate(config);
 
   assert.deepEqual(refusals, [`\`kinds.${name}.verdicts\` is not a declaration Rigger offers`]);
+  assert.deepEqual(config.kinds[name], before.kinds[name]);
+  assert.deepEqual(config, before);
 });

@@ -469,3 +469,12 @@ test('given a judge\'s marker quoted inside a fence that opens on the comment\'s
 
   assert.deepEqual(named(answer(card({ comments: [quoted] }))), ['reviewer', 'engineer', 'architect']);
 });
+
+test('given a judge\'s later marker at the head whose role holds trailing whitespace, beside its earlier readable one, the judge answer names it as owed', () => {
+  const readable = { ...verdict(HEAD, 'reviewer'), createdAt: '2026-10-01T11:00:00Z', id: 'IC_1' };
+  const later = { ...verdict(HEAD, 'reviewer'), createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' };
+  later.body = later.body.replace('role: reviewer\n', 'role: reviewer \n');
+
+  assert.ok(later.body.includes('role: reviewer \n'), 'the later marker\'s role holds no trailing space, so the test proves nothing');
+  assert.deepEqual(named(answer(card({ comments: [readable, later] }))), ['reviewer', 'engineer', 'architect']);
+});
