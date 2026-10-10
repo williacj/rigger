@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
 
 import { composeMarker, parseMarker } from '../src/workflow/marker.mjs';
 import { gateAnswer, GATE_CONTEXT } from '../src/workflow/gate.mjs';
@@ -75,7 +76,7 @@ test('a governing unreadable marker refuses by judge with the parse reason for m
   }
 });
 
-// proves R-GATE-2, R-GATE-6
+// proves R-GATE-2
 test('an edited governing marker refuses despite its sound verdict', () => {
   const comments = [marker('reviewer'), marker('engineer', {}, { edited: true }), marker('architect')];
   assert.deepEqual(gateAnswer(input(comments)), { admit: false, refusals: [{ judge: 'engineer', reason: 'marker edited' }] });
@@ -158,7 +159,8 @@ test('two judges in different refusing states are both named', () => {
 // proves R-GATE-7
 test('a current sound marker admits beside an older head marker or an older digest revision', () => {
   for (const stale of [marker('engineer', { head: OLD_HEAD }), marker('engineer', { digest: OLD_DIGEST, verdict: 'needs revision', toSound: 'Fix the earlier work.' })]) {
-    assert.deepEqual(gateAnswer(input([marker('reviewer'), stale, marker('engineer'), marker('architect')])), { admit: true });
+    stale.createdAt = '2026-10-10T13:00:00Z';
+    assert.deepEqual(gateAnswer(input([marker('reviewer'), marker('engineer'), stale, marker('architect')])), { admit: true });
   }
 });
 
@@ -177,7 +179,7 @@ test('a later marker at the current head and digest governs over an earlier soun
   assert.deepEqual(gateAnswer(input([...other, edited, marker('engineer', {}, { id: 'IC_5', createdAt: '2026-10-10T15:00:00Z' })])), { admit: true });
 });
 
-// proves R-GATE-4, R-GATE-7
+// proves R-GATE-4
 test('an unreadable later marker with invalid head, digest or role cannot displace an earlier sound marker', () => {
   const earlier = marker('engineer', {}, { id: 'IC_1', createdAt: '2026-10-10T11:00:00Z' });
   for (const field of ['head', 'digest', 'role']) {
@@ -188,7 +190,7 @@ test('an unreadable later marker with invalid head, digest or role cannot displa
   }
 });
 
-// proves R-GATE-7
+// proves R-GATE-6
 test('equal creation times use the later comment id to choose the governing marker', () => {
   const first = marker('engineer', {}, { id: 'IC_8' });
   const second = marker('engineer', { verdict: 'needs revision', toSound: 'Fix it.' }, { id: 'IC_9' });
@@ -213,7 +215,7 @@ test('the latest readable older digest is named in marker order', () => {
   assert.deepEqual(gateAnswer(input([marker('reviewer'), last, first, marker('architect')])), { admit: false, refusals: [{ judge: 'engineer', reason: `stale digest: ${'c'.repeat(64)}; current digest: ${DIGEST}` }] });
 });
 
-// proves R-GATE-4, R-GATE-6
+// proves R-GATE-4
 test('a later sound marker governs at every judge position in each judge set', () => {
   for (const judges of [['reviewer'], JUDGES, [...JUDGES, 'owner'], ['owner']]) for (const role of judges) {
     const earlier = marker(role, { verdict: 'needs revision', toSound: 'Fix it.' }, { id: 'IC_1', createdAt: '2026-10-10T11:00:00Z' });
@@ -261,11 +263,26 @@ test('an owner sound marker does not offset an agent revision marker', () => {
   assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: false, refusals: [{ judge: 'engineer', reason: 'verdict needs revision' }] });
 });
 
-// proves R-GATE-3, R-GATE-4
+// proves R-GATE-3
 test('the gate context is fixed and the rule imports only the marker reader and reads no clock', () => {
   assert.equal(GATE_CONTEXT, 'rigger/gate');
   const source = readFileSync(new URL('../src/workflow/gate.mjs', import.meta.url), 'utf8');
-  assert.deepEqual([...source.matchAll(/\bfrom ['"]([^'"]+)['"]/g)].map((match) => match[1]), ['./marker.mjs']);
+  const loads = [];
+  function visit(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'ImportDeclaration') loads.push(['import', node.source.value]);
+    if (node.type === 'ImportExpression') loads.push(['dynamic import']);
+    if ((node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') && node.source) loads.push(['re-export', node.source.value]);
+    if (node.type === 'CallExpression' && (
+      node.callee.name === 'require' || node.callee.name === 'createRequire' ||
+      (node.callee.type === 'MemberExpression' && (node.callee.property.name === 'require' || node.callee.property.value === 'require'))
+    )) loads.push(['require']);
+    for (const child of Object.values(node)) {
+      for (const held of Array.isArray(child) ? child : [child]) visit(held);
+    }
+  }
+  visit(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }));
+  assert.deepEqual(loads, [['import', './marker.mjs']]);
   assert.doesNotMatch(source, /\b(?:Date|performance)\b/);
 });
 
