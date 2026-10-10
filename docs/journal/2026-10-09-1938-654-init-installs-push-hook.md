@@ -16,3 +16,5 @@ The revised working-tree suite passed 2,580 tests: 2,563 passed, 17 skipped, 0 f
 Round 2 judges found that a refusal test could mistake the target path for the repository top level. Three tests now require the exact `inside the repository at <top level>;` clause. With that clause removed in mutation M7, all three failed; restored, all passed.
 
 Git's exit 128 also covers unsafe ownership, an invalid `.git` file and a bare repository. Real-Git tests first showed `init` writing 16 files in all three. The preflight now treats 128 as a nonrepository result only after checking that no `.git` entry or standard bare-repository entries appear in the ancestry. The check is deliberately a veto rather than a substitute for Git's discovery: a nonrepository carrying those entries is refused too, so an ambiguous failure cannot authorize writes.
+
+The next CI run's unsafe-owner probe returned 0 instead of 128 on Node 20 and 24. A local `safe.directory=*` config reproduced that result. The test now clears the trust list through command-scope configuration only while it probes, and restores the environment afterward; the same local probe then passed.

@@ -396,8 +396,15 @@ test('init refuses an unsafe repository and reports Git’s own error', async ()
   const packageRoot = elsewhere();
   const before = readFileSync(join(consumer, '.git', 'config'));
   const entries = readdirSync(consumer).sort();
-  const former = process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
-  process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+  // A runner may trust every directory; command-scope config clears that list for this probe.
+  const isolated = {
+    GIT_TEST_ASSUME_DIFFERENT_OWNER: '1',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'safe.directory',
+    GIT_CONFIG_VALUE_0: '',
+  };
+  const former = Object.fromEntries(Object.keys(isolated).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, isolated);
   try {
     const git = spawnSync('git', ['-C', consumer, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnvironment() });
     assert.equal(git.status, 128, git.stdout + git.stderr);
@@ -409,8 +416,10 @@ test('init refuses an unsafe repository and reports Git’s own error', async ()
     assert.deepEqual(readdirSync(consumer).sort(), entries);
     assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), before);
   } finally {
-    if (former === undefined) delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
-    else process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = former;
+    for (const [key, value] of Object.entries(former)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
