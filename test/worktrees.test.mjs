@@ -566,6 +566,28 @@ test('a fetch failing with any other standard error is not retried', async (t) =
   assert.equal(read(dirname(failing), 'fetches'), 'fetched');
 });
 
+// proves R-WORK-25
+test('a continuing line fetch that times out rejects without changing an existing worktree', async (t) => {
+  const { directory, source, repository, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker\'s work', 'rigger-42');
+  const path = worktreeAt(repository, join(directory, 'rigger-42'), 'rigger-42');
+  writeFileSync(join(path, 'kept'), 'earlier work\n');
+  const before = { file: readFileSync(join(path, 'kept')), worktrees: worktreeList(repository) };
+  const holdingDirectory = holding(t);
+  const hanging = fixture(holdingDirectory, 'git', [
+    'if [ "$1" = fetch ]; then /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(
+    workspaces({ repository, emitter: recorder(), git: hanging, timeout: OUTLIVED }).fetchLineAt('rigger-42', head),
+    (error) => error.message.includes('fetch') && error.message.includes(`${OUTLIVED} ms`),
+  );
+
+  assert.deepEqual({ file: readFileSync(join(path, 'kept')), worktrees: worktreeList(repository) }, before);
+});
+
 test('no operation but fetch is retried, whatever its standard error says', async (t) => {
   const { directory, repository } = world(t);
   const made = worktreeAt(repository, join(directory, 'made'), 'made');

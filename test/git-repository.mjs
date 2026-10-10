@@ -154,6 +154,11 @@ export function worktreeAt(repository, path, branch, ...flags) {
   return path;
 }
 
+/** Removes a fixture worktree while retaining its branch for a later attempt. */
+export function removeWorktreeAt(repository, path) {
+  gitIn(repository, 'worktree', 'remove', path);
+}
+
 /**
  * A worktree of the repository at `repository`, made at `path` by git itself with its `HEAD`
  * detached at `commit`, making no branch, as a judge's directory holds them. `flags` go to `git

@@ -19,11 +19,13 @@ import { cloneInto, clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeL
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
 import { previousCheckout } from './git-repository.mjs';
+import { removeWorktreeAt } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
 import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
 import { createHash } from 'node:crypto';
+import { holding, OUTLIVED } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -328,6 +330,279 @@ test('L1\'s workspace handle, built over a topic git accepts, makes a card\'s wo
   const made = await handle(42);
   assert.equal(realpathSync(made.path), realpathSync(join(here.root, 'rigger-42')));
   assert.equal(branchOf(made.path), 'rigger-42');
+});
+
+/** Publishes the card's line of work to the fixture forge and hands back its head. */
+function publishCard(here, content = 'the maker\'s work\n', force = false) {
+  if (branchOf(here.source) !== 'rigger-42') gitIn(here.source, 'switch', '-q', '-c', 'rigger-42');
+  writeFileSync(join(here.source, 'work'), content);
+  gitIn(here.source, 'add', 'work');
+  gitIn(here.source, 'commit', '-qm', 'the maker\'s work');
+  gitIn(here.source, 'push', '-q', ...(force ? ['--force'] : []), here.origin, 'HEAD:refs/heads/rigger-42');
+  return headOf(here.source);
+}
+
+// proves R-WORK-25
+test('L1\'s workspace handle makes a continuing attempt at the card line of work head it is handed', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const handle = await workspaceHandle({ root: here.root, topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
+
+  const made = await handle(42, head);
+
+  assert.equal(headOf(made.path), head);
+  assert.equal(branchOf(made.path), 'rigger-42');
+  assert.equal(readFileSync(join(made.path, 'work'), 'utf8'), 'the maker\'s work\n');
+});
+
+// proves R-WORK-10
+test('L1\'s workspace handle makes an attempt from the beginning at the forge main line when handed the card alone', async (t) => {
+  const here = world(t);
+  const main = here.push('main advances');
+  const handle = await workspaceHandle({ root: here.root, topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
+
+  const made = await handle(42);
+
+  assert.equal(headOf(made.path), main);
+  assert.equal(branchOf(made.path), 'rigger-42');
+});
+
+// proves R-WORK-25
+test('a continuing attempt replaces a clean earlier worktree with the forge line of work', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  const main = headOf(first.path);
+  const head = publishCard(here);
+
+  const made = await here.make(42, { head });
+
+  assert.notEqual(main, head);
+  assert.equal(headOf(made.path), head);
+  assert.equal(branchOf(made.path), 'rigger-42');
+});
+
+// proves R-WORK-25
+test('a continuing attempt removes uncommitted changes left in the earlier worktree', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  writeFileSync(join(first.path, 'README'), 'uncommitted change\n');
+  const head = publishCard(here);
+
+  const made = await here.make(42, { head });
+
+  assert.equal(headOf(made.path), head);
+  assert.equal(readFileSync(join(made.path, 'README'), 'utf8'), 'one\n');
+});
+
+// proves R-WORK-25
+test('a continuing attempt removes untracked and ignored files left in the earlier worktree', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  writeFileSync(join(first.path, '.gitignore'), 'ignored\n');
+  writeFileSync(join(first.path, 'untracked'), 'untracked\n');
+  writeFileSync(join(first.path, 'ignored'), 'ignored\n');
+  assert.match(gitIn(first.path, 'status', '--porcelain', '--ignored'), /!! ignored/);
+  const head = publishCard(here);
+
+  const made = await here.make(42, { head });
+
+  assert.equal(headOf(made.path), head);
+  for (const name of ['.gitignore', 'untracked', 'ignored']) assert.equal(existsSync(join(made.path, name)), false, name);
+});
+
+// proves R-WORK-25
+test('a continuing attempt drops local commits left in the earlier worktree that the forge lacks', async (t) => {
+  const here = world(t);
+  const first = await here.make(42);
+  writeFileSync(join(first.path, 'local'), 'local only\n');
+  gitIn(first.path, 'add', 'local');
+  gitIn(first.path, 'commit', '-qm', 'local only');
+  const local = headOf(first.path);
+  const head = publishCard(here);
+
+  const made = await here.make(42, { head });
+
+  assert.notEqual(local, head);
+  assert.equal(headOf(made.path), head);
+  assert.equal(existsSync(join(made.path, 'local')), false);
+});
+
+// proves R-WORK-25
+test('a continuing attempt resets a local card branch with commits absent from the forge when no workspace exists', async (t) => {
+  const here = world(t);
+  const temporary = join(here.directory, 'temporary');
+  worktreeAt(here.repository, temporary, 'rigger-42');
+  gitIn(temporary, 'commit', '-q', '--allow-empty', '-m', 'local only');
+  const local = headOf(temporary);
+  removeWorktreeAt(here.repository, temporary);
+  const head = publishCard(here);
+
+  const made = await here.make(42, { head });
+
+  assert.notEqual(local, head);
+  assert.equal(headOf(made.path), head);
+  assert.equal(branchAt(here.repository, 'rigger-42'), head);
+});
+
+// proves R-WORK-25
+test('a continuing attempt follows a force-moved forge line rather than its earlier ancestry', async (t) => {
+  const here = world(t);
+  const earlier = publishCard(here, 'old work\n');
+  await here.make(42, { head: earlier });
+  gitIn(here.source, 'reset', '--hard', 'HEAD~1');
+  const head = publishCard(here, 'force-moved work\n', true);
+
+  const made = await here.make(42, { head });
+
+  assert.notEqual(earlier, head);
+  assert.equal(headOf(made.path), head);
+  assert.equal(readFileSync(join(made.path, 'work'), 'utf8'), 'force-moved work\n');
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses a forge line moved since L2 read it, naming both heads and preserving the workspace', async (t) => {
+  const here = world(t);
+  const readHead = publishCard(here, 'first work\n');
+  const first = await here.make(42, { head: readHead });
+  writeFileSync(join(first.path, 'uncommitted'), 'kept\n');
+  const before = contents(first.path);
+  const movedHead = publishCard(here, 'later work\n');
+
+  const failure = await refusedNaming(here.make(42, { head: readHead }), first.path);
+
+  assert.ok(failure.message.includes(readHead) && failure.message.includes(movedHead), failure.message);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), readHead);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses when the forge moves during its fetch', async (t) => {
+  const here = world(t);
+  const readHead = publishCard(here, 'first work\n');
+  const first = await here.make(42, { head: readHead });
+  writeFileSync(join(first.path, 'uncommitted'), 'kept\n');
+  const before = contents(first.path);
+  gitIn(here.source, 'commit', '-q', '--allow-empty', '-m', 'later work');
+  const movedHead = headOf(here.source);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = fetch ]; then',
+    `  '${GIT}' -C '${here.source}' push -q '${here.origin}' HEAD:refs/heads/rigger-42 || exit $?`,
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head: readHead }), first.path));
+
+  assert.ok(failure.message.includes(readHead) && failure.message.includes(movedHead), failure.message);
+  assert.equal(branchAt(here.origin, 'rigger-42'), movedHead);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), readHead);
+});
+
+// proves R-WORK-25, R-WORK-13
+test('a continuing attempt refuses a different branch or detached HEAD at its path without changing the directory', async (t) => {
+  for (const kind of ['other branch', 'detached HEAD']) {
+    const here = world(t);
+    const head = publishCard(here);
+    const path = join(here.root, 'rigger-42');
+    mkdirSync(here.root, { recursive: true });
+    worktreeAt(here.repository, path, kind === 'other branch' ? 'owner-work' : 'rigger-42');
+    if (kind === 'detached HEAD') gitIn(path, 'checkout', '-q', '--detach');
+    writeFileSync(join(path, 'kept'), `${kind}\n`);
+    const before = contents(path);
+
+    const failure = await refusedNaming(here.make(42, { head }), path);
+
+    assert.ok(failure.message.includes(kind === 'other branch' ? 'owner-work' : 'detached HEAD'), failure.message);
+    assert.deepEqual(contents(path), before);
+  }
+});
+
+// proves R-WORK-25, R-WORK-13
+test('a continuing attempt refuses a plain directory at its path and preserves its contents', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'kept'), 'not a worktree\n');
+  const before = contents(path);
+
+  await refusedNaming(here.make(42, { head }), path);
+
+  assert.deepEqual(contents(path), before);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses when the card branch is checked out in a worktree elsewhere', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const elsewhere = worktreeAt(here.repository, join(here.directory, 'elsewhere'), 'rigger-42');
+  writeFileSync(join(elsewhere, 'kept'), 'elsewhere\n');
+  const before = contents(elsewhere);
+  const path = join(here.root, 'rigger-42');
+
+  const failure = await refusedNaming(here.make(42, { head }), path);
+
+  assert.ok(failure.message.includes(elsewhere), failure.message);
+  assert.deepEqual(contents(elsewhere), before);
+  assert.equal(existsSync(path), false);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses a line deleted after L2 read it and preserves the workspace', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const first = await here.make(42, { head });
+  writeFileSync(join(first.path, 'kept'), 'earlier work\n');
+  const before = contents(first.path);
+  gitIn(here.source, 'push', '-q', here.origin, ':refs/heads/rigger-42');
+
+  const failure = await refusedNaming(here.make(42, { head }), first.path);
+
+  assert.ok(failure.message.includes('rigger-42') && failure.message.includes('deleted'), failure.message);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), head);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses a failed fetch naming its path and preserving the workspace', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const first = await here.make(42, { head });
+  writeFileSync(join(first.path, 'kept'), 'earlier work\n');
+  const before = contents(first.path);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = fetch ]; then echo "fatal: fetch refused by fixture" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head }), first.path));
+
+  assert.ok(failure.message.includes('fetch refused by fixture'), failure.message);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), head);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses a timed-out fetch naming its path and preserving the workspace', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const first = await here.make(42, { head });
+  writeFileSync(join(first.path, 'kept'), 'earlier work\n');
+  const before = contents(first.path);
+  const stand = holding(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = fetch ]; then /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head, timeout: OUTLIVED }), first.path));
+
+  assert.ok(failure.message.includes('fetch') && failure.message.includes(`${OUTLIVED} ms`), failure.message);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), head);
 });
 
 test('L1\'s workspace function, handed a root that is not absolute, makes no workspace and fails naming the root, and it reads no repo', async (t) => {

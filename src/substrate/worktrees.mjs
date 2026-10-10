@@ -1,7 +1,5 @@
-// ABOUTME: L0's workspace adapter: makes a git worktree on a branch from the main line, or one
-// detached at a commit, removes one, answers whether a path is a worktree of the repository and
-// what git lists for it, unlocks one, answers whether git accepts a name as a literal branch name,
-// and whether the repository holds a commit once fetched from `origin`.
+// ABOUTME: L0's workspace adapter: makes a branch worktree from main or a verified card head, or
+// a detached worktree, removes one, and answers git questions about paths, branches and commits.
 // Every git call it makes runs one at a time.
 
 import { realpathSync, statSync } from 'node:fs';
@@ -169,23 +167,53 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     return { branch, commit: held[1] };
   };
 
+  /** The commit the forge holds for `branch`, or a refusal naming a deleted branch. */
+  const lineHead = async (branch) => {
+    const ref = `refs/heads/${branch}`;
+    const result = await call(['ls-remote', '--exit-code', ORIGIN, ref]);
+    if (result.exit === 2 && !result.timedOut) throw new Error(`${ORIGIN}'s ${ref} was deleted`);
+    if (result.exit !== 0 || result.timedOut) throw failed(git, result, timeout);
+    const line = result.stdout.split('\n').find((each) => each.endsWith(`\t${ref}`));
+    if (line === undefined) throw new Error(`${ORIGIN} named no head for ${ref}: ${JSON.stringify(result.stdout)}`);
+    return line.split('\t')[0];
+  };
+
+  /**
+   * Adds a worktree on `branch` at `commit`, resetting a local branch left by an attempt. A
+   * registration whose directory was deleted must be pruned first. `-B` resets the branch where
+   * it exists, and `--no-track` leaves the repository's shared config untouched. An add that
+   * fails may already have moved the branch, and is not retried (#426, M3-S1).
+   */
+  const addAt = async (path, branch, commit) => {
+    await answer(['worktree', 'prune']);
+    await answer(['worktree', 'add', '--quiet', '--no-track', '-B', branch, path, commit]);
+  };
+
   return {
     fetchMainLine,
 
     /** Makes a workspace at `path` with `branch` checked out at the main line's commit. */
     async make(path, branch) {
       const { commit } = await fetchMainLine();
-      // A worktree whose directory was deleted without git stays registered, and git refuses to
-      // check its branch out anywhere else, with `fatal: '<branch>' is already used by worktree
-      // at '<path>'`, until a prune forgets it.
-      await answer(['worktree', 'prune']);
-      // `-B` makes the branch where it is missing and resets it where it exists, and `--no-track`
-      // writes no upstream, so the repository's shared config is not written: measured with git
-      // 2.54.0, the config is byte-identical after. Git can differ from what this assumes in two
-      // ways #426 (M3-S1)'s report measured: an add that fails, as onto an occupied directory, has
-      // already made or moved the branch, and an add racing another process's add can fail
-      // reading that worktree's administrative files, exiting 128. Neither is retried.
-      await answer(['worktree', 'add', '--quiet', '--no-track', '-B', branch, path, commit]);
+      await addAt(path, branch, commit);
+    },
+
+    /** Fetches the card's forge line only while its head is the one L2 read. */
+    async fetchLineAt(branch, expected) {
+      const compare = async () => {
+        const actual = await lineHead(branch);
+        if (actual !== expected) throw new Error(`${ORIGIN}'s ${branch} moved from ${expected} to ${actual}`);
+      };
+      await compare();
+      await fetched(branch);
+      await compare();
+      const kind = (await answer(['cat-file', '-t', expected])).trim();
+      if (kind !== 'commit') throw new Error(`${ORIGIN}'s ${branch} at ${expected} names a ${kind}, not a commit`);
+    },
+
+    /** Makes the card's worktree at the already fetched forge head. */
+    async makeAt(path, branch, commit) {
+      await addAt(path, branch, commit);
     },
 
     /**
