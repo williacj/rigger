@@ -386,9 +386,66 @@ test('init refuses a missing target below an existing repository', async () => {
   const ran = await init({ target, packageRoot: elsewhere() });
 
   assert.notEqual(ran.code, 0, ran.text);
-  assert.ok(ran.text.includes(realpathSync.native(consumer)), ran.text);
+  assert.ok(ran.text.includes(`inside the repository at ${realpathSync.native(consumer)};`), ran.text);
   assert.equal(existsSync(target), false);
   assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+});
+
+test('init refuses an unsafe repository and reports Git’s own error', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const packageRoot = elsewhere();
+  const before = readFileSync(join(consumer, '.git', 'config'));
+  const entries = readdirSync(consumer).sort();
+  const former = process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
+  process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1';
+  try {
+    const git = spawnSync('git', ['-C', consumer, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnvironment() });
+    assert.equal(git.status, 128, git.stdout + git.stderr);
+
+    const ran = await init({ target: consumer, packageRoot });
+
+    assert.notEqual(ran.code, 0, ran.text);
+    assert.ok(ran.text.includes(git.stderr.trim().split('\n')[0]), ran.text);
+    assert.deepEqual(readdirSync(consumer).sort(), entries);
+    assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), before);
+  } finally {
+    if (former === undefined) delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
+    else process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = former;
+  }
+});
+
+test('init refuses an invalid .git file inside a repository and reports Git’s error', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const target = join(consumer, 'invalid');
+  mkdirSync(target);
+  writeFileSync(join(target, '.git'), 'gitdir: missing\n');
+  const before = readFileSync(join(consumer, '.git', 'config'));
+  const git = spawnSync('git', ['-C', target, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(git.status, 128, git.stdout + git.stderr);
+
+  const ran = await init({ target, packageRoot: elsewhere() });
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.ok(ran.text.includes(git.stderr.trim().split('\n')[0]), ran.text);
+  assert.deepEqual(readdirSync(target), ['.git']);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), before);
+});
+
+test('init refuses a bare repository without writing files or changing Git config', async () => {
+  const directory = temporaryDirectory('rigger-bare-init-');
+  const source = repositoryAt(join(directory, 'source'), { README: 'first\n' });
+  const target = bareCloneInto(source, join(directory, 'bare.git'));
+  const before = readFileSync(join(target, 'config'));
+  const entries = readdirSync(target).sort();
+  const git = spawnSync('git', ['-C', target, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(git.status, 128, git.stdout + git.stderr);
+
+  const ran = await init({ target, packageRoot: elsewhere() });
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.ok(ran.text.includes(git.stderr.trim().split('\n')[0]), ran.text);
+  assert.deepEqual(readdirSync(target).sort(), entries);
+  assert.deepEqual(readFileSync(join(target, 'config')), before);
 });
 
 test('init refuses a repository subdirectory, naming the top level and changing nothing', async () => {
@@ -400,7 +457,7 @@ test('init refuses a repository subdirectory, naming the top level and changing 
   const ran = await init({ target, packageRoot: elsewhere() });
 
   assert.notEqual(ran.code, 0, ran.text);
-  assert.ok(ran.text.includes(consumer), ran.text);
+  assert.ok(ran.text.includes(`inside the repository at ${realpathSync.native(consumer)};`), ran.text);
   assert.deepEqual(readdirSync(target), []);
   assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), before);
 });
@@ -989,7 +1046,7 @@ test('given init run in a subdirectory of a repository, with a git stand-in for 
   const ran = await withFirstOnPath(directory, () => init({ target, packageRoot, ask: originOnly(asked) }));
 
   assert.notEqual(ran.code, 0, ran.text);
-  assert.ok(ran.text.includes(realpathSync.native(outer)), ran.text);
+  assert.ok(ran.text.includes(`inside the repository at ${realpathSync.native(outer)};`), ran.text);
   assert.deepEqual(killsOf(target, leftChild(directory)), ['survivor.killed']);
   assert.equal(existsSync(join(outer, STATE)), false, `init wrote under ${join(outer, STATE)}`);
 });

@@ -1,7 +1,7 @@
 // ABOUTME: The `init` verb: what Rigger forks into a consumer's repository, read from the
 // templates the package ships, what a second run leaves alone, and the source tree it refuses.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -180,6 +180,33 @@ const listing = (heading, paths) => (paths.length === 0 ? [] : [heading, ...path
  */
 export const init = (options) => recording((opened) => forking(opened, options));
 
+/** An entry that exists or cannot be inspected; uncertainty must not authorize a fork. */
+function mayHold(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (failure) {
+    return failure.code !== 'ENOENT';
+  }
+}
+
+/**
+ * Evidence against treating Git's exit 128 as proof that a target is outside a repository.
+ *
+ * Git owns repository discovery (D16). This scan only vetoes a fork after Git could not name a
+ * worktree. The real-Git tests measure three ways exit 128 differs from "not a repository": an
+ * unsafe repository and an invalid gitfile have a `.git` entry, while a bare repository has its
+ * administrative files at its root. A nonrepository with these same entries is also refused;
+ * this guard does not claim that their presence establishes a usable repository.
+ */
+function gitMetadataAbove(dir) {
+  for (let here = resolve(dir); ; here = dirname(here)) {
+    if (mayHold(join(here, '.git'))) return true;
+    if (['HEAD', 'config', 'objects', 'refs'].every((entry) => mayHold(join(here, entry)))) return true;
+    if (dirname(here) === here) return false;
+  }
+}
+
 /** `init`'s work, recording through the sink `opened` holds. */
 async function forking({ sink, name }, {
   target = process.cwd(), templates = TEMPLATES, packageRoot = PACKAGE, timeout, ask,
@@ -199,7 +226,7 @@ async function forking({ sink, name }, {
   while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
   const found = await repoRoot(probe, git);
   const targetPath = real(target);
-  if (found.root === null && found.status !== 128) {
+  if (found.root === null && (found.status !== 128 || gitMetadataAbove(probe))) {
     return { text: `rigger init: cannot inspect the repository: ${found.why}`, code: 1 };
   }
   if (found.root !== null && found.root !== targetPath) {
