@@ -25,6 +25,7 @@ import { ADDING } from '../src/substrate/worktrees.mjs';
 import { lstatSync } from 'node:fs';
 import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
 import { createHash } from 'node:crypto';
+import { holding, OUTLIVED } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -555,6 +556,26 @@ test('a continuing attempt refuses a failed fetch naming its path and preserving
   const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head }), first.path));
 
   assert.ok(failure.message.includes('fetch refused by fixture'), failure.message);
+  assert.deepEqual(contents(first.path), before);
+  assert.equal(headOf(first.path), head);
+});
+
+// proves R-WORK-25
+test('a continuing attempt refuses a timed-out fetch naming its path and preserving the workspace', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const first = await here.make(42, { head });
+  writeFileSync(join(first.path, 'kept'), 'earlier work\n');
+  const before = contents(first.path);
+  const stand = holding(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = fetch ]; then /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head, timeout: OUTLIVED }), first.path));
+
+  assert.ok(failure.message.includes('fetch') && failure.message.includes(`${OUTLIVED} ms`), failure.message);
   assert.deepEqual(contents(first.path), before);
   assert.equal(headOf(first.path), head);
 });

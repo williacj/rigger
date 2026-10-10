@@ -59,11 +59,11 @@ const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic,
  * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
  * owner's O4 on #423).
  */
-export async function makeWorkspace({ root, topic, card, head, repository, sink }) {
+export async function makeWorkspace({ root, topic, card, head, repository, sink, timeout }) {
   const events = sink.emitter({ layer: 'L1', card });
   const branch = topicFor(topic, card);
   const path = join(root, branch);
-  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }), timeout });
   /** Runs `work`, rejecting as a workspace L1 could not make where it rejects. */
   const step = async (work) => {
     try {
