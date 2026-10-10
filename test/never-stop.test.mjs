@@ -1071,6 +1071,40 @@ test('given a dispatch\'s directory holding a process L0 may not signal, the exi
   assert.ok(ended - exiting < KILL_BOUND, `the caller ended ${ended - exiting} ms after it began to exit`);
 });
 
+// proves R-STATE-19, R-STATE-9
+test('D9: a padding-only name answer leaves an EPERM directory survivor unnamed with its returned command', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  holdingNone(directory);
+  fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+  fixture(directory, 'ps', [
+    'pid=$(/bin/cat "$here/outside.pid")',
+    'if [ "$*" = "-p $pid -o ucomm=" ]; then',
+    '  : > "$here/name-read"',
+    "  printf '   \\n'",
+    '  exit 0',
+    'fi',
+    'if [ "$*" = "-ww -p $pid -o pid=,command=" ]; then : > "$here/command-read"; fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const { status, events, pairs } = await cleanedUp(directory, { directory: work, ps: 'ps', lsof: 'lsof', refused: 'outside' });
+  const outside = pidIn(directory, 'outside');
+  const recorded = events.filter(({ pid }) => pid === outside);
+
+  assert.equal(status, 0);
+  assert.equal(existsSync(join(directory, 'name-read')), true, 'the padded ucomm read was not reached');
+  assert.equal(existsSync(join(directory, 'command-read')), true, 'the command read was not reached');
+  assert.equal(events.some(({ event }) => event === 'directory.unread'), false, 'the first listing did not answer');
+  assert.ok(pairs.some(([target, signal]) => target === outside && signal === 'SIGSTOP'), 'the census never tried to stop the listed PID');
+  assert.equal(pairs.some(([target, signal]) => target === outside && signal === 'SIGKILL'), false);
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded.map(({ event, pid, cmd, reason }) => ({ event, pid, cmd, reason })), [
+    { event: 'survivor.unended', pid: outside, cmd: tailOf(directory).cmd, reason: 'EPERM' },
+  ]);
+  assert.equal(recorded[0].name, undefined, 'padding from ucomm is not a process name');
+});
+
 test('D02: a failed first directory listing records the directory without naming an outside process', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const work = await workedIn(t, directory);

@@ -765,7 +765,8 @@ function* namesOf(pids, read) {
   for (const pid of pids) {
     const printed = yield* read(['-p', String(pid), '-o', 'ucomm=']);
     // `ps` ends the name with its padding, spaces alone, and a newline, which are not the name's own.
-    if (printed !== '') names.set(pid, printed.replace(/ *\n$/, ''));
+    const name = printed.replace(/ *\n$/, '');
+    if (name !== '') names.set(pid, name);
   }
   return names;
 }
