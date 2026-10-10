@@ -430,6 +430,41 @@ test('B0 call: a member named by the first census round remains recorded after l
   assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
 });
 
+// proves R-STATE-19, R-STATE-9
+test('G3: a retained group round survives an unseen round and the next read cut', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+  fixture(directory, 'ps', [
+    'case "$*" in "-ww -g "*" -o pid=,stat=")',
+    '  count=$(/bin/cat "$here/census-state-count" 2>/dev/null || printf 0)',
+    '  count=$((count + 1))',
+    '  printf "%s" "$count" > "$here/census-state-count"',
+    '  case "$count" in',
+    '    1) /bin/ps "$@" | /usr/bin/awk \'NR == 1 { $2 = "?" } { print }\'; exit 0 ;;',
+    '    4) : > "$here/group-clock-cut"; exit 1 ;;',
+    '  esac ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  const { status, stderr, events } = await cleanedUpBy(GROUP_LATE_CALLER, directory, { ps: 'ps' });
+  const group = pidIn(directory, 'group');
+  const one = pidIn(directory, 'one');
+  const two = pidIn(directory, 'two');
+  const pairs = linesOf(directory, 'pairs');
+
+  assert.equal(status, 0, stderr);
+  assert.equal(read(directory, 'census-state-count'), '4', 'two complete group rounds were not reached');
+  assert.equal(existsSync(join(directory, 'group-clock-jump')), true, 'the next group read was not cut');
+  assert.ok(groupKills(pairs, group) > 0, 'the group kill was not reached');
+  for (const pid of [one, two]) {
+    assert.deepEqual(events.filter((event) => event.pid === pid).map(({ event, name, cmd }) => ({ event, name, cmd })), [
+      { event: 'survivor.killed', ...tailOf(directory) },
+    ]);
+  }
+  assert.deepEqual(events.filter(({ event, group: id }) => event === 'group.killed' && id === group), []);
+});
+
 // proves R-STATE-12, R-STATE-19
 test('U1 call: a census name read that omits a shown member records the unnamed group kill', SETTLES_WITHIN, async (t) => {
   const { events, group, two, trace } = await censusCall(t, 'U1');

@@ -704,7 +704,7 @@ function* census(group, kill, deadline) {
     try {
       return yield args;
     } catch (error) {
-      throw unseen ? new Error(`the census's reads ${unseen}: ${error.message}`) : error;
+      throw unseen ? Object.assign(new Error(`the census's reads ${unseen}: ${error.message}`), { code: error.code }) : error;
     }
   };
   const column = function* (name) {
