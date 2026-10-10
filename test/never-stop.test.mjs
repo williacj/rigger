@@ -3783,7 +3783,8 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
   const heldState = answer === 'SF' || answer === 'ST';
-  const heldListing = answer === 'LF' || answer === 'LT';
+  const coListedRefusal = answer === 'EHF';
+  const heldListing = answer === 'LF' || answer === 'LT' || coListedRefusal;
   const heldPerPid = answer === 'PF' || answer === 'PT';
   const heldOmitted = answer === 'HO';
   const heldZombie = answer === 'HZ';
@@ -3802,23 +3803,27 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : coListedRefusal ? 'd8-held-listing-failure' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
   let outside;
+  let refused;
   let caller;
   let outsideClosed;
+  let refusedClosed;
   let callerClosed;
   let outsideBirth;
+  let refusedBirth;
   let commandBirth;
   let outsideError;
+  let refusedError;
   let callerError;
   let finalized = false;
   let copied = false;
 
   t.after(async () => {
-    const record = { answer, outside: outsideBirth ?? null, command: commandBirth ?? null, outsideClose: null, callerClose: null, commandGone: null, copied: false, errors: [] };
+    const record = { answer, outside: outsideBirth ?? null, refused: refusedBirth ?? null, command: commandBirth ?? null, outsideClose: null, refusedClose: null, callerClose: null, commandGone: null, refusedGone: null, copied: false, errors: [] };
     if (directory) {
       try {
         writeFileSync(join(directory, 'release'), '', { flag: 'w' });
@@ -3829,16 +3834,25 @@ async function firstDirectoryListing(t, answer) {
       try { outside.send({ release: nonce }); }
       catch (error) { record.errors.push({ stage: 'fixture-release', code: error.code ?? error.name }); }
     }
-    const [outsideResult, callerResult, commandResult] = await Promise.allSettled([
-      d2CloseWithin(outsideClosed), d2CloseWithin(callerClosed), commandBirth ? d2CommandGone(commandBirth) : Promise.resolve(null),
+    if (refused && !d2HasEnded(refused)) {
+      try { refused.send({ release: nonce }); }
+      catch (error) { record.errors.push({ stage: 'refused-release', code: error.code ?? error.name }); }
+    }
+    const [outsideResult, refusedResult, callerResult, commandResult, refusedGoneResult] = await Promise.allSettled([
+      d2CloseWithin(outsideClosed), d2CloseWithin(refusedClosed), d2CloseWithin(callerClosed), commandBirth ? d2CommandGone(commandBirth) : Promise.resolve(null), refusedBirth ? d2CommandGone(refusedBirth) : Promise.resolve(null),
     ]);
     if (outsideResult.status === 'fulfilled') record.outsideClose = outsideResult.value;
     else record.errors.push({ stage: 'fixture-close', code: outsideResult.reason.code ?? outsideResult.reason.name });
+    if (refusedResult.status === 'fulfilled') record.refusedClose = refusedResult.value;
+    else record.errors.push({ stage: 'refused-close', code: refusedResult.reason.code ?? refusedResult.reason.name });
     if (callerResult.status === 'fulfilled') record.callerClose = callerResult.value;
     else record.errors.push({ stage: 'caller-close', code: callerResult.reason.code ?? callerResult.reason.name });
     if (commandResult.status === 'fulfilled') record.commandGone = commandResult.value;
     else record.errors.push({ stage: 'command-identity', code: commandResult.reason.code ?? commandResult.reason.name });
+    if (refusedGoneResult.status === 'fulfilled') record.refusedGone = refusedGoneResult.value;
+    else record.errors.push({ stage: 'refused-identity', code: refusedGoneResult.reason.code ?? refusedGoneResult.reason.name });
     if (outsideError) record.errors.push({ stage: 'fixture-handle', code: outsideError.code ?? outsideError.name });
+    if (refusedError) record.errors.push({ stage: 'refused-handle', code: refusedError.code ?? refusedError.name });
     if (callerError) record.errors.push({ stage: 'caller-handle', code: callerError.code ?? callerError.name });
     let answeredKill = false;
     if (answer === 'A' && directory && outsideBirth) {
@@ -3846,7 +3860,7 @@ async function firstDirectoryListing(t, answer) {
       catch (error) { record.errors.push({ stage: 'kill-trace', code: error.code ?? error.name }); }
     }
     const outsideSettled = answer === 'A' ? answeredKill && record.outsideClose?.signal === 'SIGKILL' : record.outsideClose?.code === 0;
-    finalized = (!outside || (outsideBirth && outsideSettled)) && (!caller || record.callerClose?.code === 0) && (!caller || (commandBirth && record.commandGone === true)) && record.errors.length === 0;
+    finalized = (!outside || (outsideBirth && outsideSettled)) && (!refused || (refusedBirth && record.refusedClose?.code === 0 && record.refusedGone === true)) && (!caller || record.callerClose?.code === 0) && (!caller || (commandBirth && record.commandGone === true)) && record.errors.length === 0;
     let snapshotMatched = false;
     if (directory) {
       try {
@@ -3868,6 +3882,7 @@ async function firstDirectoryListing(t, answer) {
   const work = join(directory, 'work');
   const sub = join(work, 'sub');
   mkdirSync(sub, { recursive: true });
+  const refusedSub = join(work, 'refused');
   const fixtureSource = `const nonce = ${JSON.stringify(nonce)}; process.on('message', (message) => { if (message?.release === nonce) process.exit(0); }); process.on('disconnect', () => process.exit(2)); process.send(nonce);`;
   outside = d2Spawn(process.execPath, ['-e', fixtureSource], { cwd: sub }, evidence, 'outside', true);
   outside.on('error', (error) => { outsideError = error; });
@@ -3878,6 +3893,18 @@ async function firstDirectoryListing(t, answer) {
   outsideBirth = { pid: outside.pid, started: startOf(outside.pid) };
   writeFileSync(join(directory, 'outside.pid'), String(outsideBirth.pid));
   writeFileSync(join(directory, 'outside-birth.json'), JSON.stringify(outsideBirth));
+  if (coListedRefusal) {
+    mkdirSync(refusedSub);
+    refused = d2Spawn(process.execPath, ['-e', fixtureSource], { cwd: refusedSub }, evidence, 'refused', true);
+    refused.on('error', (error) => { refusedError = error; });
+    refusedClosed = new Promise((resolveClose) => refused.once('close', (code, signal) => resolveClose({ code, signal })));
+    assert.ok(Number.isSafeInteger(refused.pid) && refused.pid > 0, 'the directly owned refused fixture did not start');
+    const [refusedReady] = await once(refused, 'message');
+    assert.equal(refusedReady, nonce, 'the refused fixture did not establish its release channel');
+    refusedBirth = { pid: refused.pid, started: startOf(refused.pid) };
+    writeFileSync(join(directory, 'refused.pid'), String(refusedBirth.pid));
+    writeFileSync(join(directory, 'refused-birth.json'), JSON.stringify(refusedBirth));
+  }
   fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
   const lsofBody = answer === 'F'
     ? 'printf "%s\\n" "$@" > "$here/first-listing-argv"\n: > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2'
@@ -3967,10 +3994,11 @@ async function firstDirectoryListing(t, answer) {
       'if [ -f "$here/first-listing-entered" ]; then',
       `  printf "%s\\n" "$@" > "$here/${heldPerPid ? 'per-pid-listing' : 'later-listing'}-argv"`,
       `  : > "$here/${heldPerPid ? 'per-pid-listing' : 'later-listing'}-entered"`,
-      answer === 'LF' || answer === 'PF' ? `  echo "lsof: forced ${heldPerPid ? 'per-PID' : 'later-listing'} failure" >&2; exit 2` : '  exec /usr/bin/tail -f "$here/hold"',
+      answer === 'LF' || answer === 'PF' || coListedRefusal ? `  echo "lsof: forced ${heldPerPid ? 'per-PID' : 'later-listing'} failure" >&2; exit 2` : '  exec /usr/bin/tail -f "$here/hold"',
       'fi',
       ': > "$here/first-listing-entered"',
       listingOf('outside', realpathSync.native(sub)),
+      ...(coListedRefusal ? [listingOf('refused', realpathSync.native(refusedSub))] : []),
     ].join('\n')
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub));
   fixture(directory, 'lsof', lsofBody);
@@ -4034,7 +4062,7 @@ async function firstDirectoryListing(t, answer) {
   }
   const callerPath = join(directory, 'caller.mjs');
   writeFileSync(callerPath, answer === 'A' || heldRead || ownedRead ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
-  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedRead ? { ps: 'ps' } : { refused: 'outside' }), ...(ownedRead ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedRead ? { ps: 'ps' } : { refused: 'outside' }), ...(coListedRefusal ? { refused: 'refused' } : {}), ...(ownedRead ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
   caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
   caller.on('error', (error) => { callerError = error; });
   callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
@@ -4046,6 +4074,7 @@ async function firstDirectoryListing(t, answer) {
   commandBirth = { pid: group, started: startOf(group) };
   writeFileSync(join(directory, 'caller-birth.json'), JSON.stringify({ pid: caller.pid, started: startOf(caller.pid), command: commandBirth }));
   assert.ok(!d2HasEnded(outside) && startOf(outsideBirth.pid) === outsideBirth.started, 'the directly owned fixture changed identity before cleanup');
+  if (coListedRefusal) assert.ok(!d2HasEnded(refused) && startOf(refusedBirth.pid) === refusedBirth.started, 'the refused fixture changed identity before cleanup');
   writeFileSync(join(directory, 'begin-exit'), '');
   await until(() => d2HasEnded(caller), t);
   assert.equal(caller.exitCode, 0, 'the first-listing caller did not complete exit cleanup; inspect retained originals');
@@ -4057,8 +4086,17 @@ async function firstDirectoryListing(t, answer) {
   if (heldRead) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const pid = outsideBirth.pid;
-    const first = trace.find(({ kind, tool, args, status, stdout, error }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && status === 0 && !error && stdout === `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`);
+    const firstListing = `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
+    const refusedListing = coListedRefusal ? `p${refusedBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(refusedSub)}\n` : '';
+    const firstStart = trace.find(({ kind, tool, args }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs));
+    const first = trace.find(({ kind, tool, args, status, stdout, error }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && status === 0 && !error && stdout === firstListing + refusedListing);
+    if (coListedRefusal) assert.ok(firstStart && first && first.sequence === firstStart.sequence + 1, 'the two-PID full listing did not start and return its exact answer in order');
     const stop = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGSTOP' && result === true && sequence > first?.sequence);
+    if (coListedRefusal) {
+      const forbidden = trace.find(({ kind, target, name, error, sequence }) => kind === 'signal-answer' && target === refusedBirth.pid && name === 'SIGSTOP' && error === 'EPERM' && sequence > first?.sequence);
+      assert.ok(forbidden && forbidden.sequence > stop?.sequence, 'the co-listed PID did not answer EPERM after the other PID entered H');
+      assert.equal(startOf(refusedBirth.pid), refusedBirth.started, 'the refused PID changed birth identity during the census');
+    }
     const stateArgs = ['-p', String(pid), '-o', 'pid=,stat='];
     const stateStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'ps') && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > stop?.sequence);
     const stateEnd = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'ps') && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > stateStart?.sequence);
@@ -4124,7 +4162,7 @@ async function firstDirectoryListing(t, answer) {
       assert.equal(laterEnd.readId, laterStart.readId, 'the second full-listing result did not close its started read');
       assert.equal(existsSync(join(directory, 'later-listing-entered')), true, 'the second full listing did not enter its stand-in');
       assert.deepEqual(readFileSync(join(directory, 'later-listing-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the second listing was not full lsof with exact argv');
-      if (answer === 'LF') {
+      if (answer === 'LF' || coListedRefusal) {
         assert.equal(laterEnd.status, 2, 'the later full-listing F did not return its plain failure');
         assert.equal(laterEnd.stdout, '', 'the later full-listing F returned an answered listing');
         assert.equal(laterEnd.stderr, 'lsof: forced later-listing failure\n', 'the later full-listing F lost its exact failure cause');
@@ -4180,8 +4218,13 @@ async function firstDirectoryListing(t, answer) {
     assert.ok(resumed && unread, 'the failed held read did not resume H before its directory.unread event');
     assert.deepEqual(pairs.filter(([target]) => target === pid).map(([, signal]) => signal), ['SIGSTOP', 'SIGCONT'], 'the held PID received an invented kill or failed resume');
     assert.deepEqual(directoryEvents.map(({ event, pid: named, killed }) => ({ event, pid: named, killed })), [{ event: 'directory.unread', pid: undefined, killed: undefined }], 'the held failure invented a named PID or kill');
-    assert.equal(directoryEvents[0].census, answer === 'SF' ? 'the process-table read failed: ps: forced held-state failure' : answer === 'LF' ? 'the process-table read failed: lsof: forced later-listing failure' : answer === 'PF' ? 'the process-table read failed: lsof: forced per-PID failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held read');
+    assert.equal(directoryEvents[0].census, answer === 'SF' ? 'the process-table read failed: ps: forced held-state failure' : answer === 'LF' || coListedRefusal ? 'the process-table read failed: lsof: forced later-listing failure' : answer === 'PF' ? 'the process-table read failed: lsof: forced per-PID failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held read');
     assert.deepEqual(events.filter(({ pid: named }) => named === pid), [], 'the held PID acquired an invented named event');
+    if (coListedRefusal) {
+      assert.deepEqual(events.filter(({ pid: named }) => named === refusedBirth.pid), [], 'the EPERM PID acquired an invented described event before settlement');
+      assert.deepEqual(pairs.filter(([target]) => target === refusedBirth.pid).map(([, signal]) => signal), ['SIGSTOP'], 'the refused PID received an invented signal after EPERM');
+      assert.ok(!d2HasEnded(refused) && startOf(refusedBirth.pid) === refusedBirth.started, 'the unread result ended the EPERM fixture');
+    }
     return;
   }
   if (ownedRead) {
@@ -4531,4 +4574,9 @@ test('C615 D6 answered live state retries O as H without a named event', SETTLES
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D6 answered zombie state retries O as H without a named event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OZ');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D8 co-listed EPERM and H later full lsof F report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'EHF');
 });
