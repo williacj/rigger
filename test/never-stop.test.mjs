@@ -980,6 +980,37 @@ async function cutAsyncReading(directory, action) {
   }
 }
 
+// proves R-STATE-19, R-STATE-26
+test('D1: an answered first directory listing omits the outside PID without inventing a result', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  writeFileSync(join(directory, 'runner.pid'), String(process.pid));
+  fixture(directory, 'lsof', [
+    'printf "%s\\n" "$*" >> "$here/lsof-reads"',
+    'if ! (',
+    listingOf('runner', realpathSync.native(process.cwd())),
+    ') > "$here/first-listing-answer"; then exit 2; fi',
+    'exec /bin/cat "$here/first-listing-answer"',
+  ].join('\n'));
+
+  const { status, stderr, events, pairs } = await cleanedUp(directory, { directory: work, lsof: 'lsof' });
+  assert.equal(status, 0, stderr);
+  assert.equal(existsSync(join(directory, 'lsof-reads')), true, 'the first directory listing was not reached');
+  assert.deepEqual(read(directory, 'lsof-reads').trimEnd().split('\n'), [
+    `-w -n -P -a -d cwd -u ${process.getuid()} -F pun`,
+  ]);
+  assert.equal(existsSync(join(directory, 'first-listing-answer')), true, 'the reached listing did not return an answer');
+  const answer = read(directory, 'first-listing-answer');
+  assert.match(answer, new RegExp(`^p${process.pid}$`, 'm'));
+  assert.doesNotMatch(answer, new RegExp(`^p${outside}$`, 'm'));
+  assert.deepEqual(events.filter(({ directory: at }) => at === work), []);
+  assert.deepEqual(events.filter(({ pid }) => pid === outside), []);
+  assert.equal(pairs.some(([target]) => target === outside), false);
+  assert.equal(alive(outside), true, 'the omitted outside process was ended, so the test proves nothing');
+});
+
 // proves R-STATE-19
 test('given a dispatch\'s directory holding a process L0 may not signal, the call\'s census records it as a process it could not end because of EPERM, and settles before KILL_BOUND', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
