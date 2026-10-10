@@ -3782,7 +3782,7 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
-  const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF';
+  const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT';
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
   const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF' || answer === 'EOPT';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
@@ -3804,7 +3804,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -4005,11 +4005,12 @@ async function firstDirectoryListing(t, answer) {
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub)) + (coListedRefusal ? '\n' + listingOf('refused', realpathSync.native(refusedSub)) : '');
   fixture(directory, 'lsof', lsofBody);
   if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
+  if (answer === 'D9NT') writeFileSync(join(directory, 'hold'), '');
   if (d9Read) fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
     'if [ "$*" = "-p $pid -o ucomm=" ]; then',
     '  printf "%s\\n" "$@" > "$here/d9-name-argv"',
-    answer === 'D9NF' ? '  echo "ps: forced name failure" >&2; exit 2' : answer === 'D9EC' ? '  exit 0' : '  printf "returned-name\\n"; exit 0',
+    answer === 'D9NT' ? '  exec /usr/bin/tail -f "$here/hold"' : answer === 'D9NF' ? '  echo "ps: forced name failure" >&2; exit 2' : answer === 'D9EC' ? '  exit 0' : '  printf "returned-name\\n"; exit 0',
     'fi',
     'if [ "$*" = "-ww -p $pid -o pid=,command=" ]; then',
     '  printf "%s\\n" "$@" > "$here/d9-command-argv"',
@@ -4470,18 +4471,26 @@ async function firstDirectoryListing(t, answer) {
     const commandArgs = ['-ww', '-p', String(pid), '-o', 'pid=,command='];
     const commandStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === ps && JSON.stringify(args) === JSON.stringify(commandArgs) && sequence > name?.sequence);
     const command = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && JSON.stringify(args) === JSON.stringify(commandArgs) && sequence > commandStart?.sequence);
-    const event = trace.find(({ kind, event: type, pid: target, sequence }) => kind === 'event' && type === 'survivor.unended' && target === pid && sequence > (answer === 'D9NF' ? name?.sequence : command?.sequence));
-    assert.ok(firstStart && first && refusal && nameStart && name && event && (answer === 'D9NF' || (commandStart && command)), 'the EPERM name-first description was not reached in order');
+    const failedName = answer === 'D9NF' || answer === 'D9NT';
+    const event = trace.find(({ kind, event: type, pid: target, sequence }) => kind === 'event' && type === 'survivor.unended' && target === pid && sequence > (failedName ? name?.sequence : command?.sequence));
+    assert.ok(firstStart && first && refusal && nameStart && name && event && (failedName || (commandStart && command)), 'the EPERM name-first description was not reached in order');
     assert.equal(first.readId, firstStart.readId, 'the initial full listing did not close its started read');
     assert.equal(first.status, 0, 'the initial listing did not answer');
     assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the initial listing did not return the owned fixture');
     assert.equal(name.readId, nameStart.readId, 'the name read did not close its started read');
     assert.deepEqual(readFileSync(join(directory, 'd9-name-argv'), 'utf8').trimEnd().split('\n'), nameArgs, 'the name read used the wrong argv');
-    if (answer === 'D9NF') {
-      assert.equal(name.status, 2, 'the name F did not return its plain failure');
-      assert.equal(name.stdout, '', 'the name F returned an answered name');
-      assert.equal(name.stderr, 'ps: forced name failure\n', 'the name F lost its exact failure cause');
-      assert.equal(name.error, undefined, 'the name F was a timeout or spawn error');
+    if (failedName) {
+      if (answer === 'D9NF') {
+        assert.equal(name.status, 2, 'the name F did not return its plain failure');
+        assert.equal(name.stderr, 'ps: forced name failure\n', 'the name F lost its exact failure cause');
+        assert.equal(name.error, undefined, 'the name F was a timeout or spawn error');
+      } else {
+        assert.ok(nameStart.remaining > 0, 'the name T was a pre-spawn deadline cut');
+        assert.equal(name.status, null, 'the name T returned an answered result');
+        assert.equal(name.stderr, '', 'the name T reported a plain failure');
+        assert.equal(name.error, 'ETIMEDOUT', 'the started name read did not time out');
+      }
+      assert.equal(name.stdout, '', 'the failed name read returned an answered name');
       assert.equal(commandStart, undefined, 'a command read started after the failed name read');
       assert.equal(existsSync(join(directory, 'd9-command-argv')), false, 'a command stand-in ran after the failed name read');
       assert.deepEqual(directoryEvents.map(({ event: type, pid: target, name: shown, cmd, reason }) => ({ event: type, pid: target, name: shown, cmd, reason })), [
@@ -4729,4 +4738,9 @@ test('C615 D9 EPERM with empty name and returned command row keeps only the know
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D9 EPERM name F leaves only PID and reason without a command read', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'D9NF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D9 EPERM name T leaves only PID and reason without a command read', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'D9NT');
 });
