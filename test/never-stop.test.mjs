@@ -3783,6 +3783,8 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
   const heldState = answer === 'SF' || answer === 'ST';
+  const heldListing = answer === 'LF' || answer === 'LT';
+  const heldRead = heldState || heldListing;
   assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the first-listing control needs external TMPDIR and a private evidence root before fixtures start');
   const checkout = realpathSync.native(process.cwd());
   const scratchRoot = realpathSync.native(process.env.TMPDIR);
@@ -3790,7 +3792,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3869,25 +3871,34 @@ async function firstDirectoryListing(t, answer) {
   fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
   const lsofBody = answer === 'F'
     ? 'printf "%s\\n" "$@" > "$here/first-listing-argv"\n: > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2'
+    : heldListing ? [
+      'if [ -f "$here/first-listing-entered" ]; then',
+      '  printf "%s\\n" "$@" > "$here/later-listing-argv"',
+      '  : > "$here/later-listing-entered"',
+      answer === 'LF' ? '  echo "lsof: forced later-listing failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"',
+      'fi',
+      ': > "$here/first-listing-entered"',
+      listingOf('outside', realpathSync.native(sub)),
+    ].join('\n')
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub));
   fixture(directory, 'lsof', lsofBody);
   if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
-  if (heldState) {
-    if (answer === 'ST') writeFileSync(join(directory, 'hold'), '');
+  if (heldRead) {
+    if (answer === 'ST' || answer === 'LT') writeFileSync(join(directory, 'hold'), '');
     fixture(directory, 'ps', [
       'pid=$(/bin/cat "$here/outside.pid")',
       'if [ "$*" = "-p $pid -o pid=,stat=" ]; then',
       '  printf "%s\\n" "$@" > "$here/held-state-argv"',
       '  /bin/ps -p "$pid" -o stat= > "$here/held-state-status"',
       '  : > "$here/held-state-entered"',
-      answer === 'SF' ? '  echo "ps: forced held-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"',
+      heldListing ? '  printf "%s S\\n" "$pid"; exit 0' : answer === 'SF' ? '  echo "ps: forced held-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"',
       'fi',
       'exec /bin/ps "$@"',
     ].join('\n'));
   }
   const callerPath = join(directory, 'caller.mjs');
-  writeFileSync(callerPath, answer === 'A' || heldState ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
-  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldState ? { ps: 'ps' } : { refused: 'outside' }), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  writeFileSync(callerPath, answer === 'A' || heldRead ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead ? { ps: 'ps' } : { refused: 'outside' }), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
   caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
   caller.on('error', (error) => { callerError = error; });
   callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
@@ -3907,7 +3918,7 @@ async function firstDirectoryListing(t, answer) {
   const pairs = linesOf(directory, 'pairs');
   const directoryEvents = events.filter(({ directory: at }) => at === work);
   const firstArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
-  if (heldState) {
+  if (heldRead) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const pid = outsideBirth.pid;
     const first = trace.find(({ kind, tool, args, status, stdout, error }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && status === 0 && !error && stdout === `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`);
@@ -3916,10 +3927,39 @@ async function firstDirectoryListing(t, answer) {
     const stateStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'ps') && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > stop?.sequence);
     const stateEnd = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'ps') && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > stateStart?.sequence);
     assert.ok(first && stop && stateStart && stateEnd, 'the first listing, successful stop and intervening state read did not reach H in order');
+    assert.equal(stateEnd.readId, stateStart.readId, 'the intervening state result did not close its started read');
     assert.equal(existsSync(join(directory, 'held-state-entered')), true, 'the chosen held-state read did not start');
     assert.deepEqual(readFileSync(join(directory, 'held-state-argv'), 'utf8').trimEnd().split('\n'), stateArgs, 'the held-state stand-in received the wrong argv');
     assert.match(readFileSync(join(directory, 'held-state-status'), 'utf8').trim(), /^T/, 'the directly owned PID was not stopped at the forced state read');
-    if (answer === 'SF') {
+    let failedRead = stateEnd;
+    if (heldListing) {
+      assert.equal(stateEnd.status, 0, 'the state answer did not let H reach the next loop');
+      assert.equal(stateEnd.stdout, `${pid} S\n`, 'the state answer was not the forced non-stopped row');
+      assert.equal(stateEnd.stderr, '', 'the state answer reported a failure');
+      assert.equal(stateEnd.error, undefined, 'the state answer timed out');
+      const laterStarts = trace.filter(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > stateEnd.sequence);
+      assert.equal(laterStarts.length, 1, 'the failed second full listing did not start exactly once');
+      const laterStart = laterStarts[0];
+      const laterEnd = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > laterStart.sequence);
+      assert.ok(laterEnd, 'the second full listing did not settle');
+      assert.equal(laterEnd.readId, laterStart.readId, 'the second full-listing result did not close its started read');
+      assert.equal(existsSync(join(directory, 'later-listing-entered')), true, 'the second full listing did not enter its stand-in');
+      assert.deepEqual(readFileSync(join(directory, 'later-listing-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the second listing was not full lsof with exact argv');
+      if (answer === 'LF') {
+        assert.equal(laterEnd.status, 2, 'the later full-listing F did not return its plain failure');
+        assert.equal(laterEnd.stdout, '', 'the later full-listing F returned an answered listing');
+        assert.equal(laterEnd.stderr, 'lsof: forced later-listing failure\n', 'the later full-listing F lost its exact failure cause');
+        assert.equal(laterEnd.error, undefined, 'the later full-listing F was a timeout or spawn error');
+      } else {
+        assert.ok(laterStart.remaining > 0, 'the later full-listing T was a pre-spawn deadline cut');
+        assert.equal(laterEnd.error, 'ETIMEDOUT', 'the later full-listing T did not time out after starting');
+        assert.equal(laterEnd.status, null, 'the later full-listing T returned an answered listing');
+        assert.equal(laterEnd.stdout, '', 'the later full-listing T returned an answered listing');
+        assert.equal(laterEnd.stderr, '', 'the later full-listing T reported a plain failure');
+      }
+      assert.equal(trace.some(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'lsof') && args.includes('-p') && sequence > stateEnd.sequence), false, 'a per-PID listing started before the later full-listing failure');
+      failedRead = laterEnd;
+    } else if (answer === 'SF') {
       assert.equal(stateEnd.status, 2, 'the held-state F did not return its plain failure');
       assert.equal(stateEnd.stderr, 'ps: forced held-state failure\n', 'the held-state F lost its exact failure cause');
       assert.equal(stateEnd.error, undefined, 'the held-state F was a timeout or spawn error');
@@ -3927,12 +3967,12 @@ async function firstDirectoryListing(t, answer) {
       assert.equal(stateEnd.error, 'ETIMEDOUT', 'the held-state T did not time out after starting');
       assert.equal(stateEnd.status, null, 'the held-state T returned an answered state');
     }
-    const resumed = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGCONT' && result === true && sequence > stateEnd.sequence);
+    const resumed = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGCONT' && result === true && sequence > failedRead.sequence);
     const unread = trace.find(({ kind, event, sequence }) => kind === 'event' && event === 'directory.unread' && sequence > resumed?.sequence);
     assert.ok(resumed && unread, 'the failed held read did not resume H before its directory.unread event');
     assert.deepEqual(pairs.filter(([target]) => target === pid).map(([, signal]) => signal), ['SIGSTOP', 'SIGCONT'], 'the held PID received an invented kill or failed resume');
     assert.deepEqual(directoryEvents.map(({ event, pid: named, killed }) => ({ event, pid: named, killed })), [{ event: 'directory.unread', pid: undefined, killed: undefined }], 'the held failure invented a named PID or kill');
-    assert.equal(directoryEvents[0].census, answer === 'SF' ? 'the process-table read failed: ps: forced held-state failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held-state result');
+    assert.equal(directoryEvents[0].census, answer === 'SF' ? 'the process-table read failed: ps: forced held-state failure' : answer === 'LF' ? 'the process-table read failed: lsof: forced later-listing failure' : 'the process-table read timed out after 1000 ms', 'the unread cause differs from the forced held read');
     assert.deepEqual(events.filter(({ pid: named }) => named === pid), [], 'the held PID acquired an invented named event');
     return;
   }
@@ -4007,4 +4047,14 @@ test('C615 D4 held directory PID state F resumes without a named kill', SETTLES_
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D4 held directory PID state T resumes without a named kill', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'ST');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D4 held directory PID later full lsof F resumes without a named kill', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'LF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D4 held directory PID later full lsof T resumes without a named kill', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'LT');
 });
