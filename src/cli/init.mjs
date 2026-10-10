@@ -1,14 +1,14 @@
 // ABOUTME: The `init` verb: what Rigger forks into a consumer's repository, read from the
 // templates the package ships, what a second run leaves alone, and the source tree it refuses.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, isAbsolute, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PLACEHOLDER } from '../config/validate.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
-import { PACKAGE, gitAnswer, real, sameTree, sourceTreeRefusal } from './doctor.mjs';
+import { PACKAGE, gitAnswer, real, repoRoot, sameTree, sourceTreeRefusal } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
 /** The file a consumer's repository declares Rigger in. */
@@ -25,6 +25,9 @@ export const CONFIG = 'rigger.config.mjs';
  * lands in the directory named here.
  */
 export const PROVIDER_ASSETS = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.assets]));
+
+/** The git hook destination belongs to `init`; providers own only their own asset destinations. */
+export const ASSET_DESTINATIONS = { ...PROVIDER_ASSETS, githooks: '.githooks' };
 
 /**
  * The templates this package ships. Everything `init` writes is read from here and from nowhere
@@ -97,13 +100,13 @@ function forks(templates, provider, within = '') {
   // the prototype chain, every name `Object.prototype` carries answers as a provider Rigger has a
   // destination for, so the refusal below never fires for one and `constructor` forks the assets
   // to `function Object() { [native code] }/` — the landing place this refusal exists to prevent.
-  if (!Object.hasOwn(PROVIDER_ASSETS, provider)) {
+  if (!Object.hasOwn(ASSET_DESTINATIONS, provider)) {
     throw new Error(
       `\`templates/${provider}/\` ships assets for \`${provider}\`, which is no provider Rigger ` +
       'reads assets for, so there is nowhere to fork them to.',
     );
   }
-  const directory = PROVIDER_ASSETS[provider];
+  const directory = ASSET_DESTINATIONS[provider];
   return readdirSync(join(templates, provider, within), { withFileTypes: true })
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .flatMap((entry) => {
@@ -159,7 +162,7 @@ export function plan({ templates = TEMPLATES, repo, project } = {}) {
 const listing = (heading, paths) => (paths.length === 0 ? [] : [heading, ...paths.map((path) => `  ${path}`), '']);
 
 /**
- * Forks the templates into a repository, writing nothing over a file that is already there.
+ * Forks the templates into a target, writing nothing over a file that is already there.
  *
  * A file that exists is left exactly as it is and named in the report. That is what makes a
  * second run safe: the assets are the consumer's from the moment they land (`R-SAFE-6`), so an
@@ -191,6 +194,64 @@ async function forking({ sink, name }, {
     return { text: `rigger init: ${failure.message}`, code: 1 };
   }
   const { repo, why } = read;
+  const git = { ask, emitter: sink.emitter({ layer: 'L0' }), timeout };
+  const found = await repoRoot(target, git);
+  let targetPath;
+  try {
+    targetPath = realpathSync.native(target);
+  } catch (failure) {
+    return { text: `rigger init: cannot resolve ${target}: ${failure.message}`, code: 1 };
+  }
+  if (found.root === null && (found.status !== 128 || !found.why.includes('not a git repository'))) {
+    return { text: `rigger init: cannot inspect the repository: ${found.why}`, code: 1 };
+  }
+  if (found.root !== null && found.root !== targetPath) {
+    return { text: `rigger init: ${targetPath} is inside the repository at ${found.root}; refusing to install hooks below its top level.`, code: 1 };
+  }
+  let setHooks = false;
+  if (found.root === targetPath) {
+    const current = await gitAnswer(['-C', target, 'config', '--show-scope', '--get', 'core.hooksPath'], git);
+    if (current.why === undefined) {
+      const [scope, value] = current.stdout.trim().split('\t', 2);
+      let pointsHere = value === '.githooks';
+      if (isAbsolute(value)) {
+        try {
+          pointsHere = basename(value) === '.githooks' && realpathSync.native(dirname(value)) === targetPath;
+        } catch {
+          pointsHere = false;
+        }
+      }
+      if (scope !== 'local' || !pointsHere) {
+        return { text: `rigger init: core.hooksPath is set in ${scope} to ${value}; refusing to change it.`, code: 1 };
+      }
+    } else if (current.status === 1) {
+      setHooks = true;
+    } else {
+      return { text: `rigger init: cannot inspect core.hooksPath: ${current.why}`, code: 1 };
+    }
+    const gitDir = await gitAnswer(['-C', target, 'rev-parse', '--absolute-git-dir'], git);
+    if (gitDir.why !== undefined) return { text: `rigger init: ${gitDir.why}`, code: 1 };
+    let entries;
+    try {
+      entries = readdirSync(join(realpathSync.native(gitDir.stdout.trim()), 'hooks'));
+    } catch (failure) {
+      if (failure.code !== 'ENOENT') return { text: `rigger init: cannot read git hooks: ${failure.message}`, code: 1 };
+      entries = [];
+    }
+    const existing = entries.filter((entry) => {
+      if (entry.endsWith('.sample')) return false;
+      const hook = join(gitDir.stdout.trim(), 'hooks', entry);
+      try {
+        const file = statSync(hook);
+        return file.isFile() && Boolean(file.mode & 0o111);
+      } catch {
+        return false;
+      }
+    });
+    if (existing.length > 0) {
+      return { text: `rigger init: executable hooks in $GIT_DIR/hooks would be disabled by core.hooksPath: ${existing.join(', ')}`, code: 1 };
+    }
+  }
   const files = plan({ templates, repo });
   const wrote = [];
   const skipped = [];
@@ -201,14 +262,22 @@ async function forking({ sink, name }, {
       continue;
     }
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, file.content);
+    writeFileSync(path, file.content, { mode: file.path === '.githooks/pre-push' ? 0o755 : 0o666 });
     wrote.push(file.path);
+  }
+  if (setHooks) {
+    const configured = await gitAnswer(['-C', target, 'config', '--local', 'core.hooksPath', '.githooks'], git);
+    if (configured.why !== undefined) return { text: `rigger init: ${configured.why}`, code: 1 };
   }
   return {
     text: [
       `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
+      ...(skipped.includes('.githooks/pre-push') ? ['`.githooks/pre-push` is not Rigger\'s hook; it was left in place.'] : []),
+      ...(skipped.includes('.githooks/pre-push') && !(statSync(join(target, '.githooks/pre-push')).mode & 0o111)
+        ? ['`.githooks/pre-push` is not executable; git will not run it.'] : []),
+      ...(found.root === null ? [`did not set core.hooksPath because ${found.why}.`] : []),
       ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${printableGitReason(why)}.`]),
       // Said only where the config was written, because a run that skipped it would be claiming
       // something about a file that is the consumer's by then and that `init` never read.
