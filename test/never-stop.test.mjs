@@ -23,6 +23,7 @@ import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 import { sightingPs } from './census-sightings.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -428,6 +429,59 @@ test('B0 call: a member named by the first census round remains recorded after l
   assert.ok(existsSync(join(directory, 'sighted-next-stat')), 'no later census state read omitted the member');
   assertSighting(trace, two, 'B');
   assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('G3: an unseen group round without accepted members reaches a cut and an unnamed group result', SETTLES_WITHIN, async (t) => {
+  const directory = realpathSync(temporaryDirectory('rigger-g3-', { context: t, beforeRemoval: () => {
+    writeFileSync(join(directory, 'release'), '');
+    const pid = pidIn(directory, 'group');
+    if (pid !== undefined) assert.equal(alive(pid), false, 'the observed group leader survived finalization');
+  } }));
+  fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
+  fixture(directory, 'ps', [
+    'printf "%s\\n" "$*" >> "$here/group-reads"',
+    'if [ -f "$here/hang" ]; then printf "%s\\n" "$*" >> "$here/post-kill-reads"; fi',
+    'case "$*" in "-ww -g "*" -o pid=,stat=")',
+    '  count=$(/bin/cat "$here/census-state-count" 2>/dev/null || printf 0)',
+    '  count=$((count + 1))',
+    '  printf "%s" "$count" > "$here/census-state-count"',
+    '  if [ "$count" -eq 2 ]; then : > "$here/group-clock-cut"; exit 1; fi',
+    '  ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+
+  try {
+    const { status, stderr, events } = await cleanedUpBy(GROUP_LATE_CALLER, directory, { ps: 'ps', hangAfter: 'group' });
+    const group = pidIn(directory, 'group');
+    assert.equal(status, 0, stderr);
+    assert.ok(Number.isSafeInteger(group) && group > 0, 'the group leader did not record its PID');
+    assert.equal(existsSync(join(directory, 'group-reads')), true, 'the process-table fixture recorded no reads');
+    const state = `-ww -g ${group} -o pid=,stat=`;
+    const command = `-ww -g ${group} -o pid=,command=`;
+    const reads = read(directory, 'group-reads').split('\n');
+    const round = reads.filter((args) => args === state || args === command || args === `-p ${group} -o ucomm=`);
+    const pairs = linesOf(directory, 'pairs');
+    const firstKill = pairs.findIndex(([target, signal]) => target === -group && signal === 'SIGKILL');
+    const afterKill = pairs.slice(firstKill + 1);
+    const groupEvents = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+
+    assert.deepEqual(round, [state, command, `-p ${group} -o ucomm=`, command, state], 'the unseen round did not complete C1–C5');
+    assert.equal(read(directory, 'census-state-count'), '2', 'a second round read started after the rejected first round');
+    assert.equal(existsSync(join(directory, 'group-clock-cut')), true, 'the empty C5 answer was not returned');
+    assert.equal(existsSync(join(directory, 'group-clock-jump')), true, 'the next C1 was not cut before spawning');
+    assert.ok(firstKill >= 0, 'the group kill was not reached');
+    assert.ok(afterKill.some(([target, signal]) => target === -group && signal === 0), 'G3 first post-kill probe did not reach O');
+    assert.ok(read(directory, 'post-kill-reads').split('\n').includes(`-g ${group} -o pid=,stat=,xstat=`), 'O did not reach its post-kill group read');
+    assert.equal(groupEvents.length, 1, 'the rejected round was not recorded once as a group result');
+    assert.match(groupEvents[0].census, /the census's reads named no process of the group while it still had one: .*did not finish within 1000 ms/);
+    assert.deepEqual(events.filter(({ pid }) => pid !== undefined), [], 'an unseen member was recorded by pid or name');
+  } finally {
+    writeFileSync(join(directory, 'release'), '');
+    const pid = pidIn(directory, 'group');
+    if (pid !== undefined) assert.equal(await gone(pid), true, 'the observed group leader did not leave after release');
+  }
 });
 
 // proves R-STATE-19, R-STATE-9
