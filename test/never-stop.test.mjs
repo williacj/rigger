@@ -3721,3 +3721,237 @@ test('on a start\'s kill of a recorded group, where a read after the kill lists 
   assert.ok(existsSync(join(directory, 'answered')), 'no read after the kill listed the member a zombie, so the test proves nothing');
   assertZombieKilled(events, directory, 'recorded.killed');
 });
+
+/** Holds the exit trigger until a first-listing control has recorded both fixture identities. */
+const D2_CONTROL_CALLER = (() => {
+  const anchor = "appendFileSync(join(here, 'exiting'), String(Date.now()));";
+  assert.equal(CALLER.split(anchor).length, 2, 'the D2 caller exit anchor moved');
+  return CALLER.replace(anchor, `while (!existsSync(join(here, 'begin-exit'))) await new Promise((resolve) => setImmediate(resolve));\n${anchor}`);
+})();
+
+/** Records the answered listing, state and signal order after the held exit trigger. */
+const D3_CONTROL_CALLER = (() => {
+  const anchor = "appendFileSync(join(here, 'exiting'), String(Date.now()));";
+  assert.equal(TRACED_CALLER.split(anchor).length, 2, 'the traced caller exit anchor moved');
+  return TRACED_CALLER.replace(anchor, `while (!existsSync(join(here, 'begin-exit'))) await new Promise((resolve) => setImmediate(resolve));\n${anchor}`);
+})();
+
+/** Reads a directly owned child's settled state without sending it a signal. */
+const d2HasEnded = (child) => child.exitCode !== null || child.signalCode !== null;
+
+/** A close deadline only for teardown; a nonclosing handle leaves its scratch and evidence unresolved. */
+async function d2CloseWithin(closed) {
+  if (!closed) return null;
+  let timer;
+  const answer = await Promise.race([closed, new Promise((resolve) => { timer = setTimeout(() => resolve(null), 5_000); })]);
+  clearTimeout(timer);
+  return answer;
+}
+
+/** The recorded command identity is gone only when its PID is absent or belongs to another birth. */
+async function d2CommandGone({ pid, started }) {
+  const deadline = Date.now() + 5_000;
+  const present = () => {
+    const state = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    if (state.error) throw state.error;
+    if (state.status === 1 && !state.stdout && !state.stderr) return false;
+    if (state.status !== 0 || !state.stdout.trim() || state.stderr) throw new Error('the command identity read did not answer cleanly');
+    try { return startOf(pid) === started; }
+    catch {
+      const after = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+      if (after.status === 1 && !after.stdout && !after.stderr && !after.error) return false;
+      throw new Error('the command identity changed during its read');
+    }
+  };
+  while (present() && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  return !present();
+}
+
+/** Directs a recorded child's complete output to private files from its first byte. */
+function d2Spawn(command, args, options, evidence, name, ipc = false) {
+  const stdout = openSync(join(evidence, `${name}.stdout`), 'wx', 0o600);
+  let stderr;
+  try {
+    stderr = openSync(join(evidence, `${name}.stderr`), 'wx', 0o600);
+    return spawn(command, args, { env: process.env, ...options, stdio: ['ignore', stdout, stderr, ...(ipc ? ['ipc'] : [])] });
+  } finally {
+    closeSync(stdout);
+    if (stderr !== undefined) closeSync(stderr);
+  }
+}
+
+/** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
+async function firstDirectoryListing(t, answer) {
+  assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the first-listing control needs external TMPDIR and a private evidence root before fixtures start');
+  const checkout = realpathSync.native(process.cwd());
+  const scratchRoot = realpathSync.native(process.env.TMPDIR);
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
+  assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
+  assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : 'd3-first-answered');
+  mkdirSync(evidence, { mode: 0o700 });
+  const nonce = randomUUID();
+  let directory;
+  let outside;
+  let caller;
+  let outsideClosed;
+  let callerClosed;
+  let outsideBirth;
+  let commandBirth;
+  let outsideError;
+  let callerError;
+  let finalized = false;
+  let copied = false;
+
+  t.after(async () => {
+    const record = { answer, outside: outsideBirth ?? null, command: commandBirth ?? null, outsideClose: null, callerClose: null, commandGone: null, copied: false, errors: [] };
+    if (directory) {
+      try {
+        writeFileSync(join(directory, 'release'), '', { flag: 'w' });
+        writeFileSync(join(directory, 'begin-exit'), '', { flag: 'w' });
+      } catch (error) { record.errors.push({ stage: 'command-release', code: error.code ?? error.name }); }
+    }
+    if (outside && !d2HasEnded(outside)) {
+      try { outside.send({ release: nonce }); }
+      catch (error) { record.errors.push({ stage: 'fixture-release', code: error.code ?? error.name }); }
+    }
+    const [outsideResult, callerResult, commandResult] = await Promise.allSettled([
+      d2CloseWithin(outsideClosed), d2CloseWithin(callerClosed), commandBirth ? d2CommandGone(commandBirth) : Promise.resolve(null),
+    ]);
+    if (outsideResult.status === 'fulfilled') record.outsideClose = outsideResult.value;
+    else record.errors.push({ stage: 'fixture-close', code: outsideResult.reason.code ?? outsideResult.reason.name });
+    if (callerResult.status === 'fulfilled') record.callerClose = callerResult.value;
+    else record.errors.push({ stage: 'caller-close', code: callerResult.reason.code ?? callerResult.reason.name });
+    if (commandResult.status === 'fulfilled') record.commandGone = commandResult.value;
+    else record.errors.push({ stage: 'command-identity', code: commandResult.reason.code ?? commandResult.reason.name });
+    if (outsideError) record.errors.push({ stage: 'fixture-handle', code: outsideError.code ?? outsideError.name });
+    if (callerError) record.errors.push({ stage: 'caller-handle', code: callerError.code ?? callerError.name });
+    let answeredKill = false;
+    if (answer === 'A' && directory && outsideBirth) {
+      try { answeredKill = linesOf(directory, 'control.trace.jsonl').some(({ kind, target, name, answer: result }) => kind === 'signal-answer' && target === outsideBirth.pid && name === 'SIGKILL' && result === true); }
+      catch (error) { record.errors.push({ stage: 'kill-trace', code: error.code ?? error.name }); }
+    }
+    const outsideSettled = answer === 'A' ? answeredKill && record.outsideClose?.signal === 'SIGKILL' : record.outsideClose?.code === 0;
+    finalized = (!outside || (outsideBirth && outsideSettled)) && (!caller || record.callerClose?.code === 0) && (!caller || (commandBirth && record.commandGone === true)) && record.errors.length === 0;
+    let snapshotMatched = false;
+    if (directory) {
+      try {
+        const source = sightingFiles(directory);
+        cpSync(directory, join(evidence, 'fixture'), { recursive: true, force: false, errorOnExist: true });
+        const retained = sightingFiles(join(evidence, 'fixture'));
+        snapshotMatched = JSON.stringify(source) === JSON.stringify(retained);
+        if (!snapshotMatched) record.errors.push({ stage: 'fixture-copy', code: 'BYTE_MISMATCH' });
+      } catch (error) { record.errors.push({ stage: 'fixture-copy', code: error.code ?? error.name }); }
+    }
+    record.copied = snapshotMatched;
+    writeFileSync(join(evidence, 'finalizer.json'), JSON.stringify(record) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(evidence, 'inventory.json'), JSON.stringify({ files: sightingFiles(evidence), finalizer: finalized ? 'closed' : 'unresolved', fixtureCopy: snapshotMatched ? 'byte-complete' : 'partial-or-missing' }) + '\n', { flag: 'wx', mode: 0o600 });
+    copied = snapshotMatched;
+    assert.ok(finalized && copied, 'first-listing finalizer or private copy is unresolved; keep fixture scratch');
+  });
+
+  directory = realpathSync(temporaryDirectory('c615-first-listing-', { context: t, beforeRemoval: () => assert.ok(finalized && copied, 'first-listing scratch has unresolved identities or originals') }));
+  const work = join(directory, 'work');
+  const sub = join(work, 'sub');
+  mkdirSync(sub, { recursive: true });
+  const fixtureSource = `const nonce = ${JSON.stringify(nonce)}; process.on('message', (message) => { if (message?.release === nonce) process.exit(0); }); process.on('disconnect', () => process.exit(2)); process.send(nonce);`;
+  outside = d2Spawn(process.execPath, ['-e', fixtureSource], { cwd: sub }, evidence, 'outside', true);
+  outside.on('error', (error) => { outsideError = error; });
+  outsideClosed = new Promise((resolveClose) => outside.once('close', (code, signal) => resolveClose({ code, signal })));
+  assert.ok(Number.isSafeInteger(outside.pid) && outside.pid > 0, 'the directly owned nonforking fixture did not start');
+  const [ready] = await once(outside, 'message');
+  assert.equal(ready, nonce, 'the directly owned fixture did not establish its release channel');
+  outsideBirth = { pid: outside.pid, started: startOf(outside.pid) };
+  writeFileSync(join(directory, 'outside.pid'), String(outsideBirth.pid));
+  writeFileSync(join(directory, 'outside-birth.json'), JSON.stringify(outsideBirth));
+  fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
+  const lsofBody = answer === 'F'
+    ? 'printf "%s\\n" "$@" > "$here/first-listing-argv"\n: > "$here/first-listing-entered"\necho "lsof: forced first-listing failure" >&2\nexit 2'
+    : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub));
+  fixture(directory, 'lsof', lsofBody);
+  if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
+  const callerPath = join(directory, 'caller.mjs');
+  writeFileSync(callerPath, answer === 'A' ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' ? { ps: 'ps' } : { refused: 'outside' }), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
+  caller.on('error', (error) => { callerError = error; });
+  callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
+  assert.ok(Number.isSafeInteger(caller.pid) && caller.pid > 0, 'the first-listing caller did not start');
+  await until(() => existsSync(join(directory, 'up')) || d2HasEnded(caller), t);
+  assert.ok(existsSync(join(directory, 'up')), 'the command did not reach the held exit boundary');
+  const group = pidIn(directory, 'group');
+  assert.ok(Number.isSafeInteger(group) && group > 0, 'the command group did not record its PID');
+  commandBirth = { pid: group, started: startOf(group) };
+  writeFileSync(join(directory, 'caller-birth.json'), JSON.stringify({ pid: caller.pid, started: startOf(caller.pid), command: commandBirth }));
+  assert.ok(!d2HasEnded(outside) && startOf(outsideBirth.pid) === outsideBirth.started, 'the directly owned fixture changed identity before cleanup');
+  writeFileSync(join(directory, 'begin-exit'), '');
+  await until(() => d2HasEnded(caller), t);
+  assert.equal(caller.exitCode, 0, 'the first-listing caller did not complete exit cleanup; inspect retained originals');
+
+  const events = linesOf(directory, 'events');
+  const pairs = linesOf(directory, 'pairs');
+  const directoryEvents = events.filter(({ directory: at }) => at === work);
+  const firstArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
+  if (answer === 'A') {
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    const read = (tool, args, after = 0) => trace.find(({ kind, tool: path, args: given, sequence, status, error }) => kind === 'read-end' && path === tool && JSON.stringify(given) === JSON.stringify(args) && sequence > after && status === 0 && !error);
+    const lsof = join(directory, 'lsof');
+    const ps = join(directory, 'ps');
+    const first = read(lsof, firstArgs);
+    const expectedListing = `p${outsideBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
+    assert.ok(first && first.stdout === expectedListing, 'the first full lsof did not answer with the directly owned PID and cwd');
+    const stop = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === outsideBirth.pid && name === 'SIGSTOP' && result === true && sequence > first.sequence);
+    assert.ok(stop, 'the answered first listing did not successfully stop the recorded PID');
+    const stateArgs = ['-p', String(outsideBirth.pid), '-o', 'pid=,stat='];
+    const before = read(ps, stateArgs, stop.sequence);
+    assert.ok(before && new RegExp(`^\\s*${outsideBirth.pid}\\s+T`, 'm').test(before.stdout), 'the first state read did not answer with the held PID');
+    const second = read(lsof, [...firstArgs.slice(0, -2), '-p', String(outsideBirth.pid), '-F', 'pun'], before.sequence);
+    assert.ok(second && second.stdout === expectedListing, 'the held PID was not listed again in its directory');
+    const name = read(ps, ['-p', String(outsideBirth.pid), '-o', 'ucomm='], second.sequence);
+    const command = read(ps, ['-ww', '-p', String(outsideBirth.pid), '-o', 'pid=,command='], name?.sequence);
+    const after = read(ps, stateArgs, command?.sequence);
+    const returnedCommand = command?.stdout.match(new RegExp(`^\\s*${outsideBirth.pid} (.+)$`, 'm'))?.[1];
+    assert.ok(name && name.stdout.trim() && command && returnedCommand && after && new RegExp(`^\\s*${outsideBirth.pid}\\s+T`, 'm').test(after.stdout), 'the held PID had no answered name, command and final stopped state');
+    const kill = trace.find(({ kind, target, name: signal, answer: result, sequence }) => kind === 'signal-answer' && target === outsideBirth.pid && signal === 'SIGKILL' && result === true && sequence > after.sequence);
+    assert.ok(kill, 'the twice-listed held PID did not enter the owned kill path');
+    assert.deepEqual(pairs.filter(([target]) => target === outsideBirth.pid).map(([, signal]) => signal), ['SIGSTOP', 'SIGKILL'], 'the held PID received an unproved or duplicate signal');
+    assert.deepEqual(directoryEvents.map(({ event, pid, name: shownName, cmd, reason }) => ({ event, pid, name: shownName, cmd, reason })), [
+      { event: 'survivor.killed', pid: outsideBirth.pid, name: name.stdout.trim(), cmd: returnedCommand, reason: undefined },
+    ], 'the answered H-to-O path did not emit one truthful named kill');
+    assert.ok(trace.some(({ kind, event, pid, sequence }) => kind === 'event' && event === 'survivor.killed' && pid === outsideBirth.pid && sequence > kill.sequence), 'the product event did not follow the recorded kill');
+    assert.equal(existsSync(join(directory, 'census-clock-cut')), false, 'the answered H-to-O control cut the clock');
+    return;
+  }
+  assert.deepEqual(directoryEvents.map(({ event, pid, killed }) => ({ event, pid, killed })), [
+    { event: 'directory.unread', pid: undefined, killed: undefined },
+  ], 'the first unread listing invented or duplicated a directory/PID result');
+  const reason = answer === 'F' ? 'the process-table read failed: lsof: forced first-listing failure' : 'the reads of the process table did not finish within 1000 ms';
+  assert.equal(directoryEvents[0].census, reason, 'the unread reason differs from the forced first-listing result');
+  assert.deepEqual(events.filter(({ pid }) => pid === outsideBirth.pid), [], 'the N fixture acquired an invented named event');
+  assert.equal(pairs.some(([target]) => target === outsideBirth.pid), false, 'the N fixture acquired an invented PID signal');
+  assert.ok(!d2HasEnded(outside) && startOf(outsideBirth.pid) === outsideBirth.started, 'the first-listing result ended the outside fixture');
+  if (answer === 'F') {
+    assert.equal(existsSync(join(directory, 'first-listing-entered')), true, 'the first full lsof F was not reached');
+    assert.deepEqual(readFileSync(join(directory, 'first-listing-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the failed read was not the first full lsof with exact argv');
+    assert.equal(existsSync(join(directory, 'census-clock-cut')), false, 'the F control cut the clock');
+  } else {
+    assert.equal(existsSync(join(directory, 'census-clock-cut')), true, 'the first full lsof T did not reach the bound cut');
+    assert.equal(existsSync(join(directory, 'first-listing-entered')), false, 'the pre-spawn T actually started lsof');
+  }
+}
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D2 first full lsof F records an unread directory without a named PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'F');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D2 first full lsof pre-spawn T records an unread directory without a named PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'T');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D3 answered first listing stops, confirms and kills its recorded directory PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'A');
+});
