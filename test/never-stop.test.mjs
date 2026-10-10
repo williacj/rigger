@@ -3783,7 +3783,7 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
-  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF';
+  const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF' || answer === 'EOPT';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
   const heldPerPid = answer === 'PF' || answer === 'PT' || answer === 'EHPF' || answer === 'EHPT';
   const heldOmitted = answer === 'HO';
@@ -3791,7 +3791,7 @@ async function firstDirectoryListing(t, answer) {
   const heldRead = heldState || heldListing || heldPerPid || heldOmitted || heldZombie;
   const ownedListing = answer === 'OF' || answer === 'OT' || answer === 'EOF' || answer === 'EOT';
   const ownedState = answer === 'OSF' || answer === 'OST' || answer === 'EOSF' || answer === 'EOST';
-  const ownedPerPid = answer === 'OPF' || answer === 'OPT' || answer === 'EOPF';
+  const ownedPerPid = answer === 'OPF' || answer === 'OPT' || answer === 'EOPF' || answer === 'EOPT';
   const ownedOmitted = answer === 'OO';
   const ownedLive = answer === 'OLS';
   const ownedZombie = answer === 'OZ';
@@ -3803,7 +3803,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -4032,7 +4032,7 @@ async function firstDirectoryListing(t, answer) {
     ].join('\n'));
   }
   if (ownedRead) {
-    if (answer === 'OT' || answer === 'OST' || answer === 'OPT' || answer === 'EOT' || answer === 'EOST') writeFileSync(join(directory, 'hold'), '');
+    if (answer === 'OT' || answer === 'OST' || answer === 'OPT' || answer === 'EOT' || answer === 'EOST' || answer === 'EOPT') writeFileSync(join(directory, 'hold'), '');
     fixture(directory, 'ps', [
       'pid=$(/bin/cat "$here/outside.pid")',
       'if [ -f "$here/hang" ]; then',
@@ -4642,4 +4642,9 @@ test('C615 D8 co-listed EPERM and O intervening ps state T report unread without
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D8 co-listed EPERM and O per-PID lsof F report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'EOPF');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D8 co-listed EPERM and O per-PID lsof T report unread without describing the refused PID', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'EOPT');
 });
