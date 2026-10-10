@@ -5,8 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { chmodSync, statSync } from 'node:fs';
+import { chmodSync, realpathSync, statSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
@@ -351,6 +352,45 @@ test('outside a git repository init writes files and explains why it did not set
   assert.match(ran.text, /not a git repository/);
 });
 
+test('init creates a target directory that does not yet exist outside a repository', async () => {
+  const target = join(temporaryDirectory('rigger-new-target-'), 'consumer');
+  assert.equal(existsSync(target), false);
+
+  const ran = await init({ target, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(existsSync(join(target, CONFIG)));
+  assert.ok(existsSync(join(target, '.githooks', 'pre-push')));
+  assert.match(ran.text, /did not set core.hooksPath/);
+});
+
+test('init recognises git’s nonrepository exit without reading an English diagnostic', async () => {
+  const target = temporaryDirectory('rigger-nonrepo-status-');
+  const ask = (command, args, options) =>
+    args.slice(-2).join(' ') === 'rev-parse --show-toplevel'
+      ? { status: 128, timedOut: false, stdout: '', stderr: 'sin repositorio\n' }
+      : asked(command, args, options);
+
+  const ran = await init({ target, packageRoot: elsewhere(), ask });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(existsSync(join(target, CONFIG)));
+  assert.match(ran.text, /sin repositorio/);
+});
+
+test('init refuses a missing target below an existing repository', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const target = join(consumer, 'missing');
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target, packageRoot: elsewhere() });
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.ok(ran.text.includes(realpathSync.native(consumer)), ran.text);
+  assert.equal(existsSync(target), false);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+});
+
 test('init refuses a repository subdirectory, naming the top level and changing nothing', async () => {
   const consumer = repository('https://github.com/acme/widgets.git');
   const target = join(consumer, 'sub');
@@ -447,12 +487,75 @@ test('init in a linked worktree sets core.hooksPath in the shared git config', a
   assert.ok(existsSync(join(linked, '.githooks', 'pre-push')));
 });
 
+test('init in a linked worktree refuses executable hooks in Git’s shared hooks directory', async () => {
+  const directory = temporaryDirectory('rigger-linked-hooks-');
+  const consumer = repositoryAt(join(directory, 'main'), { README: 'first\n' });
+  const linked = worktreeAt(consumer, join(directory, 'linked'), 'topic');
+  const hooks = resolve(linked, gitIn(linked, 'rev-parse', '--git-path', 'hooks').trim());
+  const privateHooks = join(gitIn(linked, 'rev-parse', '--absolute-git-dir').trim(), 'hooks');
+  assert.notEqual(hooks, privateHooks, 'the fixture has no distinct shared hooks directory');
+  const marker = join(directory, 'hook-ran');
+  const hook = join(hooks, 'pre-commit');
+  writeFileSync(hook, `#!/bin/sh\n# ABOUTME: Marks executions of the shared hook.\nprintf 'ran\\n' >> '${marker}'\n`);
+  chmodSync(hook, 0o755);
+  gitIn(linked, 'commit', '--allow-empty', '-qm', 'before init');
+  assert.equal(readFileSync(marker, 'utf8'), 'ran\n', 'Git did not run the shared hook before init');
+  const config = readFileSync(join(consumer, '.git', 'config'));
+  const entries = readdirSync(linked).sort();
+
+  const ran = await init({ target: linked, packageRoot: elsewhere() });
+
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /pre-commit/);
+  assert.deepEqual(readdirSync(linked).sort(), entries);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  gitIn(linked, 'commit', '--allow-empty', '-qm', 'after refusal');
+  assert.equal(readFileSync(marker, 'utf8'), 'ran\nran\n', 'init disabled the shared hook');
+});
+
+test('init leaves an already correct worktree-scoped hook path unchanged', async () => {
+  const directory = temporaryDirectory('rigger-worktree-hook-path-');
+  const consumer = repositoryAt(join(directory, 'main'), { README: 'first\n' });
+  gitIn(consumer, 'config', 'extensions.worktreeConfig', 'true');
+  const linked = worktreeAt(consumer, join(directory, 'linked'), 'topic');
+  gitIn(linked, 'config', '--worktree', 'core.hooksPath', '.githooks');
+  const worktreeConfig = resolve(linked, gitIn(linked, 'rev-parse', '--git-path', 'config.worktree').trim());
+  const beforeWorktree = readFileSync(worktreeConfig);
+  const beforeShared = readFileSync(join(consumer, '.git', 'config'));
+  assert.equal(gitIn(linked, 'config', '--show-scope', '--get', 'core.hooksPath').trim(), 'worktree\t.githooks');
+
+  const ran = await init({ target: linked, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(existsSync(join(linked, '.githooks', 'pre-push')));
+  assert.deepEqual(readFileSync(worktreeConfig), beforeWorktree);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), beforeShared);
+  assert.equal(gitIn(linked, 'config', '--show-scope', '--get', 'core.hooksPath').trim(), 'worktree\t.githooks');
+});
+
+test('init leaves already disabled Git hooks alone when core.hooksPath is correct', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  gitIn(consumer, 'config', '--local', 'core.hooksPath', '.githooks');
+  const hooks = join(gitIn(consumer, 'rev-parse', '--absolute-git-dir').trim(), 'hooks');
+  const hook = join(hooks, 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\n# ABOUTME: An existing inactive hook.\nexit 0\n');
+  chmodSync(hook, 0o755);
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(existsSync(join(consumer, '.githooks', 'pre-push')));
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  assert.ok(statSync(hook).mode & 0o111);
+});
+
 test('init refuses global and system hook paths when no local path is set', async () => {
   for (const scope of ['global', 'system']) {
     const directory = temporaryDirectory(`rigger-${scope}-hooks-`);
     const setting = join(directory, `${scope}.config`);
     const empty = join(directory, 'empty.config');
-    writeFileSync(setting, '[core]\n\thooksPath = elsewhere\n');
+    writeFileSync(setting, '[core]\n\thooksPath = .githooks\n');
     writeFileSync(empty, '');
     const former = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_SYSTEM };
     process.env.GIT_CONFIG_GLOBAL = scope === 'global' ? setting : empty;
@@ -461,12 +564,12 @@ test('init refuses global and system hook paths when no local path is set', asyn
       const consumer = repository('https://github.com/acme/widgets.git');
       const before = readFileSync(join(consumer, '.git', 'config'));
       const entries = readdirSync(consumer).sort();
-      assert.equal(gitIn(consumer, 'config', '--show-scope', '--get', 'core.hooksPath').trim(), `${scope}\telsewhere`);
+      assert.equal(gitIn(consumer, 'config', '--show-scope', '--get', 'core.hooksPath').trim(), `${scope}\t.githooks`);
 
       const ran = await init({ target: consumer, packageRoot: elsewhere() });
 
       assert.notEqual(ran.code, 0, ran.text);
-      assert.match(ran.text, new RegExp(`${scope}.*elsewhere`));
+      assert.match(ran.text, new RegExp(`${scope}.*\\.githooks`));
       assert.deepEqual(readdirSync(consumer).sort(), entries);
       assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), before);
     } finally {
@@ -532,9 +635,10 @@ test('a second init leaves the planned file tree and hook config unchanged', asy
   assert.equal(second.code, 0, second.text);
   assert.deepEqual(snapshot(), before);
   assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  assert.match(second.text, /\.githooks\/pre-push.*matches Rigger.s hook/s);
+  assert.doesNotMatch(second.text, /\.githooks\/pre-push.*not Rigger.s hook/s);
 });
 
-// proves R-SAFE-6
 test('a push to the default branch runs the forked hook and is refused', async () => {
   const directory = temporaryDirectory('rigger-hook-push-');
   const source = repositoryAt(join(directory, 'source'), { README: 'first\n' });
@@ -885,7 +989,7 @@ test('given init run in a subdirectory of a repository, with a git stand-in for 
   const ran = await withFirstOnPath(directory, () => init({ target, packageRoot, ask: originOnly(asked) }));
 
   assert.notEqual(ran.code, 0, ran.text);
-  assert.match(ran.text, /inside the repository/);
+  assert.ok(ran.text.includes(realpathSync.native(outer)), ran.text);
   assert.deepEqual(killsOf(target, leftChild(directory)), ['survivor.killed']);
   assert.equal(existsSync(join(outer, STATE)), false, `init wrote under ${join(outer, STATE)}`);
 });

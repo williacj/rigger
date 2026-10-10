@@ -195,14 +195,11 @@ async function forking({ sink, name }, {
   }
   const { repo, why } = read;
   const git = { ask, emitter: sink.emitter({ layer: 'L0' }), timeout };
-  const found = await repoRoot(target, git);
-  let targetPath;
-  try {
-    targetPath = realpathSync.native(target);
-  } catch (failure) {
-    return { text: `rigger init: cannot resolve ${target}: ${failure.message}`, code: 1 };
-  }
-  if (found.root === null && (found.status !== 128 || !found.why.includes('not a git repository'))) {
+  let probe = target;
+  while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
+  const found = await repoRoot(probe, git);
+  const targetPath = real(target);
+  if (found.root === null && found.status !== 128) {
     return { text: `rigger init: cannot inspect the repository: ${found.why}`, code: 1 };
   }
   if (found.root !== null && found.root !== targetPath) {
@@ -221,7 +218,7 @@ async function forking({ sink, name }, {
           pointsHere = false;
         }
       }
-      if (scope !== 'local' || !pointsHere) {
+      if (!['local', 'worktree'].includes(scope) || !pointsHere) {
         return { text: `rigger init: core.hooksPath is set in ${scope} to ${value}; refusing to change it.`, code: 1 };
       }
     } else if (current.status === 1) {
@@ -229,27 +226,30 @@ async function forking({ sink, name }, {
     } else {
       return { text: `rigger init: cannot inspect core.hooksPath: ${current.why}`, code: 1 };
     }
-    const gitDir = await gitAnswer(['-C', target, 'rev-parse', '--absolute-git-dir'], git);
-    if (gitDir.why !== undefined) return { text: `rigger init: ${gitDir.why}`, code: 1 };
-    let entries;
-    try {
-      entries = readdirSync(join(realpathSync.native(gitDir.stdout.trim()), 'hooks'));
-    } catch (failure) {
-      if (failure.code !== 'ENOENT') return { text: `rigger init: cannot read git hooks: ${failure.message}`, code: 1 };
-      entries = [];
-    }
-    const existing = entries.filter((entry) => {
-      if (entry.endsWith('.sample')) return false;
-      const hook = join(gitDir.stdout.trim(), 'hooks', entry);
+    if (setHooks) {
+      const gitHooks = await gitAnswer(['-C', target, 'rev-parse', '--git-path', 'hooks'], git);
+      if (gitHooks.why !== undefined) return { text: `rigger init: ${gitHooks.why}`, code: 1 };
+      if (gitHooks.stdout.trim() === '') return { text: 'rigger init: git named no hooks directory.', code: 1 };
+      const hooks = resolve(target, gitHooks.stdout.trim());
+      let entries;
       try {
-        const file = statSync(hook);
-        return file.isFile() && Boolean(file.mode & 0o111);
-      } catch {
-        return false;
+        entries = readdirSync(hooks);
+      } catch (failure) {
+        if (failure.code !== 'ENOENT') return { text: `rigger init: cannot read git hooks: ${failure.message}`, code: 1 };
+        entries = [];
       }
-    });
-    if (existing.length > 0) {
-      return { text: `rigger init: executable hooks in $GIT_DIR/hooks would be disabled by core.hooksPath: ${existing.join(', ')}`, code: 1 };
+      const existing = entries.filter((entry) => {
+        if (entry.endsWith('.sample')) return false;
+        try {
+          const file = statSync(join(hooks, entry));
+          return file.isFile() && Boolean(file.mode & 0o111);
+        } catch {
+          return false;
+        }
+      });
+      if (existing.length > 0) {
+        return { text: `rigger init: executable hooks in Git's hooks directory would be disabled by core.hooksPath: ${existing.join(', ')}`, code: 1 };
+      }
     }
   }
   const files = plan({ templates, repo });
@@ -269,13 +269,16 @@ async function forking({ sink, name }, {
     const configured = await gitAnswer(['-C', target, 'config', '--local', 'core.hooksPath', '.githooks'], git);
     if (configured.why !== undefined) return { text: `rigger init: ${configured.why}`, code: 1 };
   }
+  const skippedHook = skipped.includes('.githooks/pre-push');
+  const matchesHook = skippedHook && readFileSync(join(target, '.githooks/pre-push'), 'utf8')
+    === files.find((file) => file.path === '.githooks/pre-push').content;
   return {
     text: [
       `rigger init: wrote ${wrote.length} of ${files.length} files into ${target}`,
       ...wrote.map((path) => `  ${path}`),
       ...listing(`left these ${skipped.length} alone, because they are already there:`, skipped),
-      ...(skipped.includes('.githooks/pre-push') ? ['`.githooks/pre-push` is not Rigger\'s hook; it was left in place.'] : []),
-      ...(skipped.includes('.githooks/pre-push') && !(statSync(join(target, '.githooks/pre-push')).mode & 0o111)
+      ...(skippedHook ? [`\`.githooks/pre-push\` ${matchesHook ? 'matches Rigger\'s hook' : 'is not Rigger\'s hook'}; it was left in place.`] : []),
+      ...(skippedHook && !(statSync(join(target, '.githooks/pre-push')).mode & 0o111)
         ? ['`.githooks/pre-push` is not executable; git will not run it.'] : []),
       ...(found.root === null ? [`did not set core.hooksPath because ${found.why}.`] : []),
       ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${printableGitReason(why)}.`]),
