@@ -585,6 +585,31 @@ test('init refuses a .githooks directory symlink without writing outside the rep
   assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
 });
 
+test('init refuses a .githooks symlink into the repository without changing its target or hook config', async () => {
+  const consumer = repository('https://github.com/acme/widgets.git');
+  const target = join(consumer, 'consumer-hooks');
+  mkdirSync(target);
+  const marker = join(target, 'marker');
+  writeFileSync(marker, 'keep\n');
+  const hooks = join(consumer, '.githooks');
+  symlinkSync('consumer-hooks', hooks);
+  gitIn(consumer, 'config', '--local', 'core.hooksPath', '.githooks');
+  const entries = readdirSync(consumer).sort();
+  const config = readFileSync(join(consumer, '.git', 'config'));
+
+  const ran = await init({ target: consumer, packageRoot: elsewhere() });
+
+  assert.deepEqual(readdirSync(target), ['marker'], 'init wrote through the hooks directory symlink');
+  assert.notEqual(ran.code, 0, ran.text);
+  assert.match(ran.text, /\.githooks.*symlink/i);
+  assert.ok(lstatSync(hooks).isSymbolicLink());
+  assert.equal(readlinkSync(hooks), 'consumer-hooks');
+  assert.equal(readFileSync(marker, 'utf8'), 'keep\n');
+  assert.deepEqual(readdirSync(consumer).sort(), entries);
+  assert.deepEqual(readFileSync(join(consumer, '.git', 'config')), config);
+  assert.equal(gitIn(consumer, 'config', '--local', '--get', 'core.hooksPath').trim(), '.githooks');
+});
+
 test('init names an existing nonexecutable push hook that Git will not run', async () => {
   const consumer = repository('https://github.com/acme/widgets.git');
   mkdirSync(join(consumer, '.githooks'));
