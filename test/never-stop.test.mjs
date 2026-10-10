@@ -3786,7 +3786,8 @@ async function firstDirectoryListing(t, answer) {
   const heldListing = answer === 'LF' || answer === 'LT';
   const heldPerPid = answer === 'PF' || answer === 'PT';
   const heldOmitted = answer === 'HO';
-  const heldRead = heldState || heldListing || heldPerPid || heldOmitted;
+  const heldZombie = answer === 'HZ';
+  const heldRead = heldState || heldListing || heldPerPid || heldOmitted || heldZombie;
   const ownedListing = answer === 'OF' || answer === 'OT';
   const ownedState = answer === 'OSF' || answer === 'OST';
   const ownedPerPid = answer === 'OPF' || answer === 'OPT';
@@ -3799,7 +3800,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : ownedOmitted ? 'd6-owned-omitted' : 'd3-first-answered');
+  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -3917,6 +3918,20 @@ async function firstDirectoryListing(t, answer) {
       answer === 'OF' ? 'echo "lsof: forced owned-listing failure" >&2; exit 2' : 'exec /usr/bin/tail -f "$here/hold"',
       ]),
     ].join('\n')
+    : heldZombie ? [
+      'if [ ! -f "$here/first-listing-entered" ]; then',
+      '  : > "$here/first-listing-entered"',
+      `  ${listingOf('outside', realpathSync.native(sub))}`,
+      '  exit 0',
+      'fi',
+      'if [ ! -f "$here/held-zombie-per-pid-entered" ]; then',
+      '  printf "%s\\n" "$@" > "$here/held-zombie-per-pid-argv"',
+      '  : > "$here/held-zombie-per-pid-entered"',
+      '  exit 0',
+      'fi',
+      'printf "%s\\n" "$@" > "$here/held-zombie-later-argv"',
+      ': > "$here/held-zombie-later-entered"',
+    ].join('\n')
     : heldOmitted ? [
       'if [ -f "$here/first-listing-entered" ]; then',
       '  printf "%s\\n" "$@" > "$here/held-omitted-argv"',
@@ -3938,7 +3953,21 @@ async function firstDirectoryListing(t, answer) {
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub));
   fixture(directory, 'lsof', lsofBody);
   if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
-  if (heldRead) {
+  if (heldZombie) fixture(directory, 'ps', [
+    'pid=$(/bin/cat "$here/outside.pid")',
+    'if [ "$*" = "-p $pid -o pid=,stat=" ]; then',
+    '  printf "%s\\n" "$@" > "$here/held-state-argv"',
+    '  if [ ! -f "$here/held-state-entered" ]; then',
+    '    /bin/ps -p "$pid" -o stat= > "$here/held-state-status"',
+    '    : > "$here/held-state-entered"',
+    '    printf "%s Z\\n" "$pid"; exit 0',
+    '  fi',
+    '  : > "$here/held-zombie-after-entered"',
+    '  printf "%s S\\n" "$pid"; exit 0',
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  else if (heldRead) {
     if (answer === 'ST' || answer === 'LT' || answer === 'PT') writeFileSync(join(directory, 'hold'), '');
     fixture(directory, 'ps', [
       'pid=$(/bin/cat "$here/outside.pid")',
@@ -4010,6 +4039,31 @@ async function firstDirectoryListing(t, answer) {
     assert.equal(existsSync(join(directory, 'held-state-entered')), true, 'the chosen held-state read did not start');
     assert.deepEqual(readFileSync(join(directory, 'held-state-argv'), 'utf8').trimEnd().split('\n'), stateArgs, 'the held-state stand-in received the wrong argv');
     assert.match(readFileSync(join(directory, 'held-state-status'), 'utf8').trim(), /^T/, 'the directly owned PID was not stopped at the forced state read');
+    if (heldZombie) {
+      assert.equal(stateEnd.status, 0, 'the intervening zombie state did not answer');
+      assert.equal(stateEnd.stdout, `${pid} Z\n`, 'the intervening state did not report the synthetic zombie row');
+      assert.equal(stateEnd.stderr, '', 'the zombie state returned stderr');
+      assert.equal(stateEnd.error, undefined, 'the zombie state timed out');
+      const perPidArgs = [...firstArgs.slice(0, -2), '-p', String(pid), '-F', 'pun'];
+      const omittedStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(perPidArgs) && sequence > stateEnd.sequence);
+      const omitted = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(perPidArgs) && sequence > omittedStart?.sequence);
+      assert.ok(omittedStart && omitted, 'the zombie answer did not reach the later per-PID listing');
+      assert.deepEqual(readFileSync(join(directory, 'held-zombie-per-pid-argv'), 'utf8').trimEnd().split('\n'), perPidArgs, 'the omitted listing did not target the held PID');
+      assert.ok(omitted.status === 0 && omitted.stdout === '' && omitted.stderr === '' && !omitted.error, 'the per-PID omission was not an answered empty listing');
+      const resumed = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === pid && name === 'SIGCONT' && result === true && sequence > omitted.sequence);
+      assert.ok(resumed, 'the answered zombie and per-PID omission did not resume H');
+      const finalState = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'ps') && JSON.stringify(args) === JSON.stringify(stateArgs) && sequence > resumed.sequence);
+      assert.ok(finalState && finalState.status === 0 && finalState.stdout === `${pid} S\n` && !finalState.error, 'the subsequent state did not answer live after H resumed');
+      assert.equal(existsSync(join(directory, 'held-zombie-after-entered')), true, 'the later state did not reach its stand-in');
+      const laterStart = trace.find(({ kind, tool, args, sequence }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > finalState.sequence);
+      const later = trace.find(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && sequence > laterStart?.sequence);
+      assert.ok(laterStart && later && later.status === 0 && later.stdout === '' && later.stderr === '' && !later.error, 'the later full listing did not answer empty after H resumed');
+      assert.deepEqual(readFileSync(join(directory, 'held-zombie-later-argv'), 'utf8').trimEnd().split('\n'), firstArgs, 'the later read was not full lsof');
+      assert.deepEqual(pairs.filter(([target]) => target === pid).map(([, signal]) => signal), ['SIGSTOP', 'SIGCONT'], 'the zombie answer invented a named kill or repeated a signal');
+      assert.deepEqual(directoryEvents, [], 'the zombie answer invented a directory or PID event');
+      assert.equal(startOf(pid), outsideBirth.started, 'the resumed fixture changed birth identity');
+      return;
+    }
     if (heldOmitted) {
       assert.equal(stateEnd.status, 0, 'the intervening state did not answer before the omitted listing');
       assert.equal(stateEnd.stdout, `${pid} S\n`, 'the answered state did not leave H for the next listing');
@@ -4395,4 +4449,9 @@ test('C615 D6 answered later full lsof omits H and resumes it without an event',
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D6 answered later full lsof omits O but a per-PID answer retains it', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OO');
+});
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 D6 answered zombie state and per-PID omission resume H without a named event', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'HZ');
 });
