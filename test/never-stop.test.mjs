@@ -24,6 +24,10 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 import { sightingPs } from './census-sightings.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { startOf } from './process-fixtures.mjs';
+import { closeSync, cpSync, lstatSync, openSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -1660,6 +1664,272 @@ const TRACED_CALLER = (() => {
     .replace(emitterLine, "const emitter = { emit: (event, fields) => { trace('event', { event, ...fields }); appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`); } };")
     .replace("while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));", "process.on('exit', (status) => trace('caller-end', { status }));\nwhile (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));");
 })();
+
+/** The traced caller also keeps each real tool's exact returned UTF-8 string values privately. */
+const MAC_RETURNED_CALLER = (() => {
+  const importAnchor = "import childProcess from 'node:child_process';";
+  const readAnchor = TRACED_CALLER.split('\n').find((line) => line.startsWith('childProcess.spawnSync = (tool, args, options) =>'));
+  assert.ok(readAnchor, 'the traced synchronous read hook moved');
+  assert.equal(TRACED_CALLER.split(importAnchor).length, 2, 'the traced child process import moved');
+  assert.equal(TRACED_CALLER.split(readAnchor).length, 2, 'the traced synchronous read hook is ambiguous');
+  return TRACED_CALLER.replace(importAnchor, [
+    importAnchor,
+    "import { createHash as readHash } from 'node:crypto';",
+    "import { mkdirSync as readMkdir, writeFileSync as readWrite } from 'node:fs';",
+  ].join('\n')).replace(readAnchor, [
+    "const returnedHere = traceJoin(traceHere, 'returned-tool-reads');",
+    'readMkdir(returnedHere, { mode: 0o700 });',
+    'let readSequence = 0;',
+    'const pendingReads = new Set();',
+    "const watched = (tool) => tool === '/usr/sbin/lsof' || tool === '/bin/ps';",
+    "const recordRead = (entry) => traceAppend(traceJoin(returnedHere, 'manifest.jsonl'), JSON.stringify(entry) + '\\n', { mode: 0o600 });",
+    "const beginRead = (mode, tool, args, options) => { const id = 'r' + String(++readSequence).padStart(6, '0'); const at = process.hrtime.bigint().toString(); trace('read-start', { readId: id, mode, tool, args, remaining: options?.timeout, markers: markers() }); const traceStart = traceSequence; recordRead({ kind: 'start', id, mode, tool, args, options: { timeout: options?.timeout, encoding: options?.encoding }, at, traceStart }); pendingReads.add(id); return { id, mode, tool, args, at, traceStart }; };",
+    "const keepStream = (id, name, present, value) => { const type = !present ? 'absent' : value === null ? 'null' : typeof value; if (type !== 'string') return { present, type }; const file = id + '.' + name + '.utf8'; const bytes = Buffer.from(value, 'utf8'); readWrite(traceJoin(returnedHere, file), bytes, { flag: 'wx', mode: 0o600 }); return { present, type, file, bytes: bytes.length, sha256: readHash('sha256').update(bytes).digest('hex') }; };",
+    "const endRead = (read, outcome) => { const stdout = keepStream(read.id, 'stdout', outcome.stdoutPresent, outcome.stdout); const stderr = keepStream(read.id, 'stderr', outcome.stderrPresent, outcome.stderr); trace('read-end', { readId: read.id, mode: read.mode, tool: read.tool, args: read.args, started: read.at, status: outcome.status, signal: outcome.signal, error: outcome.error?.code ?? null, stdout: outcome.stdout, stderr: outcome.stderr, stdoutType: stdout.type, stderrType: stderr.type, markers: markers() }); recordRead({ kind: 'end', id: read.id, mode: read.mode, tool: read.tool, args: read.args, started: read.at, ended: process.hrtime.bigint().toString(), traceStart: read.traceStart, traceEnd: traceSequence, status: outcome.status, signal: outcome.signal, error: outcome.error ?? null, stdout, stderr }); pendingReads.delete(read.id); };",
+    "process.on('exit', () => { for (const id of pendingReads) recordRead({ kind: 'unresolved', id }); });",
+    "childProcess.spawnSync = function(tool, args, options) { if (!watched(tool)) return originalSpawnSync.apply(this, arguments); const read = beginRead('spawnSync', tool, args, options); let result; try { result = originalSpawnSync.apply(this, arguments); } catch (error) { trace('read-threw', { readId: read.id, mode: read.mode, tool, args, code: error.code ?? null }); recordRead({ kind: 'threw', id: read.id, mode: read.mode, tool, args, started: read.at, ended: process.hrtime.bigint().toString(), traceStart: read.traceStart, traceEnd: traceSequence, error: { name: error.name, code: error.code ?? null } }); throw error; } try { endRead(read, { status: result.status, signal: result.signal, error: result.error && { name: result.error.name, code: result.error.code, signal: result.error.signal }, stdoutPresent: Object.hasOwn(result, 'stdout'), stdout: result.stdout, stderrPresent: Object.hasOwn(result, 'stderr'), stderr: result.stderr }); } catch { /* The missing end or original fails the test's closed evidence check. */ } return result; };",
+    'const originalExecFile = childProcess.execFile;',
+    "childProcess.execFile = function(tool, args, options, callback) { if (!watched(tool)) return originalExecFile.apply(this, arguments); const read = beginRead('execFile', tool, args, options); const forwarded = function(error, stdout, stderr) { try { endRead(read, { status: error?.code ?? 0, signal: error?.signal ?? null, error: error && { name: error.name, code: error.code, signal: error.signal }, stdoutPresent: arguments.length > 1, stdout, stderrPresent: arguments.length > 2, stderr }); } catch { /* The missing end or original fails the test's closed evidence check. */ } return callback.apply(this, arguments); }; try { return originalExecFile.call(this, tool, args, options, forwarded); } catch (error) { trace('read-threw', { readId: read.id, mode: read.mode, tool, args, code: error.code ?? null }); recordRead({ kind: 'threw', id: read.id, mode: read.mode, tool, args, started: read.at, ended: process.hrtime.bigint().toString(), traceStart: read.traceStart, traceEnd: traceSequence, error: { name: error.name, code: error.code ?? null } }); throw error; } };",
+  ].join('\n'));
+})();
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('this real lsof/ps control requires macOS');
+  let directory;
+  let evidenceRoot;
+  let tail;
+  let caller;
+  let tailError;
+  let callerError;
+  let finalized = false;
+  let copied = false;
+  let bodyStage = 'before-fixture';
+  const ended = (child) => child.exitCode !== null || child.signalCode !== null;
+  const waitFor = async (condition, milliseconds) => {
+    const deadline = performance.now() + milliseconds;
+    while (!condition() && performance.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+    return condition();
+  };
+
+  t.after(async () => {
+    let failure;
+    let releaseError;
+    const result = { release: 'not-started', tail: 'not-started', caller: 'not-started', command: 'not-observed', snapshot: 'pending' };
+    try {
+      if (directory) {
+        try {
+          writeFileSync(join(directory, 'release'), '');
+          writeFileSync(join(directory, 'begin-exit'), '');
+          result.release = 'written';
+        } catch (error) {
+          releaseError = error;
+          result.release = 'failed';
+        }
+      }
+      if (tail && !ended(tail) && tail.pid !== undefined) tail.kill('SIGKILL');
+      const tailReaped = !tail || await waitFor(() => ended(tail) || tailError !== undefined, 3_000);
+      result.tail = !tail ? 'never-started' : tailReaped && !tailError && ended(tail) ? 'reaped' : 'unresolved';
+      if (caller && !ended(caller)) {
+        await waitFor(() => ended(caller) || callerError !== undefined, 3_000);
+        if (!ended(caller) && caller.pid !== undefined) caller.kill('SIGKILL');
+      }
+      const callerReaped = !caller || await waitFor(() => ended(caller) || callerError !== undefined, 3_000);
+      result.caller = !caller ? 'never-started' : callerReaped && !callerError && ended(caller) ? 'reaped' : 'unresolved';
+      const command = directory && pidIn(directory, 'group');
+      const commandEnded = !caller || (command !== undefined && await waitFor(() => {
+        const read = spawnSync('/bin/ps', ['-p', String(command), '-o', 'pid=,stat='], { encoding: 'utf8' });
+        assert.ok(!read.error && (read.status === 0 || (read.status === 1 && read.stdout === '' && read.stderr === '')), 'the command finalizer could not read the process table');
+        return read.status === 1;
+      }, 3_000));
+      result.command = !caller ? 'never-started' : commandEnded ? 'absent' : 'unresolved';
+      assert.ok(!releaseError, 'the command release could not be written');
+      assert.ok(tailReaped && !tailError && (!tail || ended(tail)), 'the recorded tail handle was not reaped');
+      assert.ok(callerReaped && !callerError && (!caller || ended(caller)), 'the recorded caller handle was not reaped');
+      assert.ok(commandEnded, 'the caller command remained present after cooperative release');
+      finalized = true;
+    } catch (error) {
+      failure = error;
+      result.failure = error.code ?? error.name ?? 'Error';
+    } finally {
+      if (evidenceRoot) {
+        const finalizerPath = join(evidenceRoot, 'finalizer.json');
+        try {
+          result.bodyStage = bodyStage;
+          writeFileSync(finalizerPath, JSON.stringify(result));
+          if (directory) cpSync(directory, join(evidenceRoot, 'fixture'), { recursive: true, force: false, errorOnExist: true });
+          result.snapshot = finalized ? 'closed-copy' : 'partial-copy-source-retained';
+          writeFileSync(finalizerPath, JSON.stringify(result));
+          const expected = ['caller.stderr', 'finalizer.json', 'fixture/caller.mjs', 'fixture/command', 'fixture/control.trace.jsonl', 'fixture/events', 'fixture/pairs', 'fixture/ending', 'fixture/exiting', 'fixture/group.pid', 'fixture/up', 'fixture/tail-birth.json', 'fixture/caller-birth.json', 'fixture/begin-exit', 'fixture/release', 'fixture/returned-tool-reads/manifest.jsonl'];
+          const inventory = expected.map((name) => {
+            const path = join(evidenceRoot, name);
+            if (!existsSync(path)) return { name, state: 'never-produced' };
+            const file = lstatSync(path);
+            return file.isFile() ? { name, state: file.size === 0 ? 'produced-empty' : 'produced', bytes: file.size } : { name, state: 'unexpected-type' };
+          });
+          const discovered = [];
+          const scan = (at, prefix) => {
+            for (const entry of readdirSync(at, { withFileTypes: true })) {
+              const name = `${prefix}${entry.name}`;
+              if (entry.isDirectory()) scan(join(at, entry.name), `${name}/`);
+              else {
+                const file = lstatSync(join(at, entry.name));
+                discovered.push(file.isFile() ? { name, state: file.size === 0 ? 'produced-empty' : 'produced', bytes: file.size } : { name, state: 'unexpected-type' });
+              }
+            }
+          };
+          if (directory) scan(join(evidenceRoot, 'fixture'), 'fixture/');
+          writeFileSync(join(evidenceRoot, 'inventory.json'), JSON.stringify({ expected: inventory, discovered, completeness: finalized ? 'closed' : 'unconfirmed-partial' }));
+          copied = true;
+        } catch (error) {
+          result.snapshot = 'copy-or-inventory-failed-source-retained';
+          try { writeFileSync(finalizerPath, JSON.stringify(result)); } catch { /* The fixture scratch remains the original. */ }
+          failure ??= error;
+        }
+      }
+    }
+    if (failure) throw failure;
+    if (directory) t.diagnostic('C615 directory fixture finalizer: recorded handles reaped; command absent; private originals retained');
+  });
+
+  assert.ok(process.env.TMPDIR, 'the Mac control needs an explicit external TMPDIR');
+  const tempRoot = realpathSync.native(process.env.TMPDIR);
+  const checkout = realpathSync.native(process.cwd());
+  const outsideCheckout = (path) => path !== checkout && !path.startsWith(`${checkout}/`);
+  assert.ok(outsideCheckout(resolve(process.env.TMPDIR)) && outsideCheckout(tempRoot), 'the Mac control TMPDIR is inside the checkout');
+  assert.ok(process.env.C615_EVIDENCE_ROOT, 'the Mac control needs a private C615_EVIDENCE_ROOT before any fixture starts');
+  const outerRoot = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  assert.ok(outsideCheckout(resolve(process.env.C615_EVIDENCE_ROOT)) && outsideCheckout(outerRoot), 'the private evidence root is inside the checkout');
+  assert.equal(lstatSync(outerRoot).mode & 0o077, 0, 'the shared private evidence root is accessible to other users');
+  const directoryRoot = join(outerRoot, 'directory');
+  if (!existsSync(directoryRoot)) mkdirSync(directoryRoot, { mode: 0o700 });
+  const child = lstatSync(directoryRoot);
+  assert.ok(child.isDirectory() && !child.isSymbolicLink() && (child.mode & 0o077) === 0, 'the directory evidence child is not a private directory');
+  const privateRoot = realpathSync.native(directoryRoot);
+  assert.ok(privateRoot.startsWith(`${outerRoot}/`), 'the directory evidence child escaped its private outer root');
+  assert.equal(readdirSync(privateRoot).length, 0, 'the directory evidence child was not empty before the attempt');
+  evidenceRoot = privateRoot;
+  directory = realpathSync(temporaryDirectory('c615-mac-directory-', {
+    context: t,
+    beforeRemoval: () => assert.ok(finalized && copied, 'finalization or private copy is incomplete; keep the fixture scratch'),
+  }));
+  const work = join(directory, 'work');
+  mkdirSync(work);
+  writeFileSync(join(directory, 'hold'), '');
+  fixture(directory, 'command', 'echo $$ > "$here/group.pid"\n: > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
+
+  tail = spawn('/usr/bin/tail', ['-f', join(directory, 'hold')], { cwd: work, detached: true, stdio: 'ignore' });
+  bodyStage = 'tail-started';
+  tail.on('error', (error) => { tailError = error; });
+  assert.ok(Number.isSafeInteger(tail.pid) && tail.pid > 0, 'the direct tail fixture did not start');
+  await until(() => processState(tail.pid) !== '' && spawnSync('/bin/ps', ['-o', 'ucomm=', '-p', String(tail.pid)], { encoding: 'utf8' }).stdout.trim() === 'tail', t);
+  const tailBirth = { pid: tail.pid, started: startOf(tail.pid) };
+  writeFileSync(join(directory, 'tail-birth.json'), JSON.stringify(tailBirth));
+
+  const anchor = "appendFileSync(join(here, 'exiting'), String(Date.now()));";
+  assert.equal(MAC_RETURNED_CALLER.split(anchor).length, 2, 'the caller exit anchor moved');
+  const source = MAC_RETURNED_CALLER.replace(anchor, "while (!existsSync(join(here, 'begin-exit'))) await new Promise((resolve) => setImmediate(resolve));\n" + anchor);
+  const callerPath = join(directory, 'caller.mjs');
+  writeFileSync(callerPath, source);
+  const callerStderr = openSync(join(evidenceRoot, 'caller.stderr'), 'wx', 0o600);
+  try {
+    caller = spawn(process.execPath, [callerPath, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, directory: work })], { stdio: ['ignore', 'ignore', callerStderr] });
+    bodyStage = 'caller-started';
+  } finally {
+    closeSync(callerStderr);
+  }
+  caller.on('error', (error) => { callerError = error; });
+  assert.ok(Number.isSafeInteger(caller.pid) && caller.pid > 0, 'the direct caller fixture did not start');
+  await until(() => existsSync(join(directory, 'up')) || callerError !== undefined || ended(caller), t);
+  assert.ok(existsSync(join(directory, 'up')), 'the command did not reach the caller exit boundary');
+  const command = pidIn(directory, 'group');
+  assert.ok(Number.isSafeInteger(command) && command > 0, 'the caller command did not record its PID');
+  const callerBirth = { pid: caller.pid, started: startOf(caller.pid), command, commandStarted: startOf(command) };
+  writeFileSync(join(directory, 'caller-birth.json'), JSON.stringify(callerBirth));
+  t.diagnostic(JSON.stringify({ fixture: 'C615 Mac directory', tail: tailBirth, caller: callerBirth }));
+  assert.ok(!ended(tail), 'the recorded tail ended before the exit census began');
+  bodyStage = 'exit-census-started';
+  writeFileSync(join(directory, 'begin-exit'), '');
+  await until(() => ended(caller) || callerError !== undefined, t);
+  assert.ok(!callerError && caller.exitCode === 0, 'the caller did not finish exit cleanup; inspect its private output');
+
+  const trace = linesOf(directory, 'control.trace.jsonl');
+  const answers = (tool, args) => trace.filter(({ kind, tool: path, args: given, status, error }) => kind === 'read-end' && path === tool && given?.length === args.length && given.every((value, index) => value === args[index]) && status === 0 && !error);
+  const listsTail = (output) => {
+    const rows = output.split('\n');
+    const first = rows.indexOf(`p${tailBirth.pid}`);
+    const next = rows.findIndex((row, index) => index > first && row.startsWith('p'));
+    const fields = rows.slice(first, next < 0 ? undefined : next);
+    return first >= 0 && fields.includes(`u${process.getuid()}`) && fields.includes(`n${realpathSync.native(work)}`);
+  };
+  const listingArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
+  const [first] = answers('/usr/sbin/lsof', listingArgs);
+  assert.ok(first && listsTail(first.stdout), 'the actual full lsof listing did not answer with the recorded tail cwd');
+  const [state] = answers('/bin/ps', ['-p', String(tailBirth.pid), '-o', 'pid=,stat=']);
+  assert.ok(state && state.sequence > first.sequence && new RegExp(`^\\s*${tailBirth.pid}\\s+T`, 'm').test(state.stdout), 'the actual intervening ps read did not answer with the stopped tail');
+  const [perPid] = answers('/usr/sbin/lsof', [...listingArgs.slice(0, -2), '-p', String(tailBirth.pid), '-F', 'pun']);
+  assert.ok(perPid && perPid.sequence > state.sequence && listsTail(perPid.stdout), 'the actual per-PID lsof read did not answer with the recorded tail cwd');
+  const [name] = answers('/bin/ps', ['-p', String(tailBirth.pid), '-o', 'ucomm=']);
+  const [commandRead] = answers('/bin/ps', ['-ww', '-p', String(tailBirth.pid), '-o', 'pid=,command=']);
+  assert.ok(name && name.sequence > perPid.sequence && name.stdout.trim() === 'tail', 'the actual name read did not answer for the recorded tail');
+  assert.ok(commandRead && commandRead.sequence > name.sequence && commandRead.stdout.includes(`/usr/bin/tail -f ${join(directory, 'hold')}`), 'the actual command read did not answer for the recorded tail');
+  assert.ok(trace.some(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === tailBirth.pid && signal === 'SIGSTOP' && answer === true), 'the tail was not stopped after the answered listing');
+  assert.ok(trace.some(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === tailBirth.pid && signal === 'SIGKILL' && answer === true), 'the tail kill was not reached');
+  const events = linesOf(directory, 'events').filter(({ pid }) => pid === tailBirth.pid);
+  assert.ok(events.length === 1 && events[0].event === 'survivor.killed' && events[0].name === 'tail' && events[0].cmd === `/usr/bin/tail -f ${join(directory, 'hold')}` && events[0].reason === undefined, 'the reached directory result did not name the killed tail truthfully');
+
+  bodyStage = 'per-read-original-guard';
+  const originals = join(directory, 'returned-tool-reads');
+  assert.ok(existsSync(join(originals, 'manifest.jsonl')), 'the reached real lsof/ps calls have no complete private per-read returned-value originals');
+  const manifest = linesOf(originals, 'manifest.jsonl');
+  const starts = manifest.filter(({ kind }) => kind === 'start');
+  const ends = manifest.filter(({ kind }) => kind === 'end');
+  const traceStarts = trace.filter(({ kind }) => kind === 'read-start');
+  const traceEnds = trace.filter(({ kind }) => kind === 'read-end');
+  const actual = (row) => row.tool === '/usr/sbin/lsof' || row.tool === '/bin/ps';
+  assert.ok(manifest.length > 0 && manifest.every(({ kind }) => kind === 'start' || kind === 'end'), 'the private read manifest has an unknown or missing operation');
+  assert.ok(traceStarts.every(actual) && traceEnds.every(actual), 'the caller trace includes an unaccounted tool read');
+  assert.ok(starts.length === traceStarts.length && ends.length === traceEnds.length && starts.length === ends.length, 'an actual tool read is absent or unresolved in the private manifest');
+  assert.ok(!trace.some(({ kind }) => kind === 'read-threw'), 'a real tool invocation threw without a returned result');
+  const expectedFiles = new Set(['manifest.jsonl']);
+  const seenIds = new Set();
+  for (let index = 0; index < starts.length; index++) {
+    const start = starts[index];
+    const begun = traceStarts[index];
+    assert.ok(start.id === `r${String(index + 1).padStart(6, '0')}` && !seenIds.has(start.id), 'read IDs are missing, duplicated or out of order');
+    seenIds.add(start.id);
+    assert.ok(start.traceStart === begun.sequence && start.id === begun.readId && start.mode === begun.mode && start.tool === begun.tool && JSON.stringify(start.args) === JSON.stringify(begun.args) && actual(start), 'a private read start is not the actual traced call');
+    assert.ok(typeof start.at === 'string' && /^\d+$/.test(start.at) && start.options?.encoding === 'utf8', 'a real read lacks its start or UTF-8 options');
+    const end = ends.find((entry) => entry.id === start.id);
+    const finished = traceEnds.find((entry) => entry.readId === start.id);
+    assert.ok(end && finished && ends.filter((entry) => entry.id === start.id).length === 1 && traceEnds.filter((entry) => entry.readId === start.id).length === 1, 'a real read has no unique settled return');
+    assert.ok(end.traceStart === start.traceStart && end.traceEnd === finished.sequence && end.traceEnd > end.traceStart && end.mode === start.mode && end.tool === start.tool && JSON.stringify(end.args) === JSON.stringify(start.args), 'a returned read does not link to its start and trace');
+    assert.ok(end.started === start.at && typeof end.ended === 'string' && /^\d+$/.test(end.ended) && BigInt(end.ended) >= BigInt(start.at), 'a returned read has no valid start/end clock');
+    assert.ok(end.status === finished.status && end.signal === finished.signal && (end.error?.code ?? null) === finished.error, 'a returned read has a different status or error from the trace');
+    for (const name of ['stdout', 'stderr']) {
+      const value = end[name];
+      assert.ok(value && value.type === finished[`${name}Type`] && typeof value.present === 'boolean', 'the returned stream type or presence is unaccounted');
+      assert.ok(['string', 'null', 'undefined', 'absent'].includes(value.type) && (value.type !== 'absent' || !value.present), 'a returned stream has an unsupported type');
+      if (value.type === 'string') {
+        const file = `${start.id}.${name}.utf8`;
+        assert.ok(value.present && value.file === file && !expectedFiles.has(file) && typeof finished[name] === 'string', 'a returned string has no unique original or trace value');
+        expectedFiles.add(file);
+        const bytes = readFileSync(join(originals, file));
+        assert.ok(bytes.equals(Buffer.from(finished[name], 'utf8')) && value.bytes === bytes.length && value.sha256 === createHash('sha256').update(bytes).digest('hex'), 'a returned string original is incomplete or differs from the value supplied to the caller');
+      } else {
+        assert.ok(!Object.hasOwn(value, 'file') && !Object.hasOwn(value, 'bytes') && !Object.hasOwn(value, 'sha256'), 'an absent or non-string stream invented original bytes');
+      }
+    }
+  }
+  assert.ok(readdirSync(originals).length === expectedFiles.size && readdirSync(originals).every((name) => expectedFiles.has(name) && lstatSync(join(originals, name)).isFile()), 'the private read originals have a missing or invented file');
+  const eventTrace = trace.filter(({ kind }) => kind === 'event');
+  const eventRecords = linesOf(directory, 'events');
+  assert.ok(eventTrace.length === eventRecords.length && eventTrace.every((entry, index) => ['event', 'pid', 'name', 'cmd', 'reason'].every((field) => entry[field] === eventRecords[index][field])), 'the product event file does not match the ordered private trace');
+  assert.ok(eventTrace.some(({ event, pid, sequence }) => event === 'survivor.killed' && pid === tailBirth.pid && sequence > commandRead.sequence), 'the returned reads do not precede the recorded product event');
+  const callerEnds = trace.filter(({ kind }) => kind === 'caller-end');
+  assert.ok(callerEnds.length === 1 && traceEnds.every(({ sequence }) => sequence < callerEnds[0].sequence), 'a real tool read did not close before the caller ended');
+  bodyStage = 'passed';
+});
 
 /** Advances the group-census read driver's clock once, after its first read marked the cut. */
 const GROUP_LATE_CALLER = (() => {
