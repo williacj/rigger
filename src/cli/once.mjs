@@ -242,7 +242,6 @@ async function claiming(verb, limit, opened, {
         move: `moved to ${each.to}`,
         return: `returned acceptance on pull request #${each.pull}`,
         escalate: `escalated ${each.category}`,
-        merge: `reserved merge of pull request #${each.pull}`,
       };
       return { ...each, said: words[each.action], review: true, judgesPassed: true, judgeLines: [] };
     }

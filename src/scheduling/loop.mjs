@@ -98,16 +98,16 @@ function claiming({ config, board, facts, l2, sink, kill }) {
         answers.set(card.number, next);
         return next;
       });
+      const claimable = pulls.filter((pull) => answers.get(pull.card).action !== 'merge');
       const taken = [];
-      for (const pull of pulls) {
+      for (const pull of claimable) {
         if (taken.length >= limit) break;
         const next = answers.get(pull.card);
-        const takesSlot = next.action !== 'merge';
-        if (takesSlot && slots.size >= concurrency) continue;
+        if (slots.size >= concurrency) continue;
         claims.add(pull.card);
-        if (takesSlot) slots.add(pull.card);
+        slots.add(pull.card);
         const card = unclaimed.find((item) => item.number === pull.card);
-        taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
+        taken.push({ ...pull, card, next, decide, queueDepth: claimable.length - taken.length - 1, inFlight: slots.size });
       }
       return { claims: taken, failures };
     },
@@ -227,8 +227,8 @@ function released(release, claim, failure) {
  *
  *   One the sink refuses starts nothing, and the failure names the card and the step or the role.
  *
- * A claim is held in memory from the moment L3 pulls a card until its work settles. Every answer
- * except merge holds a slot until its work settles; merge keeps only the claim (C22).
+ * A claim and its slot are held in memory from the moment L3 pulls a card until its work settles.
+ * A merge answer takes neither; M5-09 handles its claim in the merge lane (C22).
  * One run also remembers stopped cards and cards whose
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
@@ -498,8 +498,6 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         await l2.escalated(card, next);
         excluded?.add(card.number);
         reached = { card: card.number, ...next };
-      } else if (next.action === 'merge') {
-        reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
           ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
@@ -514,7 +512,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       excluded?.add(card.number);
     }
     failure = released(release, claim, failure);
-    if (claimed && next.action !== 'merge') await freed();
+    if (claimed) await freed();
     return { reached, failure };
   };
 

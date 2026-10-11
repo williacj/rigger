@@ -56,7 +56,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-3 | **gap** |
 | R-SCHED-4 | **gap** |
 | R-SCHED-5 | **gap** |
-| R-SCHED-6 | **gap** |
+| R-SCHED-6 | `test/loop.test.mjs` a merge answer takes no claim and leaves the sole slot for a Ready maker under pull and run |
 | R-SCHED-7 | **gap** |
 | R-SCHED-8 | **gap** |
 | R-SCHED-9 | **gap** |
