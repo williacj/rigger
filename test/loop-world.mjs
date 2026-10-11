@@ -407,7 +407,7 @@ export function world({
     },
   };
   const repository = createFakeRepository(forge);
-  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations });
+  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: { postComment: repository.postComment } });
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
   const decide = (card, outcomes, options = {}) => {

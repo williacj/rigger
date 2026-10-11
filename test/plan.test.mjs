@@ -13,6 +13,7 @@ import { plan as planVerb } from '../src/cli/plan.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { seedRepository } from './fake-gh.mjs';
+import { markerComment } from './fake-repository.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -192,7 +193,7 @@ function verbOver(verb, board, seed, { roles } = {}) {
   const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` };
   const ran = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8', env });
   assert.equal(ran.error, undefined);
-  return { out: ran.stdout, err: ran.stderr, code: ran.status, again: (other) => spawnSync(process.execPath, [bin, other], { cwd: consumer, encoding: 'utf8', env }) };
+  return { out: ran.stdout, err: ran.stderr, code: ran.status, fake, again: (other) => spawnSync(process.execPath, [bin, other], { cwd: consumer, encoding: 'utf8', env }) };
 }
 
 /** Card `number`'s one open pull request from its line of work, numbered `100 + number`. */
@@ -217,3 +218,26 @@ test('given a Review card carrying two labels that select different tiers for on
   const once = ran.again('once');
   assert.equal(refusalOf(once.stdout, 51), line, `${once.stdout}${once.stderr}`);
 });
+
+for (const { action, column, ruling, expected } of [
+  { action: 'move', column: 'Review', merged: true, expected: /move.*done/ },
+  { action: 'continue', column: 'Review', ruling: { verdict: 'needs revision', items: ['unmet'], toSound: 'Print help.' }, expected: /continue.*#160.*6666666666666666666666666666666666666666/ },
+  { action: 'return', column: 'Review', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' }, expected: /return.*#160/ },
+  { action: 'escalate', column: 'Review', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expected: /escalate.*critical/ },
+  { action: 'move from Owner', column: 'Owner', expected: /move.*review.*\(redo\)/ },
+]) {
+  test(`plan names a ${column} card's ${action} answer and writes nothing`, async () => {
+    const number = 60;
+    const pull = 160;
+    const comments = ruling === undefined ? [] : [markerComment({ card: number, pull, head: JUDGED_HEAD, body: ADMITTED, ...ruling })];
+    const seed = { pullRequests: [{ ...openFor(number), merged: action === 'move', comments }] };
+    const ran = verbOver('plan', { items: [card(number, column)] }, seed);
+
+    assert.equal(ran.code, 0, ran.err);
+    assert.deepEqual(pulled(ran.out), [number], ran.out);
+    assert.match(pullLines(ran.out)[0], expected, ran.out);
+    assert.deepEqual((await ran.fake.model()).writes(), []);
+    const view = spawnSync(ran.fake.gh, ['pr', 'view', String(pull), '--json', 'comments'], { encoding: 'utf8', env: gitEnvironment() });
+    assert.equal(JSON.parse(view.stdout).comments.length, comments.length);
+  });
+}

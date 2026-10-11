@@ -201,9 +201,9 @@ async function claiming(verb, limit, opened, {
   // and why each judge it stopped naming was not dispatched, which L3 does not answer.
   const panels = new Map();
   /** L2's next action, recording refusals and judge wording while forwarding each attempt's outcomes. */
-  const decide = (card, outcomes, { attempt, workspace: unmade, maker, forge: settledFacts, judged, directories } = {}) => {
+  const decide = (card, outcomes, { attempt, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing } = {}) => {
     const next = nextAction(card, config.kinds, config.epicLabel, {
-      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, maker, forge: settledFacts, judged, directories,
+      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing,
     });
     if (next.action === 'refuse') refusals.push(next);
     if (next.action === 'judge') judging(card.number, next, judged ?? {}, directories ?? {});
@@ -236,7 +236,18 @@ async function claiming(verb, limit, opened, {
   // One line for each card that reached its maker, or that was pulled for its judges alone, each
   // followed by a line for each of its judges, then one for each failure of L2's settle that was
   // not the card left in coding for what the forge holds.
-  const outcomes = (reached) => reached.map((each) => ({ ...each, ...(each.outcome === undefined ? { said: undefined, review: true } : makerOutcome(each)), ...judgesOf(each) }));
+  const outcomes = (reached) => reached.map((each) => {
+    if (each.action !== undefined && each.action !== 'continue') {
+      const words = {
+        move: `moved to ${each.to}`,
+        return: `returned acceptance on pull request #${each.pull}`,
+        escalate: `escalated ${each.category}`,
+        merge: `reserved merge of pull request #${each.pull}`,
+      };
+      return { ...each, said: words[each.action], review: true, judgesPassed: true, judgeLines: [] };
+    }
+    return { ...each, ...(each.outcome === undefined ? { said: undefined, review: true } : makerOutcome(each)), ...judgesOf(each) };
+  });
   /**
    * What card `reached`'s judges did, as the verb says it: `judgeLines`, a line for each judge L3
    * carried, in the order L3 carried them, then each other judge L2 stopped naming, then, where the
@@ -268,8 +279,14 @@ async function claiming(verb, limit, opened, {
     return { judgeLines, judgesPassed: carried.every(({ passed }) => passed) && withheld.length === 0 };
   };
   const said = (worked) => [
-    ...worked.flatMap(({ card, workspace: path, said: what, judgeLines }) => [
-      what === undefined ? `rigger ${verb}: claimed #${card} from board ${project} for its judges alone` : `rigger ${verb}: claimed #${card} from board ${project}; ${what}, in its workspace, ${path}`,
+    ...worked.flatMap(({ card, workspace: path, said: what, judgeLines, action, pull, head }) => [
+      action !== undefined && action !== 'continue'
+        ? `rigger ${verb}: card #${card} ${what}`
+        : action === 'continue'
+          ? `rigger ${verb}: continued #${card} on pull request #${pull} at ${head}; ${what}, in its workspace, ${path}`
+          : what === undefined
+            ? `rigger ${verb}: claimed #${card} from board ${project} for its judges alone`
+            : `rigger ${verb}: claimed #${card} from board ${project}; ${what}, in its workspace, ${path}`,
       ...judgeLines,
     ]),
     ...worked.filter(({ failure }) => failure !== undefined).map(({ failure }) => `rigger ${verb}: ${failure.message}`),

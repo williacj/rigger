@@ -13,7 +13,8 @@ import template from '../templates/rigger.config.mjs';
 import { once as onceVerb } from '../src/cli/once.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
+import { installFakeGh, installGhRefusingStreamAfterMove, seedRepository } from './fake-gh.mjs';
+import { headIn, markerComment } from './fake-repository.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawn } from 'node:child_process';
@@ -60,9 +61,9 @@ const config = () => ({ ...template, repo: REPO, board: { ...template.board, pro
  * A consumer's repository holding that config, with a local bare `origin` beside it, in a
  * directory of its own, so the workspaces the default root names beside it are its alone.
  */
-const consumerRepository = () => {
+const consumerRepository = (settings = config()) => {
   const directory = temporaryDirectory('rigger-once-');
-  return withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(config())};\n` }), join(directory, 'origin.git'));
+  return withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n` }), join(directory, 'origin.git'));
 };
 
 /**
@@ -88,18 +89,23 @@ function installAgentCli(dir) {
  * append from the start; or `refusing-after-move`, where the `gh` first on PATH answers as the
  * fake does and makes the stream that directory once it has answered a move.
  */
-function once(board, { record = 'accepting' } = {}) {
-  const consumer = consumerRepository();
+function once(board, { record = 'accepting', seed, extraEnv = {}, settings, prepare = () => {} } = {}) {
+  const consumer = consumerRepository(settings);
   const dir = temporaryDirectory('rigger-once-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
+  if (seed !== undefined) seedRepository(fake, seed);
+  prepare({ consumer, fake });
   const agent = installAgentCli(dir);
   const stream = join(consumer, '.rigger', 'events.jsonl');
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
   const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-once-wrap-'), fake.gh, stream))] : [];
-  const env = { ...process.env, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
-  const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env });
-  assert.equal(ran.error, undefined);
-  return { out: ran.stdout, err: ran.stderr, code: ran.status, consumer, model: fake.model, agentRuns: agent.runs };
+  const env = { ...process.env, ...extraEnv, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
+  const invoke = () => {
+    const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env });
+    assert.equal(ran.error, undefined);
+    return { out: ran.stdout, err: ran.stderr, code: ran.status, consumer, model: fake.model, agentRuns: agent.runs, fake, rerun: invoke };
+  };
+  return invoke();
 }
 
 /** Each card on the fake board by number, with the display name of the column it is in now. */
@@ -195,6 +201,77 @@ test('after once claims a card from the ready column, the state directory\'s eve
   assert.ok(events.some((event) => event.layer === 'L3'), JSON.stringify(events));
   assert.ok(events.some((event) => event.layer === 'L2' && event.event === 'transition'), JSON.stringify(events));
 });
+
+for (const { action, ruling, merged, expectedColumn, line } of [
+  { action: 'move', merged: true, expectedColumn: 'Done', line: /#10.*move.*done/ },
+  { action: 'return', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' }, expectedColumn: 'Review', line: /#10.*return.*#11/ },
+  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expectedColumn: 'Review', line: /#10.*escalate.*critical/ },
+]) {
+  test(`once prints the ${action} it carried out for a Review card and exits zero`, async () => {
+    const head = '6'.repeat(40);
+    const comments = ruling === undefined ? [] : [markerComment({ card: 10, pull: 11, head, body: ADMITTED, ...ruling })];
+    const seed = { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments, merged: merged ?? false }] };
+
+    const ran = once({ items: [card(10, 'Review')] }, { seed });
+
+    assert.equal(ran.code, 0, ran.err);
+    assert.match(ran.out, line);
+    assert.deepEqual(await columnsOf(ran), { 10: expectedColumn });
+    if (action === 'return') {
+      const view = spawnSync(ran.fake.gh, ['pr', 'view', '11', '--json', 'comments'], { encoding: 'utf8', env: gitEnvironment() });
+      assert.equal(JSON.parse(view.stdout).comments.length, 2);
+    }
+    if (action === 'escalate') assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'review.escalate').map(({ category }) => category), ['critical']);
+  });
+}
+
+test('once moves an Owner card to Review, then dispatches its owed reviewer on the next invocation', async () => {
+  const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } };
+  const prepare = ({ consumer, fake }) => {
+    const base = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+    gitIn(consumer, 'checkout', '-q', '-b', 'rigger-10');
+    gitIn(consumer, 'commit', '-q', '--allow-empty', '-m', 'work for review');
+    const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+    gitIn(consumer, 'push', '-q', 'origin', 'rigger-10');
+    gitIn(consumer, 'checkout', '-q', 'main');
+    const reviewer = markerComment({ card: 10, pull: 11, head, body: ADMITTED });
+    const oldReviewer = { ...reviewer, body: reviewer.body.replace(/digest: [0-9a-f]{64}/, `digest: ${'f'.repeat(64)}`) };
+    const owner = markerComment({ card: 10, pull: 11, head, body: ADMITTED, role: 'owner', createdAt: '2026-10-01T11:05:00Z' });
+    seedRepository(fake, { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: base, mergeable: 'mergeable', comments: [oldReviewer, owner] }] });
+  };
+  const first = once({ items: [card(10, 'Owner')] }, {
+    settings,
+    prepare,
+  });
+
+  assert.equal(first.code, 0, first.err);
+  assert.deepEqual(await columnsOf(first), { 10: 'Review' });
+  assert.deepEqual(first.agentRuns(), []);
+  const second = first.rerun();
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /claimed #10.*judges alone/);
+  assert.equal(second.agentRuns().length, 1);
+  assert.deepEqual(eventsOf(second).filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role !== undefined).map(({ role }) => role), ['reviewer']);
+});
+
+for (const { action, ruling, merged, board, seedExtra, record, extraEnv, error } of [
+  { action: 'move', merged: true, board: { refuseMoves: true }, error: /card #10.*review.*done/ },
+  { action: 'move transition', merged: true, record: 'refusing-after-move', error: /card #10.*review.*done.*refused to record/ },
+  { action: 'return', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' }, seedExtra: { commentReplies: { 11: { status: '403', message: 'the forge refuses the comment' } } }, error: /card #10.*pull request #11.*forge refuses the comment/ },
+  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, extraEnv: () => ({ NODE_OPTIONS: `--import ${refusingAppend("event.layer === 'L2' && event.event === 'review.escalate'", 'review.escalate')}` }), error: /card #10.*critical.*review.escalate/ },
+]) {
+  test(`once exits non-zero when its ${action} write fails`, async () => {
+    const head = '6'.repeat(40);
+    const comments = ruling === undefined ? [] : [markerComment({ card: 10, pull: 11, head, body: ADMITTED, ...ruling })];
+    const seed = { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments, merged: merged ?? false }], ...seedExtra };
+    const ran = once({ items: [card(10, 'Review')], ...board }, { seed, record, extraEnv: extraEnv?.() });
+
+    assert.notEqual(ran.code, 0, ran.out);
+    assert.match(ran.err, error);
+    if (action === 'return') assert.deepEqual(await columnsOf(ran), { 10: 'Review' });
+    if (action === 'move') assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'transition'), []);
+  });
+}
 
 /** One unclaimed card in review that L2 would dispatch, and one in ready, under N 3. */
 const REDO_AND_READY = { items: [card(30, 'Ready'), card(40, 'Review')] };
@@ -327,10 +404,11 @@ function consumerHolding(settings, files = {}) {
  * environment. Answers the consumer, its origin, the fake, and `ran`, which settles on the bin's
  * status and what it printed; the bin is ended at the test's teardown if it is still running.
  */
-function onceWithAgent(t, agent, board, { settings = config(), files = {}, env = {} } = {}) {
+function onceWithAgent(t, agent, board, { settings = config(), files = {}, env = {}, prepare = () => {} } = {}) {
   const { consumer, origin } = consumerHolding(settings, files);
   const dir = temporaryDirectory('rigger-once-maker-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
+  prepare({ consumer, origin, fake });
   const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   let out = '';
@@ -381,6 +459,68 @@ test('given a stand-in that opens a pull request, the world\'s local origin hold
   const { headRefOid } = JSON.parse(view.stdout);
   assert.match(headRefOid, /^[0-9a-f]{40}$/);
   assert.doesNotThrow(() => gitIn(origin, 'cat-file', '-e', headRefOid));
+});
+
+/** Put a governed pull request at a local head that a continuing maker can check out. */
+const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting = false } = {}) => ({ consumer, fake }) => {
+  const base = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(consumer, 'checkout', '-q', '-b', 'rigger-10');
+  gitIn(consumer, 'commit', '-q', '--allow-empty', '-m', 'work for review');
+  const oldHead = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(consumer, 'push', '-q', 'origin', 'rigger-10');
+  gitIn(consumer, 'checkout', '-q', 'main');
+  const sound = markerComment({ card: 10, pull: 11, head: oldHead, body: ADMITTED });
+  const revision = markerComment({ card: 10, pull: 11, head: oldHead, body: ADMITTED, role: ruling, verdict: 'needs revision', items: ['unmet'], toSound: 'Print a help line.' });
+  const comments = [owner || conflicting ? sound : revision, ...(owner ? [revision] : [])];
+  seedRepository(fake, {
+    pullRequests: [{ number: 11, head: 'rigger-10', sha: oldHead, mergeBase: base, diff: 'diff --git a/help b/help\n', comments, mergeable: conflicting ? 'conflicting' : 'mergeable' }],
+    mergeable: { 11: conflicting ? 'CONFLICTING' : 'MERGEABLE' },
+  });
+  return oldHead;
+};
+
+for (const { column, ruling, owner, conflicting } of [
+  { column: 'Review', ruling: 'reviewer' },
+  { column: 'Owner', ruling: 'owner', owner: true },
+  { column: 'Coding', ruling: 'reviewer' },
+  { column: 'Coding', conflicting: true },
+]) {
+  test(`once continues a ${column} card ${conflicting ? 'with conflicting mergeability' : `on a ${ruling} ruling`} at L2's head`, SETTLES_WITHIN, async (t) => {
+    const agent = standInAgent({ 10: { engineer: { push: true } } });
+    let oldHead;
+    const prepare = (given) => { oldHead = prepareContinuation({ ruling, owner, conflicting })(given); };
+    const settings = owner ? { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } } : config();
+    const { origin, fake, ran } = onceWithAgent(t, agent, { items: [card(10, column)] }, { prepare, settings });
+
+    const { code, out, err } = await ran;
+    const head = headIn(origin, 'rigger-10');
+    const pull = spawnSync(fake.gh, ['pr', 'view', '11', '--json', 'headRefOid'], { encoding: 'utf8', env: gitEnvironment() });
+
+    assert.equal(code, 0, err);
+    assert.match(out, /continued #10 on pull request #11/);
+    assert.notEqual(head, oldHead);
+    assert.equal(JSON.parse(pull.stdout).headRefOid, head);
+    assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ column: held }) => held), ['Review']);
+    const maker = agent.runs().find(({ role }) => role === 'engineer');
+    assert.ok(maker, JSON.stringify(agent.runs()));
+    assert.match(maker.input, /continuing attempt on its open pull request #11/);
+    assert.ok(maker.input.includes(oldHead), maker.input);
+    if (conflicting) assert.match(maker.input, /reads pull request #11 as conflicting/);
+    else {
+      assert.match(maker.input, /item 1 unmet: The widget turns blue when pressed\./);
+      assert.match(maker.input, /Print a help line\./);
+    }
+  });
+}
+
+test('once exits non-zero when a continuing maker exits non-zero', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent({ 10: { engineer: { exit: 4 } } });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Review')] }, { prepare: prepareContinuation() });
+
+  const { code, out, err } = await ran;
+  assert.notEqual(code, 0, out);
+  assert.match(err, /continued #10 on pull request #11/);
+  assert.match(err, /exited 4/);
 });
 
 test('given once where the maker exits non-zero, once exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, async (t) => {

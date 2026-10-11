@@ -5,6 +5,7 @@ import { worktreeTopic } from '../config/validate.mjs';
 import { topicFor } from '../execution/workspace.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
+import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 
@@ -44,6 +45,7 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
+  repositoryWrites = repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
   reads = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
@@ -131,6 +133,24 @@ export function columnChanges({
       const cause = MOVES.find((each) => CHANGES[each].from === from && CHANGES[each].to === next.to);
       if (cause === undefined) throw new Error(`card #${card.number} has no move from ${from ?? card.column} to ${next.to}`);
       await change(card, cause);
+    },
+
+    /** Posts L2's return comment on its pull request, without changing the card's column. */
+    returned: async (card, next) => {
+      try {
+        await repositoryWrites.postComment(next.pull, next.comment);
+      } catch (refusal) {
+        throw new Error(`card #${card.number}'s return comment on pull request #${next.pull} was refused: ${refusal.message}`, { cause: refusal });
+      }
+    },
+
+    /** Records L2's escalation for this card and category, leaving routing to M6. */
+    escalated: (card, next) => {
+      try {
+        sink.emitter({ layer: 'L2', card: card.number }).emit('review.escalate', { category: next.category });
+      } catch (refusal) {
+        throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: ${refusal.message}`, { cause: refusal });
+      }
     },
 
     /**
