@@ -8,26 +8,29 @@ import { parse } from 'acorn';
 import { composeMarker, parseMarker } from '../src/workflow/marker.mjs';
 import { gateAnswer, GATE_CONTEXT } from '../src/workflow/gate.mjs';
 import config from '../rigger.config.mjs';
+import { OWNER as GATE_OWNER } from '../src/workflow/gate.mjs';
+import { OWNER } from '../src/config/validate.mjs';
+import { panelOf } from '../src/workflow/next-action.mjs';
 
 const HEAD = '1'.repeat(40);
 const OLD_HEAD = '2'.repeat(40);
 const DIGEST = 'a'.repeat(64);
 const OLD_DIGEST = 'b'.repeat(64);
-const JUDGES = ['reviewer', 'engineer', 'architect'];
+const JUDGES = [{ role: 'reviewer', provider: 'claude' }, { role: 'engineer', provider: 'claude' }, { role: 'architect', provider: 'claude' }];
 const CHECKS = { 'check (20)': { state: 'passed', creator: null } };
 
 /** One forge comment carrying a marker for a judge, with overridable marker and comment fields. */
 function marker(role, fields = {}, comment = {}) {
   const { items = ['met', 'met'], ...rest } = fields;
   return {
-    body: composeMarker({ card: 655, pull: 900, head: HEAD, digest: DIGEST, role, verdict: 'sound', items, coverage: 'covered', ...rest }, `Verdict by ${role}`),
+    body: composeMarker({ card: 655, pull: 900, head: HEAD, digest: DIGEST, role, provider: role === 'owner' ? undefined : 'claude', verdict: 'sound', items, coverage: 'covered', ...rest }, `Verdict by ${role}`),
     createdAt: '2026-10-10T12:00:00Z', id: `IC_${role}`, author: 'williacj', permission: 'write', edited: false,
     ...comment,
   };
 }
 
 /** The rule's named inputs in the forge and marker-reader shapes. */
-function input(comments = JUDGES.map((role) => marker(role)), changes = {}) {
+function input(comments = JUDGES.map(({ role }) => marker(role)), changes = {}) {
   return { comments, card: 655, pull: 900, head: HEAD, digest: DIGEST, count: 2, judges: JUDGES, checks: CHECKS, ...changes };
 }
 
@@ -38,7 +41,7 @@ test('three fresh sound judges and passed required checks admit', () => {
 
 // proves R-GATE-5
 test('a missing marker refuses by judge, while the other judges are sound', () => {
-  const answer = gateAnswer(input(JUDGES.slice(0, 2).map((role) => marker(role))));
+  const answer = gateAnswer(input(JUDGES.slice(0, 2).map(({ role }) => marker(role))));
   assert.deepEqual(answer, { admit: false, refusals: [{ judge: 'architect', reason: 'no marker' }] });
 });
 
@@ -104,7 +107,7 @@ test('passed and empty check maps admit; failed, pending, absent and unknown sta
 
 // proves R-GATE-2, R-GATE-5, R-GATE-6, R-GATE-7, R-VERDICT-4, R-LOOP-5, R-LOOP-6
 test('each missing, unreadable, stale, unmet, insufficient, revision, critical and edited state refuses at every judge position', () => {
-  const sets = [['reviewer'], JUDGES, [...JUDGES, 'owner'], ['owner']];
+  const sets = [[JUDGES[0]], JUDGES, [...JUDGES, { role: 'owner' }], [{ role: 'owner' }]];
   const cases = [
     { name: 'missing', change: () => null, reason: /no marker/ },
     { name: 'unreadable', change: (held) => ({ ...held, body: held.body.replace('verdict: sound\n', '') }), reason: /unreadable: the field verdict is missing/ },
@@ -118,11 +121,11 @@ test('each missing, unreadable, stale, unmet, insufficient, revision, critical a
     { name: 'critical', change: (held, role) => marker(role, { verdict: 'critical', toSound: 'Resolve the blocker.' }), reason: /verdict critical/ },
     { name: 'edited', change: (held) => ({ ...held, edited: true }), reason: /marker edited/ },
   ];
-  for (const judges of sets) for (const role of judges) for (const scenario of cases) {
-    const comments = judges.map((judge) => judge === role ? scenario.change(marker(judge), judge) : marker(judge)).filter(Boolean);
+  for (const judges of sets) for (const { role } of judges) for (const scenario of cases) {
+    const comments = judges.map(({ role: judge }) => judge === role ? scenario.change(marker(judge), judge) : marker(judge)).filter(Boolean);
     const answer = gateAnswer(input(comments, { judges }));
-    assert.equal(answer.admit, false, `${judges.join(', ')}: ${role}: ${scenario.name}`);
-    assert.equal(answer.refusals.length, 1, `${judges.join(', ')}: ${role}: ${scenario.name}: ${JSON.stringify(answer)}`);
+    assert.equal(answer.admit, false, `${JSON.stringify(judges)}: ${role}: ${scenario.name}`);
+    assert.equal(answer.refusals.length, 1, `${JSON.stringify(judges)}: ${role}: ${scenario.name}: ${JSON.stringify(answer)}`);
     assert.equal(answer.refusals[0].judge, role);
     assert.match(answer.refusals[0].reason, scenario.reason);
   }
@@ -130,16 +133,19 @@ test('each missing, unreadable, stale, unmet, insufficient, revision, critical a
 
 // proves R-GATE-4
 test('one judge, three judges, three plus owner, and owner alone admit when every marker is sound', () => {
-  for (const judges of [['reviewer'], JUDGES, [...JUDGES, 'owner'], ['owner']]) {
-    assert.deepEqual(gateAnswer(input(judges.map((role) => marker(role)), { judges })), { admit: true }, judges.join(', '));
+  for (const judges of [[JUDGES[0]], JUDGES, [...JUDGES, { role: 'owner' }], [{ role: 'owner' }]]) {
+    assert.deepEqual(gateAnswer(input(judges.map(({ role }) => marker(role)), { judges })), { admit: true }, JSON.stringify(judges));
   }
 });
 
 // proves R-GATE-5
 test('each configured kind refuses when any one of its judges has no marker', () => {
-  for (const [kind, { judges }] of Object.entries(config.kinds)) for (const absent of judges) {
-    const answer = gateAnswer(input(judges.filter((role) => role !== absent).map((role) => marker(role)), { judges }));
-    assert.deepEqual(answer, { admit: false, refusals: [{ judge: absent, reason: 'no marker' }] }, `${kind}: ${absent}`);
+  for (const [kind, declared] of Object.entries(config.kinds)) {
+    const judges = panelOf({ number: 655, labels: declared.select.labels }, declared, config.roles);
+    for (const { role: absent } of judges) {
+      const answer = gateAnswer(input(judges.filter(({ role }) => role !== absent).map(({ role, provider }) => marker(role, { provider })), { judges }));
+      assert.deepEqual(answer, { admit: false, refusals: [{ judge: absent, reason: 'no marker' }] }, `${kind}: ${absent}`);
+    }
   }
 });
 
@@ -217,19 +223,19 @@ test('the latest readable older digest is named in marker order', () => {
 
 // proves R-GATE-4
 test('a later sound marker governs at every judge position in each judge set', () => {
-  for (const judges of [['reviewer'], JUDGES, [...JUDGES, 'owner'], ['owner']]) for (const role of judges) {
+  for (const judges of [[JUDGES[0]], JUDGES, [...JUDGES, { role: 'owner' }], [{ role: 'owner' }]]) for (const { role } of judges) {
     const earlier = marker(role, { verdict: 'needs revision', toSound: 'Fix it.' }, { id: 'IC_1', createdAt: '2026-10-10T11:00:00Z' });
     const later = marker(role, {}, { id: 'IC_2', createdAt: '2026-10-10T12:00:00Z' });
-    const comments = [...judges.filter((judge) => judge !== role).map((judge) => marker(judge)), earlier, later];
-    assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: true }, `${judges.join(', ')}: ${role}`);
+    const comments = [...judges.filter(({ role: judge }) => judge !== role).map(({ role: judge }) => marker(judge)), earlier, later];
+    assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: true }, `${JSON.stringify(judges)}: ${role}`);
   }
 });
 
 // proves R-GATE-3, R-GATE-4
 test('a role outside the configured judge set is ignored at every judge position', () => {
-  for (const judges of [['reviewer'], JUDGES, [...JUDGES, 'owner'], ['owner']]) {
-    const comments = [...judges.map((role) => marker(role)), marker('outsider', { verdict: 'critical', toSound: 'Fix it.' })];
-    assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: true }, judges.join(', '));
+  for (const judges of [[JUDGES[0]], JUDGES, [...JUDGES, { role: 'owner' }], [{ role: 'owner' }]]) {
+    const comments = [...judges.map(({ role }) => marker(role)), marker('outsider', { verdict: 'critical', toSound: 'Fix it.' })];
+    assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: true }, JSON.stringify(judges));
   }
 });
 
@@ -258,8 +264,8 @@ test('a revision marker cannot say admit in free text, toSound or coverageReason
 
 // proves R-GATE-6
 test('an owner sound marker does not offset an agent revision marker', () => {
-  const judges = [...JUDGES, 'owner'];
-  const comments = judges.map((role) => role === 'engineer' ? marker(role, { verdict: 'needs revision', toSound: 'Fix it.' }) : marker(role));
+  const judges = [...JUDGES, { role: 'owner' }];
+  const comments = judges.map(({ role }) => role === 'engineer' ? marker(role, { verdict: 'needs revision', toSound: 'Fix it.' }) : marker(role));
   assert.deepEqual(gateAnswer(input(comments, { judges })), { admit: false, refusals: [{ judge: 'engineer', reason: 'verdict needs revision' }] });
 });
 
@@ -290,4 +296,90 @@ test('the gate context is fixed and the rule imports only the marker reader and 
 test('two runs of the gate on the same inputs give equal answers', () => {
   const facts = input([marker('reviewer'), marker('engineer', { head: OLD_HEAD }), marker('architect')]);
   assert.deepEqual(gateAnswer(facts), gateAnswer(facts));
+});
+
+/** An agent judge entry, as the panel function hands the rule one, and the owner's. */
+const agent = (role, provider) => ({ role, provider });
+const OWNER_ENTRY = { role: 'owner' };
+
+/** `marker(role)` with its `provider` line rewritten to hold `lines`, one line each, or none. */
+function withProviderLines(role, lines) {
+  const held = marker(role, { provider: undefined });
+  held.body = held.body.replace(`role: ${role}\n`, [`role: ${role}`, ...lines.map((line) => `provider: ${line}`), ''].join('\n'));
+  return held;
+}
+
+// proves R-GATE-9
+test('an agent judge\'s marker naming no provider refuses, naming the provider the config requires; the owner\'s naming none admits', () => {
+  assert.deepEqual(gateAnswer(input([withProviderLines('reviewer', [])], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'names no provider; the config requires codex' }] });
+  assert.deepEqual(gateAnswer(input([withProviderLines('owner', [])], { judges: [OWNER_ENTRY] })), { admit: true });
+});
+
+// proves R-GATE-9, R-VERDICT-7
+test('a marker whose provider is empty, holds whitespace or is given twice refuses as unreadable, for an agent judge and for the owner', () => {
+  for (const lines of [[''], [' codex'], ['co dex'], ['codex', 'codex']]) {
+    for (const [role, judges] of [['reviewer', [agent('reviewer', 'codex')]], ['owner', [OWNER_ENTRY]]]) {
+      const answer = gateAnswer(input([withProviderLines(role, lines)], { judges }));
+      assert.equal(answer.admit, false, `${role}: ${JSON.stringify(lines)}`);
+      assert.equal(answer.refusals.length, 1, JSON.stringify(answer));
+      assert.match(answer.refusals[0].reason, /^unreadable: .*\bprovider\b/, `${role}: ${JSON.stringify(lines)}`);
+    }
+  }
+});
+
+// proves R-GATE-9
+test('an agent judge\'s marker on the provider the config requires admits, and one on another provider, a case difference included, refuses naming both', () => {
+  assert.deepEqual(gateAnswer(input([marker('reviewer', { provider: 'codex' })], { judges: [agent('reviewer', 'codex')] })), { admit: true });
+  for (const provider of ['claude', 'Codex']) {
+    assert.deepEqual(gateAnswer(input([marker('reviewer', { provider })], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: `provider ${provider}; the config requires codex` }] }, provider);
+  }
+});
+
+// proves R-GATE-9
+test('an owner\'s marker naming any well-formed provider refuses, naming it', () => {
+  for (const provider of ['codex', 'claude', 'Codex']) {
+    assert.deepEqual(gateAnswer(input([marker('owner', { provider })], { judges: [OWNER_ENTRY] })), { admit: false, refusals: [{ judge: 'owner', reason: `the owner's marker names a provider: ${provider}` }] }, provider);
+  }
+});
+
+// proves R-GATE-9
+test('an agent entry handed no provider, or one that is not a well-formed name, refuses naming the judge, as a malformed panel', () => {
+  for (const entry of [{ role: 'reviewer' }, agent('reviewer', ''), agent('reviewer', 'co dex'), agent('reviewer', 7), agent('reviewer', null)]) {
+    assert.deepEqual(gateAnswer(input([marker('reviewer')], { judges: [entry] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'no provider is required of it, so the panel is malformed' }] }, JSON.stringify(entry));
+  }
+});
+
+// proves R-LOOP-16, R-GATE-9
+test('a conflict in place of every entry refuses the card with the conflict\'s reason and reads no marker', () => {
+  const conflict = 'carries labels selecting different providers for its maker role `engineer`: maker:codex (codex), maker:claude (claude)';
+  // `null` comments would throw were any marker read.
+  assert.deepEqual(gateAnswer(input(null, { judges: [{ conflict }], checks: {} })), { admit: false, refusals: [{ judge: '(panel)', reason: conflict }] });
+});
+
+// proves R-GATE-9
+test('a later marker on another provider displaces an earlier sound one on the required provider, and the gate refuses naming the provider', () => {
+  const earlier = marker('reviewer', { provider: 'codex' }, { id: 'IC_1', createdAt: '2026-10-10T11:00:00Z' });
+  const later = marker('reviewer', { provider: 'claude' }, { id: 'IC_2', createdAt: '2026-10-10T12:00:00Z' });
+  assert.deepEqual(gateAnswer(input([earlier, later], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
+});
+
+// proves R-GATE-9
+test('a marker on the wrong provider with verdict critical refuses naming the provider, not the verdict, and an unreadable one refuses as unreadable first', () => {
+  const critical = marker('reviewer', { provider: 'claude', verdict: 'critical', toSound: 'Resolve the blocker.' });
+  assert.deepEqual(gateAnswer(input([critical], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
+  const unreadable = marker('reviewer', { provider: 'claude' });
+  unreadable.body = unreadable.body.replace('coverage: covered\n', '');
+  assert.deepEqual(gateAnswer(input([unreadable], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'unreadable: the field coverage is missing' }] });
+});
+
+test('the owner\'s name the gate rule spells equals OWNER as the config validator spells it', () => {
+  assert.equal(GATE_OWNER, OWNER);
+});
+
+// proves R-GATE-3
+test('the gate rule reads no config: it imports only the marker reader and names no process, file or config module', () => {
+  const source = readFileSync(new URL('../src/workflow/gate.mjs', import.meta.url), 'utf8');
+  const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map(([, from]) => from);
+  assert.deepEqual(imports, ['./marker.mjs']);
+  assert.doesNotMatch(source, /\bprocess\b|readFileSync|rigger\.config|validate\.mjs/);
 });

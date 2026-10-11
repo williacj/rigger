@@ -3,12 +3,12 @@
 // and the gate rule; and its judge answer, naming the agent judges owed a marker, each with its
 // steps, the evidence they all share, and the instruction asking each for its marker.
 
-import { OWNER, roleTimeout, workRequires } from '../config/validate.mjs';
+import { OWNER, judgeRole, roleTimeout, workRequires } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
-import { failed, kindOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
+import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
@@ -52,14 +52,16 @@ function record(sink, card, name, fields, what, dispatch) {
  * id, author, permission, edited }`. Each is a read's outcome as `Promise.allSettled` records it.
  *
  * A card no kind selects, or more than one does, is answered as `nextAction` answers it. A card
- * whose labels select two tiers for one of its agent judges is refused naming the role and each
- * label (`R-LOOP-13`), and one whose acceptance the form check refuses is refused with its reason,
- * the one refusal naming each that applies. A failed read of the pull request or its comments
+ * whose labels select two tiers for one of its agent judges (`R-LOOP-13`), or two providers for
+ * its maker or one of its judges (`R-LOOP-16`), is refused naming the role and each label, and one
+ * whose acceptance the form check refuses is refused with its reason, the one refusal naming each
+ * that applies. A failed read of the pull request or its comments
  * answers no action, naming the card and the read.
  *
  * It names every agent judge of the card's kind, in the kind's order, that is owed a marker: one
  * whose governing marker at the pull request's head and the card's acceptance digest, as
- * `readMarkers` reads it, is absent, unreadable or edited (the architect's ruling R2 on #642). The
+ * `readMarkers` reads it, is absent, unreadable or edited (the architect's ruling R2 on #642), or
+ * names no provider or another than the one the panel function requires of it (`D24` rule 2). The
  * owner is never named (`R-LOOP-11`), and a marker naming a role the kind does not name as a judge
  * counts for none. With none to name it is `{ action:
  * 'ignore' }`. Otherwise it is `{ action: 'judge', kind, judges }`, each judge a role answer, as
@@ -86,18 +88,20 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
-  const agents = declared.judges.filter((role) => role !== OWNER);
+  const agents = declared.judges.map(judgeRole).filter((role) => role !== OWNER);
   if (agents.length === 0) return { action: 'ignore' };
   const tiers = new Map(agents.map((role) => [role, tierOf(card, role, roles[role] ?? {}, 'judge')]));
+  const panel = panelOf(card, declared, roles);
   const form = checkAcceptanceForm(card);
-  const reasons = [...[...tiers.values()].map((tier) => tier.conflict), form.admitted ? undefined : form.reason].filter((reason) => reason !== undefined);
+  const reasons = [...[...tiers.values()].map((tier) => tier.conflict), panel[0]?.conflict, form.admitted ? undefined : form.reason].filter((reason) => reason !== undefined);
   if (reasons.length > 0) return { action: 'refuse', card: card.number, reason: reasons.join('; and ') };
   const pull = held(card, 'pull');
   const comments = held(card, 'comments');
   const items = acceptanceItems(card.body);
   const digest = acceptanceDigest(card.body);
   const { governing, markers } = readMarkers(comments, { card: card.number, pull: pull.number, head: pull.head, digest, count: items.length });
-  const owed = agents.filter((role) => governing.get(role)?.state !== 'marker' || governing.get(role).edited);
+  const required = requiredOf(panel);
+  const owed = agents.filter((role) => stateOf(governing.get(role), required.get(role)) === 'owed');
   if (owed.length === 0) return { action: 'ignore' };
   if (card.forge.diff?.status !== 'fulfilled') {
     const reason = card.forge.diff?.reason?.message ?? `no outcome: ${JSON.stringify(card.forge.diff)}`;
@@ -116,7 +120,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
       if (missing) withheldRoles.push(role);
       return !missing;
     })
-    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
+    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   return { action: 'judge', kind, judges, ...(withheldRoles.length > 0 ? { withheld: withheldRoles } : {}) };
 }
 
@@ -173,15 +177,22 @@ function evidenceOf(card, pull, digest, diff, earlier) {
 }
 
 /**
- * L2's answer for judge `role`, declared as `declared`, running at `tier` on `pull`: its name, agent
- * file and provider as declared, its time as `roleTimeout` answers it, `evidence` and `facts` as
+ * The provider the panel function `panel` requires of each agent judge, by role. A panel holding a
+ * conflict requires none, and its card is refused before any judge is read.
+ */
+const requiredOf = (panel) => new Map(panel.filter((entry) => entry.provider !== undefined).map(({ role, provider }) => [role, provider]));
+
+/**
+ * L2's answer for judge `role`, declared as `declared`, running at `tier` on `provider`, the one the
+ * panel function requires of it, on `pull`: its name and agent file as declared, its provider, its
+ * time as `roleTimeout` answers it, `evidence` and `facts` as
  * given, `digest`, the evidence digest L1 records at `dispatch.start`, and the instruction Rigger's
  * contract with every judge composes, which asks for a marker ruling on each of `items` and
- * carrying the evidence digest, and holds the slot L3 fills with the dispatch id (`dispatched`). No
+ * carrying its provider and the evidence digest, and holds the slot L3 fills with the dispatch id (`dispatched`). No
  * directory is a field of it: L1 makes the judge's directory once L2 has answered (the architect's
  * ruling 3, P8).
  */
-function judgeOf(role, declared, tier, pull, evidence, facts, items) {
+function judgeOf(role, declared, tier, provider, pull, evidence, facts, items) {
   const digest = evidenceDigest(evidence);
   const instruction = [
     `Rigger dispatched this session, unattended, as the judge \`${role}\` of pull request #${pull.number}, at head \`${pull.head}\`.`,
@@ -192,11 +203,11 @@ function judgeOf(role, declared, tier, pull, evidence, facts, items) {
     'Never run git in `head`; run git commands in your working directory.',
     'Your working directory is not provisioned; never build or test there. Read a command\'s exit status from the tool\'s result.',
     'Use a separate tool call for each command, with no extra shell operations, pipes, groups, variables, or status probes such as `$?`, `${...}` or `$(...)`. Keep the `cd ../head && <command>` line by itself.',
-    markerInstruction({ card: facts.card, pull: pull.number, head: pull.head, digest: facts.revision, role, items, evidence: digest }),
+    markerInstruction({ card: facts.card, pull: pull.number, head: pull.head, digest: facts.revision, role, provider, items, evidence: digest }),
     '',
     '',
   ].join('\n');
-  return { role, agent: declared.agent, provider: declared.provider, tier, timeout: roleTimeout(declared), instruction, evidence, digest, facts };
+  return { role, agent: declared.agent, provider, tier, timeout: roleTimeout(declared), instruction, evidence, digest, facts };
 }
 
 /**
@@ -207,12 +218,15 @@ function judgeOf(role, declared, tier, pull, evidence, facts, items) {
  * `markerRead` says: every agent judge's, and in Owner the owner's too. In Review the owner's marker
  * is never read.
  *
+ * First, in every column, a card whose labels select two providers for its maker or one of its
+ * judges is refused, naming the role and each label, as the panel function answers it (`R-LOOP-16`).
  * A Coding card is answered as `codingAnswer` says, and an Owner card whose agent judges are all
  * sound as `ownerAnswer` says. Otherwise L2 takes the first rule that applies (architect review B's
  * R3 on #642):
  * 1. a governing critical marker escalates the card as `critical`, spending no round (`R-ESCALATE-6`);
  * 2. an Owner card any of whose agent markers no longer governs, or is not sound, moves to Review;
- * 3. agent judges owed a marker, absent, unreadable or edited, are dispatched, and only they, as
+ * 3. agent judges owed a marker, absent, unreadable, edited or on another provider than the one
+ *    the panel function requires, are dispatched, and only they, as
  *    `judgeAnswer` answers them, spending no round (the architect's r2 ruling 7);
  * 4. coverage ruled insufficient returns the acceptance to its author, as `returned` says (`R-LOOP-6`);
  * 5. needs revision, or sound with an item unmet, is a continuing attempt, as `continued` says,
@@ -231,7 +245,10 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
-  const agents = declared.judges.filter((role) => role !== OWNER);
+  const panel = panelOf(card, declared, options.roles);
+  if (panel[0]?.conflict !== undefined) return { action: 'refuse', card: card.number, reason: panel[0].conflict };
+  const required = requiredOf(panel);
+  const agents = declared.judges.map(judgeRole).filter((role) => role !== OWNER);
   // In Review the owner's marker is never read, so a kind naming the owner alone reads no marker,
   // and moves to Owner once the forge facts every advance rests on are served.
   if (agents.length === 0 && card.forge.stage === 'review') return advanced(card, { action: 'move', to: 'owner' });
@@ -245,34 +262,34 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const { governing } = readMarkers(comments, round);
   const read = card.forge.stage === 'owner' ? [...agents, OWNER] : agents;
   for (const role of read.filter((each) => governing.has(each))) markerRead(options.sink, card, pull, round, role, governing.get(role));
-  const states = agents.map((role) => stateOf(governing.get(role)));
+  const states = agents.map((role) => stateOf(governing.get(role), required.get(role)));
   if (card.forge.stage === 'coding') return codingAnswer(card, pull, states, agents.map((role) => governing.get(role)), items);
   if (states.includes('critical')) return { action: 'escalate', category: 'critical' };
   if (card.forge.stage === 'owner') {
     if (!states.every((state) => state === 'sound')) return { action: 'move', to: 'review' };
-    return ownerAnswer(card, declared.judges, pull, comments, round, governing.get(OWNER), items);
+    return ownerAnswer(card, panel, pull, comments, round, governing.get(OWNER), items);
   }
   if (states.includes('owed')) return judgeAnswer(card, kinds, epicLabel, options);
   const insufficient = agents.find((role, at) => states[at] === 'insufficient');
   if (insufficient !== undefined) return returned(card, pull, comments, governing.get(insufficient).marker);
   const revising = agents.filter((role, at) => states[at] === 'revision');
-  if (revising.length > 0 && roundsOf(comments, round, agents) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
+  if (revising.length > 0 && roundsOf(comments, round, required) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
   if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
   if (declared.judges.includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
-  return mergeAnswer(card, declared.judges, pull, comments, round);
+  return mergeAnswer(card, panel, pull, comments, round);
 }
 
 /**
  * Records, through `sink`, the L2 `marker.read` event for `role`'s marker `governing`, governing at
- * `round` on `card`'s pull request `pull`: its role, head, digest, verdict, dispatch id and
- * evidence digest, a field it lacks as null, and whether its comment was edited. An unreadable
+ * `round` on `card`'s pull request `pull`: its role, head, digest, provider, verdict, dispatch id
+ * and evidence digest, a field it lacks as null (`R-VERDICT-7`), and whether its comment was edited. An unreadable
  * marker is recorded with verdict null and its parse reason. The dispatch id is the event's own
  * `dispatch`, which the sink stamps.
  */
 function markerRead(sink, card, pull, round, role, governing) {
   const fields = governing.marker ?? {};
   const unreadable = governing.state === 'marker' ? {} : { reason: governing.reason };
-  const event = { pull: pull.number, role, head: round.head, digest: round.digest, verdict: fields.verdict ?? null, evidence: fields.evidence ?? null, edited: governing.edited, ...unreadable };
+  const event = { pull: pull.number, role, head: round.head, digest: round.digest, provider: fields.provider ?? null, verdict: fields.verdict ?? null, evidence: fields.evidence ?? null, edited: governing.edited, ...unreadable };
   // The sink stamps the dispatch id, as the dispatch the marker arose under.
   record(sink, card, 'marker.read', event, `${role}'s marker at head ${round.head} was read`, fields.dispatch ?? null);
 }
@@ -299,13 +316,17 @@ function codingAnswer(card, pull, states, governing, items) {
 /**
  * L2's answer for `card` in the Owner column, every agent judge sound, from `owner`, the owner's
  * governing marker at the head and digest: with none, the card stays in Owner and nothing is
- * dispatched, since the owner is never dispatched (`R-LOOP-11`); an unreadable or edited one is
- * named and left for the owner; otherwise the marker is answered as an agent judge's would be,
- * with no bound on rounds, and a sound one goes to the merge decision under `judges`.
+ * dispatched, since the owner is never dispatched (`R-LOOP-11`); an unreadable or edited one, or
+ * one naming a provider, which the owner's never does (`D24` rule 2), is named and left for the
+ * owner; otherwise the marker is answered as an agent judge's would be, with no bound on rounds,
+ * and a sound one goes to the merge decision under `panel`, the panel function's entries.
  */
-function ownerAnswer(card, judges, pull, comments, round, owner, items) {
+function ownerAnswer(card, panel, pull, comments, round, owner, items) {
   const at = `at head ${pull.head}, acceptance digest ${round.digest}`;
   if (owner === undefined) return { action: 'ignore', reason: `every agent judge is sound, and the owner has written no marker ${at}` };
+  if (owner.state === 'marker' && !owner.edited && owner.marker.provider !== undefined) {
+    return { action: 'ignore', reason: `the owner's marker ${at} names a provider, ${owner.marker.provider}, and the owner's names none` };
+  }
   const state = stateOf(owner);
   if (state === 'owed') {
     const why = owner.state === 'marker' ? 'edited' : `unreadable: ${owner.reason}`;
@@ -314,7 +335,7 @@ function ownerAnswer(card, judges, pull, comments, round, owner, items) {
   if (state === 'critical') return { action: 'escalate', category: 'critical' };
   if (state === 'insufficient') return returned(card, pull, comments, owner.marker);
   if (state === 'revision') return continued(pull, [owner.marker], items);
-  return mergeAnswer(card, judges, pull, comments, round);
+  return mergeAnswer(card, panel, pull, comments, round);
 }
 
 /**
@@ -366,15 +387,16 @@ function readableAtAnyCount(comment, round) {
 
 /**
  * The rounds a card's pull request has spent, from its `comments` read for `round`: the distinct
- * (head, digest) pairs at which a readable, unedited marker of one of `agents` stands, a pair at a
+ * (head, digest) pairs at which a readable, unedited marker of one of the agent judges in
+ * `required` stands, on the provider `required` names for it (`D24`), a pair at a
  * head the pull request no longer holds included (the architect's r2 ruling 7 on #642). A marker
  * from an earlier acceptance ruled on that acceptance's items, however many it held, so each is
  * read as `readableAtAnyCount` reads it: a marker valid against its own acceptance spends its round
  * after an item is added or removed, and whatever prose its comment holds.
  */
-function roundsOf(comments, round, agents) {
+function roundsOf(comments, round, required) {
   const pairs = comments.filter((comment) => !comment.edited).flatMap((comment) => readableAtAnyCount(comment, round));
-  return new Set(pairs.filter((marker) => agents.includes(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
+  return new Set(pairs.filter((marker) => required.has(marker.role) && marker.provider === required.get(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
 }
 
 /**
@@ -394,11 +416,14 @@ function continued(pull, markers, items) {
 
 /**
  * What a judge's governing marker `governing`, as `readMarkers` answers it, rules: `owed` where it
- * is absent, unreadable or edited; `critical`; `insufficient`, coverage ruled insufficient;
- * `revision`, needs revision or sound with an item unmet; or `sound`.
+ * is absent, unreadable or edited, or, for an agent judge required to run on `provider`, where it
+ * names no provider or another (`D24` rule 2); `critical`; `insufficient`, coverage ruled
+ * insufficient; `revision`, needs revision or sound with an item unmet; or `sound`. The owner is
+ * handed no provider, and `ownerAnswer` reads the owner's own.
  */
-function stateOf(governing) {
+function stateOf(governing, provider) {
   if (governing?.state !== 'marker' || governing.edited) return 'owed';
+  if (provider !== undefined && governing.marker.provider !== provider) return 'owed';
   const { verdict, coverage, items } = governing.marker;
   if (verdict === 'critical') return 'critical';
   if (coverage === 'insufficient') return 'insufficient';
@@ -422,7 +447,8 @@ function advanced(card, answer) {
 }
 
 /**
- * L2's merge decision for `card` once every one of `judges` is sound at `pull`'s head. Where the
+ * L2's merge decision for `card` once every one of `panel`, the panel function's entries, is sound
+ * at `pull`'s head. Where the
  * forge reads the pull request as conflicting, the card's maker continues on it (`R-CONFLICT-1`);
  * where its mergeability is unknown, L2 answers `ignore`, naming it (the architect's r2 ruling 5).
  * Otherwise the gate rule is handed the checks the base branch's effective rules require, less the
@@ -432,13 +458,13 @@ function advanced(card, answer) {
  * A failed read of the mergeability, the rules or the check states answers no action, naming it,
  * whatever the other reads answered.
  */
-function mergeAnswer(card, judges, pull, comments, round) {
+function mergeAnswer(card, panel, pull, comments, round) {
   const { mergeable, rules, states } = forgeFacts(card);
   if (mergeable === 'conflicting') return continued(pull, [], []);
   if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}` };
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
-  const gate = gateAnswer({ comments, ...round, judges, checks });
+  const gate = gateAnswer({ comments, ...round, judges: panel, checks });
   if (gate.admit) return { action: 'merge', pull: pull.number, head: pull.head };
   return { action: 'ignore', reason: gate.refusals.map((refusal) => `${refusal.judge ?? refusal.check}: ${refusal.reason}`).join('; ') };
 }

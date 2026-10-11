@@ -4,7 +4,7 @@
 // read it. Within an attempt at it: the next provisioning step it selected, the maker as a role,
 // the card attempted again, or the card stopped.
 
-import { roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
+import { OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
@@ -44,7 +44,8 @@ const selecting = (card, kinds) =>
  * which L3 hands back unread, and L2 answers the card from them as from the facts call's (the
  * architect's ruling 3, AQ4, on #467). A card handed on with none is answered as if the forge held
  * nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
- * labels select two tiers for its kind's maker (`R-LOOP-13`), naming the role and each label, and
+ * labels select two tiers (`R-LOOP-13`) or two providers (`R-LOOP-16`) for its kind's maker,
+ * naming the role and each label, and
  * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
  * both, the one refusal names each of those reasons too.
  *
@@ -85,12 +86,14 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
-  // Without a tier conflict, what the forge holds is refused before the acceptance's form, as at
-  // the base. With one, no reason replaces another, so the one refusal names every reason that
-  // applies (`R-LOOP-13`, `R-WORK-19`; the amended acceptance of #484).
-  const reasons = tier?.conflict === undefined
+  const provider = roles === undefined ? undefined : providerOf(card, makerRole, roles[makerRole]);
+  const conflicts = [tier?.conflict, provider?.conflict].filter((conflict) => conflict !== undefined);
+  // Without a tier or provider conflict, what the forge holds is refused before the acceptance's
+  // form, as at the base. With one, no reason replaces another, so the one refusal names every
+  // reason that applies (`R-LOOP-13`, `R-LOOP-16`, `R-WORK-19`; the amended acceptance of #484).
+  const reasons = conflicts.length === 0
     ? [held?.reason ?? (form.admitted ? undefined : form.reason)]
-    : [tier.conflict, held?.reason, form.admitted ? undefined : form.reason];
+    : [...conflicts, held?.reason, form.admitted ? undefined : form.reason];
   const named = reasons.filter((reason) => reason !== undefined);
   if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and ') };
   if (provisioning === undefined && maker === undefined) return { action: 'dispatch', kind };
@@ -263,18 +266,68 @@ export const selectedSteps = (card, kind, provisioning) => (kind.provisioning ??
  * and each such label (`R-LOOP-13`).
  */
 export function tierOf(card, name, role, part = 'maker') {
-  const selecting = Object.entries(role.labels ?? {}).filter(([label]) => carries(card, label));
-  const tiers = [...new Set(selecting.map(([, tier]) => tier))];
-  if (tiers.length > 1) {
-    const named = selecting.map(([label, tier]) => `${label} (${tier})`).join(', ');
-    return { conflict: `carries labels selecting different tiers for its ${part} role \`${name}\`: ${named}` };
+  const { value, conflict } = selected(card, name, role.labels, role.tier, part, 'tiers');
+  return conflict === undefined ? { tier: value } : { conflict };
+}
+
+/**
+ * The provider the role named `name`, declared as `role`, runs on for `card`, as `{ provider }`:
+ * the provider the labels its `providerLabels` names that the card carries select, or its own
+ * `provider` where the card carries none of them (`R-LOOP-16`). Where those labels select more than
+ * one provider, it is `{ conflict }`, the refusal's reason, naming the role, as the card's `part`,
+ * and each such label.
+ */
+export function providerOf(card, name, role = {}, part = 'maker') {
+  const { value, conflict } = selected(card, name, role.providerLabels, role.provider, part, 'providers');
+  return conflict === undefined ? { provider: value } : { conflict };
+}
+
+/**
+ * What the labels `labels` maps that `card` carries select for the role named `name`, or `fallback`
+ * where it carries none, as `{ value }`; or, where they select more than one value, `{ conflict }`,
+ * naming the role as the card's `part` and each label with the value it selects, `what` naming the
+ * values.
+ */
+function selected(card, name, labels, fallback, part, what) {
+  const selecting = Object.entries(labels ?? {}).filter(([label]) => carries(card, label));
+  const values = [...new Set(selecting.map(([, value]) => value))];
+  if (values.length > 1) {
+    const named = selecting.map(([label, value]) => `${label} (${value})`).join(', ');
+    return { conflict: `carries labels selecting different ${what} for its ${part} role \`${name}\`: ${named}` };
   }
-  return { tier: tiers[0] ?? role.tier };
+  return { value: values[0] ?? fallback };
+}
+
+/**
+ * The panel function: the judges of `kind`, declared as a config's kind is, that `card` needs, in
+ * the kind's order, each with the provider it must run on, from `roles`, a config's roles by name.
+ * The owner is `{ role: 'owner' }`, with no provider. An agent judge is `{ role, provider }`: a
+ * plain role name runs on its role's provider as `providerOf` answers it, a fixed rule on its
+ * provider, and a map on the provider it names for the maker's, as `providerOf` answers that.
+ * Where an entry carries a rule, its role's `provider` and `providerLabels` are unread. Where the
+ * card's labels select two providers for the maker or for a plain-named judge, it answers one `{
+ * conflict }` in place of every entry, naming each role and label (`D24`; `R-LOOP-16`, `R-LOOP-17`).
+ * The dispatch, the marker's instruction and the gate all take a judge's provider from it.
+ */
+export function panelOf(card, kind, roles = {}) {
+  const maker = providerOf(card, kind.maker, roles[kind.maker]);
+  const entries = kind.judges.map((entry) => {
+    const role = judgeRole(entry);
+    if (role === OWNER) return { role };
+    if (typeof entry === 'string') {
+      const { provider, conflict } = providerOf(card, role, roles[role], 'judge');
+      return conflict === undefined ? { role, provider } : { conflict };
+    }
+    return { role, provider: typeof entry.provider === 'string' ? entry.provider : entry.provider[maker.provider] };
+  });
+  const conflicts = [maker, ...entries].map((each) => each.conflict).filter((conflict) => conflict !== undefined);
+  return conflicts.length > 0 ? [{ conflict: conflicts.join('; and ') }] : entries;
 }
 
 /**
  * L2's answer for `card`'s maker, the role named `name` and declared as `role`, running at `tier`
- * on the line of work `line`: its name, agent file and provider as declared, its time as
+ * on the line of work `line`: its name and agent file as declared, its provider as `providerOf`
+ * answers it, its time as
  * `roleTimeout` answers it, the prompt L2 composes, `instruction` and then `evidence`, and
  * `digest`, the evidence digest L1 records at `dispatch.start`.
  *
@@ -289,7 +342,8 @@ export function tierOf(card, name, role, part = 'maker') {
  * opened, and the evidence also holds each marker the answer hands the maker, as `rulings` says.
  */
 function makerAnswer(card, name, role, tier, line, continuing) {
-  const { agent, provider } = role;
+  const { agent } = role;
+  const { provider } = providerOf(card, name, role);
   const instruction = [
     `Rigger dispatched this session, unattended, as the maker for card #${card.number}.`,
     `This workspace is on the card's line of work, the branch \`${line}\`.`,

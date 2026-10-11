@@ -1250,3 +1250,51 @@ test('rigger doctor, given a config whose role names provider codex, prints an a
   assert.ok(line.includes('`codex login status` says it is signed in'), ran.text);
   assert.ok(line.includes('`claude auth status --json` says it is signed in'), ran.text);
 });
+
+/**
+ * The starter config, read as the module it is, with `change` applied to it, written as a config
+ * file `doctor` can be pointed at. Every role in the starter runs on `claude`, so the one `codex`
+ * each change writes is the only one the config names. The config is checked valid first, since
+ * `doctor` asks every adapter for one it cannot read.
+ */
+async function starterWith(change) {
+  const { default: config } = await import(`data:text/javascript,${encodeURIComponent(starter())}`);
+  const changed = change(structuredClone(config));
+  assert.deepEqual(validate(changed), [], 'the changed starter config is refused, so doctor would ask every adapter and the row would prove nothing');
+  return checked(`export default ${JSON.stringify(changed)};\n`);
+}
+
+/** Asserts the agent CLI check, pointed at `config`, asks Claude Code's and Codex's CLIs, and nothing else. */
+async function asksCodex(config) {
+  const asked = answering(RECORDED.agentIn);
+  await agentAuth({ ask: asked, target: config });
+  assert.deepEqual(asked.asked.sort(), ['claude auth status --json', 'codex login status']);
+}
+
+/** Asserts every role `config` holds runs on `claude`, so the change under test is the one source naming codex. */
+async function rolesAllClaude(config) {
+  const { default: written } = await import(pathToFileURL(join(config, CONFIG)).href);
+  assert.ok(Object.values(written.roles).every((role) => role.provider === 'claude'), JSON.stringify(written.roles));
+}
+
+test('given a config whose one codex is a role\'s provider, the agent CLI check asks codex login status beside Claude Code', async () => {
+  await asksCodex(await starterWith((config) => ({ ...config, roles: { ...config.roles, pm: { ...config.roles.pm, provider: 'codex' } } })));
+});
+
+test('given a config whose roles are all claude and whose one codex is a providerLabels value, the agent CLI check asks codex login status beside Claude Code', async () => {
+  const config = await starterWith((given) => ({ ...given, roles: { ...given.roles, engineer: { ...given.roles.engineer, providerLabels: { 'maker:codex': 'codex' } } } }));
+  await rolesAllClaude(config);
+  await asksCodex(config);
+});
+
+test('given a config whose roles are all claude and whose one codex is a judge\'s fixed provider, the agent CLI check asks codex login status beside Claude Code', async () => {
+  const config = await starterWith((given) => ({ ...given, kinds: { ...given.kinds, change: { ...given.kinds.change, judges: [{ role: 'reviewer', provider: 'codex' }] } } }));
+  await rolesAllClaude(config);
+  await asksCodex(config);
+});
+
+test('given a config whose roles are all claude and whose one codex is a value of a judge\'s map, the agent CLI check asks codex login status beside Claude Code', async () => {
+  const config = await starterWith((given) => ({ ...given, kinds: { ...given.kinds, change: { ...given.kinds.change, judges: [{ role: 'reviewer', provider: { claude: 'codex' } }] } } }));
+  await rolesAllClaude(config);
+  await asksCodex(config);
+});

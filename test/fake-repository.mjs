@@ -5,9 +5,9 @@ import { gitIn } from './git-repository.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 
 /** A marker comment at a card's acceptance and pull-request head, with the requested ruling. */
-export function markerComment({ card, pull, head, body, role = 'reviewer', createdAt = '2026-10-01T11:00:00Z', ...ruling }) {
+export function markerComment({ card, pull, head, body, role = 'reviewer', provider = role === 'owner' ? undefined : 'claude', createdAt = '2026-10-01T11:00:00Z', ...ruling }) {
   return {
-    body: composeMarker({ card, pull, head, digest: acceptanceDigest(body), role, verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, `Ruled, by ${role}`),
+    body: composeMarker({ card, pull, head, digest: acceptanceDigest(body), role, provider, verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, `Ruled, by ${role}`),
     createdAt,
   };
 }

@@ -30,6 +30,8 @@ const POSITIVE = /^[1-9][0-9]*$/;
 const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const ROLE = /^\S+$/;
+/** A provider is checked for its form only, as `role` is: the parse never reads L0's adapters. */
+const PROVIDER = ROLE;
 const DISPATCH = /^d-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const LINE = /^.+$/;
 
@@ -39,9 +41,10 @@ const oneOf = (values) => new RegExp(`^(?:${values.join('|')})$`);
 /**
  * The fields a marker holds besides its items, in the order a composed block writes them: what a
  * value must match, how the parse reads it, and whether the marker needs it. `coverageReason` is
- * needed where coverage is insufficient and `toSound` where the verdict is not sound. `dispatch`
- * and `evidence` are optional for every role, so a judge Rigger did not dispatch, and the owner,
- * can write a marker.
+ * needed where coverage is insufficient and `toSound` where the verdict is not sound. `provider`,
+ * `dispatch` and `evidence` are optional for every role, so a judge Rigger did not dispatch, and the
+ * owner, can write a marker. Whether an agent judge's marker must name its provider is the gate
+ * rule's to say, since only it is handed which roles are agent judges (`D24` rule 2).
  */
 const FIELDS = {
   // A number field also holds a safe integer, so a value too long for one is not read as Infinity.
@@ -50,6 +53,7 @@ const FIELDS = {
   head: { valid: SHA, required: true },
   digest: { valid: DIGEST, required: true },
   role: { valid: ROLE, required: true },
+  provider: { valid: PROVIDER },
   verdict: { valid: oneOf(VERDICTS), required: true },
   coverage: { valid: oneOf(COVERAGES), required: true },
   coverageReason: { valid: LINE },
@@ -82,7 +86,7 @@ function blockLines({ items, ...fields }) {
   const written = (key) => (fields[key] === undefined ? [] : [`${key}: ${fields[key]}`]);
   return [
     OPEN,
-    ...['card', 'pull', 'head', 'digest', 'role', 'verdict'].flatMap(written),
+    ...['card', 'pull', 'head', 'digest', 'role', 'provider', 'verdict'].flatMap(written),
     ...items.map((ruling, at) => `item ${at + 1}: ${ruling}`),
     ...['coverage', 'coverageReason', 'toSound', 'dispatch', 'evidence'].flatMap(written),
     CLOSE,
@@ -97,17 +101,19 @@ const DISPATCH_SLOT = '<the dispatch id>';
 
 /**
  * The part of a judge's instruction that asks for its marker: one comment on pull request `pull`,
- * whose block carries `card`, `pull`, `head`, the acceptance `digest`, `role` and the `evidence`
- * digest as given, the dispatch id L3 fills in at dispatch, and a ruling on each of `items`, the
- * acceptance items, listed by ordinal.
+ * whose block carries `card`, `pull`, `head`, the acceptance `digest`, `role`, the `provider` an
+ * agent judge runs on and the `evidence` digest as given, the dispatch id L3 fills in at dispatch,
+ * and a ruling on each of `items`, the acceptance items, listed by ordinal. The owner is handed no
+ * provider, so its block names none (`D24` rule 2).
  */
-export function markerInstruction({ card, pull, head, digest, role, items, evidence }) {
+export function markerInstruction({ card, pull, head, digest, role, provider, items, evidence }) {
   const template = blockLines({
     card,
     pull,
     head,
     digest,
     role,
+    provider,
     verdict: `<${VERDICTS.slice(0, -1).join(', ')} or ${VERDICTS.at(-1)}>`,
     items: items.map(() => `<${RULINGS.join(' or ')}>`),
     coverage: `<${COVERAGES.join(' or ')}: whether the acceptance covered what the card asked>`,
@@ -139,7 +145,7 @@ export const dispatched = (answer, id) => ({ ...answer, instruction: answer.inst
  *   each field it names, as written, a block never closed read to the comment's end;
  * - `{ state: 'marker', marker, absent }`, `marker` holding each field the block gives, `card` and
  *   `pull` as numbers and `items` as each ordinal's ruling in order, and `absent` naming
- *   `dispatch` and `evidence` where the block leaves them out.
+ *   `provider`, `dispatch` and `evidence` where the block leaves them out.
  */
 export function parseMarker(body, count) {
   const written = String(body).split(/\r?\n/);
@@ -182,12 +188,12 @@ export function parseMarker(body, count) {
   if (faults.length > 0) return { state: 'unreadable', reason: faults.join('; '), fields };
   const marker = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, (FIELDS[key].read ?? String)(value)]));
   marker.items = [...items.keys()].sort((one, other) => one - other).map((ordinal) => items.get(ordinal));
-  return { state: 'marker', marker: ordered(marker), absent: ['dispatch', 'evidence'].filter((key) => !Object.hasOwn(fields, key)) };
+  return { state: 'marker', marker: ordered(marker), absent: ['provider', 'dispatch', 'evidence'].filter((key) => !Object.hasOwn(fields, key)) };
 }
 
 /** `marker` with its fields in the schema's order, `items` after `verdict`. */
 function ordered(marker) {
-  const keys = ['card', 'pull', 'head', 'digest', 'role', 'verdict', 'items', 'coverage', 'coverageReason', 'toSound', 'dispatch', 'evidence'];
+  const keys = ['card', 'pull', 'head', 'digest', 'role', 'provider', 'verdict', 'items', 'coverage', 'coverageReason', 'toSound', 'dispatch', 'evidence'];
   return Object.fromEntries(keys.filter((key) => Object.hasOwn(marker, key)).map((key) => [key, marker[key]]));
 }
 
