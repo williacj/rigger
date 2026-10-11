@@ -29,10 +29,10 @@ const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer'
 function readsOver(seed = {}, fail = () => false) {
   const repository = createFakeRepository(seed);
   const made = [];
-  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, async (what) => {
+  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, async (what, ...rest) => {
     made.push([operation, what]);
     if (fail(operation, what)) throw new Error(`readPullRequests on board 6 failed: reading the pull requests from branch ${what} in williacj/rigger, gh: HTTP 502`);
-    return read(what);
+    return read(what, ...rest);
   }]));
   return { reads, made, held: () => repository.held() };
 }

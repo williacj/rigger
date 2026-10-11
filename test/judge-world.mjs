@@ -72,10 +72,10 @@ export function judgeWorld({
   const fake = boardOf(cards);
   const repository = createFakeRepository(forge);
   const served = [];
-  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, (what) => {
+  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, (what, ...rest) => {
     served.push([operation, what]);
     log.push({ read: [operation, what] });
-    return read(what);
+    return read(what, ...rest);
   }]));
   const settings = { ...config, concurrency, roles, kinds };
   const attempts = [];

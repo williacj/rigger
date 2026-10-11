@@ -294,3 +294,110 @@ test('given a governing coverage ruled insufficient, L2 answers one return comme
   assert.equal(second.action, 'ignore', JSON.stringify(second));
   assert.equal(repository.pull(411).comments.length, 2, 'the return comment was posted once');
 });
+
+/** An L5 sink that records nothing, for an answer that records a marker it read. */
+const quiet = { emitter: () => ({ emit: () => {} }) };
+
+/** A kind like the world's, judged by the agent judge `reviewer`. */
+const REVIEWED = { change: { ...KINDS.change, judges: ['reviewer'] } };
+
+/**
+ * A comment holding the reviewer's marker on card `number`'s pull request `pull` at head `sha`
+ * and the acceptance `PASSING`, ruling as `ruling` gives.
+ */
+const reviewerMarker = (number, pull, sha, ruling = {}) => ({
+  body: composeMarker({ card: number, pull, head: sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, 'Ruled, by reviewer'),
+  createdAt: '2026-10-01T11:00:00Z',
+});
+
+/**
+ * Pulls once over a board holding `card` alone, under `kinds`, with the forge seeded with `forge`,
+ * and asserts that L2's answer for it, as its facts call reads it, refuses it naming `names`, and
+ * that the pull changed nothing: no move of it, no L3 pull event and no workspace for it, and the
+ * forge unchanged. L3 offers L2 no Owner card yet (#657), so its answer is read through the facts
+ * call over the same forge.
+ */
+async function refusedOnTheBoard(card, forge, names, kinds = KINDS) {
+  const workspace = recordingWorkspaces();
+  const built = world({ cards: [card], concurrency: 1, forge, kinds, workspace });
+  const before = built.repository.held();
+
+  await built.loop.pull();
+  const decide = (each) => nextAction(each, kinds, undefined, { sink: quiet });
+  const next = (await factsCall({ config: { ...config, board: { ...config.board, columns: COLUMNS } }, reads: built.repository.operations, decide })([card]))(card);
+
+  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.equal(next.card, card.number);
+  assert.match(next.reason, names);
+  for (const { action } of built.decisions) assert.equal(action.action, 'refuse', JSON.stringify(built.decisions));
+  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(pulledIn(built), []);
+  assert.deepEqual(workspace.asked, []);
+  assert.deepEqual(built.repository.held(), before);
+}
+
+// proves R-WORK-19
+test('given an Owner card the forge holds no pull request for, more than one open for, or only its line of work for, L2 refuses it naming what the forge holds, and nothing moves, is claimed, is given a workspace or changes on the forge, a row each', async () => {
+  await refusedOnTheBoard(cardIn(51, COLUMNS.owner), {}, /no pull request.*rigger-51/);
+  await refusedOnTheBoard(cardIn(52, COLUMNS.owner), { pullRequests: [pullFrom(52, 521), pullFrom(52, 522)] }, /#521\b.*#522\b/);
+  await refusedOnTheBoard(cardIn(53, COLUMNS.owner), { branches: ['rigger-53'] }, /\brigger-53\b/);
+});
+
+// proves R-WORK-19
+test('given a Coding card with one open pull request and no marker, its reviewer sound with the pull request mergeable, coverage ruled insufficient, or a critical marker, L2 refuses it as at the base, and nothing moves, is claimed, is given a workspace or changes on the forge, a row each', async () => {
+  const sha = pullFrom(54, 541).sha;
+  const rows = {
+    none: [],
+    m1: [reviewerMarker(54, 541, sha)],
+    m8: [reviewerMarker(54, 541, sha, { coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' })],
+    m10: [reviewerMarker(54, 541, sha, { verdict: 'critical', toSound: 'Never delete the user\'s files.' })],
+  };
+  for (const [state, comments] of Object.entries(rows)) {
+    await refusedOnTheBoard(cardIn(54, COLUMNS.coding), { pullRequests: [{ ...pullFrom(54, 541), mergeable: 'mergeable', comments }] }, /\brigger-54\b/, REVIEWED).catch((failure) => {
+      failure.message = `${state}: ${failure.message}`;
+      throw failure;
+    });
+  }
+});
+
+/** The kind `spec`, judged by the agent judge `reviewer` and then the owner. */
+const OWNED = { spec: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer', 'owner'] } };
+
+/** An acceptance digest other than `PASSING`'s, as an earlier revision of the acceptance would carry. */
+const OLD_DIGEST = 'f'.repeat(64);
+
+/** `written`, a marker comment, moved to the acceptance digest `digest`, at `createdAt`. */
+const atDigest = (written, digest, createdAt = written.createdAt) => ({ body: written.body.replace(`digest: ${acceptanceDigest(PASSING)}`, `digest: ${digest}`), createdAt });
+
+/** L2's answer for `card`, through its facts call over a forge holding `pullRequests`, under `kinds`. */
+async function answeredFromTheForge(card, pullRequests, kinds) {
+  const repository = createFakeRepository({ pullRequests });
+  const decide = (each) => nextAction(each, kinds, undefined, { sink: quiet });
+  return (await factsCall({ config, reads: repository.operations, decide })([card]))(card);
+}
+
+test('through L2\'s facts call, an Owner card\'s markers are read at the card\'s acceptance digest: a marker at that digest governs, and one at an older digest does not', async () => {
+  const sha = pullFrom(61, 611).sha;
+  const opened = (comments) => [{ ...pullFrom(61, 611), mergeable: 'mergeable', comments }];
+  const reviewer = reviewerMarker(61, 611, sha);
+  const owner = { ...reviewerMarker(61, 611, sha), body: reviewerMarker(61, 611, sha).body.replace('role: reviewer', 'role: owner'), createdAt: '2026-10-01T11:05:00Z' };
+  const card = cardIn(61, COLUMNS.owner);
+
+  assert.deepEqual(await answeredFromTheForge(card, opened([reviewer, owner]), OWNED), { action: 'merge', pull: 611, head: sha });
+  const olderOwner = await answeredFromTheForge(card, opened([reviewer, atDigest(owner, OLD_DIGEST)]), OWNED);
+  assert.equal(olderOwner.action, 'ignore', JSON.stringify(olderOwner));
+  assert.deepEqual(await answeredFromTheForge(card, opened([atDigest(reviewer, OLD_DIGEST), owner]), OWNED), { action: 'move', to: 'review' });
+});
+
+test('through L2\'s facts call, a Coding card\'s markers are read at the card\'s acceptance digest: needs revision at that digest continues, and at an older digest only it is refused', async () => {
+  const sha = pullFrom(62, 621).sha;
+  const revising = reviewerMarker(62, 621, sha, { verdict: 'needs revision', toSound: 'Print the help on stderr.' });
+  const opened = (comments) => [{ ...pullFrom(62, 621), mergeable: 'mergeable', comments }];
+  const card = cardIn(62, COLUMNS.coding);
+
+  const current = await answeredFromTheForge(card, opened([revising]), REVIEWED);
+  assert.equal(current.action, 'continue', JSON.stringify(current));
+  assert.equal(current.head, sha);
+  const older = await answeredFromTheForge(card, opened([atDigest(revising, OLD_DIGEST)]), REVIEWED);
+  assert.equal(older.action, 'refuse', JSON.stringify(older));
+});

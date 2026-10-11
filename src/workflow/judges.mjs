@@ -317,32 +317,51 @@ function ownerAnswer(card, judges, pull, comments, round, owner, items) {
 }
 
 /**
+ * The permissions on the repository whose holders' comments can be the engine's earlier return:
+ * the engine posts with write access, as a judge's marker counts only from an account holding one
+ * of these (`readMarkers`).
+ */
+const RETURNERS = ['admin', 'maintain', 'write'];
+
+/**
  * L2's answer returning `card`'s acceptance to its author for `marker`, which rules its coverage
  * insufficient: one comment on `pull`, the card's open pull request, quoting the marker's role and
  * its `coverageReason` (`R-LOOP-6`). Its first line names the marker's role, head and digest, so
- * where `comments` already hold a comment opening on that line, L2 answers `ignore` and no second
- * comment. Its second line opens no marker block, so it parses as no marker and never governs.
+ * the comment is the one return for that marker: where `comments` already hold it, written by an
+ * account with write access and its text the same but for line endings and trailing whitespace,
+ * L2 answers `ignore` and no second comment. A copy by any other account, or another comment
+ * opening on that line, is no return and stops none. Its second line opens no marker block, so it
+ * parses as no marker and never governs.
  */
 function returned(card, pull, comments, { role, head, digest, coverageReason }) {
   const first = `Rigger returns card #${card.number}'s acceptance to its author: the judge ${role} ruled its coverage insufficient at head ${head}, acceptance digest ${digest}.`;
-  if (comments.some((comment) => comment.body.split(/\r?\n/)[0] === first)) {
+  const comment = [first, '', `${role}'s reason: ${coverageReason}`, '', 'The acceptance returns to its author, who revises it. No judge rewrites it.', ''].join('\n');
+  const same = (body) => String(body).replace(/\r\n/g, '\n').trimEnd() === comment.trimEnd();
+  if (comments.some((each) => each.author !== null && RETURNERS.includes(each.permission) && same(each.body))) {
     return { action: 'ignore', reason: `pull request #${pull.number} already holds the comment returning the acceptance for ${role}'s marker at head ${head}, acceptance digest ${digest}` };
   }
-  const comment = [first, '', `${role}'s reason: ${coverageReason}`, '', 'The acceptance returns to its author, who revises it. No judge rewrites it.', ''].join('\n');
   return { action: 'return', pull: pull.number, comment };
 }
 
 /** The rounds a kind gets where it declares none (`R-LOOP-9`). */
 const ROUNDS = 3;
 
+/** The item lines a comment's text holds, each `item <n>: …`, which a marker block writes one per acceptance item. */
+const ITEM_LINE = /^item \d+:/gm;
+
 /**
  * The rounds a card's pull request has spent, from its `comments` read for `round`: the distinct
  * (head, digest) pairs at which a readable, unedited marker of one of `agents` stands, a pair at a
- * head the pull request no longer holds included (the architect's r2 ruling 7 on #642).
+ * head the pull request no longer holds included (the architect's r2 ruling 7 on #642). A marker
+ * from an earlier acceptance ruled on that acceptance's items, however many it held, so each
+ * comment is read against the count of items its own block rules on: a marker valid against its
+ * own acceptance spends its round after an item is added or removed.
  */
 function roundsOf(comments, round, agents) {
-  const { markers } = readMarkers(comments.filter((comment) => !comment.edited), round);
-  return new Set(markers.filter((marker) => agents.includes(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
+  const pairs = comments
+    .filter((comment) => !comment.edited)
+    .flatMap((comment) => readMarkers([comment], { ...round, count: (String(comment.body).match(ITEM_LINE) ?? []).length }).markers);
+  return new Set(pairs.filter((marker) => agents.includes(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
 }
 
 /**
@@ -382,14 +401,18 @@ function stateOf(governing) {
  * gate's own context, each in the state the facts hold, `absent` where they hold none (`ARCHITECTURE.md`,
  * "The engine's merge decision"): it answers `merge` where the gate admits, and `ignore` naming each
  * refusal where it does not. L2 judges no status's creator; the forge enforces the pin at the merge.
- * A failed read of the mergeability, the rules or the check states answers no action, naming it.
+ * A failed read of the mergeability, the rules or the check states answers no action, naming it,
+ * whatever the other reads answered.
  */
 function mergeAnswer(card, judges, pull, comments, round) {
+  // Every read the decision rests on is held before any answer, so no reading of one stands in
+  // for another's failure.
   const mergeable = held(card, 'mergeable');
+  const rules = held(card, 'rules');
+  const states = held(card, 'checks');
   if (mergeable === 'conflicting') return continued(pull, [], []);
   if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}` };
-  const required = new Set(held(card, 'rules').map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
-  const states = held(card, 'checks');
+  const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
   const gate = gateAnswer({ comments, ...round, judges, checks });
   if (gate.admit) return { action: 'merge', pull: pull.number, head: pull.head };

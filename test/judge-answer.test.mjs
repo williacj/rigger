@@ -1087,3 +1087,67 @@ test('given a failed read of the merge base, which only a judge\'s evidence need
   assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), ...failed })), { action: 'merge', pull: 70, head: HEAD });
   assert.deepEqual(loopAnswer(ownerCard([ownerMarker()], failed)), { action: 'merge', pull: 70, head: HEAD });
 });
+
+// proves R-LOOP-8, R-LOOP-9
+test('a marker valid against an earlier acceptance with an item fewer or an item more still spends its round, under a bound of two and under the default of three', () => {
+  const earlierWith = (items, digest, at, head = HEAD) => movedTo(markerOf({ role: 'reviewer', items, ...RULING.m9 }), { head, digest, at });
+  const added = earlierWith(['met'], OTHER_DIGEST, 1);
+  const removed = earlierWith(['met', 'met', 'unmet'], OTHER_DIGEST, 1);
+  for (const [what, earlier] of Object.entries({ 'an item added since': added, 'an item removed since': removed })) {
+    assert.deepEqual(parseMarker(earlier.body, earlier.body.match(/^item \d+:/gm).length).state, 'marker', `${what}: the earlier marker is valid against its own acceptance, so the test proves something`);
+    assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, what);
+  }
+  const twoEarlier = [earlierWith(['met'], OTHER_DIGEST, 1, EARLIER), earlierWith(['met', 'met', 'met'], 'e'.repeat(64), 2, LATER)];
+  assert.deepEqual(loopAnswer(loopCard({ comments: [...twoEarlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, 'under the default bound of three');
+});
+
+// proves R-LOOP-6
+test('only an earlier return itself suppresses the return: a copy by an account without write access, or a writer\'s comment opening on the same first line with other text, leaves L2 answering the return comment', () => {
+  const { comment } = returning();
+  const [first] = comment.split('\n');
+  const copies = {
+    'a copy by a reader': { ...posted(comment), permission: 'read' },
+    'a copy by no account': { ...posted(comment), author: null },
+    'the first line under other text': posted(`${first}\n\nThat is all.`),
+  };
+  for (const [what, copy] of Object.entries(copies)) {
+    const next = loopAnswer(loopCard({ comments: [...markersFor(['m1', 'm8', 'm1']), copy] }));
+
+    assert.equal(next.action, 'return', `${what}: ${JSON.stringify(next)}`);
+  }
+  assert.equal(loopAnswer(loopCard({ comments: [...markersFor(['m1', 'm8', 'm1']), posted(comment.trimEnd())] })).action, 'ignore', 'the return as the forge reads it back, its trailing line ending trimmed, is the earlier return');
+});
+
+/** The reads the merge decision makes, each with what its failure names. */
+const MERGE_READS = { mergeable: /mergeability/, checks: /check states/, rules: /effective rules/ };
+
+test('given every judge sound and a failed read of the check states or the effective rules, L2 answers no action naming the read for a Review or Owner card, even where the forge reads the pull request as conflicting or its mergeability as unknown', () => {
+  for (const [stage, make] of [['review', (facts) => loopCard({ comments: allSound(), ...facts })], ['owner', (facts) => ownerCard([ownerMarker()], facts)]]) {
+    for (const mergeable of ['conflicting', 'unknown']) {
+      for (const fact of ['checks', 'rules']) {
+        const given = make({ mergeable, rules: requiring('ci'), checks: { ci: { state: 'passed', creator: null } } });
+        given.forge[fact] = failedRead('gh: HTTP 502');
+
+        assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && MERGE_READS[fact].test(error.message) && /HTTP 502/.test(error.message), `${stage}, ${mergeable}, ${fact}`);
+      }
+    }
+  }
+});
+
+test('given every agent judge and the owner sound and the read of the mergeability, the check states or the effective rules failed, L2 answers no action for an Owner card, naming the card and the read', () => {
+  for (const [fact, names] of Object.entries(MERGE_READS)) {
+    const given = ownerCard([ownerMarker()], { rules: requiring('ci'), checks: { ci: { state: 'passed', creator: null } } });
+    given.forge[fact] = failedRead('gh: HTTP 502');
+
+    assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
+  }
+});
+
+test('given every agent judge and the owner sound and a required check pending or absent, L2 answers ignore for an Owner card, naming the check', () => {
+  for (const state of ['pending', 'absent']) {
+    const next = loopAnswer(ownerCard([ownerMarker()], { rules: requiring('ci'), checks: { ci: { state, creator: null } } }));
+
+    assert.equal(next.action, 'ignore', `${state}: ${JSON.stringify(next)}`);
+    assert.match(next.reason, new RegExp(`\\bci\\b.*${state}`), state);
+  }
+});
