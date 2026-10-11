@@ -12,9 +12,9 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
-import { createFakeRepository } from './fake-repository.mjs';
+import { createFakeRepository, markerComment } from './fake-repository.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
-import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { acceptanceDigest } from '../src/workflow/marker.mjs';
 import {
   COLUMNS, KINDS, cardIn, columnsOf, factsOverNothing, handleOn, makingWorkspaces, readyCard, waitFor, world,
 } from './loop-world.mjs';
@@ -148,15 +148,35 @@ test('given a Ready or Coding card with a merged pull request from its line of w
   for (const column of [COLUMNS.ready, COLUMNS.coding]) await refusedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
 });
 
-test('given a Review card with a merged pull request from its line of work, L2 answers Done at the pull: no claim, no L3 pull event and no workspace for it, and the forge unchanged', async () => {
+// proves R-WORK-5
+test('given a Review card with a merged pull request, L3 has L2 move it to Done without a workspace', async () => {
   const workspace = recordingWorkspaces();
   const built = world({ cards: [cardIn(3, COLUMNS.review)], concurrency: 1, forge: { pullRequests: [pullFrom(3, 31, true)] }, workspace });
   const before = built.repository.held();
 
-  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(await built.loop.pull(), [{ card: 3, action: 'move', to: 'done' }]);
 
   assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'move', to: 'done' }]);
-  assert.deepEqual(pulledIn(built), []);
+  assert.deepEqual(pulledIn(built), [3]);
+  assert.deepEqual(await columnsOf(built.fake), { 3: COLUMNS.done });
+  assert.deepEqual(built.events().filter(({ event }) => event === 'transition').map(({ card, from, to, cause }) => ({ card, from, to, cause })), [
+    { card: 3, from: 'review', to: 'done', cause: 'merged' },
+  ]);
+  assert.deepEqual(workspace.asked, []);
+  assert.deepEqual(built.repository.held(), before);
+});
+
+// proves R-WORK-5
+test('given an Owner card with a merged pull request, L3 has L2 move it to Done and records mergedFromOwner', async () => {
+  const workspace = recordingWorkspaces();
+  const built = world({ cards: [cardIn(8, COLUMNS.owner)], concurrency: 1, forge: { pullRequests: [pullFrom(8, 81, true)] }, workspace });
+  const before = built.repository.held();
+
+  assert.deepEqual(await built.loop.pull(), [{ card: 8, action: 'move', to: 'done' }]);
+  assert.deepEqual(await columnsOf(built.fake), { 8: COLUMNS.done });
+  assert.deepEqual(built.events().filter(({ event }) => event === 'transition').map(({ card, from, to, cause }) => ({ card, from, to, cause })), [
+    { card: 8, from: 'owner', to: 'done', cause: 'mergedFromOwner' },
+  ]);
   assert.deepEqual(workspace.asked, []);
   assert.deepEqual(built.repository.held(), before);
 });
@@ -167,15 +187,17 @@ test('given a Review card with two open pull requests from its line of work, L2 
 // proves R-WORK-19
 test('given a Review card with no pull request and its line of work on the forge, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
 
-test('a Review card with one open pull request whose kind\'s only judge is `owner` is answered a move to Owner, which L3 does not yet act on', async () => {
+// proves R-WORK-5
+test('a Review card with one open pull request whose only judge is owner moves to Owner through L2', async () => {
   const workspace = recordingWorkspaces();
   const built = world({ cards: [cardIn(7, COLUMNS.review)], concurrency: 1, forge: { pullRequests: [pullFrom(7, 71)] }, workspace });
 
-  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(await built.loop.pull(), [{ card: 7, action: 'move', to: 'owner' }]);
 
   assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'move', to: 'owner' }]);
-  assert.deepEqual(pulledIn(built), []);
-  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(pulledIn(built), [7]);
+  assert.deepEqual(await columnsOf(built.fake), { 7: COLUMNS.owner });
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
   assert.deepEqual(workspace.asked, []);
 });
 
@@ -278,8 +300,8 @@ test('L2\'s facts call reads, for an Owner card and for a Coding card holding on
 test('given a governing coverage ruled insufficient, L2 answers one return comment on the open pull request; once it is posted, a second pass reading the pull request\'s comments answers no further comment', async () => {
   const kinds = { change: { ...KINDS.change, judges: ['reviewer'] } };
   const sha = pullFrom(41, 411).sha;
-  const marker = composeMarker({ card: 41, pull: 411, head: sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' }, 'Returned, by reviewer');
-  const repository = createFakeRepository({ pullRequests: [{ ...pullFrom(41, 411), mergeable: 'mergeable', comments: [{ body: marker, createdAt: '2026-10-01T11:00:00Z' }] }] });
+  const marker = reviewerMarker(41, 411, sha, { coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' });
+  const repository = createFakeRepository({ pullRequests: [{ ...pullFrom(41, 411), mergeable: 'mergeable', comments: [marker] }] });
   const sink = { emitter: () => ({ emit: () => {} }) };
   const decide = (card) => nextAction(card, kinds, undefined, { sink });
   const card = cardIn(41, COLUMNS.review);
@@ -305,9 +327,70 @@ const REVIEWED = { change: { ...KINDS.change, judges: ['reviewer'] } };
  * A comment holding the reviewer's marker on card `number`'s pull request `pull` at head `sha`
  * and the acceptance `PASSING`, ruling as `ruling` gives.
  */
-const reviewerMarker = (number, pull, sha, ruling = {}) => ({
-  body: composeMarker({ card: number, pull, head: sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, 'Ruled, by reviewer'),
-  createdAt: '2026-10-01T11:00:00Z',
+const reviewerMarker = (number, pull, sha, ruling = {}) => markerComment({ card: number, pull, head: sha, body: PASSING, ...ruling });
+
+// proves R-LOOP-6
+test('L3 has L2 post its return comment once, byte for byte, and leaves the card in Review', async () => {
+  const number = 63;
+  const pull = 631;
+  const sha = pullFrom(number, pull).sha;
+  const marker = reviewerMarker(number, pull, sha, { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' });
+  const built = world({
+    cards: [cardIn(number, COLUMNS.review)], kinds: REVIEWED, concurrency: 1,
+    forge: { pullRequests: [{ ...pullFrom(number, pull), mergeable: 'mergeable', comments: [marker] }] },
+  });
+
+  assert.deepEqual(await built.loop.pull(), [{ card: number, action: 'return', pull }]);
+  const [answer] = built.decisions.map(({ action }) => action);
+  assert.equal(built.repository.pull(pull).comments[1].body, answer.comment);
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.review });
+  assert.deepEqual(built.fake.writes(), []);
+
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.equal(built.repository.pull(pull).comments.length, 2);
+});
+
+// proves R-ESCALATE-6
+test('run records one L2 escalation and settles without pulling that Review card again', async () => {
+  const number = 64;
+  const pull = 641;
+  const marker = reviewerMarker(number, pull, pullFrom(number, pull).sha, { verdict: 'critical', toSound: 'Keep the user files.' });
+  const built = world({
+    cards: [cardIn(number, COLUMNS.review)], kinds: REVIEWED, concurrency: 1,
+    forge: { pullRequests: [{ ...pullFrom(number, pull), mergeable: 'mergeable', comments: [marker] }] },
+  });
+
+  assert.deepEqual(await built.loop.run(), [{ card: number, action: 'escalate', category: 'critical' }]);
+  assert.deepEqual(pulledIn(built), [number]);
+  assert.deepEqual(built.events().filter(({ event }) => event === 'review.escalate').map(({ layer, card, category }) => ({ layer, card, category })), [
+    { layer: 'L2', card: number, category: 'critical' },
+  ]);
+  assert.deepEqual(built.fake.writes(), []);
+});
+
+test('run leaves out a continuing maker that exits without returning its card to Review', async () => {
+  const number = 65;
+  const pull = 651;
+  const marker = reviewerMarker(number, pull, pullFrom(number, pull).sha, { verdict: 'needs revision', toSound: 'Print a help line.' });
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [cardIn(number, COLUMNS.review)] });
+  let reads = 0;
+  const board = handleOn(fake, { beforeRead: () => {
+    reads += 1;
+    if (reads > 2) throw new Error('the continuing maker was pulled again');
+  } });
+  const built = world({
+    fake, board, cards: [], kinds: REVIEWED, concurrency: 1, answer: () => ({ exit: 1 }),
+    forge: { pullRequests: [{ ...pullFrom(number, pull), mergeable: 'mergeable', comments: [marker] }] },
+  });
+
+  const running = built.loop.run();
+  await positive(() => built.dispatches.holding().includes(number));
+  built.dispatches.releaseAll();
+  await running;
+
+  assert.deepEqual(built.dispatches.started, [number]);
+  assert.deepEqual(await columnsOf(fake), { [number]: COLUMNS.coding });
+  assert.equal(reads, 2);
 });
 
 /**
@@ -387,6 +470,36 @@ test('through L2\'s facts call, an Owner card\'s markers are read at the card\'s
   const olderOwner = await answeredFromTheForge(card, opened([reviewer, atDigest(owner, OLD_DIGEST)]), OWNED);
   assert.equal(olderOwner.action, 'ignore', JSON.stringify(olderOwner));
   assert.deepEqual(await answeredFromTheForge(card, opened([atDigest(reviewer, OLD_DIGEST), owner]), OWNED), { action: 'move', to: 'review' });
+});
+
+// proves R-WORK-5
+test('run dispatches the owed reviewer on the pull fired by an Owner to Review move', async () => {
+  const number = 66;
+  const pull = 661;
+  const sha = pullFrom(number, pull).sha;
+  const reviewer = atDigest(reviewerMarker(number, pull, sha), OLD_DIGEST);
+  const owner = reviewerMarker(number, pull, sha, { role: 'owner', createdAt: '2026-10-01T11:05:00Z' });
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [cardIn(number, COLUMNS.owner)] });
+  let reads = 0;
+  const underlying = handleOn(fake);
+  const board = {
+    readColumns: underlying.readColumns,
+    readPriority: async () => {
+      reads += 1;
+      const answer = await underlying.readPriority();
+      return reads > 2 ? { ...answer, items: [] } : answer;
+    },
+  };
+  const built = world({
+    fake, board, kinds: OWNED, concurrency: 1,
+    forge: { pullRequests: [{ ...pullFrom(number, pull), mergeBase: '7'.repeat(40), mergeable: 'mergeable', comments: [reviewer, owner] }] },
+  });
+
+  await built.loop.run();
+
+  assert.deepEqual(await columnsOf(fake), { [number]: COLUMNS.review });
+  assert.deepEqual(built.events().filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role !== undefined).map(({ role }) => role), ['reviewer']);
+  assert.equal(reads, 3);
 });
 
 test('through L2\'s facts call, a Coding card\'s markers are read at the card\'s acceptance digest: needs revision at that digest continues, and at an older digest only it is refused', async () => {

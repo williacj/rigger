@@ -392,3 +392,75 @@ test('a move answer L2 has no change for, such as to Done from Coding, is refuse
   await assert.rejects(l2.moved(card, { action: 'move', to: 'done' }), (error) => /card #30\b/.test(error.message) && /coding/.test(error.message) && /done/.test(error.message));
   assert.deepEqual(fake.writes(), []);
 });
+
+// proves R-LOOP-6
+test('L2 posts a return answer byte for byte on its pull request and leaves the board alone', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const repository = createFakeRepository({ pullRequests: [{ number: 300, head: 'rigger-30', sha: '3'.repeat(40) }] });
+  const directory = temporaryDirectory('rigger-return-');
+  const sink = openSink({ directory, run: 'r-test', now: () => 0 });
+  const l2 = columnChanges({ config, sink, items: fake.operations, repositoryWrites: { postComment: repository.postComment } });
+  const comment = 'First line\n\nSecond line\n';
+
+  await l2.returned(card, { action: 'return', pull: 300, comment });
+
+  assert.equal(repository.pull(300).comments[0].body, comment);
+  assert.deepEqual(fake.writes(), []);
+});
+
+// proves R-ESCALATE-6
+test('L2 records review.escalate under its layer with the card and category', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const directory = temporaryDirectory('rigger-escalation-');
+  const l2 = columnChanges({ config, sink: openSink({ directory, run: 'r-test', now: () => 0 }), items: fake.operations });
+
+  l2.escalated(card, { action: 'escalate', category: 'critical' });
+
+  assert.deepEqual(readEvents(directory).filter((event) => event.event === 'review.escalate').map(({ layer, card: number, category }) => ({ layer, number, category })), [
+    { layer: 'L2', number: 30, category: 'critical' },
+  ]);
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('a board refusal of a move answer names the card and both columns and records no transition', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const directory = temporaryDirectory('rigger-move-refusal-');
+  const sink = openSink({ directory, run: 'r-test', now: () => 0 });
+  const items = { ...fake.operations, moveItem: async () => { throw new Error('board unavailable'); } };
+  const l2 = columnChanges({ config, sink, items });
+
+  await assert.rejects(l2.moved(card, { action: 'move', to: 'done' }), /card #30's move from review to done .* board unavailable/);
+
+  assert.deepEqual(fake.writes(), []);
+  assert.ok(!existsSync(streamPath(directory)), 'a refused move recorded a transition');
+});
+
+test('a sink refusal after a move answer names the card and both columns', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const sink = { emitter: () => ({ emit: (event) => { if (event === 'transition') throw new Error('sink unavailable'); } }) };
+  const l2 = columnChanges({ config, sink, items: fake.operations });
+
+  await assert.rejects(l2.moved(card, { action: 'move', to: 'done' }), /card #30 moved from review to done.*sink unavailable/);
+
+  assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, config.board.columns.done] }]);
+});
+
+test('a refused return comment names the card and pull request and moves nothing', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const sink = { emitter: () => ({ emit: () => {} }) };
+  const l2 = columnChanges({ config, sink, items: fake.operations, repositoryWrites: { postComment: async () => { throw new Error('forge unavailable'); } } });
+
+  await assert.rejects(l2.returned(card, { action: 'return', pull: 300, comment: 'return' }), /card #30's return comment on pull request #300 was refused: forge unavailable/);
+
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('a refused review.escalate event names the card and category and moves nothing', async () => {
+  const { fake, card } = await boardWith(config.board.columns.review);
+  const sink = { emitter: () => ({ emit: () => { throw new Error('sink unavailable'); } }) };
+  const l2 = columnChanges({ config, sink, items: fake.operations });
+
+  assert.throws(() => l2.escalated(card, { action: 'escalate', category: 'critical' }), /card #30's escalation in category critical was refused: sink unavailable/);
+
+  assert.deepEqual(fake.writes(), []);
+});

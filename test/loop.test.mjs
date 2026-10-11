@@ -27,6 +27,8 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { stoppedCard } from './stop-failure.mjs';
+import { markerComment } from './fake-repository.mjs';
+import { PASSING } from './loop-world.mjs';
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
@@ -40,8 +42,8 @@ async function runToEnd(built) {
     const pulled = settledOf(Promise.all(ticks));
     await settling(built, pulled);
     built.dispatches.releaseAll();
-    await Promise.all(ticks);
-    if (built.dispatches.started.length === before) return built;
+    const answers = await Promise.all(ticks);
+    if (built.dispatches.started.length === before && answers.every((each) => each.length === 0)) return built;
   }
   throw new Error(`rounds were still starting dispatches after ${DRIVEN_ROUNDS} of them, having started ${built.dispatches.started}`);
 }
@@ -118,13 +120,18 @@ test('in one record of board writes and dispatch starts, each card\'s move to th
   }
 });
 
-test('a card whose dispatch returns ends the run in the review column', async () => {
+test('a card whose dispatch returns reaches Owner for its owner judge', async () => {
   const built = world({ cards: [1], concurrency: 1 });
 
   await drive(built);
 
   assert.deepEqual(built.dispatches.started, [1]);
-  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.review });
+  assert.deepEqual(built.fake.writes().map(({ operation, args: [id, column] }) => [operation, id, column]), [
+    ['moveItem', 'item-1', COLUMNS.coding],
+    ['moveItem', 'item-1', COLUMNS.review],
+    ['moveItem', 'item-1', COLUMNS.owner],
+  ]);
+  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.owner });
 });
 
 /** The two ways a dispatch fails: it ran and exited non-zero, or it threw before it ran. */
@@ -217,7 +224,7 @@ test('the same run on a board whose five columns carry other display names, with
   const named = await ran(COLUMNS);
   const other = await ran(renamed);
 
-  assert.deepEqual(movesByItem(named.moves.map(([, id, key]) => [id, key])), { 'item-1': ['coding', 'review'], 'item-2': ['coding'], 'item-4': ['coding', 'review'] });
+  assert.deepEqual(movesByItem(named.moves.map(([, id, key]) => [id, key])), { 'item-1': ['coding', 'review', 'owner'], 'item-2': ['coding'], 'item-4': ['coding', 'review', 'owner'] });
   assert.deepEqual(other.started, named.started);
   assert.deepEqual(movesByItem(other.moves.map(([, id, key]) => [id, key])), movesByItem(named.moves.map(([, id, key]) => [id, key])));
 });
@@ -337,6 +344,170 @@ test('given one pullable card and two free slots, two pull triggers whose reads 
 
   assert.deepEqual(answered, [[[7, 'Ready']], [[7, 'Ready']]]);
   assert.deepEqual(built.dispatches.started, [7]);
+});
+
+// proves R-WORK-5
+test('a continuing attempt retries L1 at the same head L2 named', async () => {
+  const built = world({ cards: [cardIn(81, COLUMNS.review)], concurrency: 1 });
+  const continuing = { action: 'continue', pull: 181, head: '8'.repeat(40), markers: [] };
+  const heads = [];
+  const asks = [];
+  const l3 = loop({
+    config: { ...config, concurrency: 1 }, board: handleOn(built.fake),
+    facts: async () => () => continuing,
+    decide: (card, outcomes, options) => {
+      asks.push(options.continuing);
+      return options.attempt === 1
+        ? { action: 'again', attempt: 2, failure: { workspace: 'unavailable' } }
+        : { action: 'stop', failure: { workspace: 'unavailable' } };
+    },
+    l2: built.l2, sink: built.sink, kill: async () => {},
+    workspace: async (card, head) => {
+      heads.push(head);
+      throw Object.assign(new Error('workspace unavailable'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });
+    },
+    judgeDirectory: async () => {}, state: built.directory, environment: {},
+  });
+
+  await assert.rejects(l3.pull(), (failure) => {
+    const messages = leavesOf(failure).map((held) => held.message);
+    assert.ok(messages.some((message) => /card #81 was stopped/.test(message)), JSON.stringify(messages));
+    return true;
+  });
+
+  assert.deepEqual(heads, [continuing.head, continuing.head]);
+  assert.deepEqual(asks, [continuing, continuing]);
+  assert.deepEqual(await columnsOf(built.fake), { 81: COLUMNS.coding });
+  assert.deepEqual(built.dispatches.started, []);
+});
+
+// proves R-SCHED-6
+test('a merge answer takes no claim and leaves the sole slot for a Ready maker under pull and run', async () => {
+  const head = '8'.repeat(40);
+  for (const mode of ['pull', 'run']) {
+    const built = world({
+      cards: [cardIn(82, COLUMNS.owner), readyCard(95)], concurrency: 1,
+      forge: { pullRequests: [{
+        number: 182, head: 'rigger-82', sha: head, mergeable: 'mergeable',
+        comments: [markerComment({ card: 82, pull: 182, head, body: PASSING, role: 'owner' })],
+      }] },
+    });
+    const fired = mode === 'pull' ? built.loop.pull(1) : built.loop.run();
+    await settling(built, settledOf(fired));
+
+    assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head });
+    assert.deepEqual(built.dispatches.started, [95], `${mode} starts the Ready maker past merge`);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [95]);
+    assert.deepEqual(built.fake.writes().filter(({ args: [id] }) => id === 'item-82'), []);
+    built.dispatches.releaseAll();
+    const reached = await fired;
+    assert.ok(reached.some(({ card }) => card === 95), `${mode} returns the Ready card`);
+    assert.ok(reached.every(({ card }) => card !== 82), `${mode} takes no merge claim`);
+    assert.ok(built.l3Events().filter(({ event }) => event === 'pull').every(({ card }) => card !== 82));
+    assert.deepEqual(built.fake.writes().filter(({ args: [id] }) => id === 'item-82'), []);
+  }
+});
+
+for (const { action, method, ruling, merged } of [
+  { action: 'move', method: 'moved', merged: true },
+  { action: 'return', method: 'returned', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' } },
+  { action: 'escalate', method: 'escalated', ruling: { verdict: 'critical', toSound: 'Keep the user files.' } },
+]) {
+  test(`overlapping triggers hold one ${action} claim until its L2 write settles`, async () => {
+    const card = 97;
+    const pull = 971;
+    const sha = '9'.repeat(40);
+    const comments = ruling === undefined ? [] : [markerComment({ card, pull, head: sha, body: PASSING, role: 'owner', ...ruling })];
+    const built = world({
+      cards: [cardIn(card, action === 'move' ? COLUMNS.review : COLUMNS.owner)], concurrency: 1,
+      forge: { pullRequests: [{ number: pull, head: `rigger-${card}`, sha, merged: merged ?? false, mergeable: 'mergeable', comments }] },
+    });
+    let settle;
+    const held = new Promise((resolve) => { settle = resolve; });
+    let writes = 0;
+    const write = built.l2[method];
+    built.l2[method] = async (...args) => {
+      writes += 1;
+      await held;
+      return write(...args);
+    };
+
+    const running = built.loop.run();
+    await positive(() => writes === 1);
+    assert.deepEqual(await built.loop.pull(), []);
+    assert.equal(writes, 1);
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    settle();
+    await running;
+
+    assert.equal(writes, 1);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [card]);
+    assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 3);
+    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' ? 1 : 0);
+    if (action === 'return') assert.equal(built.repository.pull(pull).comments.length, 2);
+    if (action === 'escalate') assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
+  });
+}
+
+test('a refused move names both columns and leaves another card in the same pull working', async () => {
+  const fake = boardOf([cardIn(91, COLUMNS.review), 92]);
+  const items = {
+    ...fake.operations,
+    moveItem: async (id, column) => {
+      if (id === 'item-1' && column === COLUMNS.done) throw new Error('the board refused Done');
+      return fake.operations.moveItem(id, column);
+    },
+  };
+  const built = world({
+    fake, items, concurrency: 2,
+    forge: { pullRequests: [{ number: 911, head: 'rigger-91', sha: '9'.repeat(40), merged: true }] },
+  });
+
+  const tick = built.loop.pull();
+  await positive(() => built.dispatches.holding().includes(92));
+  built.dispatches.releaseAll();
+  await assert.rejects(tick, (failure) => {
+    const messages = leavesOf(failure).map(({ message }) => message);
+    assert.ok(messages.some((message) => /card #91.*review.*done.*board refused Done/.test(message)), JSON.stringify(messages));
+    return true;
+  });
+
+  assert.deepEqual(built.dispatches.started, [92]);
+  assert.deepEqual(built.events().filter(({ event, card }) => event === 'transition' && card === 91), []);
+  assert.deepEqual(await columnsOf(fake), { 91: COLUMNS.review, 92: COLUMNS.review });
+});
+
+test('a refused continuing claim move starts no maker and fires no next pull', async () => {
+  const card = 93;
+  const pull = 931;
+  const sha = '9'.repeat(40);
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [cardIn(card, COLUMNS.review)], refuseMoves: true });
+  const built = world({
+    fake, concurrency: 1, kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { pullRequests: [{ number: pull, head: `rigger-${card}`, sha, mergeable: 'mergeable', comments: [markerComment({ card, pull, head: sha, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' })] }] },
+  });
+
+  await assert.rejects(built.loop.run(), (failure) => {
+    const messages = leavesOf(failure).map(({ message }) => message);
+    assert.ok(messages.some((message) => /card #93.*review.*coding/.test(message)), JSON.stringify(messages));
+    return true;
+  });
+  assert.deepEqual(built.dispatches.started, []);
+  assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 1);
+  assert.deepEqual(await columnsOf(fake), { [card]: COLUMNS.review });
+});
+
+test('an ignored Owner card leaves the sole slot for a Ready maker in the same pull', async () => {
+  const ignored = { ...cardIn(94, COLUMNS.owner), labels: [] };
+  const built = world({ cards: [ignored, readyCard(95)], concurrency: 1 });
+
+  const tick = built.loop.pull();
+  await positive(() => built.dispatches.holding().includes(95));
+  assert.deepEqual(built.dispatches.started, [95]);
+  assert.deepEqual(cardsOf(built, 'pull'), [95]);
+  assert.deepEqual(await columnsOf(built.fake), { 94: COLUMNS.owner, 95: COLUMNS.coding });
+  built.dispatches.releaseAll();
+  await tick;
 });
 
 test('after a card\'s slot is released with the forge holding nothing from its line of work, so no marker makes it fresh, the next tick pulls that card again', async () => {
@@ -499,13 +670,19 @@ test('every pull writes one event naming the card, its kind, the queue depth and
   // The first read finds 1, 2 and 3 pullable and two slots free: pulling 1 leaves 2 and 3
   // waiting with 1 in flight, and pulling 2 leaves 3 waiting with 1 and 2 in flight. Card 1's
   // release fires a read that finds only 3, which leaves nothing waiting, with 2 and 3 in flight.
-  const pulls = built.l3Events().filter((event) => event.event === 'pull')
+  const pulls = built.l3Events().filter((event) => event.event === 'pull' && event.kind === 'change')
     .map(({ card, kind, queueDepth, inFlight }) => ({ card, kind, queueDepth, inFlight }));
   assert.deepEqual(pulls, [
     { card: 1, kind: 'change', queueDepth: 2, inFlight: 1 },
     { card: 2, kind: 'change', queueDepth: 1, inFlight: 2 },
     { card: 3, kind: 'change', queueDepth: 0, inFlight: 2 },
   ]);
+  const ownerPulls = built.l3Events().filter((event) => event.event === 'pull' && event.kind === undefined);
+  assert.deepEqual(ownerPulls.map(({ card }) => card).sort(), [1, 2, 3]);
+  for (const { queueDepth, inFlight } of ownerPulls) {
+    assert.ok(Number.isInteger(queueDepth) && queueDepth >= 0);
+    assert.ok(Number.isInteger(inFlight) && inFlight >= 1);
+  }
 });
 
 test('given a board whose column read answers one turn later than the fake\'s, every pull writes one event naming the card, its kind, the queue depth and the number in flight', async () => {
@@ -523,8 +700,14 @@ test('given a board whose column read answers one turn later than the fake\'s, e
   built.dispatches.releaseAll();
   await run;
 
-  const pulls = built.l3Events().filter((event) => event.event === 'pull').map(({ card, queueDepth, inFlight }) => ({ card, queueDepth, inFlight }));
+  const pulls = built.l3Events().filter((event) => event.event === 'pull' && event.kind === 'change').map(({ card, queueDepth, inFlight }) => ({ card, queueDepth, inFlight }));
   assert.deepEqual(pulls, [{ card: 1, queueDepth: 2, inFlight: 1 }, { card: 2, queueDepth: 1, inFlight: 2 }, { card: 3, queueDepth: 0, inFlight: 2 }]);
+  const ownerPulls = built.l3Events().filter((event) => event.event === 'pull' && event.kind === undefined);
+  assert.deepEqual(ownerPulls.map(({ card }) => card).sort(), [1, 2, 3]);
+  for (const { queueDepth, inFlight } of ownerPulls) {
+    assert.ok(Number.isInteger(queueDepth) && queueDepth >= 0);
+    assert.ok(Number.isInteger(inFlight) && inFlight >= 1);
+  }
 });
 
 /** The cards named by `built`'s L3 events named `name`, in the order recorded. */
@@ -535,7 +718,7 @@ test('every slot release writes one event naming the card, whether its dispatch 
 
   await assert.rejects(drive(built), stoppedCard(2));
 
-  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 2, 3]);
+  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 1, 2, 3, 3]);
 });
 
 test('a slot freed by a claim move the board refused writes one release event naming the card', async () => {
@@ -551,8 +734,7 @@ test('a slot freed by a claim move the board refused writes one release event na
 const triggersOf = (built) => built.l3Events().filter((event) => event.event === 'trigger').map(({ trigger }) => trigger);
 
 test('every firing of the pull trigger writes one event naming the trigger as pull', async () => {
-  // Each firing reads the board once. At concurrency 1 over two cards, a run fires at its start,
-  // on card 1's release and on card 2's release: three firings, and a single pull() is one more.
+  // Each firing reads the board once, including the releases of moves to Owner.
   const fake = boardOf([1, 2]);
   let reads = 0;
   const board = handleOn(fake, { beforeRead: () => { reads += 1; } });
@@ -566,8 +748,8 @@ test('every firing of the pull trigger writes one event naming the trigger as pu
   built.dispatches.releaseAll();
   await tick;
 
-  assert.equal(reads, 4);
-  assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 4);
+  assert.equal(reads, 6);
+  assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, reads);
 });
 
 test('in a run that pulls cards and then drains, the drain trigger writes exactly one drain event, after the last release', async () => {
@@ -599,7 +781,9 @@ test('while a card is in flight, the drain trigger writes no event, and it write
   await positive(() => built.dispatches.held() === 2);
   built.dispatches.release(1);
   // Positive: until card 1's slot.release and the pull it fired are recorded.
-  await positive(() => built.attempts.some((each) => each.event === 'slot.release' && each.card === 1) && built.fake.requests().filter(({ operation }) => operation === 'readPriority').length === 2);
+  // The Owner move adds one release and read before card 2's maker returns.
+  await positive(() => cardsOf(built, 'slot.release').filter((card) => card === 1).length === 2 && built.fake.requests().filter(({ operation }) => operation === 'readPriority').length === 3);
+  assert.equal(built.fake.requests().filter(({ operation }) => operation === 'readPriority').length, 3);
   assert.deepEqual(built.dispatches.holding(), [2], "card 2's dispatch is held open");
   assert.ok(triggersOf(built).includes('pull'), "card 1's release fired a pull that found nothing");
   assert.deepEqual(triggersOf(built).filter((trigger) => trigger === 'drain'), []);
@@ -643,6 +827,8 @@ test('on one loop, a pull that claims a card after a drain ends that idle period
   await pullOnce(built);
   assert.deepEqual(built.dispatches.started, [1]);
   assert.deepEqual(cardsOf(built, 'slot.release'), [1]);
+  await pullOnce(built);
+  assert.deepEqual(await columnsOf(fake), { 1: COLUMNS.owner });
   await pullOnce(built);
 
   assert.deepEqual(drainsOf(built), ['drain', 'drain'], 'the second idle period drained once');
@@ -713,7 +899,7 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
 
   // Each card's interval runs from its pull event's time to its release event's time, and the
   // sink's clock ticks once per event, so no two events share a time.
-  const at = (name) => Object.fromEntries(built.l3Events().filter((event) => event.event === name).map(({ card, ts }) => [card, Date.parse(ts)]));
+  const at = (name) => Object.fromEntries(built.l3Events().filter((event) => event.event === name && (name !== 'pull' || event.kind === 'change')).map(({ card, ts }) => [card, Date.parse(ts)]));
   const pulled = at('pull');
   const released = at('slot.release');
   assert.deepEqual(Object.keys(pulled).sort(), ['1', '2', '3', '4']);

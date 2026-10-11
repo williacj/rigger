@@ -14,9 +14,16 @@ import { recording } from './recording.mjs';
  * One line per card: what the run does with it, its number, and the kind or the reason, and for a
  * card pulled for its judges, the judges it would dispatch.
  */
-const pullLine = ({ card, kind, redo, judges }) => {
+const pullLine = ({ card, kind, redo, judges, action, to, pull, head, category }) => {
+  const prefix = `  pull    #${card}  `;
+  const suffix = redo ? '  (redo)' : '';
+  if (action === 'move') return `${prefix}move to ${to}${suffix}`;
+  if (action === 'continue') return `${prefix}continue pull request #${pull} at ${head}${suffix}`;
+  if (action === 'return') return `${prefix}return pull request #${pull}${suffix}`;
+  if (action === 'escalate') return `${prefix}escalate ${category}${suffix}`;
+  if (action === 'merge') return `${prefix}merge pull request #${pull} at ${head}${suffix}`;
   if (judges !== undefined) return `  pull    #${card}  ${kind}  judges ${judges.join(', ')}`;
-  return `  pull    #${card}  ${kind}${redo ? '  (redo)' : ''}`;
+  return `${prefix}${kind}${suffix}`;
 };
 
 /**

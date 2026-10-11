@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createFakeBoard } from './fake-board.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { pullOrder } from '../src/scheduling/pull-order.mjs';
-import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { markerComment } from './fake-repository.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -65,17 +65,30 @@ async function planOf(fake, { priority = PRIORITY, forge = {} } = {}) {
  */
 function freshFacts(number, stage) {
   const head = 'a'.repeat(40);
-  const marker = composeMarker({ card: number, pull: 10 * number, head, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const marker = markerComment({ card: number, pull: 10 * number, head, body: PASSING });
   const read = (value) => ({ status: 'fulfilled', value });
   return {
     stage, line: `rigger-${number}`, branch: true, open: [{ number: 10 * number, head, base: 'main' }], merged: [],
     pull: read({ number: 10 * number, base: 'c'.repeat(40), head }), diff: read(''), mergeable: read('unknown'), rules: read([]), checks: read({}),
-    comments: read([{ body: marker, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
+    comments: read([{ ...marker, id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
   };
 }
 
 /** The card numbers in a plan's pull order, first pulled first. */
 const pulled = (plan) => plan.pulls.map((pull) => pull.card);
+
+// proves R-WORK-5
+test('an Owner card L2 answers with a move is offered as a redo ahead of Ready', async () => {
+  const fake = boardOf([item(2, 'Ready', 'High'), item(3, 'Owner', 'Low')]);
+  const { items, declared } = await fake.operations.readPriority(PRIORITY);
+  const order = pullOrder({ items, columns: COLUMNS, declared }, (card) => (
+    card.column === COLUMNS.owner ? { action: 'move', to: 'review' } : { action: 'dispatch', kind: 'change' }
+  ));
+
+  assert.deepEqual(pulled(order), [3, 2]);
+  assert.deepEqual(order.pulls.map(({ redo }) => redo), [true, false]);
+  assert.deepEqual(fake.writes(), []);
+});
 
 // proves R-SCHED-1
 test('the higher-priority ready card is pulled first, though the board lists the lower one first', async () => {
@@ -138,7 +151,7 @@ test('a ready card L2 refuses appears among the refusals with L2\'s reason, and 
   assert.deepEqual(plan.refusals, [{ card: 32, reason: 'missing acceptance' }]);
 });
 
-test('only Ready cards and unclaimed not-fresh Coding and Review cards enter the pull order, whatever other column a dispatchable card is in', async () => {
+test('Ready, Coding, Review and Owner cards enter the pull order, while other columns stay out', async () => {
   const elsewhere = ['Owner', 'Done', 'Backlog', 'Blocked', 'Engine Review', 'Needs Owner'];
   const fake = boardOf([
     ...elsewhere.map((column, index) => item(40 + index, column, 'High')),
@@ -149,7 +162,7 @@ test('only Ready cards and unclaimed not-fresh Coding and Review cards enter the
 
   const plan = await planOf(fake);
 
-  assert.deepEqual(pulled(plan).sort((a, b) => a - b), [50, 51, 52]);
+  assert.deepEqual(pulled(plan).sort((a, b) => a - b), [40, 50, 51, 52]);
   assert.deepEqual(plan.refusals, []);
 });
 

@@ -2,6 +2,15 @@
 // requests from them with their head SHAs, diffs and comments. Test-only, never imported from src/.
 
 import { gitIn } from './git-repository.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+
+/** A marker comment at a card's acceptance and pull-request head, with the requested ruling. */
+export function markerComment({ card, pull, head, body, role = 'reviewer', createdAt = '2026-10-01T11:00:00Z', ...ruling }) {
+  return {
+    body: composeMarker({ card, pull, head, digest: acceptanceDigest(body), role, verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, `Ruled, by ${role}`),
+    createdAt,
+  };
+}
 
 /**
  * Everything the fake holds of one pull request. `head` is the branch it is from and `sha` that
@@ -50,15 +59,23 @@ function heldPull(pull) {
  * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
  * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], rules } = {}) {
+export function createFakeRepository({ branches = [], pullRequests = [], rules, origin } = {}) {
   const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull) });
-  const pull = (number) => held.pullRequests.find((candidate) => candidate.number === number) ?? null;
+  const current = (candidate) => {
+    if (candidate === undefined) return null;
+    if (origin !== undefined && !candidate.merged) candidate.sha = headIn(origin, candidate.head) ?? candidate.sha;
+    return candidate;
+  };
+  const pull = (number) => current(held.pullRequests.find((candidate) => candidate.number === number));
   const known = (operation, number) => {
     const found = pull(number);
     if (!found) throw new Error(`the fake repository holds no pull request #${number}, so ${operation} has nothing to read`);
     return found;
   };
-  const asAnswered = ({ number, sha, base }) => ({ number, head: sha, base });
+  const asAnswered = (candidate) => {
+    const { number, sha, base } = current(candidate);
+    return { number, head: sha, base };
+  };
   const operations = {
     readPullRequests: async (branch) => {
       const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null);
@@ -77,7 +94,7 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules }
     },
     readMergeable: async (number) => known('readMergeable', number).mergeable ?? 'unknown',
     readCheckStates: async (sha, required) => {
-      const checks = held.pullRequests.find((candidate) => candidate.sha === sha)?.checks ?? {};
+      const checks = held.pullRequests.find((candidate) => current(candidate).sha === sha)?.checks ?? {};
       return Object.fromEntries(required.map(({ context }) => [context, checks[context] ?? { state: 'absent', creator: null }]));
     },
     readEffectiveRules: async () => structuredClone(rules ?? []),
@@ -112,7 +129,7 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules }
     /** Pull request `number` as the fake holds it, or null where it holds none. */
     pull: (number) => structuredClone(pull(number)),
     /** Everything the repository holds, in the form it was built from. */
-    held: () => structuredClone(held),
+    held: () => structuredClone({ ...held, pullRequests: held.pullRequests.map(current) }),
   };
 }
 

@@ -255,7 +255,7 @@ async function labels(board, state, operation) {
  * The repository the fake `gh` answers from: the one the test seeded, as every agent command
  * since has left it. By default it holds no branch, no pull request and no edit.
  */
-const repositoryOf = (state) => createFakeRepository(state.repository ?? {});
+const repositoryOf = (state) => createFakeRepository({ ...state.repository, origin: state.origin });
 
 /** The address GitHub gives pull request `number` of the fake's repository. */
 const pullUrl = (state, number) => `https://github.com/${state.repo}/pull/${number}`;

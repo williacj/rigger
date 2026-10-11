@@ -1,5 +1,5 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
-// before any await, has L2 move each claimed card, and drives its attempts: L1 makes the workspace,
+// before any await, has L2 carry each claimed answer, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker through L1, or attempts the card again as L2
 // says, and then the judges L2 names, under the one claim and slot; the run that fires that trigger
 // again each time a slot frees, excluding stopped cards and withheld judges for that run; the drain trigger; and L3's events.
@@ -30,6 +30,7 @@ function claiming({ config, board, facts, l2, sink, kill }) {
   if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
   const claims = new Set();
+  const slots = new Set();
   let killing;
 
   /**
@@ -97,11 +98,17 @@ function claiming({ config, board, facts, l2, sink, kill }) {
         answers.set(card.number, next);
         return next;
       });
-      const taken = pulls.slice(0, Math.max(0, Math.min(limit, concurrency - claims.size))).map((pull, index) => {
+      const claimable = pulls.filter((pull) => answers.get(pull.card).action !== 'merge');
+      const taken = [];
+      for (const pull of claimable) {
+        if (taken.length >= limit) break;
+        const next = answers.get(pull.card);
+        if (slots.size >= concurrency) continue;
         claims.add(pull.card);
+        slots.add(pull.card);
         const card = unclaimed.find((item) => item.number === pull.card);
-        return { ...pull, card, next: answers.get(pull.card), decide, queueDepth: pulls.length - index - 1, inFlight: claims.size };
-      });
+        taken.push({ ...pull, card, next, decide, queueDepth: claimable.length - taken.length - 1, inFlight: slots.size });
+      }
       return { claims: taken, failures };
     },
 
@@ -118,9 +125,10 @@ function claiming({ config, board, facts, l2, sink, kill }) {
         record('pull', { kind, queueDepth, inFlight }, card.number);
       } catch (refusal) {
         claims.delete(card.number);
+        slots.delete(card.number);
         throw refused(`card #${card.number} was not started, because the event sink refused to record its pull`, refusal);
       }
-      await l2.claimed(card, next);
+      if (['dispatch', 'judge', 'continue'].includes(next.action)) await l2.claimed(card, next);
     },
 
     /**
@@ -130,6 +138,7 @@ function claiming({ config, board, facts, l2, sink, kill }) {
      */
     release: (card) => {
       if (!claims.delete(card.number)) return;
+      if (!slots.delete(card.number)) return;
       try {
         record('slot.release', {}, card.number);
       } catch (refusal) {
@@ -218,8 +227,9 @@ function released(release, claim, failure) {
  *
  *   One the sink refuses starts nothing, and the failure names the card and the step or the role.
  *
- * A claim is held in memory from the moment L3 pulls a card until its slot is released, and no
- * longer (the architect's ruling 4, §4). One run also remembers stopped cards and cards whose
+ * A claim and its slot are held in memory from the moment L3 pulls a card until its work settles.
+ * A merge answer takes neither; M5-09 handles its claim in the merge lane (C22).
+ * One run also remembers stopped cards and cards whose
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, state, environment, ps, readTimeout }) {
@@ -289,10 +299,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * scratch, repository }`, the card's scratch base and repository beside it as L1 answered them,
    * or, where L1 could not make it, L2's answer for that attempt, handed the failure unread.
    */
-  const made = async (card, number) => {
-    const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number)))]);
+  const made = async (card, number, continuing) => {
+    const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number, continuing?.head)))]);
     if (outcome.status === 'fulfilled') return { path: outcome.value.path, scratch: outcome.value.scratch, repository: outcome.value.repository };
-    return { answer: decide(card, [], { attempt: number, workspace: outcome }) };
+    return { answer: decide(card, [], { attempt: number, workspace: outcome, continuing }) };
   };
 
   /**
@@ -321,6 +331,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
   const attempt = async (card, next, kept, remember) => {
+    const continuing = next.action === 'continue' ? next : undefined;
+    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, continuing });
     const failures = [];
     /** Follows L2's retry or stop answer, retaining each failure for the final report. */
     const advance = (answer, number) => {
@@ -337,15 +349,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     };
     let answer = next;
     for (let number = 1; ; number += 1) {
-      const { path, scratch, repository, answer: unmade } = await made(card, number);
+      const { path, scratch, repository, answer: unmade } = await made(card, number, continuing);
       if (unmade !== undefined) {
         answer = unmade;
       } else {
-        if (number > 1) answer = decide(card, [], { attempt: number });
+        if (number > 1 || continuing !== undefined) answer = askAttempt([], { attempt: number });
         const outcomes = [];
         while (answer.action === 'dispatch' && answer.step !== undefined) {
           outcomes.push(await dispatchStep(card, answer.step, path, { attempt: number }));
-          answer = decide(card, [...outcomes], { attempt: number });
+          answer = askAttempt([...outcomes], { attempt: number });
         }
       }
       if (advance(answer, number)) continue;
@@ -355,10 +367,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
       const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
       if (settled.status === 'fulfilled') {
-        answer = decide(card, [], { attempt: number, maker: outcome });
+        answer = askAttempt([], { attempt: number, maker: outcome });
         if (advance(answer, number)) continue;
       }
-      const reached = { card: card.number, workspace: path, outcome, settled };
+      const reached = { card: card.number, workspace: path, outcome, settled, ...(continuing === undefined ? {} : { action: 'continue', pull: continuing.pull, head: continuing.head }) };
       kept(reached);
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
@@ -476,12 +488,28 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await start(claim);
       claimed = true;
       const kept = (made) => { reached = made; };
-      reached = next.action === 'judge'
-        ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
-        : await attempt(card, next, kept, remember);
+      if (next.action === 'move') {
+        await l2.moved(card, next);
+        reached = { card: card.number, ...next };
+      } else if (next.action === 'return') {
+        await l2.returned(card, next);
+        reached = { card: card.number, action: 'return', pull: next.pull };
+      } else if (next.action === 'escalate') {
+        await l2.escalated(card, next);
+        excluded?.add(card.number);
+        reached = { card: card.number, ...next };
+      } else {
+        reached = next.action === 'judge'
+          ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
+          : await attempt(card, next, kept, remember);
+      }
     } catch (thrown) {
       failure = thrown;
+      if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
       if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
+    }
+    if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
+      excluded?.add(card.number);
     }
     failure = released(release, claim, failure);
     if (claimed) await freed();
