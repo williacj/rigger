@@ -262,12 +262,12 @@ export function readingLater(fake) {
 /**
  * L2's column changes over `fake`, and L3's loop over both under `concurrency` (none declared
  * where it is undefined), for a config whose board declares `columns` by key and whose L0 handle
- * reads priority under `priority`. L2's next action is the real one with freshness injected
- * through its own input: once a card's dispatch has returned in this world, `fresh` says whether
- * L2 has nothing more to do for it, standing in for the verdict marker M5 reads. `board` is L0's
+ * reads priority under `priority`. L2's next action is the real one, answering from what the
+ * world's forge holds: where `fresh`, once a card's dispatch has returned in this world, whatever
+ * its exit, the forge holds an open pull request from its line of work, so L2 has nothing more to
+ * do for it, as the markers of its kind's judges, owner alone, leave it. `board` is L0's
  * handle, and `items` stands in for the board's writes. The sink writes to the state directory
- * `directory`, a new temporary one where none is given, under the run id `run`. A `fresh` given
- * as a function is L2's freshness input itself, answering for each Coding or Review card.
+ * `directory`, a new temporary one where none is given, under the run id `run`.
  * `kill` is the start's kill L3 is handed, standing in for L1's kill of recorded groups, and
  * kills nothing where none is given: L1's own dispatch contains each maker's group as it ends.
  *
@@ -302,8 +302,9 @@ export function readingLater(fake) {
  * `repository` is the fake repository the forge holds beside the board, seeded with `forge`, and
  * by default it holds nothing for any card. L2's facts call, which L3 awaits before it claims, is
  * the real one over its reads, and L2's column changes read its pull requests to settle a maker's
- * outcome. A card whose maker exited 0 holds an open pull request from its line of work from L1's
- * `dispatch.end` for it on, as a maker that opened one would leave it. Both answer from memory,
+ * outcome. A card whose maker exited 0, or any maker's card where `fresh`, holds an open pull
+ * request from its line of work from L1's `dispatch.end` for it on, as a maker that opened one
+ * would leave it. Both answer from memory,
  * with no process or file read.
  *
  * `sequence` records, in the one order they happened, each board move once the board has made
@@ -407,12 +408,10 @@ export function world({
   };
   const repository = createFakeRepository(forge);
   const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations });
-  const returned = new Set();
-  const freshness = typeof fresh === 'function' ? fresh : (held) => fresh && returned.has(held.number);
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
   const decide = (card, outcomes, options = {}) => {
-    const action = nextAction(card, kinds, undefined, { columns, fresh: freshness, roles: settings.roles, provisioning, outcomes, sink, ...options });
+    const action = nextAction(card, kinds, undefined, { roles: settings.roles, provisioning, outcomes, sink, ...options });
     decisions.push({ card: card.number, action, pull: pulls() });
     return action;
   };
@@ -446,13 +445,7 @@ export function world({
   /** What a maker's L3 `dispatch` attempt and L1 `dispatch.end` attempt record, whether or not the sink accepts them. */
   const observe = ({ layer, card, dispatch, event, fields }) => {
     if (layer === 'L3' && event === 'dispatch' && fields.role !== undefined) makerIds.set(dispatch, card);
-    if (layer === 'L1' && event === 'dispatch.end' && makerIds.has(dispatch) && fields.exit === 0) openFrom(card);
-  };
-  // A card's maker has returned in this world once L3 hands L2 its outcome, however it ended.
-  const settle = l2.settled;
-  l2.settled = (card, outcome) => {
-    returned.add(card.number);
-    return settle(card, outcome);
+    if (layer === 'L1' && event === 'dispatch.end' && makerIds.has(dispatch) && (fields.exit === 0 || fresh)) openFrom(card);
   };
   /** What a maker's L3 `dispatch` event records once the sink has accepted it. */
   const accepted = ({ layer, card, dispatch, event }) => {

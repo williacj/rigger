@@ -363,6 +363,9 @@ const SETTLED_ONE = {
   pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeBase has nothing to read') },
   diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readDiff has nothing to read') },
   comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readComments has nothing to read') },
+  mergeable: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeable has nothing to read') },
+  rules: { status: 'fulfilled', value: [] },
+  checks: { status: 'fulfilled', value: {} },
 };
 
 test('for a card selecting no step, L3 asks decide at the pull, after the maker outcome, and with the facts L2 settled', async () => {

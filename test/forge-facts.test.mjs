@@ -9,6 +9,7 @@ import config from '../rigger.config.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 
 const { columns } = config.board;
 
@@ -36,22 +37,25 @@ function readsOver(seed = {}, fail = () => false) {
   return { reads, made, held: () => repository.held() };
 }
 
+/** An L5 sink that records nothing, for an answer that records a marker it read. */
+const quiet = { emitter: () => ({ emit: () => {} }) };
+
 /** L2's next action for each card, decided by the facts call over `reads` for `cards`, as L3 would ask it at the pull. */
-async function decided(cards, reads, { fresh } = {}) {
-  const decide = (card) => nextAction(card, KINDS, undefined, { columns, fresh });
+async function decided(cards, reads) {
+  const decide = (card) => nextAction(card, KINDS, undefined, { columns, sink: quiet });
   const atPull = await factsCall({ config, reads, decide })(cards);
   return cards.map((card) => atPull(card));
 }
 
-test('L2\'s facts call reads, for every Ready, Coding and Review card it is handed, the pull requests from its line of work, and the branches once for them all', async () => {
+test('L2\'s facts call reads, for every Ready, Coding, Review and Owner card it is handed, the pull requests from its line of work, and the branches once for them all', async () => {
   const { reads, made } = readsOver();
   const cards = [cardIn(1, columns.ready), cardIn(2, columns.coding), cardIn(3, columns.review), cardIn(4, columns.owner), cardIn(5, columns.done), cardIn(6, null)];
 
   await factsCall({ config, reads, decide: () => ({ action: 'ignore' }) })(cards);
 
-  assert.deepEqual(made.filter(([operation]) => operation === 'readPullRequests').map(([, branch]) => branch), ['rigger-1', 'rigger-2', 'rigger-3']);
-  assert.deepEqual(made.filter(([operation]) => operation === 'readBranches'), [['readBranches', ['rigger-1', 'rigger-2', 'rigger-3']]]);
-  assert.equal(made.length, 4, JSON.stringify(made));
+  assert.deepEqual(made.filter(([operation]) => operation === 'readPullRequests').map(([, branch]) => branch), ['rigger-1', 'rigger-2', 'rigger-3', 'rigger-4']);
+  assert.deepEqual(made.filter(([operation]) => operation === 'readBranches'), [['readBranches', ['rigger-1', 'rigger-2', 'rigger-3', 'rigger-4']]]);
+  assert.equal(made.length, 5, JSON.stringify(made));
 });
 
 test('given its read of one card\'s pull requests failing, L2\'s facts call rejects naming the card and the read', async () => {
@@ -79,6 +83,16 @@ const BASE = 'c'.repeat(40);
 /** A pull request from card `number`'s line of work, numbered `pull`, merged where `merged` says. */
 const pullFrom = (number, pull, merged = false) => ({ number: pull, head: `rigger-${number}`, sha: `${pull}`.padStart(40, 'a'), merged });
 
+/**
+ * One open pull request from card `number`'s line of work, numbered `pull`, holding the reviewer's
+ * sound marker at its head and the acceptance's digest, whose mergeability the forge cannot yet say.
+ */
+const soundFrom = (number, pull) => {
+  const opened = pullFrom(number, pull);
+  const marker = composeMarker({ card: number, pull, head: opened.sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  return { ...opened, diff: DIFF, mergeBase: BASE, mergeable: 'unknown', comments: [{ body: marker, createdAt: '2026-10-01T11:00:00Z' }] };
+};
+
 // proves R-WORK-19
 test('given a Ready card whose line of work the forge holds, L2 refuses the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(1, columns.ready)], readsOver({ branches: ['rigger-1'] }).reads);
@@ -98,14 +112,16 @@ test('given a Coding card whose line of work the forge holds, L2 refuses the car
 });
 
 // proves R-WORK-19
-test('given a Ready, Coding or Review card with a merged pull request from its line of work, L2 refuses the card, naming it and the pull request', async () => {
-  for (const column of [columns.ready, columns.coding, columns.review]) {
+test('given a Ready or Coding card with a merged pull request from its line of work, L2 refuses the card, naming it and the pull request, and answers Done for a Review card', async () => {
+  for (const column of [columns.ready, columns.coding]) {
     const [next] = await decided([cardIn(3, column)], readsOver({ pullRequests: [pullFrom(3, 31, true)] }).reads);
 
     assert.equal(next.action, 'refuse', `${column}: ${JSON.stringify(next)}`);
     assert.equal(next.card, 3);
     assert.match(next.reason, /#31\b/, column);
   }
+  const [review] = await decided([cardIn(3, columns.review)], readsOver({ pullRequests: [pullFrom(3, 31, true)] }).reads);
+  assert.deepEqual(review, { action: 'move', to: 'done' });
 });
 
 // proves R-WORK-19
@@ -158,11 +174,11 @@ test('given a Ready or Coding card the forge holds nothing for, L2 dispatches it
   assert.deepEqual(nexts, [{ action: 'dispatch', kind: 'change' }, { action: 'dispatch', kind: 'change' }]);
 });
 
-test('given a Coding or Review card that injected freshness answers fresh, L2 answers ignore whatever the forge holds', async () => {
-  const seed = { branches: ['rigger-11', 'rigger-12'], pullRequests: [pullFrom(11, 111, true), pullFrom(12, 121), pullFrom(12, 122)] };
-  const nexts = await decided([cardIn(11, columns.coding), cardIn(12, columns.review)], readsOver(seed).reads, { fresh: () => true });
+test('given a Coding or Review card whose one open pull request\'s markers make it fresh, L2 answers ignore', async () => {
+  const seed = { branches: ['rigger-11', 'rigger-12'], pullRequests: [soundFrom(11, 111), soundFrom(12, 121)] };
+  const nexts = await decided([cardIn(11, columns.coding), cardIn(12, columns.review)], readsOver(seed).reads);
 
-  assert.deepEqual(nexts, [{ action: 'ignore' }, { action: 'ignore' }]);
+  assert.deepEqual(nexts.map((next) => next.action), ['ignore', 'ignore']);
 });
 
 test('given a card no kind selects, L2 ignores it whatever the forge holds, and never refuses it', async () => {
@@ -198,13 +214,13 @@ test('given a Ready card whose line of work the forge holds, whose acceptance th
   for (const named of [/\bengineer\b/, /tier:high/, /tier:low/, /\brigger-15\b/, /missing acceptance/]) assert.match(next.reason, named);
 });
 
-test('given a Review card with one open pull request from its line of work and agent judges, L2 answers ignore where injected freshness answers fresh, whatever the forge holds', async () => {
-  const [next] = await decided([cardIn(16, columns.review)], readsOver({ pullRequests: [{ ...pullFrom(16, 161), diff: DIFF, mergeBase: BASE }] }).reads, { fresh: () => true });
+test('given a Review card with one open pull request from its line of work and agent judges, L2 answers ignore where its markers make it fresh', async () => {
+  const [next] = await decided([cardIn(16, columns.review)], readsOver({ pullRequests: [soundFrom(16, 161)] }).reads);
 
-  assert.deepEqual(next, { action: 'ignore' });
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
 });
 
-test('L2\'s facts call reads, for each Review card holding exactly one open pull request from its line of work, that pull request, its diff and its comments, and reads none of them for any other card', async () => {
+test('L2\'s facts call reads, for each Review or Coding card holding exactly one open pull request from its line of work, that pull request, its diff and its comments, and reads none of them for any other card', async () => {
   const seed = {
     pullRequests: [
       { ...pullFrom(17, 171), diff: DIFF, mergeBase: BASE },
@@ -219,7 +235,8 @@ test('L2\'s facts call reads, for each Review card holding exactly one open pull
   await factsCall({ config, reads, decide: () => ({ action: 'ignore' }) })(cards);
 
   const reviewReads = made.filter(([operation]) => !['readPullRequests', 'readBranches'].includes(operation));
-  assert.deepEqual(reviewReads.sort(), [['readComments', 171], ['readDiff', 171], ['readMergeBase', 171]]);
+  const each = (pull, sha) => [['readCheckStates', sha], ['readComments', pull], ['readDiff', pull], ['readEffectiveRules', 'main'], ['readMergeBase', pull], ['readMergeable', pull]];
+  assert.deepEqual(reviewReads.sort(), [...each(171, pullFrom(17, 171).sha), ...each(201, pullFrom(20, 201).sha)].sort());
 });
 
 test('L2\'s facts call answers a Review card\'s one open pull request as its number, the merge base its diff is taken from and its head, beside its diff and comments, each as the read settled', async () => {

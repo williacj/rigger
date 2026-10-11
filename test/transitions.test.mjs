@@ -5,10 +5,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
+import { streamPath } from '../src/observation/sink.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -335,4 +337,58 @@ test("with no item-write side passed in, L2's move goes to the forge through the
   assert.match(write[4], /PVTI_lADOBzomGc4Bkn7fzgd/);
   assert.match(write[4], /47fc9ee4/);
   assert.equal(readEvents(directory).length, 1);
+});
+
+/**
+ * L2's column changes over a fake board holding card 30 in the column displayed as `column`, with
+ * a sink of its own, and the board's items and the events recorded.
+ */
+async function boardWith(column) {
+  const fake = createFakeBoard({ columns: Object.values(config.board.columns), items: [{ type: 'issue', repository: config.repo, number: 30, title: 'Card 30', column }] });
+  const directory = temporaryDirectory('rigger-transitions-loop-');
+  const l2 = columnChanges({ config, sink: openSink({ directory, run: 'r-test', now: () => 0 }), items: fake.operations, reads: readsWith(createFakeRepository().operations.readPullRequests) });
+  const [card] = await itemsOf(fake);
+  return { fake, l2, card, events: () => (existsSync(streamPath(directory)) ? readEvents(directory) : []).filter((event) => event.event === 'transition').map(({ from, to, cause }) => ({ from, to, cause })) };
+}
+
+/** L2's continuing-attempt answer on pull request #300 at a head. */
+const CONTINUE = { action: 'continue', pull: 300, head: '3'.repeat(40), markers: [] };
+
+test('L2 makes each review-loop move on the fake board: Review to Owner, Owner to Review, Review to Done and Owner to Done by its move answer, and Review to Coding and Owner to Coding by a continuing attempt\'s claim', async () => {
+  const { columns } = config.board;
+  const rows = [
+    { from: columns.review, make: (l2, card) => l2.moved(card, { action: 'move', to: 'owner' }), to: columns.owner, transition: { from: 'review', to: 'owner', cause: 'sound' } },
+    { from: columns.owner, make: (l2, card) => l2.moved(card, { action: 'move', to: 'review' }), to: columns.review, transition: { from: 'owner', to: 'review', cause: 'rejudged' } },
+    { from: columns.review, make: (l2, card) => l2.moved(card, { action: 'move', to: 'done' }), to: columns.done, transition: { from: 'review', to: 'done', cause: 'merged' } },
+    { from: columns.owner, make: (l2, card) => l2.moved(card, { action: 'move', to: 'done' }), to: columns.done, transition: { from: 'owner', to: 'done', cause: 'mergedFromOwner' } },
+    { from: columns.review, make: (l2, card) => l2.claimed(card, CONTINUE), to: columns.coding, transition: { from: 'review', to: 'coding', cause: 'continued' } },
+    { from: columns.owner, make: (l2, card) => l2.claimed(card, CONTINUE), to: columns.coding, transition: { from: 'owner', to: 'coding', cause: 'continuedFromOwner' } },
+  ];
+  for (const { from, make, to, transition } of rows) {
+    const { fake, l2, card, events } = await boardWith(from);
+
+    await make(l2, card);
+
+    const [moved] = await itemsOf(fake);
+    assert.equal(moved.column, to, JSON.stringify(transition));
+    assert.deepEqual(events(), [transition]);
+  }
+});
+
+test('claimed moves a Review card L2 answered as a continuing attempt by the continuing change, never by redone, and leaves a Coding card where it is', async () => {
+  const review = await boardWith(config.board.columns.review);
+  await review.l2.claimed(review.card, CONTINUE);
+  const coding = await boardWith(config.board.columns.coding);
+  await coding.l2.claimed(coding.card, CONTINUE);
+
+  assert.deepEqual(review.events().map((event) => event.cause), ['continued']);
+  assert.deepEqual(coding.events(), []);
+  assert.deepEqual(coding.fake.writes(), []);
+});
+
+test('a move answer L2 has no change for, such as to Done from Coding, is refused naming the card and both columns, and nothing moves', async () => {
+  const { fake, l2, card } = await boardWith(config.board.columns.coding);
+
+  await assert.rejects(l2.moved(card, { action: 'move', to: 'done' }), (error) => /card #30\b/.test(error.message) && /coding/.test(error.message) && /done/.test(error.message));
+  assert.deepEqual(fake.writes(), []);
 });

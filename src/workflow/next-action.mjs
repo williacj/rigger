@@ -1,14 +1,14 @@
-// ABOUTME: L2's next action for a ready card, or an unclaimed Coding or Review card no fresh
-// verdict covers: ignore it, refuse it with a reason, or dispatch it under the one kind that selects
-// it, from what the forge holds of its line of work where L2's facts call read it. Within an attempt
-// at it: the next provisioning step it selected, the maker as a role, the card attempted again, or
-// the card stopped.
+// ABOUTME: L2's next action for a ready card, or an unclaimed Coding, Review or Owner card: ignore
+// it, refuse it with a reason, dispatch it under the one kind that selects it, or answer it from
+// its pull request's markers, from what the forge holds of its line of work where L2's facts call
+// read it. Within an attempt at it: the next provisioning step it selected, the maker as a role,
+// the card attempted again, or the card stopped.
 
 import { roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
-import { judgeAnswer } from './judges.mjs';
+import { reviewAnswer } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
@@ -36,11 +36,11 @@ const selecting = (card, kinds) =>
  *
  * A card L2's facts call handed on with its `forge` facts is answered from them, as `fromTheForge`
  * says, once a kind selects it and before the form check: refused for what the forge holds of its
- * line of work, ignored, left to be dispatched, or, for a Review card with one open pull request
- * from its line of work, answered with its judges, as `judgeAnswer` answers it under `roles`,
- * `provisioning` and `sink`, handed `judged`, the outcomes of each judge's steps by role, and
- * `directories`, the outcome of L1's make of each judge's directory by role, where L1 could not
- * make it. `forge`, where given, is the facts L2's settle answered for a card it moved to review,
+ * line of work, moved to Done, left to be dispatched, or, for a Review or Owner card with one open
+ * pull request from its line of work, and a Coding card with one, answered by L2's review loop, as
+ * `reviewAnswer` answers it under `roles`, `provisioning` and `sink`, handed `judged`, the outcomes
+ * of each judge's steps by role, and `directories`, the outcome of L1's make of each judge's
+ * directory by role, where L1 could not make it. `forge`, where given, is the facts L2's settle answered for a card it moved to review,
  * which L3 hands back unread, and L2 answers the card from them as from the facts call's (the
  * architect's ruling 3, AQ4, on #467). A card handed on with none is answered as if the forge held
  * nothing L2 reads. Handed `roles`, a config's roles by name, L2 refuses a card whose
@@ -48,12 +48,12 @@ const selecting = (card, kinds) =>
  * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
  * both, the one refusal names each of those reasons too.
  *
- * A card in the `coding` or `review` column of `columns`, the declared columns by key, is a redo,
- * and one `fresh(card)` answers true on attempt 1 is `{ action: 'ignore' }`: a fresh verdict covers it, so
- * L2 has nothing to do for it. Freshness does not interrupt a maker failure or its later attempt.
- * Freshness is an injected input until M5 reads the markers (the
- * architect's ruling 1, U10), and with none injected no card is fresh. Freshness injected without
- * `columns` is refused, since no card could be told a redo.
+ * Whether a verdict covers a Coding or Review card is read from its pull request's markers, never
+ * injected: L2 takes no `fresh` input.
+ *
+ * `continuing` is L2's continuing-attempt answer for the card, `{ action: 'continue', pull, head,
+ * markers }`, which L3 hands back unread within that attempt. With it, L2 answers within the attempt
+ * as below, and its maker answer is the continuing one `makerAnswer` composes.
  *
  * Handed `provisioning`, a config's provisioning steps by name, L2 answers within an attempt at the
  * card, from `outcomes`, the outcomes L3 has handed it of the attempt's steps so far, none by
@@ -64,22 +64,24 @@ const selecting = (card, kinds) =>
  * `maker` is L1's maker outcome, handed unread by L3 after L2's settle. Where its dispatch never
  * started, L2 records an environment attempt failure and answers another attempt or stop. For
  * any other outcome, L2 answers `settled`, ending the attempt as L2's column changes settled it.
- * Without `provisioning` and without a maker outcome, L2 answers as above, whatever `outcomes`,
+ * Without `provisioning`, a maker outcome or `continuing`, L2 answers as above, whatever `outcomes`,
  * `sink`, `attempt` and `workspace` are (the architect's ruling 6, Q-D, on #423). A maker outcome
  * is classified even without `provisioning`. Its maker answer is the role
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
-export function nextAction(given, kinds, epicLabel, { columns, fresh, roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, maker, forge, judged, directories } = {}) {
-  if (fresh && !columns) throw new Error('freshness was injected with no declared columns to tell a redo by');
-  if (fresh && maker === undefined && attempt === 1 && [columns.coding, columns.review].includes(given.column) && fresh(given)) return { action: 'ignore' };
+export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
+  if (continuing !== undefined) {
+    const tier = roles === undefined ? undefined : tierOf(card, kinds[kind].maker, roles[kinds[kind].maker]);
+    return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker, continuing });
+  }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
-  if (held?.action === 'ignore') return held;
-  if (held?.action === 'judge') return judgeAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
+  if (held?.action === 'ignore' || held?.action === 'move') return held;
+  if (held?.action === 'judge') return reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
@@ -114,22 +116,27 @@ const numbered = (pulls) => pulls.map((pull) => `#${pull.number}`).join(', ');
  * What L2 answers for `card` from what the forge holds of its line of work, its `forge` facts as
  * L2's facts call read them, or nothing where those facts leave the card to be dispatched.
  *
- * A merged pull request from the line of work refuses the card, whatever its column, naming the
- * pull request, and so does the line of work itself on a Ready or Coding card, naming it: its work
- * would start again from the beginning over what was pushed (`R-WORK-19`; the owner's O6 on #467).
- * A Review card with one open pull request is answered `{ action: 'judge' }`, which `nextAction`
- * answers with its judges, and one with more is refused, naming each. A Review card whose line of work is on the forge with no
- * pull request from it is refused, naming the line of work. A Review card the forge holds nothing
- * for is done again from the beginning (`R-WORK-24`).
+ * A merged pull request from the line of work moves a Review or Owner card to Done, whoever merged
+ * it (the architect's r2 ruling 5 on #642), and refuses a Ready or Coding card, naming the pull
+ * request. The line of work itself refuses a Ready or Coding card, naming it: its work would start
+ * again from the beginning over what was pushed (`R-WORK-19`; the owner's O6 on #467). A Review or
+ * Owner card with one open pull request, and a Coding card with one, is answered `{ action:
+ * 'judge' }`, which `nextAction` answers by L2's review loop, and a Review or Owner card with more
+ * is refused, naming each. A Review card whose line of work is on the forge with no pull request
+ * from it is refused, naming the line of work, and a Review card the forge holds nothing for is
+ * done again from the beginning (`R-WORK-24`). An Owner card with no pull request is refused,
+ * naming its line of work where the forge holds it and saying it holds none otherwise.
  */
 function fromTheForge(card) {
   const { stage, line, branch, open, merged } = card.forge;
   const refuse = (reason) => ({ action: 'refuse', card: card.number, reason });
+  if (merged.length > 0 && ['review', 'owner'].includes(stage)) return { action: 'move', to: 'done' };
   if (merged.length > 0) return refuse(`the forge holds pull request ${numbered(merged)}, merged from its line of work ${line}`);
-  if (stage === 'review') {
+  if (['review', 'owner'].includes(stage) || (stage === 'coding' && open.length === 1)) {
     if (open.length === 1) return { action: 'judge' };
     if (open.length > 1) return refuse(`the forge holds more than one open pull request from its line of work ${line}: ${numbered(open)}`);
   }
+  if (stage === 'owner') return refuse(branch ? `the forge holds its line of work ${line} with no pull request from it` : `the forge holds no pull request from its line of work ${line}, open or merged`);
   if (branch || open.length > 0) return refuse(`the forge holds its line of work, ${line}, so its work would not start from the beginning`);
   return undefined;
 }
@@ -147,7 +154,7 @@ function fromTheForge(card) {
  * outcome's failure is recorded, and each is recorded once. A sink that refuses it has L2 answer
  * no action, naming the card, the step and the refusal.
  */
-function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace, maker }) {
+function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace, maker, continuing }) {
   if (workspace !== undefined) return failedAttempt(card, attempt, unmade(workspace, card), sink);
   if (maker !== undefined) {
     if (maker?.status === 'rejected' && maker.reason?.code === NOT_STARTED) {
@@ -172,7 +179,7 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
       }
     }
   }
-  if (outcomes.length === steps.length) return { action: 'dispatch', kind, maker: makerAnswer(card, declared.maker, roles?.[declared.maker] ?? {}, tier, topicFor(topic, card.number)) };
+  if (outcomes.length === steps.length) return { action: 'dispatch', kind, maker: makerAnswer(card, declared.maker, roles?.[declared.maker] ?? {}, tier, topicFor(topic, card.number), continuing) };
   return { action: 'dispatch', kind, step: stepAnswer(steps[outcomes.length], provisioning) };
 }
 
@@ -276,18 +283,47 @@ export function tierOf(card, name, role, part = 'maker') {
  * decomposition's §2.5, on #467). It says Rigger dispatched
  * the session, which a role prompt can condition on. Until M6 gives a maker an escalation route, a
  * maker that cannot finish exits non-zero, naming why.
+ *
+ * Handed `continuing`, L2's continuing-attempt answer, the instruction names the open pull request
+ * and the head L2 read, and asks for commits pushed to the line of work rather than a pull request
+ * opened, and the evidence also holds each marker the answer hands the maker, as `rulings` says.
  */
-function makerAnswer(card, name, role, tier, line) {
+function makerAnswer(card, name, role, tier, line, continuing) {
   const { agent, provider } = role;
   const instruction = [
     `Rigger dispatched this session, unattended, as the maker for card #${card.number}.`,
     `This workspace is on the card's line of work, the branch \`${line}\`.`,
-    `Once your work meets every acceptance item below, open a pull request from \`${line}\`.`,
+    ...(continuing === undefined
+      ? [`Once your work meets every acceptance item below, open a pull request from \`${line}\`.`]
+      : [
+        `This is a continuing attempt on its open pull request #${continuing.pull}, at head \`${continuing.head}\`.`,
+        `Once your work meets every acceptance item and answers every ruling below, push your commits to \`${line}\`, so they reach pull request #${continuing.pull}. Open no other pull request.`,
+      ]),
     `Never switch this workspace off \`${line}\`, never detach \`HEAD\`, and never add a worktree inside this workspace.`,
     'Where you cannot finish the work, exit non-zero, naming why.',
     '',
     '',
   ].join('\n');
-  const evidence = [`Card #${card.number}: ${card.title}`, '', 'Acceptance:', ...acceptanceItems(card.body).map((item) => `- ${item}`), ''].join('\n');
+  const evidence = [
+    `Card #${card.number}: ${card.title}`, '', 'Acceptance:', ...acceptanceItems(card.body).map((item) => `- ${item}`), '',
+    ...(continuing === undefined ? [] : [...rulings(continuing), '']),
+  ].join('\n');
   return { role: name, agent, provider, tier, timeout: roleTimeout(role), instruction, evidence, digest: evidenceDigest(evidence) };
+}
+
+/**
+ * The lines of a continuing maker's evidence naming what it answers: each marker `continuing`
+ * hands it, by its role and verdict, each unmet item by its ordinal and text, and its `toSound`
+ * where it gives one, or, with no marker, the forge's reading of the pull request as conflicting.
+ */
+function rulings({ pull, head, markers }) {
+  if (markers.length === 0) return [`The forge reads pull request #${pull} as conflicting with its base at head ${head}.`];
+  return [
+    `Rulings at head ${head}:`,
+    ...markers.flatMap(({ role, verdict, unmet, toSound }) => [
+      `- ${role}: ${verdict}`,
+      ...unmet.map(({ item, text }) => `  - item ${item} unmet: ${text}`),
+      ...(toSound === undefined ? [] : [`  - to make it sound: ${toSound}`]),
+    ]),
+  ];
 }

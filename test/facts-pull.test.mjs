@@ -12,6 +12,9 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+import { factsCall } from '../src/workflow/facts.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 import {
   COLUMNS, KINDS, cardIn, columnsOf, factsOverNothing, handleOn, makingWorkspaces, readyCard, waitFor, world,
 } from './loop-world.mjs';
@@ -22,6 +25,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { positive } from './loop-world.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
+import { PASSING } from './loop-world.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH a loop is handed. */
 const agent = standInAgent();
@@ -140,8 +144,21 @@ test('given a Ready card whose line of work the forge holds, L2 refuses it at th
 test('given a Coding card whose line of work the forge holds, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(2, COLUMNS.coding), { branches: ['rigger-2'] }, /rigger-2/));
 
 // proves R-WORK-19
-test('given a Ready, Coding or Review card with a merged pull request from its line of work, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', async () => {
-  for (const column of [COLUMNS.ready, COLUMNS.coding, COLUMNS.review]) await refusedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
+test('given a Ready or Coding card with a merged pull request from its line of work, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', async () => {
+  for (const column of [COLUMNS.ready, COLUMNS.coding]) await refusedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
+});
+
+test('given a Review card with a merged pull request from its line of work, L2 answers Done at the pull: no claim, no L3 pull event and no workspace for it, and the forge unchanged', async () => {
+  const workspace = recordingWorkspaces();
+  const built = world({ cards: [cardIn(3, COLUMNS.review)], concurrency: 1, forge: { pullRequests: [pullFrom(3, 31, true)] }, workspace });
+  const before = built.repository.held();
+
+  assert.deepEqual(await built.loop.pull(), []);
+
+  assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'move', to: 'done' }]);
+  assert.deepEqual(pulledIn(built), []);
+  assert.deepEqual(workspace.asked, []);
+  assert.deepEqual(built.repository.held(), before);
 });
 
 // proves R-WORK-19
@@ -150,13 +167,13 @@ test('given a Review card with two open pull requests from its line of work, L2 
 // proves R-WORK-19
 test('given a Review card with no pull request and its line of work on the forge, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
 
-test('a Review card with one open pull request whose kind\'s only judge is `owner` is ignored', async () => {
+test('a Review card with one open pull request whose kind\'s only judge is `owner` is answered a move to Owner, which L3 does not yet act on', async () => {
   const workspace = recordingWorkspaces();
   const built = world({ cards: [cardIn(7, COLUMNS.review)], concurrency: 1, forge: { pullRequests: [pullFrom(7, 71)] }, workspace });
 
   assert.deepEqual(await built.loop.pull(), []);
 
-  assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'ignore' }]);
+  assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'move', to: 'owner' }]);
   assert.deepEqual(pulledIn(built), []);
   assert.deepEqual(built.fake.writes(), []);
   assert.deepEqual(workspace.asked, []);
@@ -233,4 +250,47 @@ test('given a card carrying two labels the maker role\'s labels maps to two diff
   assert.ok(!moved.includes((await fake.operations.readItems()).find((item) => item.number === 21).id), JSON.stringify(fake.writes()));
   assert.deepEqual(events().filter((event) => event.layer === 'L3' && event.event === 'pull').map((event) => event.card), [22]);
   assert.deepEqual(asked, [22, 22]);
+});
+
+test('L2\'s facts call reads, for an Owner card and for a Coding card holding one open pull request, what it reads for a Review card: the pull request, its comments for its markers, its check states and its mergeable state', async () => {
+  const comments = [{ body: 'A comment', createdAt: '2026-10-01T09:00:00Z' }];
+  const opened = (number, pull) => ({ ...pullFrom(number, pull), diff: 'diff --git a/x b/x\n', mergeBase: 'b'.repeat(40), comments, mergeable: 'conflicting', checks: { ci: { state: 'failed', creator: null } } });
+  const repository = createFakeRepository({ pullRequests: [opened(31, 311), opened(32, 321), opened(33, 331)], rules: [{ context: 'ci', integration_id: null }] });
+  const forges = new Map();
+  const decide = (card) => {
+    forges.set(card.number, card.forge);
+    return { action: 'ignore' };
+  };
+  const cards = [cardIn(31, COLUMNS.review), cardIn(32, COLUMNS.owner), cardIn(33, COLUMNS.coding)];
+
+  const atPull = await factsCall({ config, reads: repository.operations, decide })(cards);
+  for (const card of cards) atPull(card);
+
+  const read = (number) => {
+    const { stage, pull, comments: held, mergeable, rules, checks } = forges.get(number);
+    return { stage, pull: pull.value.number, comments: held.value.map((comment) => comment.body), mergeable: mergeable.value, rules: rules.value, checks: checks.value };
+  };
+  const expected = (stage, pull) => ({ stage, pull, comments: ['A comment'], mergeable: 'conflicting', rules: [{ context: 'ci', integration_id: null }], checks: { ci: { state: 'failed', creator: null } } });
+  assert.deepEqual([read(31), read(32), read(33)], [expected('review', 311), expected('owner', 321), expected('coding', 331)]);
+});
+
+// proves R-LOOP-6
+test('given a governing coverage ruled insufficient, L2 answers one return comment on the open pull request; once it is posted, a second pass reading the pull request\'s comments answers no further comment', async () => {
+  const kinds = { change: { ...KINDS.change, judges: ['reviewer'] } };
+  const sha = pullFrom(41, 411).sha;
+  const marker = composeMarker({ card: 41, pull: 411, head: sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' }, 'Returned, by reviewer');
+  const repository = createFakeRepository({ pullRequests: [{ ...pullFrom(41, 411), mergeable: 'mergeable', comments: [{ body: marker, createdAt: '2026-10-01T11:00:00Z' }] }] });
+  const sink = { emitter: () => ({ emit: () => {} }) };
+  const decide = (card) => nextAction(card, kinds, undefined, { sink });
+  const card = cardIn(41, COLUMNS.review);
+  const pass = async () => (await factsCall({ config, reads: repository.operations, decide })([card]))(card);
+
+  const first = await pass();
+  assert.equal(first.action, 'return', JSON.stringify(first));
+  assert.equal(first.pull, 411);
+  await repository.postComment(first.pull, first.comment);
+  const second = await pass();
+
+  assert.equal(second.action, 'ignore', JSON.stringify(second));
+  assert.equal(repository.pull(411).comments.length, 2, 'the return comment was posted once');
 });

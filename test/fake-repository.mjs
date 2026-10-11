@@ -12,9 +12,11 @@ import { gitIn } from './git-repository.mjs';
  * with, where none is given one the forge cannot answer. `comments` carry body, creation time,
  * identity, author and edit fields, oldest first. `from` names another repository a fork's pull
  * request is from, and is null for this
- * repository's own. `title` and `body` are what it was opened with.
+ * repository's own. `title` and `body` are what it was opened with. `mergeable` is the forge's
+ * mergeability answer, `unknown` where none is given, and `checks` each context's check state at
+ * its head, by context, a required context it does not name being `absent`.
  */
-const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body'];
+const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks'];
 
 /** The fields a comment read selects, filled as the fake forge gives an agent's comment. */
 export function commentOf(comment, number, index) {
@@ -41,12 +43,14 @@ function heldPull(pull) {
 /**
  * A repository holding `branches`, by name, and `pullRequests` as `PULL_FACTS` describes each. By
  * default it holds no branch and no pull request, which is what the forge holds for a card nobody
- * worked.
+ * worked. `rules` are the effective rules every base branch's required checks come from, as
+ * `readEffectiveRules` answers them, none where none are given.
  *
  * Its `operations` are the forge adapter's repository reads, and nothing else is. `open` and
- * `comment` are what an agent does on the forge, and `pull` and `held` the fake gh's own controls.
+ * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
+ * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [] } = {}) {
+export function createFakeRepository({ branches = [], pullRequests = [], rules } = {}) {
   const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull) });
   const pull = (number) => held.pullRequests.find((candidate) => candidate.number === number) ?? null;
   const known = (operation, number) => {
@@ -72,15 +76,32 @@ export function createFakeRepository({ branches = [], pullRequests = [] } = {}) 
       return { base, head: sha, mergeBase };
     },
     readMergeable: async (number) => known('readMergeable', number).mergeable ?? 'unknown',
-    readCheckStates: async (sha, required) => Object.fromEntries(required.map(({ context }) => [context, { state: 'absent', creator: null }])),
-    readEffectiveRules: async () => [],
+    readCheckStates: async (sha, required) => {
+      const checks = held.pullRequests.find((candidate) => candidate.sha === sha)?.checks ?? {};
+      return Object.fromEntries(required.map(({ context }) => [context, checks[context] ?? { state: 'absent', creator: null }]));
+    },
+    readEffectiveRules: async () => structuredClone(rules ?? []),
     readComments: async (number) => structuredClone(known('readComments', number).comments.map((comment, index) => {
       const node = commentOf(comment, number, index);
       return { body: node.body, createdAt: node.createdAt, id: node.id, author: node.author?.login ?? null, permission: 'write', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
     })),
   };
+  /**
+   * The forge adapter's comment write, beside the reads and never among them: posts `body` on pull
+   * request `number` as the engine's account, which holds write access, at the next minute after
+   * its newest comment, and answers the comment as the forge does, with its id.
+   */
+  const postComment = async (number, body) => {
+    const { comments } = known('postComment', number);
+    const newest = comments.at(-1)?.createdAt;
+    const createdAt = new Date((newest === undefined ? Date.parse('2026-10-01T12:00:00Z') : Date.parse(newest)) + 60_000).toISOString().replace('.000Z', 'Z');
+    const id = `IC_${number}_${comments.length + 1}`;
+    comments.push({ body, createdAt, id, author: { login: 'rigger-engine' } });
+    return { id, body };
+  };
   return {
     operations,
+    postComment,
     /** Opens a pull request, `PULL_FACTS` as each is given, and holds its branch. */
     open: (opened) => {
       held.pullRequests.push(heldPull(opened));

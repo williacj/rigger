@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createFakeBoard } from './fake-board.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { pullOrder } from '../src/scheduling/pull-order.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 
 /** One kind, selected by one label, in the shape a config's `kinds` takes. */
 const KINDS = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
@@ -47,14 +48,30 @@ const boardOf = (items) => createFakeBoard({
 
 /**
  * L3's pull order over `fake`'s board as it reads now, handed on as L0's priority read hands it
- * for the declaration `priority`. L2's next action is the real one, with freshness injected
- * through its own input: a Coding or Review card `fresh` answers true for is one L2 has nothing to
- * do for.
+ * for the declaration `priority`. L2's next action is the real one, handed `forge`, the facts L2's
+ * facts call would hold for each card, by number, where a test gives them: a Coding or Review card
+ * whose markers make it fresh is one L2 has nothing to do for.
  */
-async function planOf(fake, { priority = PRIORITY, fresh = () => false } = {}) {
+async function planOf(fake, { priority = PRIORITY, forge = {} } = {}) {
   const { items, declared } = await fake.operations.readPriority(priority);
-  const l2 = (card) => nextAction(card, KINDS, undefined, { columns: COLUMNS, fresh });
+  const quiet = { emitter: () => ({ emit: () => {} }) };
+  const l2 = (card) => nextAction(forge[card.number] === undefined ? card : { ...card, forge: forge[card.number] }, KINDS, undefined, { sink: quiet });
   return pullOrder({ items, columns: COLUMNS, declared }, l2);
+}
+
+/**
+ * The facts L2's facts call would hold for card `number` at `stage`: one open pull request whose
+ * reviewer's marker at its head is sound, and whose mergeability the forge cannot yet say.
+ */
+function freshFacts(number, stage) {
+  const head = 'a'.repeat(40);
+  const marker = composeMarker({ card: number, pull: 10 * number, head, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const read = (value) => ({ status: 'fulfilled', value });
+  return {
+    stage, line: `rigger-${number}`, branch: true, open: [{ number: 10 * number, head, base: 'main' }], merged: [],
+    pull: read({ number: 10 * number, base: 'c'.repeat(40), head }), diff: read(''), mergeable: read('unknown'), rules: read([]), checks: read({}),
+    comments: read([{ body: marker, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
+  };
 }
 
 /** The card numbers in a plan's pull order, first pulled first. */
@@ -162,11 +179,11 @@ test('among redos the pull order is by priority and then by issue number', async
   assert.deepEqual(pulled(await planOf(fake)), [72, 70, 73, 74, 71]);
 });
 
-test('Coding and Review cards with freshness injected as fresh do not appear in the pull order', async () => {
+test('Coding and Review cards whose markers make them fresh do not appear in the pull order', async () => {
   const fake = boardOf([item(80, 'Coding', 'High'), item(81, 'Review', 'High'), item(82, 'Ready', 'Low')]);
-  const fresh = (card) => card.column === 'Coding' || card.column === 'Review';
+  const forge = { 80: freshFacts(80, 'coding'), 81: freshFacts(81, 'review') };
 
-  const plan = await planOf(fake, { fresh });
+  const plan = await planOf(fake, { forge });
 
   assert.deepEqual(pulled(plan), [82]);
   assert.deepEqual(plan.refusals, []);
