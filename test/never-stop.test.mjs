@@ -1690,9 +1690,17 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
   assert.ok(ended - killed < CLEANUP_BOUND + UNREAPED_BOUND / 2, `the caller ended ${ended - killed} ms after the census's kill, against the cleanup's own bound of ${CLEANUP_BOUND} ms`);
 });
 
+/** Counts state reads under one lock and exposes only a complete published value. */
+const stateCounter = [
+  '  if [ -f "$here/first-inside" ]; then : > "$here/second-attempt"; fi',
+  `  count=$(/usr/bin/lockf -k "$here/state-count.lock" /bin/sh -c 'count=$(/bin/cat "$1/state-count" 2>/dev/null || printf 0); count=$((count + 1)); if [ -f "$1/hold-first" ] && [ "$count" -eq 1 ]; then : > "$1/first-inside"; while [ ! -f "$1/release-first" ]; do :; done; fi; if [ -f "$1/counter-cut-request" ] && [ "$count" -eq 3 ]; then : > "$1/state-count.next"; : > "$1/counter-cut"; exec /usr/bin/tail -f "$1/hold"; fi; printf "%s\\n" "$count" > "$1/state-count.next" && /bin/mv -f "$1/state-count.next" "$1/state-count" || exit 1; printf "%s" "$count"' sh "$here") || exit 79`,
+];
+
 /** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
 async function directoryReadCell(t, { listing, first, second, third, caller, clockCutAt, observe }) {
   const directory = holding(t);
+  // A requested cut holds the third staged write so the final read must see the prior complete count.
+  if (process.env.RIGGER_708_COUNTER_CUT === 'third') writeFileSync(join(directory, 'counter-cut-request'), '');
   const work = await workedIn(t, directory);
   const outside = pidIn(directory, 'outside');
   holdingNone(directory);
@@ -1725,8 +1733,7 @@ async function directoryReadCell(t, { listing, first, second, third, caller, clo
   };
   fixture(directory, 'ps', [
     `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
-    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
-    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    ...stateCounter,
     `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; ${answerFor(first, clockCutAt === 'first' || clockCutAt === 'firstTimeout')}; fi`,
     ...(third ? [`  if [ "$count" -eq 2 ]; then ${answerFor(second)}; fi`] : []),
     `  ${answerFor(third ?? second, clockCutAt === 'second' || clockCutAt === 'reaped' || clockCutAt === 'failed' || clockCutAt === 'thirdFailed')}`,
@@ -1737,6 +1744,7 @@ async function directoryReadCell(t, { listing, first, second, third, caller, clo
   try {
   const result = caller ? { ...await cleanedUpBy(caller, directory, options), pairs: linesOf(directory, 'pairs'), exiting: Number(read(directory, 'exiting')), ended: Date.now() } : await cleanedUp(directory, options);
   assert.equal(result.status, 0, result.stderr);
+  if (process.env.RIGGER_708_COUNTER_CUT === 'third') assert.ok(existsSync(join(directory, 'counter-cut')), 'the third counter write was not interrupted');
   if (observe) {
     assert.ok(killedIn(result.pairs, outside) !== undefined, 'the census did not send the named outside PID its kill');
     return observe({ directory, outside, result, trace: linesOf(directory, 'control.trace.jsonl') });
@@ -1789,6 +1797,7 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
     '  : > "$here/post-kill-listing"',
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-start","argv":"%s"}\\n' "$*" >> "$here/post-kill-trace"`,
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"lsof-end","result":"${listing}"}\\n' >> "$here/post-kill-trace"`,
+    ...(postKillCut && first === 'failed' && second === 'failed' ? ['  : > "$here/clock-cut"'] : []),
     after,
     'fi',
     listed,
@@ -1801,8 +1810,7 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
   })[mode];
   fixture(directory, 'ps', [
     `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
-    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
-    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    ...stateCounter,
     '  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-start","argv":"%s","count":%s}\\n\' "$*" "$count" >> "$here/post-kill-trace"',
     `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":1,"result":"${first}"}\\n' >> "$here/post-kill-trace"; ${answer(first)}; fi`,
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":%s,"result":"${second}"}\\n' "$count" >> "$here/post-kill-trace"; ${postKillCut ? ': > "$here/clock-cut"; ' : ''}${answer(second)}`,
@@ -1839,6 +1847,45 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
   t.diagnostic(JSON.stringify({ cell: { listing, first, second }, pairs: result.pairs, events: result.events, stateReads: read(directory, 'state-count') }));
   return result.events;
 }
+
+test('two concurrent state counter calls hold one lock and preserve both increments', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  writeFileSync(join(directory, 'hold-first'), '');
+  const counter = fixture(directory, 'counter', [
+    ...stateCounter,
+  ].join('\n'));
+  const first = spawn(counter, [], { stdio: 'ignore', env: {} });
+  const firstExit = once(first, 'close');
+  let secondExit;
+  try {
+    await until(() => existsSync(join(directory, 'first-inside')), t);
+    const second = spawn(counter, [], { stdio: 'ignore', env: {} });
+    secondExit = once(second, 'close');
+    await until(() => existsSync(join(directory, 'second-attempt')), t);
+    const probe = spawnSync('/usr/bin/lockf', ['-s', '-t', '0', '-k', join(directory, 'state-count.lock'), '/usr/bin/true'], { env: {} });
+    assert.equal(probe.error, undefined, 'the lock probe could not run');
+    assert.equal(probe.status, 75, 'the first increment did not hold the lock after the second call started');
+  } finally {
+    writeFileSync(join(directory, 'release-first'), '');
+  }
+  const exits = await Promise.all([firstExit, secondExit]);
+  assert.deepEqual(exits, [[0, null], [0, null]], 'both overlapping counter calls must finish');
+  assert.equal(read(directory, 'state-count'), '2', 'one overlapping state read lost its increment');
+});
+
+test('the failed-state read count still rejects a missing second state call', SETTLES_WITHIN, async (t) => {
+  await assert.rejects(
+    directoryReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed', caller: TRACED_CALLER, clockCutAt: 'listing' }),
+    /the plain failed state read was not reached/,
+  );
+});
+
+test('the post-kill counter still rejects a missing second state call', SETTLES_WITHIN, async (t) => {
+  await assert.rejects(
+    postKillReadCell(t, { listing: 'omitted', first: 'failed', second: 'failed', postKillCut: true }),
+    /the plain failed state read was not reached/,
+  );
+});
 
 /** Successful live results returned by the named state stand-in, excluding timed-out partial output. */
 const liveAnswersOf = (trace, directory, pid) => trace.filter(({ kind, tool, args, error, status, stdout }) => kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${pid} -o pid=,stat=` && !error && status === 0 && stdout === `${pid} T\n`);
