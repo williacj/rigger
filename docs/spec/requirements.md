@@ -207,6 +207,8 @@ under the test above.
 | R-LOOP-13 | Rigger never dispatches a role for a card carrying two or more labels that select different tiers for that role. It refuses the card, and the refusal names the role and every such label. | the engine | the test suite | |
 | R-LOOP-14 | A judge takes its role's instructions, and every setting and tool declaration its agent loads, from the repository's main line as the forge held it when Rigger made the judge's directory. It never takes them from the work it judges. | the engine | the test suite | D6 |
 | R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
+| R-LOOP-16 | A role runs on the provider the consumer declares for it, unless a card label the consumer declares selects another provider for that role. Rigger refuses a card carrying two labels that select different providers for one role, naming the role and each label. | the engine | the test suite | D24 |
+| R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
 
 ## R-EVIDENCE — what a judge is given
 
@@ -229,6 +231,7 @@ under the test above.
 | R-VERDICT-4 | A verdict leaving an acceptance item unmet is not sound. | the role prompt | the gate | D2 |
 | R-VERDICT-5 | A verdict is bound to the work it ruled on and to the acceptance it ruled against, so a later reader can tell what it covered. | the engine | the event record, by what each verdict names | D2 |
 | R-VERDICT-6 | A judge returns critical, the verdict for a fault that must not merge, only where no maker revision could resolve that fault without an owner decision. A fault a maker revision could resolve is needs revision. | the role prompt | nothing yet | D14 |
+| R-VERDICT-7 | An agent judge's verdict names the provider it ran on. | the engine, through the judge's instruction | the event record, by the provider each marker.read event names | D24 |
 
 ## R-GATE — what admits a merge
 
@@ -241,7 +244,8 @@ under the test above.
 | R-GATE-5 | — every configured judge has returned a verdict; | the gate | the test suite | |
 | R-GATE-6 | — every one of those verdicts is sound; | the gate | the test suite | |
 | R-GATE-7 | — every one of those verdicts ruled on the work now being merged, and against the card's current acceptance; | the gate | the test suite | D2 |
-| R-GATE-8 | — the consumer's own checks have passed. | the gate | the test suite | |
+| R-GATE-8 | — the consumer's own checks have passed; | the gate | the test suite | |
+| R-GATE-9 | — every configured agent judge's verdict names the provider the configuration requires of that judge for the card, and the owner's verdict names none. | the gate | the test suite | D24 |
 
 ## R-ESCALATE — what reaches the owner
 
