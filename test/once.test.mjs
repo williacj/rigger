@@ -1015,3 +1015,16 @@ for (const { row, extra, code, column, line } of [
     assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'merge.end').map(({ card: number, outcome }) => ({ number, outcome })), [{ number: 10, outcome: code === 0 ? 'merged' : 'refused' }]);
   });
 }
+
+test('once, given two Review cards each ready to merge, finishes one card: it merges the first in pull order and leaves the other in Review', async () => {
+  const head = (card) => String(card).padStart(40, '6');
+  const pullRequest = (card, number) => ({ number, head: `rigger-${card}`, sha: head(card), mergeBase: '7'.repeat(40), comments: [markerComment({ card, pull: number, head: head(card), body: ADMITTED })] });
+  const seed = { pullRequests: [pullRequest(10, 11), pullRequest(20, 21)], mergeable: { 11: 'MERGEABLE', 21: 'MERGEABLE' } };
+
+  const ran = once({ items: [card(10, 'Review'), card(20, 'Review')] }, { seed });
+
+  assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Done', 20: 'Review' });
+  assert.match(ran.out, /card #10 merged pull request #11\b/);
+  assert.doesNotMatch(ran.out, /#20/);
+});

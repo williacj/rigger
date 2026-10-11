@@ -64,9 +64,9 @@ function claiming({ config, board, facts, l2, sink, kill }) {
     /**
      * Fires the pull trigger's read: records the trigger, reads the board, awaits L2's facts call
      * over the cards no claim holds, and claims as many cards as there are free slots and no more
-     * than `limit`, first pulled first, deciding each with the `decide` that call answered, and
-     * claims too every card L2 answered `merge`, which holds no slot and counts toward neither N nor
-     * `limit` (the architect's r2 ruling 3). L3
+     * than `limit` where one is given, first pulled first, deciding each with the `decide` that call
+     * answered. A card L2 answered `merge` holds no slot, so N does not bound it (the architect's r2
+     * ruling 3), and a limit given counts it like any other claim. L3
      * reads nothing of that answer but calls it (the architect's ruling 2, P2, on #467). Every
      * claim is taken in the same synchronous step as the pull order it follows, so no other trigger
      * can claim a card between the two. Answers `claims`, each with its pull, its card, L2's answer
@@ -104,17 +104,15 @@ function claiming({ config, board, facts, l2, sink, kill }) {
         return next;
       });
       const taken = [];
-      let slotted = 0;
       for (const pull of pulls) {
+        if (limit !== undefined && taken.length >= limit) break;
         const next = answers.get(pull.card);
-        // A merge claim holds no slot, so neither N nor the limit bounds it (the architect's r2 ruling 3).
+        // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit
+        // given counts every card claimed, since each claim finishes a card.
         const merge = next.action === 'merge';
-        if (!merge && (slotted >= limit || slots.size >= concurrency)) continue;
+        if (!merge && slots.size >= concurrency) continue;
         claims.add(pull.card);
-        if (!merge) {
-          slots.add(pull.card);
-          slotted += 1;
-        }
+        if (!merge) slots.add(pull.card);
         const card = unclaimed.find((item) => item.number === pull.card);
         taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
       }
@@ -558,7 +556,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * card's work is not over until it settles. `excluded` is this run's cards omitted from later
    * pulls; without it, a single pull keeps no admission memory.
    *
-   * It claims no more than `limit` cards, N where none is given. Settles once every card it
+   * It claims no more than `limit` cards where one is given, merges among them, and otherwise as
+   * many as there are free slots, beside every card L2 answered `merge`. Settles once every card it
    * claimed has been worked, on what each card it claimed answers, in one of these shapes:
    *
    * - a card whose maker ran: `{ card, workspace, outcome, settled }`, naming its number, its
@@ -583,7 +582,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = concurrency, excluded) => {
+  const trigger = async (freed = () => {}, limit = undefined, excluded) => {
     const { claims: claimed, failures } = await take(limit, excluded);
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
@@ -607,12 +606,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   return {
     /**
      * Fires the pull trigger once, as `trigger` says, claiming no more than `limit` cards where one
-     * is given, which caps the limit at N. A limit that is not a positive whole number is refused,
+     * is given, merges among them, and never more slots than N. A limit that is not a positive whole number is refused,
      * naming it, before the board is read.
      */
     pull: async (limit) => {
       refuseLimit(limit);
-      return trigger(() => {}, limit ?? concurrency);
+      return trigger(() => {}, limit);
     },
 
     /**
@@ -637,7 +636,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const failures = [];
       const reached = [];
       const excluded = new Set();
-      const fire = () => trigger(fire, concurrency, excluded).then((each) => {
+      const fire = () => trigger(fire, undefined, excluded).then((each) => {
         reached.push(...each);
       }, (failure) => {
         failures.push(failure);

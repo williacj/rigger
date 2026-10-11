@@ -10,6 +10,10 @@ import {
 } from './loop-world.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { createFakeBoard } from './fake-board.mjs';
+import config from '../rigger.config.mjs';
+import { loop } from '../src/scheduling/loop.mjs';
+import { factsCall } from '../src/workflow/facts.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
 
 /** The kind every card here is, judged by the reviewer alone, so a sound reviewer marker at Review answers `merge`. */
 const REVIEWED = { change: { ...KINDS.change, judges: ['reviewer'] } };
@@ -420,27 +424,36 @@ test('given the merge call times out after the forge merged, the next pull moves
   assert.equal(built.repository.merges().length, 1);
 });
 
-for (const { row, script, merges, column } of [
-  { row: 'before the forge call', script: () => new Promise(() => {}), merges: [1061], column: COLUMNS.done },
-  { row: 'after the forge merged, before the Done move', script: async ({ merge }) => { await merge(); return new Promise(() => {}); }, merges: [], column: COLUMNS.done },
+for (const { row, stop, first: firstMerges, merges } of [
+  {
+    // L2's merge call is entered and holds before it reaches the repository-write side.
+    row: 'before the forge call',
+    stop: (built, reached) => { built.l2.merge = () => { reached(); return new Promise(() => {}); }; },
+    first: [], merges: [1061],
+  },
+  {
+    // The forge merges, and the call then holds before L2 is answered.
+    row: 'after the forge merged, before the Done move',
+    stop: (built, reached) => built.repository.answerMerge(async ({ merge }) => { await merge(); reached(); return new Promise(() => {}); }),
+    first: [1061], merges: [],
+  },
 ]) {
-  test(`given the engine killed ${row}, the next engine's pull ${merges.length > 0 ? 'answers merge again' : 'moves the card to Done and sends no merge'}`, async () => {
+  test(`given the engine killed ${row}, the next engine's pull ${merges.length > 0 ? 'merges the card once' : 'moves the card to Done and sends no merge'}`, async () => {
     const fake = boardOf([cardIn(106, COLUMNS.review)]);
     const first = merging([106], { fake });
-    let reached = false;
-    first.repository.answerMerge((call) => {
-      reached = true;
-      return script(call);
-    });
+    let stopped = false;
+    stop(first, () => { stopped = true; });
     first.loop.pull();
-    await positive(() => reached);
+    await positive(() => stopped);
+    assert.deepEqual(first.repository.merges().map(({ number }) => number), firstMerges);
+    assert.deepEqual(await columnsOf(fake), { 106: COLUMNS.review });
 
     // A second engine, over the board and the forge as the first left them.
     const second = world({ fake, kinds: REVIEWED, forge: first.repository.held() });
     await second.loop.pull();
 
     assert.deepEqual(second.repository.merges().map(({ number }) => number), merges);
-    assert.deepEqual(await columnsOf(fake), { 106: column });
+    assert.deepEqual(await columnsOf(fake), { 106: COLUMNS.done });
   });
 }
 
@@ -534,4 +547,52 @@ test('a pull request changing a Self-hosting path and an authored What-binds doc
 
   assert.deepEqual(built.repository.merges().map(({ number }) => number), [1121]);
   assert.deepEqual(await columnsOf(built.fake), { 112: COLUMNS.done });
+});
+
+test('a pull limited to one card claims one card in all, merge or maker: a merge first in pull order is merged and no Ready maker is dispatched beside it', async () => {
+  // A maker that never starts, so a pull that wrongly dispatched one still settles.
+  const built = merging([113, 114], { others: [readyCard(99)], concurrency: 3, answer: () => new Error('the maker cannot start') });
+
+  const [pulled] = await Promise.allSettled([built.loop.pull(1)]);
+  const reached = pulled.status === 'fulfilled' ? pulled.value : pulled.reason.reached;
+
+  assert.deepEqual(reached.map(({ card, action }) => ({ card, action })), [{ card: 113, action: 'merge' }]);
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [113]);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1131]);
+  assert.deepEqual(await columnsOf(built.fake), { 113: COLUMNS.done, 114: COLUMNS.review, 99: COLUMNS.ready });
+});
+
+test('a pull given no limit, with N 1, takes every merge with no slot beside the one Ready maker the slot admits', async () => {
+  const built = merging([115], { others: [readyCard(98), readyCard(99)], concurrency: 1, answer: () => new Error('the maker cannot start') });
+
+  await built.loop.pull().catch(() => {});
+
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [115, 98]);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1151]);
+});
+
+// proves R-CONFLICT-1
+test('given a card returned for a conflict, the next pull has L1 make its workspace at the pull request\'s head, continuing it, never afresh', async () => {
+  const { built } = await mergedAs(({ repository }) => {
+    repository.update(1011, { mergeable: 'conflicting' });
+    return { outcome: 'refused', reason: 'conflict' };
+  });
+  assert.deepEqual(await columnsOf(built.fake), { 101: COLUMNS.coding });
+  // The next pull, by an engine whose workspace handle records the head L3 hands it, and which
+  // L1 cannot make, so no maker runs and L2 attempts the card twice and stops it.
+  const settings = { ...config, concurrency: 1 };
+  const decide = (card, outcomes, options = {}) => nextAction(card, REVIEWED, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink: built.sink, ...options });
+  const heads = [];
+  const next = loop({
+    config: settings, board: handleOn(built.fake), decide, facts: factsCall({ config: settings, reads: built.repository.operations, decide }),
+    l2: built.l2, sink: built.sink, kill: async () => {}, state: built.directory, environment: {}, judgeDirectory: async () => {},
+    workspace: async (card, head) => {
+      heads.push(head);
+      throw Object.assign(new Error('the workspace is not made here'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });
+    },
+  });
+
+  await next.pull().catch(() => {});
+
+  assert.deepEqual(heads, [shaOf(101), shaOf(101)]);
 });

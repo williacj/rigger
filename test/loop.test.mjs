@@ -392,7 +392,7 @@ test('a merge answer takes a claim, records its pull and holds no slot, leaving 
         comments: [markerComment({ card: 82, pull: 182, head, body: PASSING, role: 'owner' })],
       }] },
     });
-    const fired = mode === 'pull' ? built.loop.pull(1) : built.loop.run();
+    const fired = mode === 'pull' ? built.loop.pull() : built.loop.run();
     await settling(built, settledOf(fired));
 
     assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head });
