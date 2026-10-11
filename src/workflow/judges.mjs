@@ -232,9 +232,9 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
   const agents = declared.judges.filter((role) => role !== OWNER);
-  // In Review the owner's marker is never read, so a kind naming the owner alone has nothing for
-  // L2 to judge there, and moves to Owner reading neither the pull request nor its forge facts.
-  if (agents.length === 0 && card.forge.stage === 'review') return { action: 'move', to: 'owner' };
+  // In Review the owner's marker is never read, so a kind naming the owner alone reads no marker,
+  // and moves to Owner once the forge facts every advance rests on are served.
+  if (agents.length === 0 && card.forge.stage === 'review') return advanced(card, { action: 'move', to: 'owner' });
   // The pull request's number and head as L2's facts call read them from its line of work: only
   // a judge's evidence needs the merge base, which `judgeAnswer` reads.
   const [pull] = card.forge.open;

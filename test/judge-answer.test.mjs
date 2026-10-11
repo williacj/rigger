@@ -1181,3 +1181,13 @@ test('given a Review card whose kind names agent judges and then the owner, ever
     assert.deepEqual(loopAnswer(loopCard({ label, comments })), { action: 'move', to: 'owner' }, `${label}: with every read served, the card moves, so the rows prove something`);
   }
 });
+
+test('given a Review card whose kind names the owner alone and a failed read of the mergeability, the check states or the effective rules, L2 answers no action naming the read, and with every read served it moves the card to Owner', () => {
+  for (const [fact, names] of Object.entries(MERGE_READS)) {
+    const given = loopCard({ label: 'type:decision' });
+    given.forge[fact] = failedRead('gh: HTTP 502');
+
+    assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
+  }
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:decision' })), { action: 'move', to: 'owner' }, 'with every read served, the card moves');
+});

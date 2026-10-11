@@ -25,6 +25,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { makerRuns } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { readsWith } from './loop-world.mjs';
+import { readsServing } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
@@ -73,7 +74,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   const events = () => (existsSync(streamPath(state)) ? readEvents(state) : []);
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(card)] });
   const settings = { ...config, concurrency: 1 };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(oneOpenFromEveryLine) });
   const settled = [];
   const l2 = {
     claimed: changes.claimed,

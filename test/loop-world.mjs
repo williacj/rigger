@@ -534,6 +534,13 @@ export const factsOverNothing = (config, decide) => factsCall({ config, reads: c
  */
 export const readsWith = (read) => ({ ...createFakeRepository().operations, readPullRequests: read });
 
+/**
+ * `readsWith(read)`, whose reads of the pull request's mergeability, its base branch's effective
+ * rules and its check states also answer for the pull request `read` serves: mergeability the
+ * forge cannot yet say, no required check, and so no check state.
+ */
+export const readsServing = (read) => ({ ...readsWith(read), readMergeable: async () => 'unknown', readEffectiveRules: async () => [], readCheckStates: async () => ({}) });
+
 /** The SHA the pull request `oneOpenFromEveryLine` answers is at. */
 const OPEN_HEAD = '0'.repeat(40);
 

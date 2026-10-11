@@ -26,6 +26,7 @@ import { makerRuns, positive } from './loop-world.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
 import { readsWith } from './loop-world.mjs';
+import { readsServing } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
 /** The stand-in agent every maker in this file runs as, first on the PATH each loop is handed. */
@@ -88,7 +89,7 @@ function attemptWorld({
     const opened = agent.act(number, 'engineer')?.pr || makerCalls.some(({ start }) => start.card.number === number);
     return { open: opened ? [{ number: 900 + number, head: String(number).padStart(40, 'e'), base: 'main' }] : [], merged: [] };
   };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(forgeOfAgent) });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(forgeOfAgent) });
   const l2 = {
     claimed: changes.claimed,
     settled: (card, outcome) => {
@@ -363,7 +364,7 @@ const SETTLED_ONE = {
   pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeBase has nothing to read') },
   diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readDiff has nothing to read') },
   comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readComments has nothing to read') },
-  mergeable: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readMergeable has nothing to read') },
+  mergeable: { status: 'fulfilled', value: 'unknown' },
   rules: { status: 'fulfilled', value: [] },
   checks: { status: 'fulfilled', value: {} },
 };
@@ -448,7 +449,7 @@ test('columnChanges reads neither kinds nor provisioning', async () => {
     },
   });
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)] });
-  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) });
+  const changes = columnChanges({ config: settings, sink: { emitter: () => ({ emit: () => {} }) }, items: fake.operations, reads: readsServing(oneOpenFromEveryLine) });
   const [card] = (await fake.operations.readPriority()).items;
 
   await changes.claimed(card);
