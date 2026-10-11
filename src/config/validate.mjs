@@ -90,6 +90,15 @@ export const SHAPES = {
     // (`ARCHITECTURE.md`, below the extension-point table).
     labels: {},
     timeout: {},
+    // Optional: a card label mapped to the provider it selects for this role. A role declaring
+    // none runs on its `provider` (`ARCHITECTURE.md`, below the extension-point table).
+    providerLabels: {},
+  },
+  // A judge entry that is not a plain role name: the role, and its provider rule, a provider name
+  // or a map from the maker's provider to the judge's (`D24` rule 1). The owner is never one.
+  judge: {
+    role: { required: true },
+    provider: { required: true },
   },
   kind: {
     select: { required: true, keys: 'select' },
@@ -128,6 +137,9 @@ export const SHAPES = {
  * is the one judge that is not a role, which is why a kind may name it and `roles` may not.
  */
 export const OWNER = 'owner';
+
+/** The role a kind's judge entry names: the entry itself where it is a role name, or its `role`. */
+export const judgeRole = (entry) => (typeof entry === 'string' ? entry : entry?.role);
 
 /**
  * The escalation categories, which are Rigger's and not the consumer's (`R-ESCALATE-3`). A
@@ -289,21 +301,26 @@ function readKinds(config, refusals) {
       refusals.push(`\`${where}.judges\` must be an ordered list naming at least one judge`);
       continue;
     }
+    // Every check below reads an entry's role through `judgeRole`, whichever form names it (`D24`
+    // rule 1). An entry that is neither form earns its one refusal here, and names no role to check.
+    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roles[kind.maker]), refusals));
+    const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.
-    if (kind.judges.includes(kind.maker)) {
+    if (named.includes(kind.maker)) {
       refusals.push(`\`${where}\` names \`${kind.maker}\` as both its maker and one of its judges, and no judge is the maker`);
     }
     // Each judge of a card runs in a directory named for its role, so a judge named twice would
     // be two dispatches sharing one directory (ruling 1 Q3 on #467; `R-WORK-12`). The owner is
     // never dispatched, and named twice is named before last, which the owner's own rule below
     // refuses.
-    const repeated = kind.judges.filter((judge, position) => judge !== OWNER && kind.judges.indexOf(judge) !== position);
+    const repeated = named.filter((judge, position) => formed[position] && judge !== undefined && judge !== OWNER && named.indexOf(judge) !== position);
     for (const judge of new Set(repeated)) {
       refusals.push(`\`${where}.judges\` names \`${judge}\` more than once, and each judge of a card has a directory of its own`);
     }
-    kind.judges.forEach((judge, position) => {
-      if (judge !== OWNER && !Object.hasOwn(roles, judge)) {
+    named.forEach((judge, position) => {
+      if (!formed[position]) return;
+      if (judge !== OWNER && !(typeof judge === 'string' && Object.hasOwn(roles, judge))) {
         refusals.push(`\`${where}.judges\` names \`${judge}\`, which is no role the config declares`);
       }
       // The owner judges last if at all (`R-LOOP-11`), so the owner is asked once every agent
@@ -313,6 +330,70 @@ function readKinds(config, refusals) {
       }
     });
   }
+}
+
+/**
+ * The providers the maker declared as `maker` can run on: its `provider`, and each provider its
+ * `providerLabels` selects, where each is a name. A maker that declares neither runs on none the
+ * validator can read, and earned its refusal where its role was read.
+ */
+function makerProviders(maker) {
+  if (!declares(maker)) return [];
+  const labelled = mapsNamesToStrings(maker.providerLabels) ? Object.values(maker.providerLabels) : [];
+  return [...new Set([maker.provider, ...labelled].filter(names))];
+}
+
+/** Whether `provider` names a provider Rigger has an adapter for, read from L0's adapter map. */
+const adapted = (provider) => typeof provider === 'string' && Object.hasOwn(ADAPTERS, provider);
+
+/**
+ * Whether a value is a plain object whose every enumerable own key is a name: what `mapsNamesToStrings`
+ * asks of an object besides the type of its values.
+ */
+function plainWithNamedKeys(value) {
+  if (!declares(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (Object.getOwnPropertySymbols(value).some((symbol) => Object.getOwnPropertyDescriptor(value, symbol).enumerable)) return false;
+  return Object.keys(value).every(names);
+}
+
+/**
+ * What one entry of a kind's `judges` may be, sitting at `where`: a role name, or an object holding
+ * exactly `role` and `provider`, whose `provider` is a provider Rigger has an adapter for, or a map
+ * from each provider in `providers`, those the kind's maker can run on, to one (`D24` rule 1). The
+ * entry object and a map are read as a role's `labels` is (`mapsNamesToStrings`). The owner has no
+ * provider, so it is written only as a plain name. It answers whether the entry is either form, so
+ * the kind's checks read a role from it through `judgeRole`.
+ */
+function readJudgeEntry(entry, where, providers, refusals) {
+  if (typeof entry === 'string') return true;
+  if (!declares(entry)) {
+    refusals.push(`\`${where}\` is neither a role name nor \`{ role, provider }\`, and the config gives ${inspect(entry)}`);
+    return false;
+  }
+  readShape(entry, 'judge', where, refusals);
+  if (judgeRole(entry) === OWNER) {
+    refusals.push(`\`${where}\` names \`${OWNER}\` as \`{ role, provider }\`, and the owner, who has no provider, is written only as a plain name`);
+  }
+  const { provider } = entry;
+  if (typeof provider === 'string') {
+    if (!mapsNamesToStrings(entry)) refusals.push(`\`${where}\` must be a plain object of names to strings, and the config gives ${inspect(entry)}`);
+    else if (!adapted(provider)) refusals.push(`\`${where}.provider\` names ${inspect(provider)}, which is no provider Rigger has an adapter for`);
+  } else if (Object.hasOwn(entry, 'provider')) {
+    if (!plainWithNamedKeys(entry)) refusals.push(`\`${where}\` must be a plain object of names, and the config gives ${inspect(entry)}`);
+    if (!mapsNamesToStrings(provider)) {
+      refusals.push(`\`${where}.provider\` must be a provider name or map provider names to provider names, and the config gives ${inspect(provider)}`);
+    } else {
+      for (const [from, to] of Object.entries(provider)) {
+        for (const named of [from, to]) {
+          if (!adapted(named)) refusals.push(`\`${where}.provider\` maps ${inspect(named)}, which is no provider Rigger has an adapter for`);
+        }
+      }
+      for (const held of providers) {
+        if (!Object.hasOwn(provider, held)) refusals.push(`\`${where}.provider\` holds no key for \`${held}\`, a provider the kind's maker can run on`);
+      }
+    }
+  }
+  return true;
 }
 
 /**
@@ -359,6 +440,20 @@ function readTierLabels(labels, where, refusals) {
 }
 
 /**
+ * What a role's `providerLabels` may be: card labels, each mapped to the provider it selects for
+ * the role, read as `labels` is, and each a provider Rigger has an adapter for.
+ */
+function readProviderLabels(labels, where, refusals) {
+  if (!mapsNamesToStrings(labels)) {
+    refusals.push(`\`${where}\` must map label names to providers, and the config gives ${inspect(labels)}`);
+    return;
+  }
+  for (const [label, provider] of Object.entries(labels)) {
+    if (!adapted(provider)) refusals.push(`\`${where}\` maps \`${label}\` to ${inspect(provider)}, which is no provider Rigger has an adapter for`);
+  }
+}
+
+/**
  * What each role may be: a name holding no `/`, and declarations naming a provider Rigger has an
  * adapter for, the tier it runs at, the labels that select another, and the time it may run.
  */
@@ -385,10 +480,11 @@ function readRoles(roles, refusals) {
     }
     // L0's adapter map holds every provider a role can name, so the names are its and never
     // typed here (ruling 3 P11 on #467; `D8`).
-    if (Object.hasOwn(role, 'provider') && !(typeof role.provider === 'string' && Object.hasOwn(ADAPTERS, role.provider))) {
+    if (Object.hasOwn(role, 'provider') && !adapted(role.provider)) {
       refusals.push(`\`${where}.provider\` names ${inspect(role.provider)}, which is no provider Rigger has an adapter for`);
     }
     if (Object.hasOwn(role, 'labels')) readTierLabels(role.labels, `${where}.labels`, refusals);
+    if (Object.hasOwn(role, 'providerLabels')) readProviderLabels(role.providerLabels, `${where}.providerLabels`, refusals);
     readTimeout(role, where, refusals);
   }
 }
@@ -632,8 +728,8 @@ export function selectedLabels(config) {
 
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
- * epic label where it declares one, then those its roles' `labels` map to a tier, roles in the
- * order declared. These are the labels `setup-board` gives the repository. Two names GitHub holds
+ * epic label where it declares one, then those its roles' `labels` map to a tier, then those
+ * its roles' `providerLabels` map to a provider, roles in the order declared. These are the labels `setup-board` gives the repository. Two names GitHub holds
  * as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
@@ -641,6 +737,7 @@ export function declaredLabels(config) {
     ...selectedLabels(config),
     ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : []),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.labels ?? {})),
+    ...Object.values(config.roles).flatMap((role) => Object.keys(role.providerLabels ?? {})),
   ];
   return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));
 }

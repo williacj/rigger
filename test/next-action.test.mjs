@@ -9,6 +9,8 @@ import { readFileSync } from 'node:fs';
 import config from '../rigger.config.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { panelOf, providerOf } from '../src/workflow/next-action.mjs';
+import * as nextActionModule from '../src/workflow/next-action.mjs';
 
 /** Two kinds, each selected by one label, in the shape a config's `kinds` takes. */
 const KINDS = {
@@ -176,7 +178,7 @@ const cardInColumn = (number, column) => ({ ...card(number, ['type:change']), co
  */
 function withFacts(number, column, stage, sound) {
   const head = 'a'.repeat(40);
-  const marker = composeMarker({ card: number, pull: 10 * number, head, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const marker = composeMarker({ card: number, pull: 10 * number, head, digest: acceptanceDigest(PASSING), role: 'reviewer', provider: 'claude', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
   const read = (value) => ({ status: 'fulfilled', value });
   const forge = sound
     ? {
@@ -238,5 +240,101 @@ test('nextAction no longer accepts an injected fresh: given { fresh: () => true 
 
     assert.equal(next.action, 'judge', JSON.stringify(next));
     assert.deepEqual(next.judges.map((judge) => judge.role), ['reviewer']);
+  }
+});
+
+/**
+ * Roles for the provider cells below, written by hand: the maker `engineer` on `claude` unless a
+ * `maker:codex` card label selects `codex`, and `reviewer` and `architect` on `claude`, `reviewer`
+ * selecting `codex` where a card carries `judge:codex`.
+ */
+const PROVIDER_ROLES = {
+  engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard', providerLabels: { 'maker:codex': 'codex', 'maker:claude': 'claude' } },
+  reviewer: { agent: '.claude/agents/reviewer.md', provider: 'claude', tier: 'high', providerLabels: { 'judge:codex': 'codex', 'judge:claude': 'claude' } },
+  architect: { agent: '.claude/agents/architect.md', provider: 'claude', tier: 'high' },
+};
+
+/** A `change` kind made by `engineer` and judged by `judges`. */
+const judgedBy = (judges) => ({ select: { labels: ['type:change'] }, maker: 'engineer', judges });
+
+// proves R-LOOP-16
+test('a maker carrying none of its providerLabels runs on its provider, and one carrying a selecting label on the provider it selects', () => {
+  assert.deepEqual(providerOf(card(1, ['type:change']), 'engineer', PROVIDER_ROLES.engineer), { provider: 'claude' });
+  assert.deepEqual(providerOf(card(1, ['type:change', 'maker:codex']), 'engineer', PROVIDER_ROLES.engineer), { provider: 'codex' });
+  assert.deepEqual(providerOf(card(1, ['type:change', 'Maker:Codex']), 'engineer', PROVIDER_ROLES.engineer), { provider: 'codex' });
+});
+
+// proves R-LOOP-16
+test('a card carrying two labels that select different providers for one role is a conflict naming the role and each label', () => {
+  const answer = providerOf(card(1, ['type:change', 'maker:codex', 'maker:claude']), 'engineer', PROVIDER_ROLES.engineer);
+  assert.equal(answer.provider, undefined);
+  assert.match(answer.conflict, /`engineer`/);
+  assert.match(answer.conflict, /maker:codex \(codex\)/);
+  assert.match(answer.conflict, /maker:claude \(claude\)/);
+});
+
+// proves R-LOOP-16
+test('nextAction refuses a card whose labels select two providers for its maker, naming the role and each label, and dispatches its maker on the provider providerOf answers', () => {
+  const kinds = { change: judgedBy(['reviewer']) };
+  const given = card(30, ['type:change', 'maker:codex', 'maker:claude']);
+  const before = structuredClone(given);
+  const refused = nextAction(given, kinds, undefined, { roles: PROVIDER_ROLES });
+  assert.deepEqual(given, before, 'L2 changed the card it refused');
+  assert.equal(refused.action, 'refuse', JSON.stringify(refused));
+  assert.match(refused.reason, /`engineer`.*maker:codex \(codex\).*maker:claude \(claude\)/);
+  const sink = { emitter: () => ({ emit: () => {} }) };
+  for (const [labels, provider] of [[[], 'claude'], [['maker:codex'], 'codex']]) {
+    const next = nextAction(card(31, ['type:change', ...labels]), kinds, undefined, { roles: PROVIDER_ROLES, provisioning: {}, sink });
+    assert.equal(next.maker?.provider, provider, JSON.stringify(next));
+    assert.equal(next.maker.agent, '.claude/agents/engineer.md');
+  }
+});
+
+// proves R-LOOP-16, R-LOOP-17
+test('the panel function answers each judge entry in the kind\'s order: the owner by its role, a plain name on its role\'s provider label-selected, a fixed rule on its provider, and a map on its value for the maker\'s provider', () => {
+  const kind = judgedBy([
+    'reviewer',
+    { role: 'architect', provider: 'codex' },
+    'owner',
+  ]);
+  assert.deepEqual(panelOf(card(1, ['type:change']), kind, PROVIDER_ROLES), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'codex' }, { role: 'owner' }]);
+  assert.deepEqual(panelOf(card(1, ['type:change', 'judge:codex']), kind, PROVIDER_ROLES), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }, { role: 'owner' }]);
+  const mapped = judgedBy([{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, 'owner']);
+  assert.deepEqual(panelOf(card(1, ['type:change']), mapped, PROVIDER_ROLES), [{ role: 'reviewer', provider: 'codex' }, { role: 'owner' }]);
+  assert.deepEqual(panelOf(card(1, ['type:change', 'maker:codex']), mapped, PROVIDER_ROLES), [{ role: 'reviewer', provider: 'claude' }, { role: 'owner' }]);
+});
+
+// proves R-LOOP-17
+test('a judge entry carrying a rule reads neither its role\'s provider nor its providerLabels, so labels selecting two providers for that role are no conflict', () => {
+  const given = card(1, ['type:change', 'judge:codex', 'judge:claude']);
+  assert.deepEqual(panelOf(given, judgedBy([{ role: 'reviewer', provider: 'codex' }]), PROVIDER_ROLES), [{ role: 'reviewer', provider: 'codex' }]);
+  assert.deepEqual(panelOf(given, judgedBy([{ role: 'reviewer', provider: { claude: 'claude' } }]), { ...PROVIDER_ROLES, reviewer: { ...PROVIDER_ROLES.reviewer, provider: 'codex' } }), [{ role: 'reviewer', provider: 'claude' }]);
+});
+
+// proves R-LOOP-16
+test('the panel function answers one conflict in place of every entry where the card\'s labels select two providers for the maker or for a plain-named judge', () => {
+  const kind = judgedBy(['reviewer', { role: 'architect', provider: 'codex' }, 'owner']);
+  const maker = panelOf(card(1, ['type:change', 'maker:codex', 'maker:claude']), kind, PROVIDER_ROLES);
+  assert.equal(maker.length, 1, JSON.stringify(maker));
+  assert.deepEqual(Object.keys(maker[0]), ['conflict']);
+  assert.match(maker[0].conflict, /`engineer`.*maker:codex \(codex\).*maker:claude \(claude\)/);
+  const judge = panelOf(card(1, ['type:change', 'judge:codex', 'judge:claude']), kind, PROVIDER_ROLES);
+  assert.equal(judge.length, 1, JSON.stringify(judge));
+  assert.match(judge[0].conflict, /judge role `reviewer`.*judge:codex \(codex\).*judge:claude \(claude\)/);
+});
+
+test('the panel function and providerOf are exported from next-action.mjs beside tierOf', () => {
+  for (const name of ['panelOf', 'providerOf', 'tierOf']) assert.equal(typeof nextActionModule[name], 'function', name);
+});
+
+// proves R-LOOP-16, R-GATE-9
+test('handed this repository\'s config, the panel function requires every kind\'s agent judges to run on claude, the provider their plain role names yield, and answers the owner by its role', () => {
+  for (const [name, kind] of Object.entries(config.kinds)) {
+    const panel = panelOf(card(1, kind.select.labels), kind, config.roles);
+    assert.equal(panel.length, kind.judges.length, `${name}: ${JSON.stringify(panel)}`);
+    for (const entry of panel) {
+      if (entry.role === 'owner') assert.deepEqual(entry, { role: 'owner' }, name);
+      else assert.equal(entry.provider, 'claude', `${name}: ${entry.role}`);
+    }
   }
 });

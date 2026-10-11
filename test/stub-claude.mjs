@@ -327,7 +327,7 @@ export async function standInMain() {
 
 /**
  * The marker a judge handed `input` writes from the marker block its instruction shows: the
- * block's card, pull request, head, digest, role and evidence digest, its dispatch id where L3
+ * block's card, pull request, head, digest, role, provider and evidence digest, its dispatch id where L3
  * filled one in, sound, every item it lists met, and the acceptance covered. Nothing where the
  * input shows no block.
  */
@@ -343,6 +343,7 @@ function instructedMarker(input) {
     head: given.head,
     digest: given.digest,
     role: given.role,
+    provider: given.provider,
     verdict: 'sound',
     items: block.filter((line) => /^item \d+: /.test(line)).map(() => 'met'),
     coverage: 'covered',

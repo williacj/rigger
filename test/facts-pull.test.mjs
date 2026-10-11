@@ -455,7 +455,7 @@ const atDigest = (written, digest, createdAt = written.createdAt) => ({ body: wr
 /** L2's answer for `card`, through its facts call over a forge holding `pullRequests`, under `kinds`. */
 async function answeredFromTheForge(card, pullRequests, kinds) {
   const repository = createFakeRepository({ pullRequests });
-  const decide = (each) => nextAction(each, kinds, undefined, { sink: quiet });
+  const decide = (each) => nextAction(each, kinds, undefined, { roles: config.roles, sink: quiet });
   return (await factsCall({ config, reads: repository.operations, decide })([card]))(card);
 }
 
@@ -463,7 +463,7 @@ test('through L2\'s facts call, an Owner card\'s markers are read at the card\'s
   const sha = pullFrom(61, 611).sha;
   const opened = (comments) => [{ ...pullFrom(61, 611), mergeable: 'mergeable', comments }];
   const reviewer = reviewerMarker(61, 611, sha);
-  const owner = { ...reviewerMarker(61, 611, sha), body: reviewerMarker(61, 611, sha).body.replace('role: reviewer', 'role: owner'), createdAt: '2026-10-01T11:05:00Z' };
+  const owner = { ...reviewerMarker(61, 611, sha), body: reviewerMarker(61, 611, sha).body.replace('role: reviewer\nprovider: claude', 'role: owner'), createdAt: '2026-10-01T11:05:00Z' };
   const card = cardIn(61, COLUMNS.owner);
 
   assert.deepEqual(await answeredFromTheForge(card, opened([reviewer, owner]), OWNED), { action: 'merge', pull: 611, head: sha });

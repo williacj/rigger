@@ -100,7 +100,7 @@ export function judgeWorld({
           }
           if (context.layer === 'L1' && event === 'dispatch.end' && fields.exit === 0) {
             if (makers.has(context.dispatch)) repository.open(pullFor(context.card));
-            if (judging.has(context.dispatch)) repository.comment(1000 + context.card, soundMarker(context.card, judging.get(context.dispatch)), new Date().toISOString());
+            if (judging.has(context.dispatch)) repository.comment(1000 + context.card, soundMarker(context.card, judging.get(context.dispatch), roles[judging.get(context.dispatch)]?.provider), new Date().toISOString());
           }
         },
       };
@@ -144,9 +144,9 @@ export function judgeWorld({
   };
 }
 
-/** A sound marker of `role` for card `number`'s pull request at `HEAD`, every item of the `PASSING` acceptance met. */
-const soundMarker = (number, role) => composeMarker({
-  card: number, pull: 1000 + number, head: HEAD, digest: acceptanceDigest(PASSING), role, verdict: 'sound', items: acceptanceItems(PASSING).map(() => 'met'), coverage: 'covered',
+/** A sound marker of `role`, run on `provider`, for card `number`'s pull request at `HEAD`, every item of the `PASSING` acceptance met. */
+const soundMarker = (number, role, provider) => composeMarker({
+  card: number, pull: 1000 + number, head: HEAD, digest: acceptanceDigest(PASSING), role, provider, verdict: 'sound', items: acceptanceItems(PASSING).map(() => 'met'), coverage: 'covered',
 }, `Sound, by ${role}`);
 
 /** The events of `events` for which `match` holds, by layer and name, among those `built` recorded. */
