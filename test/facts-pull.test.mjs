@@ -159,6 +159,24 @@ test('given a Review card with a merged pull request, L3 has L2 move it to Done 
   assert.deepEqual(built.decisions.map(({ action }) => action), [{ action: 'move', to: 'done' }]);
   assert.deepEqual(pulledIn(built), [3]);
   assert.deepEqual(await columnsOf(built.fake), { 3: COLUMNS.done });
+  assert.deepEqual(built.events().filter(({ event }) => event === 'transition').map(({ card, from, to, cause }) => ({ card, from, to, cause })), [
+    { card: 3, from: 'review', to: 'done', cause: 'merged' },
+  ]);
+  assert.deepEqual(workspace.asked, []);
+  assert.deepEqual(built.repository.held(), before);
+});
+
+// proves R-WORK-5
+test('given an Owner card with a merged pull request, L3 has L2 move it to Done and records mergedFromOwner', async () => {
+  const workspace = recordingWorkspaces();
+  const built = world({ cards: [cardIn(8, COLUMNS.owner)], concurrency: 1, forge: { pullRequests: [pullFrom(8, 81, true)] }, workspace });
+  const before = built.repository.held();
+
+  assert.deepEqual(await built.loop.pull(), [{ card: 8, action: 'move', to: 'done' }]);
+  assert.deepEqual(await columnsOf(built.fake), { 8: COLUMNS.done });
+  assert.deepEqual(built.events().filter(({ event }) => event === 'transition').map(({ card, from, to, cause }) => ({ card, from, to, cause })), [
+    { card: 8, from: 'owner', to: 'done', cause: 'mergedFromOwner' },
+  ]);
   assert.deepEqual(workspace.asked, []);
   assert.deepEqual(built.repository.held(), before);
 });

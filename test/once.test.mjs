@@ -229,11 +229,12 @@ test('once moves an Owner card to Review, then dispatches its owed reviewer on t
   const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } };
   const prepare = ({ consumer, fake }) => {
     const base = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+    const initialBranch = gitIn(consumer, 'symbolic-ref', '--short', 'HEAD').trim();
     gitIn(consumer, 'checkout', '-q', '-b', 'rigger-10');
     gitIn(consumer, 'commit', '-q', '--allow-empty', '-m', 'work for review');
     const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
     gitIn(consumer, 'push', '-q', 'origin', 'rigger-10');
-    gitIn(consumer, 'checkout', '-q', 'main');
+    gitIn(consumer, 'checkout', '-q', initialBranch);
     const reviewer = markerComment({ card: 10, pull: 11, head, body: ADMITTED });
     const oldReviewer = { ...reviewer, body: reviewer.body.replace(/digest: [0-9a-f]{64}/, `digest: ${'f'.repeat(64)}`) };
     const owner = markerComment({ card: 10, pull: 11, head, body: ADMITTED, role: 'owner', createdAt: '2026-10-01T11:05:00Z' });
@@ -464,11 +465,12 @@ test('given a stand-in that opens a pull request, the world\'s local origin hold
 /** Put a governed pull request at a local head that a continuing maker can check out. */
 const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting = false } = {}) => ({ consumer, fake }) => {
   const base = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  const initialBranch = gitIn(consumer, 'symbolic-ref', '--short', 'HEAD').trim();
   gitIn(consumer, 'checkout', '-q', '-b', 'rigger-10');
   gitIn(consumer, 'commit', '-q', '--allow-empty', '-m', 'work for review');
   const oldHead = gitIn(consumer, 'rev-parse', 'HEAD').trim();
   gitIn(consumer, 'push', '-q', 'origin', 'rigger-10');
-  gitIn(consumer, 'checkout', '-q', 'main');
+  gitIn(consumer, 'checkout', '-q', initialBranch);
   const sound = markerComment({ card: 10, pull: 11, head: oldHead, body: ADMITTED });
   const revision = markerComment({ card: 10, pull: 11, head: oldHead, body: ADMITTED, role: ruling, verdict: 'needs revision', items: ['unmet'], toSound: 'Print a help line.' });
   const comments = [owner || conflicting ? sound : revision, ...(owner ? [revision] : [])];
