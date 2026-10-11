@@ -232,7 +232,8 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
   const agents = declared.judges.filter((role) => role !== OWNER);
-  // In Review the owner's marker is never read, so a kind naming the owner alone reads nothing.
+  // In Review the owner's marker is never read, so a kind naming the owner alone has nothing for
+  // L2 to judge there, and moves to Owner reading neither the pull request nor its forge facts.
   if (agents.length === 0 && card.forge.stage === 'review') return { action: 'move', to: 'owner' };
   // The pull request's number and head as L2's facts call read them from its line of work: only
   // a judge's evidence needs the merge base, which `judgeAnswer` reads.
@@ -257,7 +258,7 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const revising = agents.filter((role, at) => states[at] === 'revision');
   if (revising.length > 0 && roundsOf(comments, round, agents) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
   if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
-  if (declared.judges.includes(OWNER)) return { action: 'move', to: 'owner' };
+  if (declared.judges.includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
   return mergeAnswer(card, declared.judges, pull, comments, round);
 }
 
@@ -346,21 +347,33 @@ function returned(card, pull, comments, { role, head, digest, coverageReason }) 
 /** The rounds a kind gets where it declares none (`R-LOOP-9`). */
 const ROUNDS = 3;
 
-/** The item lines a comment's text holds, each `item <n>: …`, which a marker block writes one per acceptance item. */
+/** The lines of a comment's text that look like a marker's item line, `item <n>: …`, inside its block or not. */
 const ITEM_LINE = /^item \d+:/gm;
+
+/**
+ * The readable markers `comment` holds for `round`, read against the item count its own block
+ * rules on, whatever acceptance it ruled against. A block parses against exactly the count of the
+ * items it rules on, so it is read against each count up to the item-like lines the comment holds,
+ * prose after the block included, and the count it parses against is its own.
+ */
+function readableAtAnyCount(comment, round) {
+  for (let count = (String(comment.body).match(ITEM_LINE) ?? []).length; count >= 0; count -= 1) {
+    const { markers } = readMarkers([comment], { ...round, count });
+    if (markers.length > 0) return markers;
+  }
+  return [];
+}
 
 /**
  * The rounds a card's pull request has spent, from its `comments` read for `round`: the distinct
  * (head, digest) pairs at which a readable, unedited marker of one of `agents` stands, a pair at a
  * head the pull request no longer holds included (the architect's r2 ruling 7 on #642). A marker
- * from an earlier acceptance ruled on that acceptance's items, however many it held, so each
- * comment is read against the count of items its own block rules on: a marker valid against its
- * own acceptance spends its round after an item is added or removed.
+ * from an earlier acceptance ruled on that acceptance's items, however many it held, so each is
+ * read as `readableAtAnyCount` reads it: a marker valid against its own acceptance spends its round
+ * after an item is added or removed, and whatever prose its comment holds.
  */
 function roundsOf(comments, round, agents) {
-  const pairs = comments
-    .filter((comment) => !comment.edited)
-    .flatMap((comment) => readMarkers([comment], { ...round, count: (String(comment.body).match(ITEM_LINE) ?? []).length }).markers);
+  const pairs = comments.filter((comment) => !comment.edited).flatMap((comment) => readableAtAnyCount(comment, round));
   return new Set(pairs.filter((marker) => agents.includes(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
 }
 
@@ -394,6 +407,21 @@ function stateOf(governing) {
 }
 
 /**
+ * The forge facts every advance of a Review or Owner card rests on, `card`'s mergeability, its base
+ * branch's effective rules and its check states, each held, so a failed read of any one answers no
+ * action naming it, whatever the others answered (the answers table's failed-read row).
+ */
+function forgeFacts(card) {
+  return { mergeable: held(card, 'mergeable'), rules: held(card, 'rules'), states: held(card, 'checks') };
+}
+
+/** `answer`, L2's advance of `card`, once every read `forgeFacts` holds was served. */
+function advanced(card, answer) {
+  forgeFacts(card);
+  return answer;
+}
+
+/**
  * L2's merge decision for `card` once every one of `judges` is sound at `pull`'s head. Where the
  * forge reads the pull request as conflicting, the card's maker continues on it (`R-CONFLICT-1`);
  * where its mergeability is unknown, L2 answers `ignore`, naming it (the architect's r2 ruling 5).
@@ -405,11 +433,7 @@ function stateOf(governing) {
  * whatever the other reads answered.
  */
 function mergeAnswer(card, judges, pull, comments, round) {
-  // Every read the decision rests on is held before any answer, so no reading of one stands in
-  // for another's failure.
-  const mergeable = held(card, 'mergeable');
-  const rules = held(card, 'rules');
-  const states = held(card, 'checks');
+  const { mergeable, rules, states } = forgeFacts(card);
   if (mergeable === 'conflicting') return continued(pull, [], []);
   if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}` };
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));

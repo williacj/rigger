@@ -1151,3 +1151,33 @@ test('given every agent judge and the owner sound and a required check pending o
     assert.match(next.reason, new RegExp(`\\bci\\b.*${state}`), state);
   }
 });
+
+// proves R-LOOP-8, R-LOOP-9
+test('an earlier marker whose comment holds item-like prose after its closed block still spends its round: at a changed digest, at a changed head, two at one pair counting one, under a bound of two and under the default of three', () => {
+  const prose = (written) => ({ ...written, body: `${written.body}\nitem 1: ordinary text a person wrote after the block\nitem 9: more of it\n` });
+  const earlier = (at, moved, ruling = RULING.m9) => prose(movedTo(markerOf({ role: 'reviewer', ...ruling }), { ...moved, at }));
+  for (const written of [earlier(1, { digest: OTHER_DIGEST }), earlier(1, { head: EARLIER })]) {
+    assert.equal(parseMarker(written.body, 2).state, 'marker', 'the earlier marker is readable against its own acceptance, so the test proves something');
+  }
+  const bounded = (comments) => loopAnswer(loopCard({ label: 'type:bounded', comments: [...comments, ...revisingNow()] }));
+  const ambiguous = { action: 'escalate', category: 'ambiguous' };
+
+  assert.deepEqual(bounded([earlier(1, { digest: OTHER_DIGEST })]), ambiguous, 'at a changed digest');
+  assert.deepEqual(bounded([earlier(1, { head: EARLIER })]), ambiguous, 'at a changed head');
+  const pair = [earlier(1, { head: EARLIER }), prose(movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 }))];
+  assert.deepEqual(bounded(pair), ambiguous, 'two at one earlier pair spend its round');
+  assert.equal(loopAnswer(loopCard({ comments: [...pair, ...revisingNow()] })).action, 'continue', 'two at one earlier pair count one round, not two, under the default of three');
+  assert.deepEqual(loopAnswer(loopCard({ comments: [earlier(1, { head: EARLIER }), earlier(2, { head: LATER }), ...revisingNow()] })), ambiguous, 'under the default bound of three');
+});
+
+test('given a Review card whose kind names agent judges and then the owner, every agent judge sound, and a failed read of the mergeability, the check states or the effective rules, L2 answers no action naming the read rather than a move to Owner', () => {
+  for (const [label, comments] of [['type:spec', allSound()]]) {
+    for (const [fact, names] of Object.entries(MERGE_READS)) {
+      const given = loopCard({ label, comments });
+      given.forge[fact] = failedRead('gh: HTTP 502');
+
+      assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), `${label}, ${fact}`);
+    }
+    assert.deepEqual(loopAnswer(loopCard({ label, comments })), { action: 'move', to: 'owner' }, `${label}: with every read served, the card moves, so the rows prove something`);
+  }
+});
