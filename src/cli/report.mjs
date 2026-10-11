@@ -1,5 +1,5 @@
-// ABOUTME: The `report` verb: prints the signals L5's report derives from the event stream in the
-// consumer's state directory, each beside the facts it was computed from, and refuses its own source tree.
+// ABOUTME: The `report` verb: prints L5's derived signals and unmatched marker reads from the
+// consumer's event stream, and refuses its own source tree.
 
 import { join } from 'node:path';
 
@@ -43,7 +43,16 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
   } catch (refused) {
     return { text: `rigger report: ${refused.message}, so no signal is derived`, code: 1 };
   }
-  const { path, runs } = derived;
+  const { path, runs, markers } = derived;
   if (runs === null) return { text: `rigger report: no events are recorded; there is no stream at ${path}`, code: 0 };
-  return { text: [`rigger report: the events recorded at ${path}`, ...runs.flatMap(runLines)].join('\n'), code: 0 };
+  const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
+    `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
+  return { text: [
+    `rigger report: the events recorded at ${path}`,
+    ...runs.flatMap(runLines),
+    'markers no dispatch wrote',
+    ...markerLines,
+    '  only markers L2 recorded in this state directory are named',
+    '  markers of role owner are never checked',
+  ].join('\n'), code: 0 };
 }
