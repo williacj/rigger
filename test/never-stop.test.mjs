@@ -967,7 +967,7 @@ test('G3: an unseen group round without accepted members reaches a cut and an un
   }
 });
 
-// proves R-STATE-19, R-STATE-9
+// proves R-STATE-9
 test('G3: a retained group round survives an unseen round and the next read cut', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   holdingTwo(directory);
@@ -1047,128 +1047,103 @@ test('U2 exit: a missing second command read records the unnamed group kill', SE
   await unnamedCensusCell(t, 'exit', 'U2');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-empty-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
   assert.ok(process.env.C615_EVIDENCE_ROOT, 'the explicit-empty test needs a valid suite root to challenge fallback');
   await deniedPreparedRoot(t, '', process.env.C615_EVIDENCE_ROOT);
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-absent-both denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRoot(t, undefined, undefined);
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-empty-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRoot(t, undefined, '');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-type-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-type-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-symlink-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'symlink');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-symlink-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'symlink');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-location-explicit-checkout denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'checkout');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-location-suite-checkout denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'checkout');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-location-explicit-nested denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'nested');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-location-suite-nested denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'nested');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-mode-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'mode');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-mode-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'mode');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-access-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'access');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-access-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'access');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-explicit-absent denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'absent');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-suite-absent denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'absent');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-explicit-lstat-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'lstat-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-suite-lstat-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'lstat-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-explicit-realpath-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'realpath-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-suite-realpath-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'realpath-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-explicit-checkout-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'checkout-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-suite-checkout-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'checkout-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-explicit-scratch-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'explicit', 'scratch-error');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-canonical-suite-scratch-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite', 'scratch-error');
 });
@@ -1203,12 +1178,10 @@ async function validPreparedRoot(t, route) {
   }
 }
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-explicit retains a separate private attempt', SETTLES_WITHIN, async (t) => {
   await validPreparedRoot(t, 'explicit');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-suite retains a separate private attempt', SETTLES_WITHIN, async (t) => {
   await validPreparedRoot(t, 'suite');
 });
@@ -1309,7 +1282,6 @@ function assertPreparedCache(retained, cell) {
   return { ids, records };
 }
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-preparation-valid binds the private cache to actual ps returns', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
   const observation = sightingAttempts.get(directory);
@@ -1319,7 +1291,6 @@ test('C615 fixture-preparation-valid binds the private cache to actual ps return
   assert.equal(records.length, 12);
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-cache-binding rejects a consumed value different from its preparatory original', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
   const observation = sightingAttempts.get(directory);
@@ -1371,7 +1342,6 @@ function syntheticPreparationDirectory(name, ids = [42001, 42002, 42003]) {
   return directory;
 }
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-preparation-refusal denies a missing fixture state row', SETTLES_WITHIN, () => {
   const directory = syntheticPreparationDirectory('missing-row');
   const calls = [];
@@ -1399,7 +1369,6 @@ test('C615 fixture-preparation-refusal denies a missing fixture state row', SETT
   }
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-preparation-refusal denies invalid rows and start text', SETTLES_WITHIN, () => {
   const ids = [42001, 42002, 42003];
   const birth = 'Mon Oct 11 10:00:00 2026\n';
@@ -1457,7 +1426,6 @@ test('C615 fixture-preparation-refusal denies invalid rows and start text', SETT
   }
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-read-refusal retains synthetic failed and incomplete returns', SETTLES_WITHIN, () => {
   const cases = [
     { name: 'failure', result: { status: 2, signal: null, error: undefined, stdout: 'partial\n', stderr: 'ps failed\n' }, error: /not a product-equivalent answer/ },
@@ -1501,7 +1469,6 @@ test('C615 fixture-read-refusal retains synthetic failed and incomplete returns'
   }
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-read-refusal denies a synthetic deadline overrun after return', SETTLES_WITHIN, () => {
   const directory = syntheticPreparationDirectory('deadline');
   const ticks = [0n, 0n, 0n, 7_000_000_000n, 7_000_000_000n];
@@ -1526,7 +1493,6 @@ test('C615 fixture-read-refusal denies a synthetic deadline overrun after return
   assert.equal(readFileSync(join(prepared, '001.stderr.utf8'), 'utf8'), '');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-read-refusal retains a real ps omitted row after recorded fixture release', SETTLES_WITHIN, async (t) => {
   const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
   const directory = join(outer, `preparation-real-omission-${randomUUID()}`);
@@ -1581,7 +1547,6 @@ test('C615 fixture-read-refusal retains a real ps omitted row after recorded fix
   }
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads', SETTLES_WITHIN, async (t) => {
   const { directory, group, trace } = await censusExit(t, 'U2');
   const before = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat='], 'before-kill');
@@ -1628,7 +1593,6 @@ test('C615 fixture-outer-order rejects failed missing mismatched and reversed re
     'an outer mutation altered the complete private original');
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-retention denies failed copies missing bytes and unresolved finalizers', SETTLES_WITHIN, () => {
   const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
   const retainedBytes = Buffer.from('retained original\n');
@@ -1683,7 +1647,6 @@ test('C615 fixture-retention denies failed copies missing bytes and unresolved f
   }
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 fixture-retention reopens actual finalizer and recorded identities after teardown', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
   const target = sightingAttempts.get(directory)?.target;
@@ -1700,7 +1663,6 @@ test('C615 fixture-retention reopens actual finalizer and recorded identities af
   }));
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 prepared sighting rejects an answered read without END', SETTLES_WITHIN, () => {
   const selected = process.env.C615_EVIDENCE_ROOT;
   assert.ok(selected, 'the negative control needs a private external evidence root');
@@ -1734,7 +1696,7 @@ test('C615 prepared sighting rejects an answered read without END', SETTLES_WITH
 });
 
 /** Retains a two-read prepared transcript with one synthetic failed outer return. */
-function forcedPreparedLogReturn(mode) {
+function forcedPreparedLogReturn(mode, actual) {
   const selected = process.env.C615_EVIDENCE_ROOT;
   assert.ok(selected, 'the forced-return control needs a private external evidence root');
   const root = realpathSync.native(selected);
@@ -1765,15 +1727,35 @@ function forcedPreparedLogReturn(mode) {
         stdout: stream(id, 'stdout', stdout), stderr: stream(id, 'stderr', stderr) },
     ];
   };
-  const failed = mode === 'F';
+  const returned = JSON.parse(readFileSync(join(actual.directory, 'forced-return.json'), 'utf8'));
+  assert.equal(returned.readId, 'r000002');
+  assert.deepEqual(returned.argv, second);
+  const actualStdout = readFileSync(join(actual.directory, returned.stdout.file), 'utf8');
+  const actualStderr = readFileSync(join(actual.directory, returned.stderr.file), 'utf8');
+  for (const [name, value] of [['stdout', actualStdout], ['stderr', actualStderr]]) {
+    assert.equal(Buffer.byteLength(value), returned[name].bytes, `the actual ${name} byte count changed`);
+    assert.equal(createHash('sha256').update(value).digest('hex'), returned[name].sha256,
+      `the actual ${name} digest changed`);
+  }
   const records = [
     ...read(1, first, '42 S\n', '', 0, null, null),
-    ...read(2, second, '', failed ? 'log write failed\n' : '', failed ? 2 : null,
-      failed ? null : { code: 'ETIMEDOUT' }, failed ? null : 'SIGTERM'),
+    ...read(2, second, actualStdout, actualStderr, returned.status,
+      returned.error === null ? null : { code: returned.error }, returned.signal),
   ];
+  assert.equal(records[2].id, returned.readId);
+  assert.deepEqual(records[2].argv, returned.argv);
+  assert.equal(records[3].status, returned.status);
+  assert.equal(records[3].signal, returned.signal);
+  assert.equal(records[3].error?.code ?? null, returned.error);
+  for (const name of ['stdout', 'stderr']) {
+    assert.equal(records[3][name].bytes, returned[name].bytes);
+    assert.equal(records[3][name].sha256, returned[name].sha256);
+  }
   writeFileSync(join(reads, 'trace.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
   const before = 'READ -g 42 -o pid=,stat=\nPHASE before-kill\nROW 42 S\nEND\n';
-  const partial = before + 'READ -ww -g 42 -o pid=,stat=\nPHASE before-kill\nROW 42 S\n';
+  const secondRows = actualStdout.trimEnd().split('\n').filter(Boolean);
+  const partial = before + 'READ -ww -g 42 -o pid=,stat=\nPHASE before-kill\n'
+    + (secondRows.length > 0 ? secondRows : ['42 S']).map((row) => `ROW ${row}\n`).join('');
   const complete = partial + 'END\n';
   writeFileSync(join(directory, 'sighted-ps.log'), partial, { flag: 'wx', mode: 0o600 });
   const completeDirectory = join(root, `sighting-log-complete-${mode}-${randomUUID()}`);
@@ -1788,7 +1770,14 @@ function forcedPreparedLogReturn(mode) {
   writeFileSync(join(completeReads, 'trace.jsonl'), completeRecords.map((record) => JSON.stringify(record)).join('\n') + '\n',
     { flag: 'wx', mode: 0o600 });
   writeFileSync(join(completeDirectory, 'sighted-ps.log'), complete, { flag: 'wx', mode: 0o600 });
-  return { directory, completeDirectory, partial, complete, stderr: failed ? 'log write failed\n' : '' };
+  const provenance = { readId: returned.readId, actualRoot: actual.directory.slice(root.length + 1),
+    actualReturnSha256: createHash('sha256').update(readFileSync(join(actual.directory, 'forced-return.json'))).digest('hex'),
+    actualTool: returned.tool, syntheticRead: 'r000001', syntheticToolPath: true,
+    constructedLogRows: secondRows.length === 0, constructedEnd: true };
+  for (const target of [directory, completeDirectory]) {
+    writeFileSync(join(target, 'return-provenance.json'), JSON.stringify(provenance) + '\n', { flag: 'wx', mode: 0o600 });
+  }
+  return { directory, completeDirectory, partial, complete, returned, actualStdout, actualStderr };
 }
 
 /** Forces the actual prepared stand-in's log open to fail or time out and retains its return. */
@@ -1828,10 +1817,13 @@ function forcePreparedLogWrite(mode) {
   writeFileSync(join(directory, 'forced.stdout.utf8'), answer.stdout, { flag: 'wx', mode: 0o600 });
   writeFileSync(join(directory, 'forced.stderr.utf8'), answer.stderr, { flag: 'wx', mode: 0o600 });
   const wasFifo = mode === 'T' && lstatSync(log).isFIFO();
-  writeFileSync(join(directory, 'forced-return.json'), JSON.stringify({ tool: script, argv,
+  const readId = 'r000002';
+  const stream = (file, value) => ({ file, bytes: Buffer.byteLength(value),
+    sha256: createHash('sha256').update(value).digest('hex') });
+  writeFileSync(join(directory, 'forced-return.json'), JSON.stringify({ readId, tool: script, argv,
     timeout: settings.timeout, status: answer.status, signal: answer.signal,
     error: answer.error?.code ?? null, pid: answer.pid ?? null,
-    stdoutBytes: Buffer.byteLength(answer.stdout), stderrBytes: Buffer.byteLength(answer.stderr),
+    stdout: stream('forced.stdout.utf8', answer.stdout), stderr: stream('forced.stderr.utf8', answer.stderr),
     log: mode === 'F' ? 'directory-not-a-byte-original' : wasFifo ? 'fifo-open-blocked-no-byte-original' : 'unknown' }) + '\n', { flag: 'wx', mode: 0o600 });
   if (mode === 'F') {
     assert.ok(lstatSync(log).isDirectory(), 'the failed log target was no longer a directory');
@@ -1841,22 +1833,30 @@ function forcePreparedLogWrite(mode) {
     assert.equal(answer.error?.code, 'ETIMEDOUT', 'the log open did not time out');
     unlinkSync(log); // The synchronous child has returned; the pipe held no byte original.
   }
+  return { directory, readId };
 }
 
-// proves R-STATE-19, R-STATE-26
 test('C615 prepared log-write F counterexample rejects read r000002', SETTLES_WITHIN, () => {
-  forcePreparedLogWrite('F');
-  const { directory, completeDirectory, partial, complete, stderr } = forcedPreparedLogReturn('F');
-  assert.equal(readFileSync(join(directory, 'sighting-reads/r000002.stderr.utf8'), 'utf8'), stderr);
+  const actual = forcePreparedLogWrite('F');
+  assert.equal(actual?.readId, 'r000002', 'the actual forced F return has no read ID');
+  const { directory, completeDirectory, partial, complete, returned, actualStderr } = forcedPreparedLogReturn('F', actual);
+  assert.equal(readFileSync(join(directory, 'sighting-reads/r000002.stderr.utf8'), 'utf8'), actualStderr);
+  assert.ok(actualStderr.length > 0, 'the actual F return did not report its failed log write');
+  assert.equal(returned.status, 0);
+  assert.equal(returned.error, null);
+  assert.equal(returned.signal, null);
   assert.throws(() => completePreparedSightingReads(directory, partial), /r000002 END/);
-  assert.throws(() => completePreparedSightingReads(completeDirectory, complete), /r000002 failed/);
+  assert.throws(() => completePreparedSightingReads(completeDirectory, complete), /r000002 stderr differed/);
 });
 
-// proves R-STATE-19, R-STATE-26
 test('C615 prepared log-write T counterexample rejects read r000002', SETTLES_WITHIN, () => {
-  forcePreparedLogWrite('T');
-  const { directory, completeDirectory, partial, complete, stderr } = forcedPreparedLogReturn('T');
-  assert.equal(readFileSync(join(directory, 'sighting-reads/r000002.stderr.utf8'), 'utf8'), stderr);
+  const actual = forcePreparedLogWrite('T');
+  assert.equal(actual?.readId, 'r000002', 'the actual forced T return has no read ID');
+  const { directory, completeDirectory, partial, complete, returned, actualStderr } = forcedPreparedLogReturn('T', actual);
+  assert.equal(readFileSync(join(directory, 'sighting-reads/r000002.stderr.utf8'), 'utf8'), actualStderr);
+  assert.equal(returned.status, null);
+  assert.equal(returned.error, 'ETIMEDOUT');
+  assert.equal(returned.signal, 'SIGKILL');
   assert.throws(() => completePreparedSightingReads(directory, partial), /r000002 END/);
   assert.throws(() => completePreparedSightingReads(completeDirectory, complete), /r000002 failed/);
 });
@@ -2277,7 +2277,7 @@ async function cutAsyncReading(directory, action) {
   }
 }
 
-// proves R-STATE-19, R-STATE-26
+// proves R-STATE-26
 test('D1: an answered first directory listing omits the outside PID without inventing a result', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const work = await workedIn(t, directory);
@@ -3054,7 +3054,7 @@ function assertFocusedAdmission() {
   assert.ok(!stopped && process.hrtime.bigint() < BigInt(deadlineText), 'the focused runner closed new test work before fixture start');
 }
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('this real lsof/ps control requires macOS');
   assertFocusedAdmission();
@@ -3240,8 +3240,23 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   assert.ok(commandRead && commandRead.sequence > name.sequence && commandRead.stdout.includes(`/usr/bin/tail -f ${join(directory, 'hold')}`), 'the actual command read did not answer for the recorded tail');
   assert.ok(trace.some(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === tailBirth.pid && signal === 'SIGSTOP' && answer === true), 'the tail was not stopped after the answered listing');
   assert.ok(trace.some(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === tailBirth.pid && signal === 'SIGKILL' && answer === true), 'the tail kill was not reached');
-  const events = linesOf(directory, 'events').filter(({ pid }) => pid === tailBirth.pid);
+  const allEvents = linesOf(directory, 'events');
+  const events = allEvents.filter(({ pid }) => pid === tailBirth.pid);
   assert.ok(events.length === 1 && events[0].event === 'survivor.killed' && events[0].name === 'tail' && events[0].cmd === `/usr/bin/tail -f ${join(directory, 'hold')}` && events[0].reason === undefined, 'the reached directory result did not name the killed tail truthfully');
+  const [groupName] = answers('/bin/ps', ['-p', String(command), '-o', 'ucomm=']);
+  const groupCommands = answers('/bin/ps', ['-ww', '-g', String(command), '-o', 'pid=,command=']);
+  const groupCommandRead = groupCommands.find(({ stdout }) => new RegExp(`^\\s*${command}\\s+(.+)$`, 'm').test(stdout));
+  const observedCommand = groupCommandRead && new RegExp(`^\\s*${command}\\s+(.+)$`, 'm').exec(groupCommandRead.stdout)?.[1];
+  const groupKill = trace.find(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === -command && signal === 'SIGKILL' && answer === true);
+  const commandEvent = allEvents.find(({ pid }) => pid === command);
+  assert.ok(groupName && groupName.stdout.trim() !== '' && groupCommandRead && observedCommand && groupKill &&
+    groupName.sequence < groupKill.sequence && groupCommandRead.sequence < groupKill.sequence &&
+    commandEvent?.event === 'survivor.killed' &&
+    commandEvent.name === groupName.stdout.trim() && commandEvent.cmd === observedCommand && commandEvent.reason === undefined,
+  'the group result did not match the actual command identity reads');
+  assert.equal(allEvents.length, 2, 'the answered group and directory reads did not justify another forced-end event');
+  assert.deepEqual(new Set(allEvents.map(({ pid }) => pid)), new Set([command, tailBirth.pid]),
+    'the group and directory results included an unobserved PID');
 
   bodyStage = 'per-read-original-guard';
   const { traceEnds } = assertReturnedToolOriginals(directory, trace);
@@ -3254,7 +3269,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   bodyStage = 'passed';
 });
 
-// proves R-STATE-19, R-STATE-26
+// proves R-STATE-26
 test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('this real ps control requires macOS');
   assertFocusedAdmission();
@@ -3458,6 +3473,7 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   const observedCommand = /^\s*\d+\s+(.*)$/.exec(round[3].stdout.trimEnd())?.[1];
   assert.ok(named && named.name === observedName && named.cmd === observedCommand && named.reason === undefined, 'the reached group result did not record the observed identity and disposition');
   assert.ok(!events.some(({ event }) => event === 'group.killed'), 'the answered accepted group census invented an unnamed group result');
+  assert.equal(events.length, 1, 'the answered group reads did not justify another forced-end event');
   const eventTrace = trace.filter(({ kind }) => kind === 'event');
   assert.ok(eventTrace.length === events.length && eventTrace.every((entry, index) => ['event', 'pid', 'name', 'cmd', 'reason'].every((field) => entry[field] === events[index][field])), 'the group event file does not match the ordered private trace');
   const namedTrace = eventTrace.find(({ event, pid }) => event === 'survivor.killed' && pid === group);
@@ -3503,7 +3519,7 @@ const GROUP_BOUND_CALLER = (() => {
     .replace(signal, "trace('signal-start', { target, name }); try { const answer = signalled(target, name); trace('signal-answer', { target, name, answer }); return answer; } catch (error) { trace('signal-answer', { target, name, error: error.code ?? null }); throw error; } };");
 })();
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('G3 C2 bound: an accepted round survives a rejected round and names the killed member', SETTLES_WITHIN, async (t) => {
   assert.ok(process.env.TMPDIR && process.env.C615_EVIDENCE_ROOT, 'the group-bound control needs external TMPDIR and private C615_EVIDENCE_ROOT');
   const checkout = realpathSync.native(process.cwd());
@@ -3585,6 +3601,7 @@ test('G3 C2 bound: an accepted round survives a rejected round and names the kil
   const records = events.filter(({ pid }) => pid === group);
   assert.equal(records.length, 1, 'the accepted member did not have one PID-bound result');
   assert.equal(records[0].event, 'survivor.killed', 'the group kill did not report the accepted live member');
+  assert.equal(events.length, 1, 'the accepted group reads did not justify another forced-end event');
   const observedName = ends[2].stdout.replace(/ *\n$/, '');
   const observedCommand = /^\s*\d+\s+(.*)$/.exec(ends[3].stdout.trimEnd())?.[1];
   assert.ok(observedName && observedCommand && records[0].name === observedName && records[0].cmd === observedCommand && records[0].reason === undefined, 'the accepted member lost its observed name or command or gained an invented reason');
@@ -5361,6 +5378,13 @@ async function firstDirectoryListing(t, answer) {
     const groupKill = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === -group && name === 'SIGKILL' && result === true && sequence > prior.sequence);
     const probe = trace.find(({ kind, target, name, sequence }) => kind === 'signal-answer' && target === -group && name === 0 && sequence > groupKill?.sequence);
     assert.ok(probe && ((probe.answer === false && probe.error === undefined) || (probe.answer === true && probe.error === undefined) || (probe.answer === undefined && probe.error === 'EPERM')), 'the first post-kill group probe did not report its reached E or O answer');
+    if (groupC1Failure || groupC2Failure || groupC3Failure) {
+      assert.equal(events.length, 2, 'the failed group read invented an extra forced-end event');
+      assert.deepEqual(events.filter(({ event, group: id, pid: target, directory: at }) =>
+        (event === 'group.killed' && id === group) ||
+        (event === 'survivor.unended' && target === pid && at === work)), events,
+      'the failed group read recorded an unobserved process');
+    }
     if (groupC1Failure) {
       assert.deepEqual(trace.filter(({ kind, tool, sequence }) => kind === 'read-start' && tool === ps && sequence < groupKill.sequence).map(({ args }) => args), [firstGroupArgs], 'C2, C3, C4 or C5 spawned after the failed C1 before group kill');
       assert.deepEqual(events.filter(({ event: type, pid: target }) => type === 'survivor.killed' && target === group), [], 'the failed C1 invented a named group member');
@@ -5899,7 +5923,7 @@ test('C615 D2 first full lsof pre-spawn T records an unread directory without a 
   await firstDirectoryListing(t, 'T');
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 D3 answered first listing stops, confirms and kills its recorded directory PID', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'A');
 });
@@ -5964,7 +5988,7 @@ test('C615 D5 owned directory PID per-PID lsof T kills unnamed and rereads unend
   await firstDirectoryListing(t, 'OPT');
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 D6 answered later full lsof omits H and resumes it without an event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'HO');
 });
@@ -5974,17 +5998,17 @@ test('C615 D6 answered later full lsof omits O but a per-PID answer retains it',
   await firstDirectoryListing(t, 'OO');
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 D6 answered zombie state and per-PID omission resume H without a named event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'HZ');
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 D6 answered live state retries O as H without a named event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OLS');
 });
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 D6 answered zombie state retries O as H without a named event', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'OZ');
 });
