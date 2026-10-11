@@ -325,6 +325,14 @@ test('report names both distinct markers that name one dispatch id', () => {
   assert.equal(lines.length, 2);
 });
 
+test('report names both distinct joining markers that share a dispatch id', () => {
+  const real = markerRead({ dispatch: 'd-judge' });
+  real.fields.verdict = 'needs revision';
+  const forged = markerRead({ dispatch: 'd-judge' });
+  const { lines } = namedMarkerLines([real, forged], judgeStart());
+  assert.equal(lines.length, 2, JSON.stringify(lines));
+});
+
 test('report names one marker read on three pulls at most once', () => {
   const reads = [42, 43, 44].map((pull) => markerRead({ pull }));
   const { lines } = namedMarkerLines(reads);
@@ -440,7 +448,7 @@ test('report over a stream holding the layers a maker\'s dispatch records prints
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /\bL3\b/, ran.out);
-  assert.doesNotMatch(ran.out.split('markers no dispatch wrote')[0], /\bL[0-24-9]\b/, ran.out);
+  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[0-24-9]\b/, ran.out);
 });
 
 test('report over a stream holding a line that does not parse exits non-zero, names that line, and prints no signal', async () => {

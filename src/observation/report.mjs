@@ -63,24 +63,31 @@ function wroteMarker(marker, dispatches, starts) {
     && typeof l1.digest === 'string' && l1.digest === marker.evidence;
 }
 
-/** Agent marker reads no recorded judge dispatch wrote, counted once across repeated reads. */
+/** Agent marker reads with no unique matching dispatch, counted once across repeated reads. */
 function unwrittenMarkers(events) {
   const dispatches = new Map(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => [event.dispatch, event]));
   const starts = new Map(events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').map((event) => [event.dispatch, event]));
-  const named = new Map();
+  const distinct = new Map();
   for (const event of events) {
-    if (event.layer !== 'L2' || event.event !== 'marker.read' || event.role === 'owner' || wroteMarker(event, dispatches, starts)) continue;
+    if (event.layer !== 'L2' || event.event !== 'marker.read' || event.role === 'owner') continue;
     const key = JSON.stringify([event.card, event.role, event.head, event.digest, event.evidence, event.dispatch, event.verdict, event.reason, event.edited]);
-    if (!named.has(key)) named.set(key, { card: event.card, role: event.role, head: event.head, dispatch: event.dispatch, reason: event.reason });
+    if (!distinct.has(key)) distinct.set(key, event);
   }
-  return [...named.values()];
+  const uses = new Map();
+  for (const marker of distinct.values()) {
+    if (typeof marker.dispatch !== 'string' || marker.dispatch === '') continue;
+    uses.set(marker.dispatch, (uses.get(marker.dispatch) ?? 0) + 1);
+  }
+  return [...distinct.values()]
+    .filter((marker) => (uses.get(marker.dispatch) ?? 0) > 1 || !wroteMarker(marker, dispatches, starts))
+    .map(({ card, role, head, dispatch, reason }) => ({ card, role, head, dispatch, reason }));
 }
 
 /**
  * The report over the state directory `directory`: its stream's `path`, L3 signals per run, and
- * agent markers with no matching recorded dispatch. The latter joins the whole stream, across
- * runs. It reads through the sink and writes nothing; an unreadable line throws as the reader
- * does, naming that line.
+ * agent markers with no unique matching recorded dispatch. The latter joins the whole stream,
+ * across runs. It reads through the sink and writes nothing; an unreadable line throws as the
+ * reader does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
