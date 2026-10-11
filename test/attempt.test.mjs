@@ -25,7 +25,6 @@ import { standInAgent } from './stub-claude.mjs';
 import { makerRuns, positive } from './loop-world.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryAt } from './git-repository.mjs';
-import { readsWith } from './loop-world.mjs';
 import { readsServing } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 

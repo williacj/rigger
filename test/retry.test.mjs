@@ -24,7 +24,6 @@ import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { makerRuns } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
-import { readsWith } from './loop-world.mjs';
 import { readsServing } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';

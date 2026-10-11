@@ -27,7 +27,6 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { dirname } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { running } from './process-fixtures.mjs';
-import { readsWith } from './loop-world.mjs';
 import { readsServing } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
