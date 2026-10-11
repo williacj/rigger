@@ -555,6 +555,29 @@ async function censusExit(t, cell, afterKill = 'omit') {
   return { directory, events, group, two, trace };
 }
 
+/** Confirms a refused prepared root leaves no fixture scratch or caller process to account for. */
+async function deniedPreparedRoot(t, explicit, suite) {
+  const prior = {
+    explicit: process.env.C615_SIGHTING_EVIDENCE_ROOT,
+    suite: process.env.C615_EVIDENCE_ROOT,
+  };
+  const assign = (name, value) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  };
+  assert.ok(process.env.TMPDIR, 'a prepared-root refusal needs the suite scratch root');
+  const before = readdirSync(process.env.TMPDIR).sort();
+  try {
+    assign('C615_SIGHTING_EVIDENCE_ROOT', explicit);
+    assign('C615_EVIDENCE_ROOT', suite);
+    await assert.rejects(censusExit(t, 'U2'), /prepared sighting needs private returned-read originals/);
+    assert.deepEqual(readdirSync(process.env.TMPDIR).sort(), before, 'a refused root started fixture scratch');
+  } finally {
+    assign('C615_SIGHTING_EVIDENCE_ROOT', prior.explicit);
+    assign('C615_EVIDENCE_ROOT', prior.suite);
+  }
+}
+
 /** The ordered arguments and response rows of the stand-in's complete read log. */
 function sightingReads(trace) {
   return trace.split(/(?=READ )/).filter(Boolean).map((block) => {
@@ -776,6 +799,22 @@ test('U1 exit: a census name read that omits a shown member records the unnamed 
 // proves R-STATE-12, R-STATE-19
 test('U2 exit: a missing second command read records the unnamed group kill', SETTLES_WITHIN, async (t) => {
   await unnamedCensusCell(t, 'exit', 'U2');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-empty-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  assert.ok(process.env.C615_EVIDENCE_ROOT, 'the explicit-empty test needs a valid suite root to challenge fallback');
+  await deniedPreparedRoot(t, '', process.env.C615_EVIDENCE_ROOT);
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-absent-both denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRoot(t, undefined, undefined);
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-empty-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRoot(t, undefined, '');
 });
 
 // proves R-STATE-12, R-STATE-19
