@@ -328,13 +328,20 @@ test('the panel function and providerOf are exported from next-action.mjs beside
 });
 
 // proves R-LOOP-16, R-GATE-9
-test('handed this repository\'s config, the panel function requires every kind\'s agent judges to run on claude, the provider their plain role names yield, and answers the owner by its role', () => {
+test('handed this repository\'s config, the panel function requires codex of every agent judge without maker:codex and answers the owner by its role', () => {
   for (const [name, kind] of Object.entries(config.kinds)) {
     const panel = panelOf(card(1, kind.select.labels), kind, config.roles);
     assert.equal(panel.length, kind.judges.length, `${name}: ${JSON.stringify(panel)}`);
     for (const entry of panel) {
       if (entry.role === 'owner') assert.deepEqual(entry, { role: 'owner' }, name);
-      else assert.equal(entry.provider, 'claude', `${name}: ${entry.role}`);
+      else assert.equal(entry.provider, 'codex', `${name}: ${entry.role}`);
     }
   }
+});
+
+test('a maker:codex change card requires claude of its reviewer', () => {
+  const kind = config.kinds.change;
+  const given = card(1, [...kind.select.labels, 'maker:codex']);
+  assert.deepEqual(providerOf(given, 'engineer', config.roles.engineer), { provider: 'codex' });
+  assert.deepEqual(panelOf(given, kind, config.roles), [{ role: 'reviewer', provider: 'claude' }]);
 });

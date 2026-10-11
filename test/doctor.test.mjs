@@ -701,6 +701,8 @@ test('the whole report is lines, and carries no stack trace', async () => {
  */
 function freshClone() {
   const into = cloneInto(root, join(temporaryDirectory('rigger-clone-'), 'rigger'));
+  // The clone holds HEAD; during a maker edit, exercise the config that will become that head.
+  writeFileSync(join(into, CONFIG), readFileSync(join(root, CONFIG), 'utf8'));
   const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
@@ -725,7 +727,7 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
   const ran = await doctor({
     target: clone,
     packageRoot: root,
-    ask: answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn }),
+    ask: answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn }),
   });
 
   assert.equal(forked.code, 0, forked.text);
@@ -752,7 +754,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
 
   const gh = stubGh(RECORDED.ghIn);
-  const env = { ...process.env, PATH: stubClaude(RECORDED.agentIn).first(gh.first()) };
+  const env = { ...process.env, PATH: stubCodex(CODEX.signedIn).first(stubClaude(RECORDED.agentIn).first(gh.first())) };
 
   const ran = spawnSync(process.execPath, [join(root, bin), 'doctor'], { cwd: clone, encoding: 'utf8', env });
 
@@ -773,7 +775,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   assert.equal(ran.status === 0, /^rigger doctor: (\d+) of \1 checks passed/.test(printed), printed);
   // The agent CLI line as this repository's `doctor` prints it, read off a run at 4f017db: the
   // defect this catches is the adapter map handing `doctor` another question, or none.
-  assert.ok(printed.includes('\n  ok         agent CLI authentication: `claude auth status --json` says it is signed in\n'), printed);
+  assert.ok(printed.includes('\n  ok         agent CLI authentication: `claude auth status --json` says it is signed in; `codex login status` says it is signed in\n'), printed);
 });
 
 /** The repository and board the starter config names, which the fake `gh` answers for. */
@@ -1198,6 +1200,33 @@ const CODEX = {
   signedIn: { status: 0, stdout: '', stderr: 'Logged in using ChatGPT\n' },
   signedOut: { status: 1, stdout: '', stderr: 'Not logged in\n' },
 };
+
+/** A separate repository holding this checkout's live config, so doctor may inspect it. */
+const ownConfig = () => checked(readFileSync(join(root, CONFIG), 'utf8'));
+
+test('this repository doctor asks both agent CLIs and passes when each records signed in', async () => {
+  const ask = answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn });
+  const ran = await doctor({ ...against(ownConfig(), {}), ask });
+  const [line] = checkLines(ran.text).filter((each) => each.includes('agent CLI authentication'));
+  assert.equal(ran.code, 0, ran.text);
+  assert.ok(line.includes('  ok         agent CLI authentication:'), line);
+  assert.match(line, /`claude auth status --json` says it is signed in; `codex login status` says it is signed in/);
+  assert.deepEqual(ask.asked.filter((command) => command.startsWith('claude ') || command.startsWith('codex ')), ['claude auth status --json', 'codex login status']);
+});
+
+test('this repository doctor fails the agent CLI line when codex records signed out', async () => {
+  const ran = await doctor(against(ownConfig(), { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedOut }));
+  const [line] = checkLines(ran.text).filter((each) => each.includes('agent CLI authentication'));
+  assert.equal(ran.code, 1, ran.text);
+  assert.match(line, /failed +agent CLI authentication:.*`codex login status` says it is signed out/);
+});
+
+test('this repository doctor cannot pass when codex login status cannot start', async () => {
+  const ran = await doctor(against(ownConfig(), { gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: await notStarted() }));
+  const [line] = checkLines(ran.text).filter((each) => each.includes('agent CLI authentication'));
+  assert.equal(ran.code, 1, ran.text);
+  assert.match(line, /not asked +agent CLI authentication:.*`codex login status` could not be run here:/);
+});
 
 /** The starter config with its engineer role run by Codex. */
 const codexStarter = () => {

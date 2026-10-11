@@ -913,8 +913,40 @@ async function forThisRepository() {
     PLACEHOLDER.project,
     `this repository's \`${CONFIG}\` still holds \`${PLACEHOLDER.project}\`, so it names no board of its own`,
   );
-  return plan({ repo, project: riggerConfig.board.project }).filter(({ path }) => !path.startsWith('.githooks/'));
+  return plan({ repo, project: riggerConfig.board.project }).filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/'));
 }
+
+test('the repository comparison covers the full init plan except hooks and its local config', async () => {
+  const repo = await slugOf(root);
+  const all = plan({ repo, project: riggerConfig.board.project });
+  const compared = await forThisRepository();
+  const omitted = all.filter((file) => !compared.some((held) => held.path === file.path)).map(({ path }) => path).sort();
+  assert.deepEqual(omitted, ['.githooks/pre-push', CONFIG]);
+  assert.deepEqual(compared.map(({ path }) => path), all.filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/')).map(({ path }) => path));
+});
+
+test('one changed byte in a planned .claude asset is named as a divergence', async () => {
+  const copy = cloneInto(root, join(temporaryDirectory('rigger-comparison-'), 'rigger'));
+  const files = await forThisRepository();
+  assert.deepEqual(divergences(copy, files), []);
+  const asset = '.claude/agents/engineer.md';
+  assert.ok(files.some(({ path }) => path === asset), `${asset} is not in the comparison`);
+  const path = join(copy, asset);
+  const original = readFileSync(path, 'utf8');
+  assert.notEqual(original[0], '!');
+  writeFileSync(path, `!${original.slice(1)}`);
+  assert.deepEqual(divergences(copy, files), [
+    `\`${asset}\` is not what \`init\` would write here. Templates are the source and these are the fork, so the two move together or not at all.`,
+  ]);
+});
+
+test('the planned starter config is the template with only repo and board number filled', () => {
+  const template = readFileSync(join(TEMPLATES, CONFIG), 'utf8');
+  assert.equal(template.split("'OWNER/REPOSITORY'").length, 2);
+  assert.equal(template.split("'PROJECT_NUMBER'").length, 2);
+  const expected = template.replace("'OWNER/REPOSITORY'", "'acme/widgets'").replace("'PROJECT_NUMBER'", '12');
+  assert.equal(planned(plan({ repo: 'acme/widgets', project: 12 }), CONFIG).content, expected);
+});
 
 /** The controlled origin read remains under the stand-in; hook checks ask real git through L0. */
 const originOnly = (originAsk) => (command, args, options) =>
