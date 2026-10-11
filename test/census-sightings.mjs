@@ -76,26 +76,29 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
 export const shownBefore = (directory) => sightingPs(directory);
 
 /** Prepares controlled census answers while the exit caller still holds its group. */
-export function prepareSighting(directory) {
+export function prepareSighting(directory, { reader = spawnSync, clock = process.hrtime.bigint } = {}) {
   if (!existsSync(join(directory, 'sighting-prepare'))) return;
-  const deadline = process.hrtime.bigint() + 6_000_000_000n;
+  const source = reader === spawnSync ? 'real-/bin/ps' : 'synthetic-controlled-return';
+  const clockSource = clock === process.hrtime.bigint ? 'real-monotonic-clock' : 'synthetic-clock';
+  const deadline = clock() + 6_000_000_000n;
   const output = join(directory, 'sighting-prepared');
   mkdirSync(output, { mode: 0o700 });
   const ids = ['group', 'one', 'two'].map((name) => Number(readFileSync(join(directory, `${name}.pid`), 'utf8')));
   if (ids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0) || new Set(ids).size !== ids.length) throw new Error('the controlled sighting has no distinct fixture PIDs');
   let serial = 0;
   const read = (args) => {
-    const remainingMs = Number((deadline - process.hrtime.bigint()) / 1_000_000n);
+    const remainingMs = Number((deadline - clock()) / 1_000_000n);
     if (remainingMs <= 0) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
     const timeout = Math.min(500, remainingMs);
     const id = String(++serial).padStart(3, '0');
-    const startedNs = process.hrtime.bigint().toString();
-    writeFileSync(join(output, `${id}.start.json`), JSON.stringify({ args, timeout, startedNs }) + '\n', { flag: 'wx', mode: 0o600 });
+    const startedNs = clock().toString();
+    writeFileSync(join(output, `${id}.start.json`), JSON.stringify({ source, clockSource, tool: '/bin/ps', args, timeout, startedNs }) + '\n', { flag: 'wx', mode: 0o600 });
     let result;
     let thrown;
-    try { result = spawnSync('/bin/ps', args, { encoding: 'utf8', env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, timeout, killSignal: 'SIGKILL' }); }
+    const settings = { encoding: 'utf8', env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, timeout, killSignal: 'SIGKILL' };
+    try { result = reader === spawnSync ? spawnSync('/bin/ps', args, settings) : reader('/bin/ps', args, settings); }
     catch (error) { thrown = { code: error.code ?? null, name: error.name, message: error.message }; }
-    const endedNs = process.hrtime.bigint().toString();
+    const endedNs = clock().toString();
     const streams = {};
     for (const name of ['stdout', 'stderr']) {
       const value = result?.[name];
@@ -106,10 +109,10 @@ export function prepareSighting(directory) {
         streams[name].file = file;
       }
     }
-    writeFileSync(join(output, `${id}.json`), JSON.stringify({ args, timeout, startedNs, endedNs, status: result?.status ?? null, signal: result?.signal ?? null, error: thrown ?? (result?.error ? { code: result.error.code ?? null, message: result.error.message } : null), streams }) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(output, `${id}.json`), JSON.stringify({ source, clockSource, tool: '/bin/ps', args, timeout, startedNs, endedNs, status: result?.status ?? null, signal: result?.signal ?? null, error: thrown ?? (result?.error ? { code: result.error.code ?? null, message: result.error.message } : null), streams }) + '\n', { flag: 'wx', mode: 0o600 });
     if (thrown) throw new Error('a controlled sighting preparation read threw before returning');
     if (result.error || result.signal || typeof result.stdout !== 'string' || typeof result.stderr !== 'string' || result.stderr !== '' || (result.status !== 0 && !(result.status === 1 && result.stdout === ''))) throw new Error('a controlled sighting preparation read was not a product-equivalent answer');
-    if (process.hrtime.bigint() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
+    if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
     if (result.status !== 0 || result.stdout === '') throw new Error('a controlled sighting preparation read contained no required row');
     return result.stdout;
   };
@@ -135,12 +138,12 @@ export function prepareSighting(directory) {
   if (names.some((value) => !value.trim())) throw new Error('a controlled fixture name was empty');
   if (birth().some((value, index) => value !== born[index])) throw new Error('a controlled fixture start value changed during preparation');
   requireIds(read(['-ww', '-g', String(ids[0]), '-o', 'pid=,stat=']), true);
-  if (process.hrtime.bigint() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
+  if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
   const save = (name, value) => writeFileSync(join(directory, `sighting-cache.${name}`), value, { flag: 'wx', mode: 0o600 });
   save('state', state);
   save('command', command);
   ids.forEach((pid, index) => { save(`name.${pid}`, names[index]); save(`birth.${pid}`, born[index]); });
-  if (process.hrtime.bigint() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
+  if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
   save('ready', '');
-  if (process.hrtime.bigint() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
+  if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
 }

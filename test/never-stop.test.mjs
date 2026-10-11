@@ -22,14 +22,15 @@ import { gone } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
-import { sightingPs } from './census-sightings.mjs';
+import { prepareSighting, sightingPs } from './census-sightings.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { startOf } from './process-fixtures.mjs';
-import { closeSync, cpSync, lstatSync, openSync, readdirSync } from 'node:fs';
+import { chmodSync, closeSync, cpSync, lstatSync, openSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
+import { symlinkSync } from 'node:fs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -218,14 +219,22 @@ const CALLER = [
 const sightingEvidenceRoot = () => process.env.C615_SIGHTING_EVIDENCE_ROOT ?? process.env.C615_EVIDENCE_ROOT;
 
 const sightingAttempts = new Map();
+const sightingRootFaults = new Map();
+
+/** Forces a named validator read to fail only for one test-selected root. */
+function selectedRootRead(requested, stage, read) {
+  if (sightingRootFaults.get(requested) === `${stage}-error`) throw new Error(`forced ${stage} failure`);
+  return read();
+}
 
 /** Retains one conditional exit-sighting attempt outside the suite scratch. */
 function sightingObservation(directory, options, requested = sightingEvidenceRoot()) {
   if (!requested || options.ps !== 'ps-sighted') return null;
-  assert.ok(lstatSync(requested).isDirectory() && !lstatSync(requested).isSymbolicLink(), 'the sighting evidence root is unsafe');
-  const root = realpathSync.native(requested);
-  const checkout = realpathSync.native(process.cwd());
-  const scratch = realpathSync.native(process.env.TMPDIR);
+  const entry = selectedRootRead(requested, 'lstat', () => lstatSync(requested));
+  assert.ok(entry.isDirectory() && !entry.isSymbolicLink(), 'the sighting evidence root is unsafe');
+  const root = selectedRootRead(requested, 'realpath', () => realpathSync.native(requested));
+  const checkout = selectedRootRead(requested, 'checkout', () => realpathSync.native(process.cwd()));
+  const scratch = selectedRootRead(requested, 'scratch', () => realpathSync.native(process.env.TMPDIR));
   assert.ok(root !== checkout && !root.startsWith(`${checkout}/`) && root !== scratch && !root.startsWith(`${scratch}/`) && (lstatSync(root).mode & 0o077) === 0, 'the sighting evidence root must be private and outside checkout and suite scratch');
   const id = randomUUID();
   const target = join(root, `attempt-${id}`);
@@ -301,6 +310,70 @@ function retainSighting(observation, directory, phase) {
   });
   writeFileSync(join(output, 'inventory.json'), JSON.stringify(report) + '\n', { flag: 'wx', mode: 0o600 });
   return report;
+}
+
+/** Admits a prepared attempt only after its retained copy and finalizer are both closed. */
+function eligibleSightingAttempt(root) {
+  const report = JSON.parse(readFileSync(join(root, 'settled', 'inventory.json'), 'utf8'));
+  assert.equal(report.exit?.state, 'observed', 'the exit caller never settled');
+  assert.equal(report.close?.state, 'closed', 'the exit caller never closed');
+  assert.equal(report.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
+  assert.equal(report.reads, 'settled-returned-originals', 'an observed outer read did not settle with originals');
+  assert.deepEqual(report.errors, [], 'private retention reported an error');
+  assert.deepEqual(report.producedThenLost, [], 'a produced original was lost');
+  assert.deepEqual(report.copied, report.source, 'the private copy differed from its source inventory');
+  for (const { name } of report.copied) {
+    assert.ok((lstatSync(join(root, 'settled', 'fixture', name)).mode & 0o400) !== 0,
+      `retained original ${name} is not owner-readable`);
+  }
+  assert.deepEqual(sightingFiles(join(root, 'settled', 'fixture')), report.copied,
+    'a retained original is missing or differs from its frozen inventory');
+  const finalizer = JSON.parse(readFileSync(join(root, 'finalizer.json'), 'utf8'));
+  assert.equal(finalizer.attempt, report.attempt, 'the finalizer names another attempt');
+  assert.equal(finalizer.state, 'pass', 'the fixture finalizer did not pass');
+  assert.equal(finalizer.scratch, 'removed', 'fixture scratch remained at finalization');
+  assert.ok(Array.isArray(finalizer.identities) && finalizer.identities.length > 0,
+    'the finalizer contains no observed identities');
+  for (const identity of finalizer.identities) {
+    assert.ok(Number.isSafeInteger(identity.pid) && identity.pid > 0, 'the finalizer identity has no recorded PID');
+    assert.equal(identity.disposition, 'absent', `identity ${identity.pid} remains live, zombie, unsafe or unconfirmed`);
+  }
+  return true;
+}
+
+/** Records a final returned process-table answer for each identity named by the retained fixture. */
+function finalizedSightingIdentities(observation) {
+  const copied = join(observation.target, 'settled', 'fixture');
+  const identities = [
+    { source: 'caller', pid: observation.callerPid },
+    ...['group', 'one', 'two'].map((source) => ({
+      source,
+      pid: existsSync(join(copied, `${source}.pid`)) ? Number(readFileSync(join(copied, `${source}.pid`), 'utf8').trim()) : null,
+    })),
+  ];
+  const originals = join(observation.target, 'finalizer-reads');
+  mkdirSync(originals, { mode: 0o700 });
+  return identities.map(({ source, pid }) => {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return { source, pid, disposition: 'unconfirmed' };
+    const args = ['-p', String(pid), '-o', 'pid=,stat='];
+    const answer = spawnSync('/bin/ps', args, { timeout: 500, maxBuffer: 1024 * 1024 });
+    const stdout = answer.stdout ?? Buffer.alloc(0);
+    const stderr = answer.stderr ?? Buffer.alloc(0);
+    const base = `finalizer-reads/${source}`;
+    writeFileSync(join(observation.target, `${base}.stdout`), stdout, { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(observation.target, `${base}.stderr`), stderr, { flag: 'wx', mode: 0o600 });
+    const original = `${base}.json`;
+    const record = {
+      tool: '/bin/ps', args, status: answer.status, signal: answer.signal,
+      error: answer.error ? { code: answer.error.code ?? answer.error.name, message: answer.error.message } : null,
+      stdout: { file: `${base}.stdout`, bytes: stdout.length, sha256: createHash('sha256').update(stdout).digest('hex'), produced: answer.stdout !== null },
+      stderr: { file: `${base}.stderr`, bytes: stderr.length, sha256: createHash('sha256').update(stderr).digest('hex'), produced: answer.stderr !== null },
+    };
+    writeFileSync(join(observation.target, original), JSON.stringify(record) + '\n', { flag: 'wx', mode: 0o600 });
+    const disposition = !answer.error && !answer.signal && answer.status === 1 && stdout.length === 0 && stderr.length === 0
+      ? 'absent' : answer.error || answer.signal ? 'unconfirmed' : /\bZ/.test(stdout.toString('utf8')) ? 'zombie' : 'live';
+    return { source, pid, disposition, original };
+  });
 }
 
 /** Lines of JSON a caller in `directory` appended to `name`, each parsed, or none. */
@@ -516,7 +589,13 @@ async function censusExit(t, cell, afterKill = 'omit') {
       t.after(() => {
         const observation = sightingAttempts.get(directory);
         if (!observation) return;
-        writeFileSync(join(observation.target, 'finalizer.json'), JSON.stringify({ attempt: observation.id, outcome: existsSync(directory) ? 'unknown-scratch-present' : 'holding-teardown-removed-scratch', snapshot: observation.snapshotResult ?? 'unresolved', snapshotError: observation.snapshotError ?? null }) + '\n', { flag: 'wx', mode: 0o600 });
+        const scratch = existsSync(directory) ? 'present' : 'removed';
+        const identities = finalizedSightingIdentities(observation);
+        const state = scratch === 'removed' && observation.snapshotResult === 'byte-complete-at-snapshot'
+          && !observation.snapshotError && identities.every(({ disposition }) => disposition === 'absent') ? 'pass' : 'fail';
+        writeFileSync(join(observation.target, 'finalizer.json'), JSON.stringify({ attempt: observation.id, state, scratch,
+          snapshot: observation.snapshotResult ?? 'unresolved', snapshotError: observation.snapshotError ?? null,
+          identities }) + '\n', { flag: 'wx', mode: 0o600 });
         sightingAttempts.delete(directory);
       });
     });
@@ -527,11 +606,13 @@ async function censusExit(t, cell, afterKill = 'omit') {
   sightingPs(directory, { cell, afterKill, prepared });
   const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
   if (prepared) {
-    const retained = sightingAttempts.get(directory)?.snapshotReport;
+    const observation = sightingAttempts.get(directory);
+    const retained = observation?.snapshotReport;
     assert.equal(retained?.close.state, 'closed', 'the exit caller did not close before private retention');
     assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
     assert.equal(retained.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
     assert.deepEqual(retained.errors, [], 'private retention reported an error');
+    assertPreparedCache(join(observation.target, 'settled', 'fixture'), cell);
   }
   const group = pidIn(directory, 'group');
   const two = pidIn(directory, 'two');
@@ -599,22 +680,53 @@ async function deniedPreparedRoot(t, explicit, suite) {
 }
 
 /** Retains a rejected root input and the pre-process scratch made by the exit fixture. */
-async function deniedPreparedRootType(t, route) {
+async function deniedPreparedRootType(t, route, kind = 'file') {
   const prior = {
     explicit: process.env.C615_SIGHTING_EVIDENCE_ROOT,
     suite: process.env.C615_EVIDENCE_ROOT,
   };
   const root = realpathSync.native(prior.suite || prior.explicit);
   const checkout = realpathSync.native(process.cwd());
-  const scratch = realpathSync.native(process.env.TMPDIR);
+  const priorTmpdir = process.env.TMPDIR;
+  const scratch = realpathSync.native(temporaryDirectory('c615-refused-type-', { context: t }));
+  process.env.TMPDIR = scratch;
   assert.ok(root !== checkout && !root.startsWith(`${checkout}/`) && root !== scratch && !root.startsWith(`${scratch}/`) && (lstatSync(root).mode & 0o077) === 0,
     'the type refusal needs a private outer evidence root');
   const attempt = join(root, `root-type-${randomUUID()}`);
   mkdirSync(attempt, { mode: 0o700 });
-  const selected = join(attempt, 'selected-file');
-  writeFileSync(selected, '', { flag: 'wx', mode: 0o600 });
-  assert.ok(lstatSync(selected).isFile(), 'the selected root was not a regular file');
+  let selected = join(attempt, 'selected-file');
+  if (kind === 'symlink') {
+    const destination = join(attempt, 'valid-directory');
+    mkdirSync(destination, { mode: 0o700 });
+    symlinkSync(destination, selected);
+    assert.equal(realpathSync.native(selected), destination, 'the selected link did not target the valid directory');
+    assert.ok(lstatSync(selected).isSymbolicLink(), 'the selected root was not a link');
+  } else if (kind === 'file') {
+    writeFileSync(selected, '', { flag: 'wx', mode: 0o600 });
+    assert.ok(lstatSync(selected).isFile(), 'the selected root was not a regular file');
+  } else if (kind === 'checkout') {
+    selected = checkout;
+  } else if (kind === 'nested') {
+    selected = scratch;
+  } else if (kind === 'mode') {
+    mkdirSync(selected, { mode: 0o700 });
+    chmodSync(selected, 0o755);
+    assert.equal(lstatSync(selected).mode & 0o077, 0o055, 'the selected root does not expose group/other mode bits');
+  } else if (kind === 'access') {
+    mkdirSync(selected, { mode: 0o700 });
+    chmodSync(selected, 0o500);
+    assert.equal(lstatSync(selected).mode & 0o077, 0, 'the selected root is not private');
+  } else if (kind === 'absent') {
+    assert.equal(existsSync(selected), false, 'the selected root unexpectedly exists');
+  } else if (kind === 'lstat-error' || kind === 'realpath-error'
+    || kind === 'checkout-error' || kind === 'scratch-error') {
+    mkdirSync(selected, { mode: 0o700 });
+    sightingRootFaults.set(selected, kind);
+  } else {
+    assert.fail(`unknown refused-root fixture: ${kind}`);
+  }
   const before = new Set(readdirSync(scratch));
+  let refusal;
   try {
     if (route === 'explicit') {
       process.env.C615_SIGHTING_EVIDENCE_ROOT = selected;
@@ -623,13 +735,18 @@ async function deniedPreparedRootType(t, route) {
       delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
       process.env.C615_EVIDENCE_ROOT = selected;
     }
-    await assert.rejects(censusExit(t, 'U2'), /the sighting evidence root is unsafe/);
+    try { await censusExit(t, 'U2'); }
+    catch (error) { refusal = error; }
   } finally {
     try {
+      sightingRootFaults.delete(selected);
+      if (kind === 'access') chmodSync(selected, 0o700);
       const added = readdirSync(scratch).filter((name) => !before.has(name));
       writeFileSync(join(attempt, 'refusal.json'), JSON.stringify({ route, scratchEntries: added.length }) + '\n', { flag: 'wx', mode: 0o600 });
       if (added.length === 1) cpSync(join(scratch, added[0]), join(attempt, 'scratch'), { recursive: true, force: false, errorOnExist: true });
     } finally {
+      if (priorTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = priorTmpdir;
       if (prior.explicit === undefined) delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
       else process.env.C615_SIGHTING_EVIDENCE_ROOT = prior.explicit;
       if (prior.suite === undefined) delete process.env.C615_EVIDENCE_ROOT;
@@ -637,6 +754,8 @@ async function deniedPreparedRootType(t, route) {
     }
   }
   assert.deepEqual(readdirSync(join(attempt, 'scratch')).sort(), ['hold'], 'the refused root allowed a fixture process or script to start');
+  assert.match(refusal?.message ?? '', kind === 'absent' ? /ENOENT/ : kind.endsWith('-error') ? /forced .* failure/ : kind === 'access' ? /EACCES/ : kind === 'mode' || kind === 'checkout' || kind === 'nested'
+    ? /the sighting evidence root must be private/ : /the sighting evidence root is unsafe/, 'the selected root did not produce the required refusal');
 }
 
 /** The ordered arguments and response rows of the stand-in's complete read log. */
@@ -949,6 +1068,633 @@ test('C615 fixture-root-type-explicit denies before preparation starts', SETTLES
 // proves R-STATE-19, R-STATE-26
 test('C615 fixture-root-type-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
   await deniedPreparedRootType(t, 'suite');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-symlink-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'symlink');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-symlink-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'symlink');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-location-explicit-checkout denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'checkout');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-location-suite-checkout denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'checkout');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-location-explicit-nested denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'nested');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-location-suite-nested denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'nested');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-mode-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'mode');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-mode-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'mode');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-access-explicit denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'access');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-access-suite denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'access');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-explicit-absent denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'absent');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-suite-absent denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'absent');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-explicit-lstat-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'lstat-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-suite-lstat-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'lstat-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-explicit-realpath-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'realpath-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-suite-realpath-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'realpath-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-explicit-checkout-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'checkout-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-suite-checkout-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'checkout-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-explicit-scratch-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'explicit', 'scratch-error');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-canonical-suite-scratch-error denies before preparation starts', SETTLES_WITHIN, async (t) => {
+  await deniedPreparedRootType(t, 'suite', 'scratch-error');
+});
+
+/** Requires either selected root route to retain its own complete attempt without overwriting prior bytes. */
+async function validPreparedRoot(t, route) {
+  assert.ok(route === 'explicit' || route === 'suite', 'unknown valid-root route');
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  const selected = join(outer, `root-${route}-${randomUUID()}`);
+  mkdirSync(selected, { mode: 0o700 });
+  const marker = join(selected, 'preexisting');
+  writeFileSync(marker, 'untouched', { flag: 'wx', mode: 0o600 });
+  const prior = { explicit: process.env.C615_SIGHTING_EVIDENCE_ROOT, suite: process.env.C615_EVIDENCE_ROOT };
+  try {
+    if (route === 'explicit') process.env.C615_SIGHTING_EVIDENCE_ROOT = selected;
+    else {
+      delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
+      process.env.C615_EVIDENCE_ROOT = selected;
+    }
+    const { directory } = await censusExit(t, 'U2');
+    const observation = sightingAttempts.get(directory);
+    assert.equal(observation?.root, selected, 'the requested root was not selected');
+    assert.equal(observation.target, join(selected, `attempt-${observation.id}`));
+    assert.deepEqual(readdirSync(selected).sort(), ['preexisting', `attempt-${observation.id}`].sort(), 'the selected root reused or overwrote an attempt');
+    assert.equal(readFileSync(marker, 'utf8'), 'untouched', 'the selected root overwrote its prior entry');
+    assert.equal(observation.snapshotReport?.copy, 'byte-complete-at-snapshot');
+  } finally {
+    if (prior.explicit === undefined) delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
+    else process.env.C615_SIGHTING_EVIDENCE_ROOT = prior.explicit;
+    if (prior.suite === undefined) delete process.env.C615_EVIDENCE_ROOT;
+    else process.env.C615_EVIDENCE_ROOT = prior.suite;
+  }
+}
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-explicit retains a separate private attempt', SETTLES_WITHIN, async (t) => {
+  await validPreparedRoot(t, 'explicit');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-root-suite retains a separate private attempt', SETTLES_WITHIN, async (t) => {
+  await validPreparedRoot(t, 'suite');
+});
+
+/** Checks each accepted cache byte against the complete original from its own real preparatory read. */
+function assertPreparedCache(retained, cell) {
+  const prepared = join(retained, 'sighting-prepared');
+  const ids = ['group', 'one', 'two'].map((name) => Number(readFileSync(join(retained, `${name}.pid`), 'utf8')));
+  assert.equal(new Set(ids).size, 3, 'the prepared PIDs were not distinct');
+  const expectedArgv = [
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'lstart=']),
+    ['-ww', '-g', String(ids[0]), '-o', 'pid=,stat='],
+    ['-ww', '-g', String(ids[0]), '-o', 'pid=,command='],
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'ucomm=']),
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'lstart=']),
+    ['-ww', '-g', String(ids[0]), '-o', 'pid=,stat='],
+  ];
+  const records = expectedArgv.map((argv, index) => {
+    const id = String(index + 1).padStart(3, '0');
+    const start = JSON.parse(readFileSync(join(prepared, `${id}.start.json`), 'utf8'));
+    const end = JSON.parse(readFileSync(join(prepared, `${id}.json`), 'utf8'));
+    assert.equal(start.source, 'real-/bin/ps', `preparation read ${id} was not the real tool`);
+    assert.equal(end.source, 'real-/bin/ps', `preparation return ${id} was not the real tool`);
+    assert.equal(start.clockSource, 'real-monotonic-clock', `preparation read ${id} used a synthetic clock`);
+    assert.equal(end.clockSource, 'real-monotonic-clock', `preparation return ${id} used a synthetic clock`);
+    assert.equal(start.tool, '/bin/ps', `preparation read ${id} did not identify its tool`);
+    assert.equal(end.tool, '/bin/ps', `preparation return ${id} did not identify its tool`);
+    assert.deepEqual(start.args, argv, `preparation read ${id} used different argv`);
+    assert.deepEqual(end.args, argv, `preparation return ${id} used different argv`);
+    assert.equal(end.status, 0, `preparation read ${id} failed`);
+    assert.equal(end.error, null, `preparation read ${id} returned an error`);
+    assert.equal(end.signal, null, `preparation read ${id} was interrupted`);
+    assert.ok(start.timeout > 0 && start.timeout <= 500, `preparation read ${id} exceeded its 500 ms admission timeout`);
+    assert.ok(BigInt(end.endedNs) >= BigInt(start.startedNs), `preparation read ${id} ended before start`);
+    const returned = {};
+    for (const stream of ['stdout', 'stderr']) {
+      assert.equal(end.streams[stream].type, 'string', `preparation read ${id} had no returned ${stream}`);
+      assert.equal(end.streams[stream].file, `${id}.${stream}.utf8`);
+      returned[stream] = readFileSync(join(prepared, end.streams[stream].file), 'utf8');
+    }
+    assert.equal(returned.stderr, '', `preparation read ${id} returned stderr`);
+    assert.ok(returned.stdout.length > 0, `preparation read ${id} returned no required answer`);
+    return { start, end, ...returned };
+  });
+  assert.ok(BigInt(records.at(-1).end.endedNs) - BigInt(records[0].start.startedNs) <= 6_000_000_000n,
+    'the prepared answer exceeded its six-second admission deadline');
+  assert.equal(readFileSync(join(retained, 'sighting-cache.state'), 'utf8'), records[3].stdout);
+  assert.equal(readFileSync(join(retained, 'sighting-cache.command'), 'utf8'), records[4].stdout);
+  ids.forEach((pid, index) => {
+    assert.equal(readFileSync(join(retained, `sighting-cache.name.${pid}`), 'utf8'), records[5 + index].stdout,
+      `prepared name for ${pid} differs from its returned original`);
+    assert.equal(readFileSync(join(retained, `sighting-cache.birth.${pid}`), 'utf8'), records[index].stdout.replace(/\n$/, ''),
+      `prepared start text for ${pid} differs from its first return`);
+    assert.equal(records[8 + index].stdout, records[index].stdout, `prepared start text for ${pid} changed`);
+  });
+  assert.deepEqual(new Set(readdirSync(prepared).filter((name) => name.endsWith('.start.json'))),
+    new Set(expectedArgv.map((_, index) => `${String(index + 1).padStart(3, '0')}.start.json`)));
+  assert.equal(readFileSync(join(retained, 'sighting-cache.ready'), 'utf8'), '');
+  const minimumReads = {
+    B: { state: 2, command: 2 },
+    U2: { state: 2, command: 2 },
+    A: { state: 3, command: 2 },
+  }[cell];
+  assert.ok(minimumReads, `unknown prepared cache cell ${cell}`);
+  const group = ids[0];
+  const target = ids[2];
+  const count = { state: 0, command: 0 };
+  const log = readFileSync(join(retained, 'sighted-ps.log'), 'utf8');
+  assert.ok(log.endsWith('\n'), 'the consumed fixture log is partial');
+  for (const block of sightingReads(log).filter(({ rows }) => rows.includes('PHASE before-kill'))) {
+    let source;
+    let cut = false;
+    if (block.args === `-ww -g ${group} -o pid=,stat=`) {
+      cut = cell === 'A' ? count.state !== 1 : count.state > 0;
+      count.state++;
+      source = records[3].stdout;
+    } else if (block.args === `-ww -g ${group} -o pid=,command=`) {
+      cut = cell === 'A' || count.state >= 2 || (cell === 'U2' && count.command > 0);
+      count.command++;
+      source = records[4].stdout;
+    } else {
+      const name = /^-p (\d+) -o ucomm=$/.exec(block.args);
+      if (name) {
+        const index = ids.indexOf(Number(name[1]));
+        assert.ok(index >= 0, 'a prepared name read used an unknown PID');
+        source = records[5 + index].stdout;
+      }
+    }
+    if (source === undefined) continue;
+    const sourceRows = source.replace(/\n+$/, '').split('\n');
+    const expectedRows = cut ? sourceRows.filter((row) => !new RegExp(`^\\s*${target}(?:\\s|$)`).test(row)) : sourceRows;
+    const observedRows = block.rows.filter((row) => row.startsWith('ROW ')).map((row) => row.slice(4));
+    assert.deepEqual(observedRows, expectedRows,
+      `consumed cached answer differed from its preparatory original: ${block.args}`);
+  }
+  assert.ok(count.state >= minimumReads.state, 'the prepared state cache read count changed');
+  assert.ok(count.command >= minimumReads.command, 'the prepared command cache read count changed');
+  return { ids, records };
+}
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-preparation-valid binds the private cache to actual ps returns', SETTLES_WITHIN, async (t) => {
+  const { directory } = await censusExit(t, 'U2');
+  const observation = sightingAttempts.get(directory);
+  const retained = join(observation.target, 'settled', 'fixture');
+  const { ids, records } = assertPreparedCache(retained, 'U2');
+  assert.equal(ids.length, 3);
+  assert.equal(records.length, 12);
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-cache-binding rejects a consumed value different from its preparatory original', SETTLES_WITHIN, async (t) => {
+  const { directory } = await censusExit(t, 'U2');
+  const observation = sightingAttempts.get(directory);
+  const original = join(observation.target, 'settled', 'fixture');
+  const copy = join(observation.root, `cache-consumed-mismatch-${randomUUID()}`);
+  cpSync(original, copy, { recursive: true, force: false, errorOnExist: true });
+  const group = readFileSync(join(copy, 'group.pid'), 'utf8').trim();
+  const state = readFileSync(join(copy, 'sighting-prepared', '004.stdout.utf8'), 'utf8');
+  const row = state.split('\n').find((line) => new RegExp(`^\\s*${group}\\s`).test(line));
+  assert.ok(row, 'the preparatory source had no group state row');
+  const log = readFileSync(join(copy, 'sighted-ps.log'), 'utf8');
+  const changed = log.replace(`ROW ${row}\n`, `ROW ${group} Q\n`);
+  assert.notEqual(changed, log, 'the copied consumed row was not changed');
+  writeFileSync(join(copy, 'sighted-ps.log'), changed);
+  assert.equal(readFileSync(join(original, 'sighted-ps.log'), 'utf8'), log,
+    'the mutation altered the complete private original');
+  assert.throws(() => assertPreparedCache(copy, 'U2'), /consumed cached answer differed from its preparatory original/);
+  const mutations = [
+    { name: 'absent-state', file: 'sighting-cache.state', change: (file) => unlinkSync(file) },
+    { name: 'incomplete-state', file: 'sighting-cache.state', change: (file) => {
+      const value = readFileSync(file, 'utf8');
+      writeFileSync(file, value.slice(0, -1));
+    } },
+    { name: 'mismatched-command', file: 'sighting-cache.command', change: (file) => writeFileSync(file, 'changed command\n') },
+    { name: 'mismatched-name', file: `sighting-cache.name.${readFileSync(join(original, 'two.pid'), 'utf8').trim()}`,
+      change: (file) => writeFileSync(file, 'different name\n') },
+    { name: 'changed-preparation-original', file: 'sighting-prepared/004.stdout.utf8',
+      change: (file) => writeFileSync(file, 'different preparatory return\n') },
+    { name: 'absent-ready', file: 'sighting-cache.ready', change: (file) => unlinkSync(file) },
+  ];
+  for (const mutation of mutations) {
+    const candidate = join(observation.root, `cache-${mutation.name}-${randomUUID()}`);
+    cpSync(original, candidate, { recursive: true, force: false, errorOnExist: true });
+    mutation.change(join(candidate, mutation.file));
+    assert.throws(() => assertPreparedCache(candidate, 'U2'), undefined,
+      `${mutation.name}: a bad cache earned prepared credit`);
+  }
+});
+
+/** Makes one private, labelled synthetic preparation input without starting a fixture process. */
+function syntheticPreparationDirectory(name, ids = [42001, 42002, 42003]) {
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  const directory = join(outer, `preparation-${name}-${randomUUID()}`);
+  mkdirSync(directory, { mode: 0o700 });
+  writeFileSync(join(directory, 'sighting-prepare'), '', { flag: 'wx', mode: 0o600 });
+  ['group', 'one', 'two'].forEach((part, index) => {
+    writeFileSync(join(directory, `${part}.pid`), String(ids[index]), { flag: 'wx', mode: 0o600 });
+  });
+  return directory;
+}
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-preparation-refusal denies a missing fixture state row', SETTLES_WITHIN, () => {
+  const directory = syntheticPreparationDirectory('missing-row');
+  const calls = [];
+  const reader = (tool, argv) => {
+    calls.push({ tool, argv });
+    const stdout = argv.at(-1) === 'lstart=' ? 'Mon Oct 11 10:00:00 2026\n'
+      : argv.at(-1) === 'pid=,stat=' ? '42001 S\n42002 S\n' : '';
+    return { status: 0, signal: null, error: undefined, stdout, stderr: '' };
+  };
+  assert.throws(() => prepareSighting(directory, { reader }),
+    /controlled group snapshot differed from its three fixture PIDs/);
+  assert.equal(calls.length, 4, 'the missing-row return was not reached');
+  assert.deepEqual(calls.map(({ tool }) => tool), Array(4).fill('/bin/ps'));
+  assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false, 'an invalid preparation became ready');
+  const prepared = join(directory, 'sighting-prepared');
+  for (let index = 1; index <= 4; index++) {
+    const id = String(index).padStart(3, '0');
+    const start = JSON.parse(readFileSync(join(prepared, `${id}.start.json`), 'utf8'));
+    const end = JSON.parse(readFileSync(join(prepared, `${id}.json`), 'utf8'));
+    assert.equal(start.source, 'synthetic-controlled-return');
+    assert.equal(end.source, 'synthetic-controlled-return');
+    assert.equal(end.streams.stdout.file, `${id}.stdout.utf8`);
+    assert.equal(readFileSync(join(prepared, `${id}.stdout.utf8`), 'utf8'),
+      index === 4 ? '42001 S\n42002 S\n' : 'Mon Oct 11 10:00:00 2026\n');
+  }
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-preparation-refusal denies invalid rows and start text', SETTLES_WITHIN, () => {
+  const ids = [42001, 42002, 42003];
+  const birth = 'Mon Oct 11 10:00:00 2026\n';
+  const state = '42001 S\n42002 S\n42003 S\n';
+  const command = '42001 /bin/sh\n42002 /bin/sh\n42003 /bin/sh\n';
+  const answer = [birth, birth, birth, state, command, 'sh\n', 'sh\n', 'sh\n', birth, birth, birth, state];
+  const argv = [
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'lstart=']),
+    ['-ww', '-g', '42001', '-o', 'pid=,stat='],
+    ['-ww', '-g', '42001', '-o', 'pid=,command='],
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'ucomm=']),
+    ...ids.map((pid) => ['-p', String(pid), '-o', 'lstart=']),
+    ['-ww', '-g', '42001', '-o', 'pid=,stat='],
+  ];
+  const cases = [
+    { name: 'duplicate-state', index: 3, value: '42001 S\n42001 S\n42003 S\n', error: /snapshot differed/ },
+    { name: 'zombie-state', index: 3, value: '42001 S\n42002 Z\n42003 S\n', error: /not live and running/ },
+    { name: 'stopped-state', index: 3, value: '42001 S\n42002 T\n42003 S\n', error: /not live and running/ },
+    { name: 'malformed-state', index: 3, value: '42001 S\nbad-row\n42003 S\n', error: /row is malformed/ },
+    { name: 'omitted-command', index: 4, value: '42001 /bin/sh\n42002 /bin/sh\n', error: /snapshot differed/ },
+    { name: 'empty-name', index: 6, value: ' \n', error: /name was empty/ },
+    { name: 'empty-start', index: 0, value: '\n', error: /start value was empty/ },
+    { name: 'changed-start', index: 9, value: 'Mon Oct 11 10:00:01 2026\n', error: /start value changed/ },
+    { name: 'omitted-final-state', index: 11, value: '42001 S\n42002 S\n', error: /snapshot differed/ },
+  ];
+  for (const variant of cases) {
+    const directory = syntheticPreparationDirectory(variant.name, ids);
+    const expected = answer.with(variant.index, variant.value);
+    let calls = 0;
+    const reader = (tool, args) => {
+      assert.equal(tool, '/bin/ps', `${variant.name}: unexpected tool`);
+      assert.deepEqual(args, argv[calls], `${variant.name}: unexpected read ${calls + 1}`);
+      return { status: 0, signal: null, error: undefined, stdout: expected[calls++], stderr: '' };
+    };
+    assert.throws(() => prepareSighting(directory, { reader }), variant.error,
+      `${variant.name}: invalid preparation was accepted`);
+    assert.ok(calls > variant.index, `${variant.name}: forced return was not read`);
+    assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false,
+      `${variant.name}: invalid preparation became ready`);
+    assert.deepEqual(readdirSync(directory).filter((name) => name.startsWith('sighting-cache.')), [],
+      `${variant.name}: an invalid preparation wrote cache values`);
+    const prepared = join(directory, 'sighting-prepared');
+    for (let index = 0; index < calls; index++) {
+      const id = String(index + 1).padStart(3, '0');
+      const start = JSON.parse(readFileSync(join(prepared, `${id}.start.json`), 'utf8'));
+      const end = JSON.parse(readFileSync(join(prepared, `${id}.json`), 'utf8'));
+      assert.equal(start.source, 'synthetic-controlled-return');
+      assert.equal(end.source, 'synthetic-controlled-return');
+      assert.equal(start.tool, '/bin/ps');
+      assert.deepEqual(start.args, argv[index]);
+      assert.deepEqual(end.args, argv[index]);
+      assert.equal(readFileSync(join(prepared, `${id}.stdout.utf8`), 'utf8'), expected[index]);
+      assert.equal(readFileSync(join(prepared, `${id}.stderr.utf8`), 'utf8'), '');
+    }
+  }
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-read-refusal retains synthetic failed and incomplete returns', SETTLES_WITHIN, () => {
+  const cases = [
+    { name: 'failure', result: { status: 2, signal: null, error: undefined, stdout: 'partial\n', stderr: 'ps failed\n' }, error: /not a product-equivalent answer/ },
+    { name: 'timeout', result: { status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' }, stdout: 'partial\n', stderr: 'timed out\n' }, error: /not a product-equivalent answer/ },
+    { name: 'missing-stdout', result: { status: 0, signal: null, error: undefined, stdout: undefined, stderr: '' }, error: /not a product-equivalent answer/ },
+    { name: 'empty-stdout', result: { status: 0, signal: null, error: undefined, stdout: '', stderr: '' }, error: /contained no required row/ },
+    { name: 'thrown-before-return', thrown: new Error('synthetic reader failed before return'), error: /threw before returning/ },
+  ];
+  for (const variant of cases) {
+    const directory = syntheticPreparationDirectory(`read-${variant.name}`);
+    let calls = 0;
+    const reader = (tool, args) => {
+      assert.equal(tool, '/bin/ps');
+      assert.deepEqual(args, ['-p', '42001', '-o', 'lstart=']);
+      calls++;
+      if (variant.thrown) throw variant.thrown;
+      return variant.result;
+    };
+    assert.throws(() => prepareSighting(directory, { reader }), variant.error,
+      `${variant.name}: rejected read was admitted`);
+    assert.equal(calls, 1, `${variant.name}: unexpected follow-up read`);
+    assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false,
+      `${variant.name}: a failed read became ready`);
+    const prepared = join(directory, 'sighting-prepared');
+    const start = JSON.parse(readFileSync(join(prepared, '001.start.json'), 'utf8'));
+    const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
+    assert.equal(start.source, 'synthetic-controlled-return');
+    assert.equal(end.source, 'synthetic-controlled-return');
+    assert.equal(start.tool, '/bin/ps');
+    assert.deepEqual(start.args, ['-p', '42001', '-o', 'lstart=']);
+    for (const stream of ['stdout', 'stderr']) {
+      const expected = variant.result?.[stream];
+      assert.equal(end.streams[stream].type, typeof expected);
+      if (typeof expected === 'string') {
+        assert.equal(end.streams[stream].file, `001.${stream}.utf8`);
+        assert.equal(readFileSync(join(prepared, `001.${stream}.utf8`), 'utf8'), expected,
+          `${variant.name}: partial returned ${stream} was lost`);
+      } else assert.equal(end.streams[stream].file, null);
+    }
+    if (variant.thrown) assert.equal(end.error.name, 'Error');
+  }
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-read-refusal denies a synthetic deadline overrun after return', SETTLES_WITHIN, () => {
+  const directory = syntheticPreparationDirectory('deadline');
+  const ticks = [0n, 0n, 0n, 7_000_000_000n, 7_000_000_000n];
+  const clock = () => ticks.shift() ?? 7_000_000_000n;
+  let calls = 0;
+  const reader = (tool, argv) => {
+    assert.equal(tool, '/bin/ps');
+    assert.deepEqual(argv, ['-p', '42001', '-o', 'lstart=']);
+    calls++;
+    return { status: 0, signal: null, error: undefined,
+      stdout: 'Mon Oct 11 10:00:00 2026\n', stderr: '' };
+  };
+  assert.throws(() => prepareSighting(directory, { reader, clock }), /exceeded its 6000 ms total bound/);
+  assert.equal(calls, 1, 'the synthetic clock did not cut the first returned read');
+  assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false);
+  const prepared = join(directory, 'sighting-prepared');
+  const start = JSON.parse(readFileSync(join(prepared, '001.start.json'), 'utf8'));
+  const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
+  assert.equal(start.clockSource, 'synthetic-clock');
+  assert.equal(end.clockSource, 'synthetic-clock');
+  assert.equal(readFileSync(join(prepared, '001.stdout.utf8'), 'utf8'), 'Mon Oct 11 10:00:00 2026\n');
+  assert.equal(readFileSync(join(prepared, '001.stderr.utf8'), 'utf8'), '');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-read-refusal retains a real ps omitted row after recorded fixture release', SETTLES_WITHIN, async (t) => {
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  const directory = join(outer, `preparation-real-omission-${randomUUID()}`);
+  mkdirSync(directory, { mode: 0o700 });
+  writeFileSync(join(directory, 'sighting-prepare'), '', { flag: 'wx', mode: 0o600 });
+  const names = ['group', 'one', 'two'];
+  const children = names.map((name) => {
+    const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready\\n"); process.stdin.resume(); process.stdin.once("end", () => process.exit(0));'],
+      { stdio: ['pipe', 'pipe', 'pipe'] });
+    const record = { name, child, stdout: [], stderr: [], error: null };
+    record.closed = new Promise((resolveClose) => child.once('close', (code, signal) => resolveClose({ code, signal })));
+    child.once('error', (error) => { record.error = error.code ?? error.name; });
+    child.stdout.on('data', (bytes) => record.stdout.push(Buffer.from(bytes)));
+    child.stderr.on('data', (bytes) => record.stderr.push(Buffer.from(bytes)));
+    writeFileSync(join(directory, `${name}.pid`), String(child.pid), { flag: 'wx', mode: 0o600 });
+    return record;
+  });
+  let finalization;
+  const finalize = () => finalization ??= (async () => {
+    for (const { child } of children) if (!child.stdin.writableEnded) child.stdin.end();
+    const results = await Promise.all(children.map(async ({ name, child, stdout, stderr, error, closed }) => {
+      const close = await closed;
+      writeFileSync(join(directory, `${name}.stdout`), Buffer.concat(stdout), { flag: 'wx', mode: 0o600 });
+      writeFileSync(join(directory, `${name}.stderr`), Buffer.concat(stderr), { flag: 'wx', mode: 0o600 });
+      return { name, pid: child.pid, ...close, error };
+    }));
+    const state = results.every(({ pid, code, signal, error }) => Number.isSafeInteger(pid) && pid > 0 && code === 0 && signal === null && !error) ? 'pass' : 'fail';
+    writeFileSync(join(directory, 'finalizer.json'), JSON.stringify({ state, identities: results }) + '\n', { flag: 'wx', mode: 0o600 });
+    return state;
+  })();
+  t.after(finalize);
+  try {
+    await until(() => children.every(({ stdout }) => Buffer.concat(stdout).includes(Buffer.from('ready\n'))), t);
+    children[0].child.stdin.end();
+    assert.deepEqual(await children[0].closed, { code: 0, signal: null }, 'the recorded group fixture did not close');
+    assert.throws(() => prepareSighting(directory), /contained no required row/);
+    assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false);
+    const prepared = join(directory, 'sighting-prepared');
+    const start = JSON.parse(readFileSync(join(prepared, '001.start.json'), 'utf8'));
+    const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
+    assert.equal(start.source, 'real-/bin/ps');
+    assert.equal(end.source, 'real-/bin/ps');
+    assert.equal(start.tool, '/bin/ps');
+    assert.deepEqual(start.args, ['-p', String(children[0].child.pid), '-o', 'lstart=']);
+    assert.equal(end.status, 1, 'the omitted row was not an actual no-row answer');
+    assert.equal(end.error, null);
+    assert.equal(end.signal, null);
+    assert.equal(readFileSync(join(prepared, '001.stdout.utf8'), 'utf8'), '');
+    assert.equal(readFileSync(join(prepared, '001.stderr.utf8'), 'utf8'), '');
+  } finally {
+    assert.equal(await finalize(), 'pass', 'a recorded fixture failed finalization');
+  }
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads', SETTLES_WITHIN, async (t) => {
+  const { directory, group, trace } = await censusExit(t, 'U2');
+  const before = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat='], 'before-kill');
+  const after = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat=,xstat='], 'after-kill');
+  assert.notEqual(before.start.id, after.start.id, 'the outer answers reused one read ID');
+  assert.ok(BigInt(after.start.startedNs) > BigInt(before.end.endedNs), 'the post-kill answer preceded the before-kill answer');
+  const observation = sightingAttempts.get(directory);
+  const original = join(observation.target, 'settled', 'fixture');
+  const originalLog = readFileSync(join(original, 'sighted-ps.log'), 'utf8');
+  const originalTrace = readFileSync(join(original, 'sighting-reads', 'trace.jsonl'), 'utf8');
+  const cases = [
+    { name: 'failure', error: /prepared read r000001 failed/, change: (rows) => { rows[1].status = 2; } },
+    { name: 'timeout', error: /prepared read r000001 returned an error/, change: (rows) => {
+      rows[1].error = { code: 'ETIMEDOUT' }; rows[1].signal = 'SIGTERM'; rows[1].returnedStreams = 'partial-possible';
+    } },
+    { name: 'no-settled-return', error: /prepared log and outer read counts differ/, change: (rows) => { rows.splice(1, 1); } },
+    { name: 'wrong-argv', error: /argv differs from log/, change: (rows) => { rows[0].argv = ['-bad']; } },
+    { name: 'wrong-returned-string', error: /differed from the complete log answer/, change: (rows, copy) => {
+      const file = join(copy, 'sighting-reads', rows[1].stdout.file);
+      const changed = 'different returned answer\n';
+      writeFileSync(file, changed);
+      rows[1].stdout.bytes = Buffer.byteLength(changed);
+      rows[1].stdout.sha256 = createHash('sha256').update(changed).digest('hex');
+    } },
+    { name: 'reversed-order', error: /began before its predecessor ended/, change: (rows) => {
+      rows[2].startedNs = '0';
+    } },
+    { name: 'lost-returned-original', error: /ENOENT/, change: (rows, copy) => {
+      unlinkSync(join(copy, 'sighting-reads', rows[1].stdout.file));
+    } },
+  ];
+  for (const variant of cases) {
+    const copy = join(observation.root, `outer-${variant.name}-${randomUUID()}`);
+    cpSync(original, copy, { recursive: true, force: false, errorOnExist: true });
+    const rows = originalTrace.trimEnd().split('\n').map((line) => JSON.parse(line));
+    for (const row of rows) if (row.kind === 'start') row.tool = join(copy, 'ps-sighted');
+    variant.change(rows, copy);
+    writeFileSync(join(copy, 'sighting-reads', 'trace.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+    assert.throws(() => completePreparedSightingReads(copy, originalLog), variant.error,
+      `${variant.name}: an ineligible outer read was accepted`);
+  }
+  assert.equal(readFileSync(join(original, 'sighted-ps.log'), 'utf8'), originalLog);
+  assert.equal(readFileSync(join(original, 'sighting-reads', 'trace.jsonl'), 'utf8'), originalTrace,
+    'an outer mutation altered the complete private original');
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-retention denies failed copies missing bytes and unresolved finalizers', SETTLES_WITHIN, () => {
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  const retainedBytes = Buffer.from('retained original\n');
+  const retainedFile = { name: 'marker', bytes: retainedBytes.length,
+    sha256: createHash('sha256').update(retainedBytes).digest('hex') };
+  const ready = {
+    attempt: 'synthetic-retention', exit: { state: 'observed' }, close: { state: 'closed' },
+    copy: 'byte-complete-at-snapshot', reads: 'settled-returned-originals',
+    errors: [], producedThenLost: [], source: [retainedFile], copied: [retainedFile],
+  };
+  const closed = { attempt: 'synthetic-retention', state: 'pass', scratch: 'removed',
+    identities: [{ pid: 42001, disposition: 'absent' }] };
+  const cases = [
+    { name: 'complete', inventory: ready, finalizer: closed, admitted: true },
+    { name: 'failed-copy', inventory: { ...ready, copy: 'partial-or-changed' }, finalizer: closed },
+    { name: 'lost-original', inventory: { ...ready, producedThenLost: [{ name: 'stdout' }] }, finalizer: closed },
+    { name: 'unsettled-caller', inventory: { ...ready, close: { state: 'not-observed' } }, finalizer: closed },
+    { name: 'unsettled-read', inventory: { ...ready, reads: 'partial-or-unresolved' }, finalizer: closed },
+    { name: 'missing-retained-original', inventory: ready, finalizer: closed,
+      change: (root) => unlinkSync(join(root, 'settled', 'fixture', 'marker')) },
+    { name: 'unreadable-retained-original', inventory: ready, finalizer: closed,
+      change: (root) => chmodSync(join(root, 'settled', 'fixture', 'marker'), 0),
+      restore: (root) => chmodSync(join(root, 'settled', 'fixture', 'marker'), 0o600) },
+    { name: 'missing-finalizer', inventory: ready },
+    { name: 'failed-finalizer', inventory: ready, finalizer: { ...closed, state: 'fail' } },
+    { name: 'identity-mismatch', inventory: ready, finalizer: { ...closed, attempt: 'other' } },
+    ...['live', 'zombie', 'unsafe', 'unconfirmed'].map((disposition) => ({
+      name: `${disposition}-identity`, inventory: ready,
+      finalizer: { ...closed, identities: [{ pid: 42001, disposition }] },
+    })),
+  ];
+  for (const variant of cases) {
+    const root = join(outer, `retention-${variant.name}-${randomUUID()}`);
+    mkdirSync(root, { mode: 0o700 });
+    mkdirSync(join(root, 'settled'), { mode: 0o700 });
+    mkdirSync(join(root, 'settled', 'fixture'), { mode: 0o700 });
+    writeFileSync(join(root, 'settled', 'fixture', 'marker'), retainedBytes, { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(root, 'settled', 'inventory.json'), JSON.stringify(variant.inventory) + '\n', { flag: 'wx', mode: 0o600 });
+    if (variant.finalizer) writeFileSync(join(root, 'finalizer.json'), JSON.stringify(variant.finalizer) + '\n', { flag: 'wx', mode: 0o600 });
+    try {
+      variant.change?.(root);
+      if (variant.name === 'unreadable-retained-original') {
+        assert.equal(lstatSync(join(root, 'settled', 'fixture', 'marker')).mode & 0o400, 0,
+          'the unreadable original was never forced');
+      }
+      if (variant.admitted) assert.equal(eligibleSightingAttempt(root), true);
+      else assert.throws(() => eligibleSightingAttempt(root), undefined,
+        `${variant.name}: an unresolved retained attempt earned credit`);
+    } finally {
+      variant.restore?.(root);
+    }
+  }
+});
+
+// proves R-STATE-19, R-STATE-26
+test('C615 fixture-retention reopens actual finalizer and recorded identities after teardown', SETTLES_WITHIN, async (t) => {
+  const { directory } = await censusExit(t, 'U2');
+  const target = sightingAttempts.get(directory)?.target;
+  assert.ok(target, 'the actual prepared attempt has no private target');
+  t.after(() => t.after(() => {
+    assert.equal(eligibleSightingAttempt(target), true);
+    const finalizer = JSON.parse(readFileSync(join(target, 'finalizer.json'), 'utf8'));
+    assert.deepEqual(finalizer.identities.map(({ source }) => source).sort(), ['caller', 'group', 'one', 'two']);
+    for (const identity of finalizer.identities) {
+      assert.equal(identity.disposition, 'absent');
+      assert.ok(identity.original, 'the identity disposition has no returned tool original');
+      assert.ok(existsSync(join(target, identity.original)), 'the identity original was lost');
+    }
+  }));
 });
 
 // proves R-STATE-19, R-STATE-26
