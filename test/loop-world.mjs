@@ -407,7 +407,7 @@ export function world({
     },
   };
   const repository = createFakeRepository(forge);
-  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: { postComment: repository.postComment } });
+  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: { postComment: repository.postComment, mergePullRequest: repository.mergePullRequest } });
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
   const decide = (card, outcomes, options = {}) => {
@@ -470,6 +470,8 @@ export function world({
   const watched = board;
   board = {
     readColumns: ending((...args) => watched.readColumns(...args)),
+    // The lane's read of a card it reaches, which no trigger counts: the board's own, where L0's handle has none.
+    readItems: (...args) => (watched.readItems ?? fake.operations.readItems)(...args),
     readPriority: async (...args) => {
       try {
         const answer = await watched.readPriority(...args);
@@ -491,6 +493,8 @@ export function world({
       if (each.layer !== 'L3') continue;
       if (each.event === 'pull' && each.accepted) open.add(each.card);
       if (each.event === 'slot.release') open.delete(each.card);
+      // A merge claim holds no slot, so its merge's end ends it, and so does a merge start the sink refused.
+      if (each.event === 'merge.end' || (each.event === 'merge.start' && !each.accepted)) open.delete(each.card);
     }
     return [...open];
   };

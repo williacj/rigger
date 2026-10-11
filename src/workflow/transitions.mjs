@@ -23,6 +23,8 @@ const CHANGES = {
   rejudged: { from: 'owner', to: 'review' },
   merged: { from: 'review', to: 'done' },
   mergedFromOwner: { from: 'owner', to: 'done' },
+  conflicted: { from: 'review', to: 'coding' },
+  conflictedFromOwner: { from: 'owner', to: 'coding' },
 };
 
 /** The changes L2's `move` answers make, each the one change from its column to the column the answer names. */
@@ -104,6 +106,18 @@ export function columnChanges({
     throw Object.assign(new Error(`card #${card.number} stays in coding: ${why}`), { code: REVIEW_WITHHELD, facts });
   };
 
+  /**
+   * L3 hands over `next`, L2's `move` answer for `card` at the pull, unread: the card moves from
+   * its column to the column the answer names, by the one change L2 makes between them. A move
+   * L2 makes no change for is refused, naming the card and both columns, and nothing moves.
+   */
+  const moved = async (card, next) => {
+    const from = Object.keys(columns).find((key) => columns[key] === card.column);
+    const cause = MOVES.find((each) => CHANGES[each].from === from && CHANGES[each].to === next.to);
+    if (cause === undefined) throw new Error(`card #${card.number} has no move from ${from ?? card.column} to ${next.to}`);
+    await change(card, cause);
+  };
+
   return {
     /**
      * L3 has claimed `card`, a board item as the forge adapter read it, on `next`, L2's answer for
@@ -123,16 +137,38 @@ export function columnChanges({
       await change(card, card.column === columns.review ? 'redone' : 'claimed');
     },
 
+    moved,
+
     /**
-     * L3 hands over `next`, L2's `move` answer for `card` at the pull, unread: the card moves from
-     * its column to the column the answer names, by the one change L2 makes between them. A move
-     * L2 makes no change for is refused, naming the card and both columns, and nothing moves.
+     * L3's lane hands over `next`, L2's `merge` answer for `card` from its rule run again at the
+     * lane, unread: L2 merges the pull request it names at the head it names through the
+     * repository-write side, and answers the adapter's answer unread, or rejects as the call did.
      */
-    moved: async (card, next) => {
-      const from = Object.keys(columns).find((key) => columns[key] === card.column);
-      const cause = MOVES.find((each) => CHANGES[each].from === from && CHANGES[each].to === next.to);
-      if (cause === undefined) throw new Error(`card #${card.number} has no move from ${from ?? card.column} to ${next.to}`);
-      await change(card, cause);
+    merge: (card, next) => repositoryWrites.mergePullRequest(next.pull, next.head),
+
+    /**
+     * L3's lane hands over `answer`, what L2's `merge` answered for `card` on `next`, once it has
+     * recorded the merge's end. A merge the forge made, or had made already, moves the card to Done
+     * from its column, as `moved` moves it. A refused merge has L2 read the pull request's
+     * mergeability, and only that read decides a conflict, never the refusal's reason (the
+     * architect's r3 ruling 5): read as conflicting, the card moves to coding, its transition's cause
+     * naming the conflict, where its maker continues on the pull request (`R-CONFLICT-1`). Any other
+     * refusal leaves the card where it is. A read that fails leaves it there too, and rejects naming
+     * the card and the read.
+     */
+    mergeEnded: async (card, next, answer) => {
+      if (['merged', 'already merged'].includes(answer.outcome)) {
+        await moved(card, { to: 'done' });
+        return;
+      }
+      if (answer.outcome !== 'refused') return;
+      let mergeable;
+      try {
+        mergeable = await reads.readMergeable(next.pull);
+      } catch (failure) {
+        throw new Error(`card #${card.number}'s merge of pull request #${next.pull} was refused, and L2 could not read its mergeability: ${failure.message}`, { cause: failure });
+      }
+      if (mergeable === 'conflicting') await change(card, card.column === columns.owner ? 'conflictedFromOwner' : 'conflicted');
     },
 
     /** Posts L2's return comment on its pull request, without changing the card's column. */

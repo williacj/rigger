@@ -52,6 +52,17 @@ function makerOutcome({ outcome, settled: settle }) {
 }
 
 /**
+ * What a card's merge of pull request `pull` did, as the lane's `merge.end` named it in
+ * `merge`: `said`, the line's words, and `review`, whether the pull request is merged, the one
+ * outcome this verb meets in full. Any other leaves the card for a later invocation, short of it.
+ */
+function mergeOutcome({ pull, merge }) {
+  if (['merged', 'already merged'].includes(merge.outcome)) return { said: `${merge.outcome} pull request #${pull}`, review: true };
+  const why = [merge.outcome, merge.reason, merge.context, merge.action].filter((each) => each !== undefined).join(', ');
+  return { said: `did not merge pull request #${pull}: ${why}`, review: false };
+}
+
+/**
  * What a judge's `outcome`, L1's as `Promise.allSettled` records it, says on the judge's line, for
  * a judge whose time is `timeout` milliseconds, and `passed`, whether the judge exited 0 in its time.
  */
@@ -243,6 +254,7 @@ async function claiming(verb, limit, opened, {
         return: `returned acceptance on pull request #${each.pull}`,
         escalate: `escalated ${each.category}`,
       };
+      if (each.action === 'merge') return { ...each, ...mergeOutcome(each), judgesPassed: true, judgeLines: [] };
       return { ...each, said: words[each.action], review: true, judgesPassed: true, judgeLines: [] };
     }
     return { ...each, ...(each.outcome === undefined ? { said: undefined, review: true } : makerOutcome(each)), ...judgesOf(each) };

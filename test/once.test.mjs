@@ -996,3 +996,22 @@ test('the stand-in that refuses the stream once a judge\'s directory is made, on
   assert.deepEqual(agent.runs(), []);
   assert.deepEqual(readdirSync(agent.dir).sort(), ['claude', 'git', 'plan.json']);
 });
+
+for (const { row, extra, code, column, line } of [
+  { row: 'the forge merges it', extra: {}, code: 0, column: 'Done', line: /card #10 merged pull request #11\b/ },
+  { row: 'the forge answers it closed', extra: { pullStates: { 11: 'closed' } }, code: 1, column: 'Review', line: /card #10 did not merge pull request #11: refused, closed/ },
+]) {
+  test(`once, given a Review card whose judge is sound and whose pull request is mergeable, makes the merge, and where ${row} prints so and exits ${code}`, async () => {
+    const head = '6'.repeat(40);
+    const comments = [markerComment({ card: 10, pull: 11, head, body: ADMITTED })];
+    const seed = { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments }], mergeable: { 11: 'MERGEABLE' }, ...extra };
+
+    const ran = once({ items: [card(10, 'Review')] }, { seed });
+
+    assert.equal(ran.code, code, `${ran.out}\n${ran.err}`);
+    // A verb exiting non-zero says what it did on standard error.
+    assert.match(code === 0 ? ran.out : ran.err, line);
+    assert.deepEqual(await columnsOf(ran), { 10: column });
+    assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'merge.end').map(({ card: number, outcome }) => ({ number, outcome })), [{ number: 10, outcome: code === 0 ? 'merged' : 'refused' }]);
+  });
+}
