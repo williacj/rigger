@@ -33,9 +33,9 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
-| **L4 Quality** | What the work is and what good means: kinds of work and their maker and judge sets, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
+| **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, answers to escalations | | | | A person |
@@ -132,8 +132,8 @@ workaround.
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
 | **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
-| **Kinds of work** | A name per kind, with its maker role, ordered judge roles (`owner` last if at all), provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop and the gate | Yes |
-| **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
+| **Kinds of work** | A name per kind, with its maker role, ordered judges (`owner` last if at all), each a role and optionally its provider rule, provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop, the gate, the provider each judge runs on, and the provider the gate requires of each judge's marker | Yes |
+| **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, the card labels that select another provider, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L2 selects the provider its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
@@ -255,6 +255,18 @@ selects for this role. A role's `timeout` is the milliseconds its dispatch may r
 is, and a role that declares none may run for 14,400,000 milliseconds, which is four hours. A
 role's name names a directory, so it holds no `/`.
 
+A role's `providerLabels` is optional. It maps a card label to the provider that label
+selects for this role, and each provider it names is one Rigger has an adapter for. Without
+a selecting label, the role runs on its `provider`.
+
+A judge is a role name, or `{ role, provider }`. A role name runs the judge on its role's
+provider, and `owner` is written only that way. In the object, `provider` is the judge's
+provider rule. A provider name fixes the provider. A map from the provider the maker runs on
+to the provider the judge runs on makes it follow the maker's, and it holds a key for every
+provider the maker can run on. Where an entry carries a rule, L2 reads neither its role's
+`provider` nor its `providerLabels`. L2 answers every role's provider from one function, and
+the dispatch, the marker's instruction and the gate all take their provider from it.
+
 ## Triggers
 
 L3 owns three trigger kinds. **Pull** fires on board occupancy: a card in Ready and a free slot.
@@ -274,11 +286,13 @@ do it are L0. A Windows equivalent arrives with native Windows, which is not in 
 
 The gate is one L2 rule, enforced in two places: by a required check on the forge, and by the
 engine's merge decision. The rule lives in `src/workflow/gate.mjs`. It reads a card's markers, its
-kind's judges, the pull request's head, the acceptance digest and the required checks' states. It
-answers admit, or a refusal naming each missing, stale or unsound piece.
+kind's judges and the provider each agent judge must run on, the pull request's head, the acceptance
+digest and the required checks' states. It answers admit, or a refusal naming each missing, stale or
+unsound piece. The rule tells the owner by the role `owner`. It refuses an agent judge handed no
+provider, and a card whose labels select two providers for one of its roles.
 
 The rule holds no opinion. It reads no text outside the marker's schema, and it never decides which
-judges a card needs or which checks count. L4 names the judges. The forge's rules name the checks.
+judges a card needs or which checks count. L4 names the judges and their providers. The forge's rules name the checks.
 
 The client hooks under `.githooks/` are an early check and not the boundary, because a session can
 run code it wrote (`D23` rule 2). A hook refuses some routes early, and the required check is what
@@ -292,7 +306,7 @@ holds:
 
 - the card and the pull request;
 - the head SHA the judge ruled on, and the acceptance digest it ruled against;
-- the judge's role and its verdict;
+- the judge's role, the provider an agent judge ran on, and its verdict;
 - each acceptance item, keyed by its ordinal, as met or unmet;
 - the ruling on whether the acceptance covered what the card asked (`R-LOOP-6`);
 - the dispatch id and the evidence digest, where Rigger dispatched the judge.
@@ -312,11 +326,17 @@ follows:
 - The rule reads only markers written by an account with write access to the repository. A
   marker on a pull request from a fork admits nothing.
 - The rule refuses a marker that has been edited.
+- The rule refuses an agent judge's marker whose provider is absent, or is not exactly the one
+  L4 requires of that judge on that card. L2 owes that judge a marker, as for one that is
+  absent. That holds whether or not the consumer declares a provider rule.
+- The rule refuses an owner's marker that names a provider, and L2 leaves it for the owner, as
+  an edited one.
 
 The owner's verdict is a marker in the same schema, with the role `owner`, and the owner writes it.
 L2 never writes it. A marker the owner writes, or one written by a judge Rigger did not dispatch,
 carries neither a dispatch id nor an evidence digest. Its writer takes the head, the acceptance
-digest and the items from the gate check's run summary.
+digest, the items and, for an agent judge, the provider required of it from the gate check's
+run summary. The owner's marker carries no provider.
 
 ### The required check on the forge
 
@@ -333,7 +353,7 @@ reads:
 - the pull request's base from the pull request, never from `GITHUB_REF`, which names the default
   branch even for another base;
 - the config from the base branch;
-- the card's markers and its acceptance.
+- the card's markers, its acceptance and its labels.
 
 The script hands the rule no required checks, because the forge enforces those itself. One run of
 the script rules on one pull request. It exits 0 to admit, and prints the head SHA it read and its
@@ -395,6 +415,9 @@ it.
 
 - A marker a session wrote with the owner's token, from one the owner wrote.
 - A card's kind changed by relabelling, from the kind its author gave it.
+- A marker naming one provider, from one the other provider wrote.
+- A card's maker provider changed by relabelling, or a label that does not match the maker a
+  person dispatched.
 
 The App design carries one named residual: it is not tested against forging (#642, P29). Either of
 two observations reverses it (#642, P26): any run off `main` obtaining the App's secret, or a job on
