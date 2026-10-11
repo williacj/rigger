@@ -339,7 +339,7 @@ test('given one pullable card and two free slots, two pull triggers whose reads 
   assert.deepEqual(built.dispatches.started, [7]);
 });
 
-test('after a card\'s slot is released with freshness "not fresh", the next tick pulls that card again', async () => {
+test('after a card\'s slot is released with the forge holding nothing from its line of work, so no marker makes it fresh, the next tick pulls that card again', async () => {
   const built = world({ cards: [5], concurrency: 1, fresh: false, answer: () => ({ exit: 1, output: '' }) });
 
   const first = built.loop.pull();

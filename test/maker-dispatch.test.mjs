@@ -27,7 +27,7 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { dirname } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { running } from './process-fixtures.mjs';
-import { readsWith } from './loop-world.mjs';
+import { readsServing } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
 
 // A bound on a test that waits on real processes, so one whose pull never settles fails here
@@ -112,7 +112,7 @@ function makerWorld({
     const open = agent.act(number, 'engineer')?.pr && ran(number) ? [{ number: 500 + number, head: String(number).padStart(40, 'a'), base: 'main' }] : [];
     return { open, merged: [] };
   };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(pullRequests) });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests) });
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles, provisioning, outcomes, sink, ...attempt });
   const workspaces = join(directory, 'workspaces');
@@ -411,7 +411,7 @@ function psWorld({ steps = [], provisioning = {}, ...handed } = {}) {
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: settings.roles, provisioning, outcomes, sink, ...attempt });
   const built = loop({
-    config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, reads: readsWith(oneOpenFromEveryLine) }), sink, kill: async () => {}, workspace: makingWorkspaces(join(directory, 'workspaces')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() }, ...handed,
+    config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(oneOpenFromEveryLine) }), sink, kill: async () => {}, workspace: makingWorkspaces(join(directory, 'workspaces')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() }, ...handed,
   });
   return { loop: built, agent };
 }

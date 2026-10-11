@@ -9,6 +9,8 @@ import { existsSync } from 'node:fs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { composeMarker } from '../src/workflow/marker.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** A body whose acceptance passes the form check, with two items and a bullet outside it. */
@@ -477,4 +479,715 @@ test('given a judge\'s later marker at the head whose role holds trailing whites
 
   assert.ok(later.body.includes('role: reviewer \n'), 'the later marker\'s role holds no trailing space, so the test proves nothing');
   assert.deepEqual(named(answer(card({ comments: [readable, later] }))), ['reviewer', 'engineer', 'architect']);
+});
+
+// L2's review loop: what it answers for a card in Review, Owner or Coding from the markers at its
+// open pull request's head and acceptance digest, and from the forge's mergeability and checks.
+
+/** The kinds the review loop is answered under: three agent judges, with and without the owner, the owner alone, and a bound of two rounds. */
+const LOOP_KINDS = {
+  change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer', 'engineer', 'architect'] },
+  spec: { select: { labels: ['type:spec'] }, maker: 'pm', judges: ['reviewer', 'engineer', 'architect', 'owner'] },
+  decision: { select: { labels: ['type:decision'] }, maker: 'pm', judges: ['owner'] },
+  bounded: { select: { labels: ['type:bounded'] }, maker: 'engineer', judges: ['reviewer', 'engineer', 'architect'], rounds: 2 },
+};
+
+/** The three agent judges each of `change`, `spec` and `bounded` names. */
+const AGENTS = ['reviewer', 'engineer', 'architect'];
+
+/** A head SHA other than `HEAD` and `EARLIER`, and an acceptance digest other than `DIGEST`. */
+const LATER = '4444444444444444444444444444444444444444';
+const OTHER_DIGEST = 'f'.repeat(64);
+
+/**
+ * A comment holding `role`'s marker on card 7's pull request #70, at `head` and `digest`, ruling
+ * `verdict` with `items` and `coverage`, written `at` minutes past 11:00 with comment id `IC_<at>`.
+ */
+function markerOf({ role, head = HEAD, digest = DIGEST, verdict = 'sound', items = ['met', 'met'], coverage = 'covered', coverageReason, toSound, at = 1, edited = false, ...fields }) {
+  const marker = { card: 7, pull: 70, head, digest, role, verdict, items, coverage, coverageReason, toSound, ...fields };
+  const body = composeMarker(marker, `${verdict}, by ${role}`);
+  return { body, createdAt: `2026-10-01T11:${String(at).padStart(2, '0')}:00Z`, id: `IC_${at}`, author: 'williacj', permission: 'write', edited };
+}
+
+/** Sound markers of every agent judge at `HEAD` and `DIGEST`, the first written at `from` minutes. */
+const allSound = (from = 1) => AGENTS.map((role, at) => markerOf({ role, at: from + at }));
+
+/**
+ * Card 7 carrying `label`, in `column`, with the facts L2's facts call holds for it at `stage`:
+ * one open pull request, #70, from base `main` at `HEAD`, its comments `comments`, its mergeability
+ * `mergeable`, the effective rules' `rules` and the check states `checks`. `facts` replaces any of those.
+ */
+const loopCard = ({ label = 'type:change', stage = 'review', comments = [], mergeable = 'mergeable', rules = [], checks = {}, ...facts } = {}) => ({
+  number: 7,
+  title: 'Add a verb',
+  body: BODY,
+  labels: [label],
+  column: { review: 'Review', owner: 'Owner', coding: 'Coding' }[stage],
+  forge: {
+    stage,
+    line: 'rigger-7',
+    branch: true,
+    open: [{ number: 70, head: HEAD, base: 'main' }],
+    merged: [],
+    pull: read({ number: 70, base: BASE, head: HEAD }),
+    diff: read(DIFF),
+    comments: read(comments),
+    mergeable: read(mergeable),
+    rules: read(rules),
+    checks: read(checks),
+    ...facts,
+  },
+});
+
+/**
+ * L2's next action for `given`, under the loop's kinds and the roles above, recording through a
+ * sink of its own unless `options` names one. Every answer it gives is checked to name no dispatch
+ * of the owner, who is never dispatched (`R-LOOP-11`).
+ */
+function loopAnswer(given, options = {}) {
+  const next = nextAction(given, LOOP_KINDS, undefined, { roles: ROLES, sink: sinkFor().sink, ...options });
+  assert.ok(!(next.judges ?? []).some((each) => each.role === 'owner'), `the answer dispatches the owner: ${JSON.stringify(next)}`);
+  return next;
+}
+
+test('given a Review or Owner card whose pull request the forge holds as merged, L2 answers Done, whoever merged it', () => {
+  for (const stage of ['review', 'owner']) {
+    const next = loopAnswer(loopCard({ stage, open: [], merged: [{ number: 70, head: HEAD, base: 'main' }] }));
+
+    assert.deepEqual(next, { action: 'move', to: 'done' }, stage);
+  }
+});
+
+test('given every agent judge\'s marker sound at the head and digest, the gate admitting and the pull request mergeable, L2 answers merge for a Review card whose kind does not name the owner', () => {
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound() })), { action: 'merge', pull: 70, head: HEAD });
+});
+
+/** The effective rules requiring `context`, unpinned, as `readEffectiveRules` answers them. */
+const requiring = (...contexts) => contexts.map((context) => ({ context, integration_id: null }));
+
+test('given every agent judge sound and a required check failed, pending or absent, L2 answers ignore for a Review card, naming the check', () => {
+  for (const state of ['failed', 'pending', 'absent']) {
+    const next = loopAnswer(loopCard({ comments: allSound(), rules: requiring('ci'), checks: { ci: { state, creator: null } } }));
+
+    assert.equal(next.action, 'ignore', `${state}: ${JSON.stringify(next)}`);
+    assert.match(next.reason, /\bci\b/, state);
+    assert.match(next.reason, new RegExp(state), state);
+  }
+});
+
+test('given every agent judge sound and a required check the facts hold no state for, L2 answers ignore naming it absent', () => {
+  const next = loopAnswer(loopCard({ comments: allSound(), rules: requiring('ci'), checks: {} }));
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /\bci\b.*absent/);
+});
+
+test('L2 hands the gate rule the checks the base branch\'s effective rules require less rigger/gate: with rigger/gate required and failing and every agent judge sound, it answers merge', () => {
+  const checks = { 'rigger/gate': { state: 'failed', creator: null }, ci: { state: 'passed', creator: null } };
+
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), rules: requiring('rigger/gate', 'ci'), checks })), { action: 'merge', pull: 70, head: HEAD });
+});
+
+test('given every agent judge sound, the gate admitting and the forge reading the pull request\'s mergeability as unknown, L2 answers ignore for a Review card, naming the unknown mergeability', () => {
+  const next = loopAnswer(loopCard({ comments: allSound(), mergeable: 'unknown' }));
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /mergeab.*unknown/);
+});
+
+// proves R-CONFLICT-1
+test('given every agent judge sound and the forge reading the pull request as conflicting, L2 answers no merge for a Review card but a continuing attempt on its open pull request at the head it read', () => {
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [] });
+});
+
+test('given every agent judge sound and the read of the mergeability, the check states or the effective rules failed, L2 answers no action for a Review card, naming the card and the read', () => {
+  const reads = { mergeable: /mergeability/, checks: /check states/, rules: /effective rules/ };
+  for (const [fact, names] of Object.entries(reads)) {
+    const given = loopCard({ comments: allSound(), rules: requiring('ci'), checks: { ci: { state: 'passed', creator: null } } });
+    given.forge[fact] = failedRead('gh: HTTP 502');
+
+    assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
+  }
+});
+
+// proves R-LOOP-11
+test('given every agent judge sound at the head and digest, L2 answers a move to Owner for a Review card whose kind names the owner, and dispatches nothing for the owner', () => {
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:spec', comments: allSound() })), { action: 'move', to: 'owner' });
+});
+
+// proves R-LOOP-11
+test('given a Review card whose kind names the owner as its only judge, L2 answers a move to Owner', () => {
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:decision' })), { action: 'move', to: 'owner' });
+});
+
+test('given every agent judge sound and an owner marker ruling needs revision, sound with an item unmet, or coverage insufficient, L2 reads no owner marker in Review and answers a move to Owner', () => {
+  const owners = {
+    m9: { verdict: 'needs revision', toSound: 'Rename the verb.' },
+    m6: { items: ['met', 'unmet'] },
+    m8: { coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' },
+  };
+  for (const [state, ruling] of Object.entries(owners)) {
+    const comments = [...allSound(), markerOf({ role: 'owner', at: 9, ...ruling })];
+
+    assert.deepEqual(loopAnswer(loopCard({ label: 'type:spec', comments })), { action: 'move', to: 'owner' }, state);
+  }
+});
+
+/** The rulings a marker holds for each state the review loop tells apart, by the gate's state names. */
+const RULING = {
+  m6: { items: ['met', 'unmet'] },
+  m8: { coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' },
+  m9: { verdict: 'needs revision', toSound: 'Print the help on stderr.' },
+  m10: { verdict: 'critical', toSound: 'Never delete the user\'s files.' },
+};
+
+/** Markers at the head and digest: `states` gives the reviewer's, engineer's and architect's in turn, `m1` sound, `missing` none. */
+const markersFor = (states, from = 1) => states.flatMap((state, at) => (state === 'missing' ? [] : [markerOf({ role: AGENTS[at], at: from + at, ...(RULING[state] ?? {}) })]));
+
+// proves R-ESCALATE-6
+test('given one agent judge\'s governing marker critical and the others sound, L2 answers an escalation in the category critical', () => {
+  assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m1', 'm10', 'm1']) })), { action: 'escalate', category: 'critical' });
+});
+
+// proves R-ESCALATE-6
+test('given one agent judge critical beside one needing revision, one ruling coverage insufficient, or one with no marker, L2 answers an escalation in the category critical, a row each', () => {
+  for (const other of ['m9', 'm8', 'missing']) {
+    assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m10', other, 'm1']) })), { action: 'escalate', category: 'critical' }, other);
+  }
+});
+
+/** `role`'s marker at the head made unreadable as `how` says: `m3` a verdict outside the three, `m7` its coverage line removed. */
+function unreadableOf(role, how, at = 2) {
+  const written = markerOf({ role, at });
+  const body = how === 'm7' ? written.body.replace('coverage: covered\n', '') : written.body.replace('verdict: sound', 'verdict: approved');
+  assert.notEqual(body, written.body, `the ${how} marker is unchanged, so the test proves nothing`);
+  return { ...written, body };
+}
+
+test('given one agent judge with no marker and the others sound, L2 dispatches the missing judge only', () => {
+  const next = loopAnswer(loopCard({ comments: markersFor(['m1', 'missing', 'm1']) }));
+
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  assert.deepEqual(named(next), ['engineer']);
+});
+
+// proves R-LOOP-8
+test('given one agent judge\'s governing marker unreadable (m3), without its coverage line (m7), or edited (m11), the others sound, L2 dispatches that judge only and spends no round, a row each', () => {
+  const variants = {
+    m3: unreadableOf('engineer', 'm3'),
+    m7: unreadableOf('engineer', 'm7'),
+    m11: { ...markerOf({ role: 'engineer', at: 2 }), edited: true },
+  };
+  for (const [state, written] of Object.entries(variants)) {
+    // Under a bound of two rounds, one earlier round of needs revision leaves one to spend.
+    const earlier = markersFor(['m9', 'm9', 'm9'], 20).map((each) => ({ ...each, body: each.body.replace(`head: ${HEAD}`, `head: ${EARLIER}`) }));
+    const next = loopAnswer(loopCard({ label: 'type:bounded', comments: [...earlier, markerOf({ role: 'reviewer', at: 1 }), written, markerOf({ role: 'architect', at: 3 })] }));
+
+    assert.equal(next.action, 'judge', `${state}: ${JSON.stringify(next)}`);
+    assert.deepEqual(named(next), ['engineer'], state);
+  }
+});
+
+test('given one agent judge\'s slot holding only a marker of a role the kind does not name, the others sound, L2 answers as if that marker were absent and dispatches that judge only', () => {
+  const comments = [markerOf({ role: 'reviewer', at: 1 }), markerOf({ role: 'pm', at: 2 }), markerOf({ role: 'architect', at: 3 })];
+
+  assert.deepEqual(named(loopAnswer(loopCard({ comments }))), ['engineer']);
+});
+
+test('given one agent judge needing revision and one with no marker, L2 dispatches the missing judge only', () => {
+  assert.deepEqual(named(loopAnswer(loopCard({ comments: markersFor(['m9', 'missing', 'm1']) }))), ['engineer']);
+});
+
+test('given markers at an older head only, or at an older acceptance digest only, L2 dispatches every agent judge', () => {
+  const older = {
+    head: markersFor(['m1', 'm1', 'm1']).map((each) => ({ ...each, body: each.body.replace(`head: ${HEAD}`, `head: ${EARLIER}`) })),
+    digest: markersFor(['m1', 'm1', 'm1']).map((each) => ({ ...each, body: each.body.replace(`digest: ${DIGEST}`, `digest: ${OTHER_DIGEST}`) })),
+  };
+  for (const [what, comments] of Object.entries(older)) {
+    assert.deepEqual(named(loopAnswer(loopCard({ comments }))), AGENTS, what);
+  }
+});
+
+/** The marker a continuing attempt hands the maker for the reviewer's `ruling`, as the acceptance above words its two items. */
+const handed = {
+  m6: { role: 'engineer', verdict: 'sound', unmet: [{ item: 2, text: 'The verb exits 0.' }] },
+  m9: { role: 'engineer', verdict: 'needs revision', unmet: [], toSound: 'Print the help on stderr.' },
+};
+
+test('given one agent judge needing revision, rounds below the bound, L2 answers a continuing attempt on the open pull request at the head it read, handing that judge\'s marker', () => {
+  assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m1', 'm9', 'm1']) })), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m9] });
+});
+
+test('given one agent judge\'s marker sound with an item unmet and the others sound, L2 answers a continuing attempt as for needs revision, handing the unmet item by its ordinal and text', () => {
+  assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m1', 'm6', 'm1']) })), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m6] });
+});
+
+test('given one agent judge\'s two markers at the head and digest, the later needing revision, L2 answers as for needs revision', () => {
+  const comments = [...markersFor(['m1', 'm1', 'm1']), markerOf({ role: 'engineer', at: 9, ...RULING.m9 })];
+
+  assert.deepEqual(loopAnswer(loopCard({ comments })), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m9] });
+});
+
+/** `written`, a marker comment, moved to `head` and `digest` and written at `at` minutes. */
+const movedTo = (written, { head = HEAD, digest = DIGEST, at }) => ({
+  ...written,
+  body: written.body.replace(`head: ${HEAD}`, `head: ${head}`).replace(`digest: ${DIGEST}`, `digest: ${digest}`),
+  createdAt: `2026-10-01T10:${String(at).padStart(2, '0')}:00Z`,
+  id: `IC_0${at}`,
+});
+
+/** The current round's markers: the engineer needing revision, the others sound. */
+const revisingNow = () => markersFor(['m1', 'm9', 'm1']);
+
+// proves R-LOOP-9
+test('given the kind\'s bound of rounds reached with a governing needs revision, L2 answers an escalation in the category ambiguous', () => {
+  const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 });
+
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+});
+
+// proves R-LOOP-9
+test('given a kind with no rounds declared, the bound is three: two rounds with a governing needs revision continue, and three escalate as ambiguous', () => {
+  const one = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 });
+  const two = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: LATER, at: 2 });
+
+  assert.equal(loopAnswer(loopCard({ comments: [one, ...revisingNow()] })).action, 'continue');
+  assert.deepEqual(loopAnswer(loopCard({ comments: [one, two, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+});
+
+// proves R-LOOP-8
+test('L2 counts rounds as distinct head and digest pairs: two markers at one earlier pair count one round', () => {
+  const pair = [movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 }), movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 })];
+
+  // Two rounds against a bound of three continue; counted as two, the earlier pair would make three.
+  assert.equal(loopAnswer(loopCard({ comments: [...pair, ...revisingNow()] })).action, 'continue');
+});
+
+// proves R-LOOP-8
+test('a change of the acceptance digest at one head counts a second round', () => {
+  const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { digest: OTHER_DIGEST, at: 1 });
+
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+});
+
+// proves R-LOOP-8
+test('a new head counts a new round, whether or not the pull request still holds the earlier head', () => {
+  const earlier = movedTo(markerOf({ role: 'architect' }), { head: EARLIER, at: 1 });
+
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+});
+
+// proves R-LOOP-8
+test('under a bound of two rounds, an earlier pair holding only an unreadable marker, only an edited one, only a role the kind does not name, or only the owner\'s counts no round, a row each', () => {
+  const pairs = {
+    m3: movedTo(unreadableOf('reviewer', 'm3'), { head: EARLIER, at: 1 }),
+    m11: { ...movedTo(markerOf({ role: 'reviewer' }), { head: EARLIER, at: 1 }), edited: true },
+    m13: movedTo(markerOf({ role: 'pm' }), { head: EARLIER, at: 1 }),
+    owner: movedTo(markerOf({ role: 'owner' }), { head: EARLIER, at: 1 }),
+  };
+  for (const [state, written] of Object.entries(pairs)) {
+    assert.equal(loopAnswer(loopCard({ label: 'type:bounded', comments: [written, ...revisingNow()] })).action, 'continue', state);
+  }
+});
+
+// proves R-ESCALATE-6
+test('given a governing critical marker with the bound of rounds reached, L2 escalates as critical, not ambiguous', () => {
+  const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 });
+
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...markersFor(['m1', 'm10', 'm9'])] })), { action: 'escalate', category: 'critical' });
+});
+
+/** The answer L2 gives for the engineer's coverage ruled insufficient, the other judges as `others` gives them. */
+const returning = (others = ['m1', 'm1']) => loopAnswer(loopCard({ comments: markersFor([others[0], 'm8', others[1]]) }));
+
+/** A comment L2's return answer composed, as the forge reads it back once it is posted. */
+const posted = (comment, at = 30) => ({ body: comment, createdAt: `2026-10-01T11:${at}:00Z`, id: `IC_${at}`, author: 'rigger-app', permission: 'write', edited: false });
+
+// proves R-LOOP-6
+test('given one agent judge ruling the acceptance\'s coverage insufficient, L2 answers one return comment on the card\'s open pull request, quoting the role and the reason and returning the acceptance to its author', () => {
+  const next = returning();
+
+  assert.deepEqual(Object.keys(next), ['action', 'pull', 'comment']);
+  assert.equal(next.action, 'return');
+  assert.equal(next.pull, 70);
+  assert.match(next.comment, /\bengineer\b/);
+  assert.ok(next.comment.includes(RULING.m8.coverageReason), next.comment);
+  assert.match(next.comment, /acceptance returns to its author/);
+});
+
+test('the return comment\'s first line names the marker\'s role, head and digest', () => {
+  const [first] = returning().comment.split('\n');
+
+  for (const named of ['engineer', HEAD, DIGEST]) assert.ok(first.includes(named), `${named} is not on the first line: ${first}`);
+});
+
+test('given the return comment already on the pull request, a second pass at the same markers answers no further comment', () => {
+  const { comment } = returning();
+  const next = loopAnswer(loopCard({ comments: [...markersFor(['m1', 'm8', 'm1']), posted(comment)] }));
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /#70\b/);
+});
+
+test('the return comment parses as no marker, so it can never govern', () => {
+  assert.deepEqual(parseMarker(returning().comment, 2), { state: 'none' });
+});
+
+// proves R-LOOP-6
+test('given one agent judge ruling coverage insufficient and another needing revision, L2 answers the return comment and no move', () => {
+  assert.equal(returning(['m9', 'm1']).action, 'return');
+});
+
+// proves R-LOOP-8
+test('given a coverage ruled insufficient and then a change to the acceptance digest, L2 dispatches every agent judge again', () => {
+  const comments = markersFor(['m1', 'm8', 'm1']);
+  const edited = { ...loopCard({ comments }), body: BODY.replace('exits 0', 'exits 1') };
+
+  assert.equal(returning().action, 'return', 'before the edit, the coverage ruling returns the card');
+  assert.deepEqual(named(loopAnswer(edited)), AGENTS);
+});
+
+/** An Owner card of kind `spec` holding every agent judge's sound marker, then `owner`, the owner's marker comments. */
+const ownerCard = (owner = [], facts = {}) => loopCard({ label: 'type:spec', stage: 'owner', comments: [...allSound(), ...owner], ...facts });
+
+/** The owner's marker at the head and digest, ruling as `ruling` gives. */
+const ownerMarker = (ruling = {}) => markerOf({ role: 'owner', at: 9, ...ruling });
+
+test('given every agent judge and the owner sound, the gate admitting and the pull request mergeable, L2 answers merge for an Owner card', () => {
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()])), { action: 'merge', pull: 70, head: HEAD });
+});
+
+// proves R-LOOP-11
+test('given every agent judge sound and no owner marker, L2 leaves an Owner card in Owner, dispatching nothing: it answers ignore', () => {
+  const next = loopAnswer(ownerCard());
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /\bowner\b/);
+});
+
+// proves R-LOOP-11
+test('given an Owner card whose kind names the owner as its only judge and no owner marker, L2 answers ignore', () => {
+  const next = loopAnswer(loopCard({ label: 'type:decision', stage: 'owner' }));
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+});
+
+// proves R-LOOP-11
+test('given every agent judge sound and the owner\'s marker at an older head or an older digest only, L2 leaves an Owner card in Owner, dispatching nothing', () => {
+  for (const older of [{ head: EARLIER }, { digest: OTHER_DIGEST }]) {
+    const next = loopAnswer(ownerCard([movedTo(ownerMarker(), { ...older, at: 9 })]));
+
+    assert.equal(next.action, 'ignore', `${JSON.stringify(older)}: ${JSON.stringify(next)}`);
+  }
+});
+
+// proves R-LOOP-11
+test('given an Owner card one of whose agent markers no longer governs at the head and digest, L2 answers a move to Review, where it dispatches every owed agent judge', () => {
+  const comments = [markerOf({ role: 'reviewer', at: 1 }), movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 }), markerOf({ role: 'architect', at: 3 }), ownerMarker()];
+
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:spec', stage: 'owner', comments })), { action: 'move', to: 'review' });
+  assert.deepEqual(named(loopAnswer(loopCard({ label: 'type:spec', comments }))), ['engineer']);
+});
+
+test('given the owner\'s marker needing revision or sound with an item unmet, L2 answers a continuing attempt for an Owner card, handing the owner\'s marker', () => {
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m9)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m9, role: 'owner' }] });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m6)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m6, role: 'owner' }] });
+});
+
+test('given the owner\'s marker unreadable or edited, L2 leaves an Owner card in Owner, answering ignore naming the owner marker\'s state', () => {
+  const variants = { unreadable: unreadableOf('owner', 'm3', 9), edited: { ...ownerMarker(), edited: true } };
+  for (const [state, written] of Object.entries(variants)) {
+    const next = loopAnswer(ownerCard([written]));
+
+    assert.equal(next.action, 'ignore', `${state}: ${JSON.stringify(next)}`);
+    assert.match(next.reason, new RegExp(`\\bowner\\b.*\\b${state}\\b`), state);
+  }
+});
+
+// proves R-LOOP-6
+test('given the owner\'s marker ruling coverage insufficient, L2 answers the comment returning the acceptance to its author for an Owner card', () => {
+  const next = loopAnswer(ownerCard([ownerMarker(RULING.m8)]));
+
+  assert.equal(next.action, 'return', JSON.stringify(next));
+  assert.match(next.comment.split('\n')[0], /\bowner\b/);
+});
+
+// proves R-ESCALATE-6
+test('given the owner\'s marker critical, L2 answers an escalation in the category critical for an Owner card', () => {
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m10)])), { action: 'escalate', category: 'critical' });
+});
+
+test('given every agent judge and the owner sound, L2 answers ignore for an Owner card where the mergeability is unknown or a required check failed, naming it', () => {
+  const unknown = loopAnswer(ownerCard([ownerMarker()], { mergeable: 'unknown' }));
+  const failing = loopAnswer(ownerCard([ownerMarker()], { rules: requiring('ci'), checks: { ci: { state: 'failed', creator: null } } }));
+
+  assert.equal(unknown.action, 'ignore', JSON.stringify(unknown));
+  assert.match(unknown.reason, /mergeab.*unknown/);
+  assert.equal(failing.action, 'ignore', JSON.stringify(failing));
+  assert.match(failing.reason, /\bci\b.*failed/);
+});
+
+// proves R-WORK-19
+test('given an Owner card the forge holds no open or merged pull request for, more than one open, or its line of work alone, L2 refuses it naming what the forge holds, a row each', () => {
+  const rows = [
+    { facts: { open: [], branch: false }, names: /no pull request.*rigger-7/ },
+    { facts: { open: [{ number: 70, head: HEAD, base: 'main' }, { number: 71, head: LATER, base: 'main' }] }, names: /#70\b.*#71\b/ },
+    { facts: { open: [], branch: true }, names: /\brigger-7\b/ },
+  ];
+  for (const { facts, names } of rows) {
+    const next = loopAnswer(loopCard({ stage: 'owner', ...facts }));
+
+    assert.equal(next.action, 'refuse', JSON.stringify(next));
+    assert.equal(next.card, 7);
+    assert.match(next.reason, names);
+  }
+});
+
+/** A Coding card holding one open pull request, #70, with `comments`, and `facts` beside. */
+const codingCard = (comments, facts = {}) => loopCard({ stage: 'coding', comments, ...facts });
+
+test('given a Coding card with one open pull request and a governing needs revision or sound-with-an-item-unmet marker at its head, L2 answers a continuing attempt, not a refusal', () => {
+  assert.deepEqual(loopAnswer(codingCard(markersFor(['m1', 'm9', 'm1']))), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m9] });
+  assert.deepEqual(loopAnswer(codingCard(markersFor(['m1', 'm6', 'm1']))), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m6] });
+});
+
+// proves R-CONFLICT-1
+test('given a Coding card with every agent judge sound and the forge reading its pull request as conflicting, L2 answers a continuing attempt', () => {
+  assert.deepEqual(loopAnswer(codingCard(allSound(), { mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [] });
+});
+
+// proves R-WORK-19
+test('given a Coding card with one open pull request and no marker, every agent sound with the pull request mergeable, coverage ruled insufficient, or a critical marker, L2 refuses it as at the base, naming its line of work, a row each', () => {
+  const rows = { none: [], m1: allSound(), m8: markersFor(['m1', 'm8', 'm1']), m10: markersFor(['m1', 'm10', 'm1']) };
+  for (const [state, comments] of Object.entries(rows)) {
+    const next = loopAnswer(codingCard(comments));
+
+    assert.equal(next.action, 'refuse', `${state}: ${JSON.stringify(next)}`);
+    assert.equal(next.card, 7);
+    assert.match(next.reason, /\brigger-7\b/, state);
+  }
+});
+
+test('given a Coding card with every agent judge sound and the forge reading its mergeability as unknown, L2 answers ignore naming it, since the forge cannot yet say whether it conflicts', () => {
+  const next = loopAnswer(codingCard(allSound(), { mergeable: 'unknown' }));
+
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /mergeab.*unknown/);
+});
+
+// proves R-LOOP-11
+test('given a kind naming three agent judges then the owner, L2 answers no move to Owner while any agent judge\'s governing marker is in a state from m2 to m11, a row each', () => {
+  const engineer = (written) => [markerOf({ role: 'reviewer', at: 1 }), ...written, markerOf({ role: 'architect', at: 3 })];
+  const rows = {
+    m2: engineer([]),
+    m3: engineer([unreadableOf('engineer', 'm3')]),
+    m4: engineer([movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 })]),
+    m5: engineer([movedTo(markerOf({ role: 'engineer' }), { digest: OTHER_DIGEST, at: 2 })]),
+    m6: engineer([markerOf({ role: 'engineer', at: 2, ...RULING.m6 })]),
+    m7: engineer([unreadableOf('engineer', 'm7')]),
+    m8: engineer([markerOf({ role: 'engineer', at: 2, ...RULING.m8 })]),
+    m9: engineer([markerOf({ role: 'engineer', at: 2, ...RULING.m9 })]),
+    m10: engineer([markerOf({ role: 'engineer', at: 2, ...RULING.m10 })]),
+    m11: engineer([{ ...markerOf({ role: 'engineer', at: 2 }), edited: true }]),
+  };
+  for (const [state, comments] of Object.entries(rows)) {
+    const next = loopAnswer(loopCard({ label: 'type:spec', comments }));
+
+    assert.notDeepEqual(next, { action: 'move', to: 'owner' }, state);
+    assert.notEqual(next.action, 'merge', state);
+  }
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:spec', comments: engineer([markerOf({ role: 'engineer', at: 2 })]) })), { action: 'move', to: 'owner' }, 'with the engineer sound the card moves, so the rows prove something');
+});
+
+test('L2 records one marker.read event per governing marker per answer, naming the card, pull request, role, head, digest, verdict, dispatch id and evidence digest, a field the marker lacks as null and an unreadable marker with verdict null and its parse reason', () => {
+  const { sink, events } = sinkFor();
+  const dispatch = 'd-12345678-1234-1234-1234-123456789abc';
+  const evidence = 'e'.repeat(64);
+  const comments = [
+    markerOf({ role: 'reviewer', at: 1, dispatch, evidence }),
+    unreadableOf('engineer', 'm7'),
+    markerOf({ role: 'architect', at: 3, ...RULING.m9 }),
+    movedTo(markerOf({ role: 'architect' }), { head: EARLIER, at: 4 }),
+  ];
+
+  loopAnswer(loopCard({ comments }), { sink });
+
+  const read = events().filter((each) => each.event === 'marker.read').map(({ card, pull, role, head, digest, verdict, dispatch: id, evidence: digested, reason }) => ({ card, pull, role, head, digest, verdict, dispatch: id, evidence: digested, reason }));
+  assert.deepEqual(read, [
+    { card: 7, pull: 70, role: 'reviewer', head: HEAD, digest: DIGEST, verdict: 'sound', dispatch, evidence, reason: undefined },
+    { card: 7, pull: 70, role: 'engineer', head: HEAD, digest: DIGEST, verdict: null, dispatch: null, evidence: null, reason: 'the field coverage is missing' },
+    { card: 7, pull: 70, role: 'architect', head: HEAD, digest: DIGEST, verdict: 'needs revision', dispatch: null, evidence: null, reason: undefined },
+  ]);
+});
+
+test('in the Owner column, L2 records the owner\'s governing marker\'s state in its marker.read event, and in Review it reads no owner marker', () => {
+  const owner = { sink: sinkFor() };
+  loopAnswer(ownerCard([unreadableOf('owner', 'm3', 9)]), { sink: owner.sink.sink });
+  const review = { sink: sinkFor() };
+  loopAnswer(loopCard({ label: 'type:spec', comments: [...allSound(), ownerMarker()] }), { sink: review.sink.sink });
+
+  const roles = (events) => events().filter((each) => each.event === 'marker.read').map((each) => each.role);
+  assert.deepEqual(roles(owner.sink.events), [...AGENTS, 'owner']);
+  const [read] = owner.sink.events().filter((each) => each.event === 'marker.read' && each.role === 'owner');
+  assert.equal(read.verdict, null);
+  assert.match(read.reason, /verdict/);
+  assert.deepEqual(roles(review.sink.events), AGENTS);
+});
+
+test('a sink that refuses the marker.read event has L2 answer no action, naming the card and the refusal', () => {
+  const sink = { emitter: () => ({ emit: () => { throw new Error('EACCES: the stream is read-only'); } }) };
+
+  assert.throws(() => loopAnswer(loopCard({ comments: allSound() }), { sink }), (error) => /card #7\b/.test(error.message) && /EACCES/.test(error.message));
+});
+
+test('L2\'s continuing-attempt answer names the open pull request\'s number and the head SHA L2 read of it', () => {
+  const next = loopAnswer(loopCard({ comments: markersFor(['m1', 'm9', 'm1']).map((each) => movedTo(each, { head: LATER, at: Number(each.id.slice(3)) })), open: [{ number: 70, head: LATER, base: 'main' }] }));
+
+  assert.equal(next.action, 'continue', JSON.stringify(next));
+  assert.equal(next.pull, 70);
+  assert.equal(next.head, LATER);
+});
+
+/** L2's maker answer within the continuing attempt `continuing`, L2's own answer, which L3 hands back unread. */
+const continuingMaker = (given, continuing) => loopAnswer(given, { continuing, provisioning: {} });
+
+test('given a continuing attempt, the maker\'s instruction names the open pull request and asks for commits pushed to its line of work', () => {
+  const given = loopCard({ comments: markersFor(['m1', 'm9', 'm1']) });
+  const next = continuingMaker(given, loopAnswer(given));
+
+  assert.equal(next.action, 'dispatch', JSON.stringify(next));
+  assert.equal(next.maker.role, 'engineer');
+  assert.match(next.maker.instruction, /pull request #70\b/);
+  assert.match(next.maker.instruction, /push.*commits.*`rigger-7`/i);
+  assert.doesNotMatch(next.maker.instruction, /open a pull request/i);
+});
+
+test('given a continuing attempt, the maker\'s evidence holds each governing agent marker that is not sound: its role, verdict, each unmet item by ordinal and text, and its toSound', () => {
+  const given = loopCard({ comments: [markerOf({ role: 'reviewer', at: 1, ...RULING.m6 }), markerOf({ role: 'engineer', at: 2, ...RULING.m9 }), markerOf({ role: 'architect', at: 3 })] });
+  const { maker } = continuingMaker(given, loopAnswer(given));
+
+  const lines = maker.evidence.split('\n');
+  for (const line of ['- reviewer: sound', '  - item 2 unmet: The verb exits 0.', '- engineer: needs revision', `  - to make it sound: ${RULING.m9.toSound}`]) {
+    assert.ok(lines.includes(line), `the evidence holds no line ${JSON.stringify(line)}:\n${maker.evidence}`);
+  }
+  assert.ok(!maker.evidence.includes('- architect:'), 'a sound marker is handed to the maker');
+  assert.match(maker.evidence, new RegExp(`head ${HEAD}`));
+});
+
+test('given a Review card whose kind names the owner alone, L2 answers the move to Owner without reading the pull request or its comments, so a failed read of either holds it in Review no longer', () => {
+  const given = loopCard({ label: 'type:decision', pull: failedRead('no merge base'), comments: failedRead('gh: HTTP 502') });
+
+  assert.deepEqual(loopAnswer(given), { action: 'move', to: 'owner' });
+});
+
+test('given a failed read of the merge base, which only a judge\'s evidence needs, L2 still answers a Coding, Review or Owner card from its pull request\'s number and head and its markers', () => {
+  const failed = { pull: failedRead('the fake repository holds no merge base for pull request #70') };
+
+  assert.equal(loopAnswer(codingCard(markersFor(['m1', 'm9', 'm1']), failed)).action, 'continue');
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), ...failed })), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()], failed)), { action: 'merge', pull: 70, head: HEAD });
+});
+
+// proves R-LOOP-8, R-LOOP-9
+test('a marker valid against an earlier acceptance with an item fewer or an item more still spends its round, under a bound of two and under the default of three', () => {
+  const earlierWith = (items, digest, at, head = HEAD) => movedTo(markerOf({ role: 'reviewer', items, ...RULING.m9 }), { head, digest, at });
+  const added = earlierWith(['met'], OTHER_DIGEST, 1);
+  const removed = earlierWith(['met', 'met', 'unmet'], OTHER_DIGEST, 1);
+  for (const [what, earlier] of Object.entries({ 'an item added since': added, 'an item removed since': removed })) {
+    assert.deepEqual(parseMarker(earlier.body, earlier.body.match(/^item \d+:/gm).length).state, 'marker', `${what}: the earlier marker is valid against its own acceptance, so the test proves something`);
+    assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, what);
+  }
+  const twoEarlier = [earlierWith(['met'], OTHER_DIGEST, 1, EARLIER), earlierWith(['met', 'met', 'met'], 'e'.repeat(64), 2, LATER)];
+  assert.deepEqual(loopAnswer(loopCard({ comments: [...twoEarlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, 'under the default bound of three');
+});
+
+// proves R-LOOP-6
+test('only an earlier return itself suppresses the return: a copy by an account without write access, or a writer\'s comment opening on the same first line with other text, leaves L2 answering the return comment', () => {
+  const { comment } = returning();
+  const [first] = comment.split('\n');
+  const copies = {
+    'a copy by a reader': { ...posted(comment), permission: 'read' },
+    'a copy by no account': { ...posted(comment), author: null },
+    'the first line under other text': posted(`${first}\n\nThat is all.`),
+  };
+  for (const [what, copy] of Object.entries(copies)) {
+    const next = loopAnswer(loopCard({ comments: [...markersFor(['m1', 'm8', 'm1']), copy] }));
+
+    assert.equal(next.action, 'return', `${what}: ${JSON.stringify(next)}`);
+  }
+  assert.equal(loopAnswer(loopCard({ comments: [...markersFor(['m1', 'm8', 'm1']), posted(comment.trimEnd())] })).action, 'ignore', 'the return as the forge reads it back, its trailing line ending trimmed, is the earlier return');
+});
+
+/** The reads the merge decision makes, each with what its failure names. */
+const MERGE_READS = { mergeable: /mergeability/, checks: /check states/, rules: /effective rules/ };
+
+test('given every judge sound and a failed read of the check states or the effective rules, L2 answers no action naming the read for a Review or Owner card, even where the forge reads the pull request as conflicting or its mergeability as unknown', () => {
+  for (const [stage, make] of [['review', (facts) => loopCard({ comments: allSound(), ...facts })], ['owner', (facts) => ownerCard([ownerMarker()], facts)]]) {
+    for (const mergeable of ['conflicting', 'unknown']) {
+      for (const fact of ['checks', 'rules']) {
+        const given = make({ mergeable, rules: requiring('ci'), checks: { ci: { state: 'passed', creator: null } } });
+        given.forge[fact] = failedRead('gh: HTTP 502');
+
+        assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && MERGE_READS[fact].test(error.message) && /HTTP 502/.test(error.message), `${stage}, ${mergeable}, ${fact}`);
+      }
+    }
+  }
+});
+
+test('given every agent judge and the owner sound and the read of the mergeability, the check states or the effective rules failed, L2 answers no action for an Owner card, naming the card and the read', () => {
+  for (const [fact, names] of Object.entries(MERGE_READS)) {
+    const given = ownerCard([ownerMarker()], { rules: requiring('ci'), checks: { ci: { state: 'passed', creator: null } } });
+    given.forge[fact] = failedRead('gh: HTTP 502');
+
+    assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
+  }
+});
+
+test('given every agent judge and the owner sound and a required check pending or absent, L2 answers ignore for an Owner card, naming the check', () => {
+  for (const state of ['pending', 'absent']) {
+    const next = loopAnswer(ownerCard([ownerMarker()], { rules: requiring('ci'), checks: { ci: { state, creator: null } } }));
+
+    assert.equal(next.action, 'ignore', `${state}: ${JSON.stringify(next)}`);
+    assert.match(next.reason, new RegExp(`\\bci\\b.*${state}`), state);
+  }
+});
+
+// proves R-LOOP-8, R-LOOP-9
+test('an earlier marker whose comment holds item-like prose after its closed block still spends its round: at a changed digest, at a changed head, two at one pair counting one, under a bound of two and under the default of three', () => {
+  const prose = (written) => ({ ...written, body: `${written.body}\nitem 1: ordinary text a person wrote after the block\nitem 9: more of it\n` });
+  const earlier = (at, moved, ruling = RULING.m9) => prose(movedTo(markerOf({ role: 'reviewer', ...ruling }), { ...moved, at }));
+  for (const written of [earlier(1, { digest: OTHER_DIGEST }), earlier(1, { head: EARLIER })]) {
+    assert.equal(parseMarker(written.body, 2).state, 'marker', 'the earlier marker is readable against its own acceptance, so the test proves something');
+  }
+  const bounded = (comments) => loopAnswer(loopCard({ label: 'type:bounded', comments: [...comments, ...revisingNow()] }));
+  const ambiguous = { action: 'escalate', category: 'ambiguous' };
+
+  assert.deepEqual(bounded([earlier(1, { digest: OTHER_DIGEST })]), ambiguous, 'at a changed digest');
+  assert.deepEqual(bounded([earlier(1, { head: EARLIER })]), ambiguous, 'at a changed head');
+  const pair = [earlier(1, { head: EARLIER }), prose(movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 }))];
+  assert.deepEqual(bounded(pair), ambiguous, 'two at one earlier pair spend its round');
+  assert.equal(loopAnswer(loopCard({ comments: [...pair, ...revisingNow()] })).action, 'continue', 'two at one earlier pair count one round, not two, under the default of three');
+  assert.deepEqual(loopAnswer(loopCard({ comments: [earlier(1, { head: EARLIER }), earlier(2, { head: LATER }), ...revisingNow()] })), ambiguous, 'under the default bound of three');
+});
+
+test('given a Review card whose kind names agent judges and then the owner, every agent judge sound, and a failed read of the mergeability, the check states or the effective rules, L2 answers no action naming the read rather than a move to Owner', () => {
+  for (const [label, comments] of [['type:spec', allSound()]]) {
+    for (const [fact, names] of Object.entries(MERGE_READS)) {
+      const given = loopCard({ label, comments });
+      given.forge[fact] = failedRead('gh: HTTP 502');
+
+      assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), `${label}, ${fact}`);
+    }
+    assert.deepEqual(loopAnswer(loopCard({ label, comments })), { action: 'move', to: 'owner' }, `${label}: with every read served, the card moves, so the rows prove something`);
+  }
+});
+
+test('given a Review card whose kind names the owner alone and a failed read of the mergeability, the check states or the effective rules, L2 answers no action naming the read, and with every read served it moves the card to Owner', () => {
+  for (const [fact, names] of Object.entries(MERGE_READS)) {
+    const given = loopCard({ label: 'type:decision' });
+    given.forge[fact] = failedRead('gh: HTTP 502');
+
+    assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
+  }
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:decision' })), { action: 'move', to: 'owner' }, 'with every read served, the card moves');
 });

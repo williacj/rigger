@@ -16,7 +16,16 @@ const CHANGES = {
   claimed: { from: 'ready', to: 'coding' },
   redone: { from: 'review', to: 'coding' },
   returned: { from: 'coding', to: 'review' },
+  sound: { from: 'review', to: 'owner' },
+  continued: { from: 'review', to: 'coding' },
+  continuedFromOwner: { from: 'owner', to: 'coding' },
+  rejudged: { from: 'owner', to: 'review' },
+  merged: { from: 'review', to: 'done' },
+  mergedFromOwner: { from: 'owner', to: 'done' },
 };
+
+/** The changes L2's `move` answers make, each the one change from its column to the column the answer names. */
+const MOVES = ['sound', 'rejudged', 'merged', 'mergedFromOwner'];
 
 /**
  * The `code` of the failure `settled` rejects with where a maker exited 0 and L2 left the card in
@@ -99,11 +108,29 @@ export function columnChanges({
      * it at the pull, which L3 hands over unread. A card claimed from coding is there already, and
      * is not moved, and so is one claimed for its judges, which stays in review. One otherwise
      * claimed from review is done again from the beginning, and moves to coding, where it shows
-     * while it is (`R-WORK-24`). Any other claim is of a ready card, which moves to coding.
+     * while it is (`R-WORK-24`). Any other claim is of a ready card, which moves to coding. A card
+     * L2 answered as a continuing attempt moves to coding from review or owner by its continuing
+     * change, never as `redone`, since its work goes on from what was pushed; from coding it stays.
      */
     claimed: async (card, next) => {
+      if (next?.action === 'continue' && card.column !== columns.coding) {
+        await change(card, card.column === columns.owner ? 'continuedFromOwner' : 'continued');
+        return;
+      }
       if (card.column === columns.coding || next?.action === 'judge') return;
       await change(card, card.column === columns.review ? 'redone' : 'claimed');
+    },
+
+    /**
+     * L3 hands over `next`, L2's `move` answer for `card` at the pull, unread: the card moves from
+     * its column to the column the answer names, by the one change L2 makes between them. A move
+     * L2 makes no change for is refused, naming the card and both columns, and nothing moves.
+     */
+    moved: async (card, next) => {
+      const from = Object.keys(columns).find((key) => columns[key] === card.column);
+      const cause = MOVES.find((each) => CHANGES[each].from === from && CHANGES[each].to === next.to);
+      if (cause === undefined) throw new Error(`card #${card.number} has no move from ${from ?? card.column} to ${next.to}`);
+      await change(card, cause);
     },
 
     /**

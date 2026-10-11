@@ -39,17 +39,18 @@ const redoBoard = () => boardWith([cardIn(1, COLUMNS.coding), cardIn(2, COLUMNS.
 const boardWith = (items) => createFakeBoard({ columns: Object.values(COLUMNS), items });
 
 // proves R-STATE-2
-test('given an unclaimed Coding card and an unclaimed Review card, with freshness injected as "not fresh", a fresh engine dispatches both again', async () => {
-  const restarted = world({ fake: redoBoard(), concurrency: 2, fresh: () => false });
+test('given an unclaimed Coding card and an unclaimed Review card the forge holds nothing for, so no marker makes either fresh, a fresh engine dispatches both again', async () => {
+  const restarted = world({ fake: redoBoard(), concurrency: 2 });
 
   await pullOnce(restarted);
 
   assert.deepEqual([...restarted.dispatches.started].sort(), [1, 2]);
 });
 
-test('given an unclaimed Coding card and an unclaimed Review card, with freshness injected as "fresh", a fresh engine dispatches neither, and neither card\'s column changes', async () => {
+test('given an unclaimed Coding card and an unclaimed Review card, each with an open pull request whose markers under its owner-judged kind leave L2 nothing to dispatch, a fresh engine dispatches neither, and neither card\'s column changes', async () => {
   const fake = redoBoard();
-  const restarted = world({ fake, concurrency: 2, fresh: () => true });
+  const pullRequests = [1, 2].map((number) => ({ number: 100 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') }));
+  const restarted = world({ fake, concurrency: 2, forge: { pullRequests } });
 
   await pullOnce(restarted);
 

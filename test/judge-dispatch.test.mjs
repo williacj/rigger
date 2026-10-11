@@ -96,7 +96,7 @@ test('in that case, the fake forge records no read of that card between the sett
   assert.ok(settle > 0 && judges > settle, JSON.stringify(built.log));
   const between = built.log.slice(settle + 1, judges).filter((entry) => entry.read !== undefined);
   // The settle's one read is the pull requests and, of the one open, what the judge answer reads.
-  assert.deepEqual(between.map((entry) => entry.read).sort(), [['readComments', 1003], ['readDiff', 1003], ['readMergeBase', 1003]]);
+  assert.deepEqual(between.map((entry) => entry.read).sort(), [['readCheckStates', HEAD], ['readComments', 1003], ['readDiff', 1003], ['readEffectiveRules', 'main'], ['readMergeBase', 1003], ['readMergeable', 1003]]);
   const dispatched = at(built, (entry) => appended(entry, 'L3', 'dispatch', (each) => each.fields.role === 'engineer'));
   assert.ok(built.log.slice(dispatched, settle).some((entry) => appended(entry, 'L1', 'dispatch.end')), 'the settle read came before the maker ended');
 });

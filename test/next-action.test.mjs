@@ -1,5 +1,5 @@
 // ABOUTME: Tests L2's next action for a card: ignored when no kind selects it or, in Coding or
-// Review, when injected freshness says a fresh verdict covers it, refused when two kinds select it
+// Review, when its markers say a fresh verdict covers it, refused when two kinds select it
 // or the form check refuses it, and otherwise dispatched under its one kind.
 
 import { test } from 'node:test';
@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 
 /** Two kinds, each selected by one label, in the shape a config's `kinds` takes. */
 const KINDS = {
@@ -168,17 +169,37 @@ const COLUMNS = config.board.columns;
 /** `card(number, ['type:change'])`, in the column displayed as `column`. */
 const cardInColumn = (number, column) => ({ ...card(number, ['type:change']), column });
 
-test('an unclaimed Coding card and an unclaimed Review card that freshness answers "fresh" for are ignored', () => {
-  const fresh = () => true;
-  for (const column of [COLUMNS.coding, COLUMNS.review]) {
-    assert.deepEqual(nextAction(cardInColumn(20, column), KINDS, undefined, { columns: COLUMNS, fresh }), { action: 'ignore' }, column);
+/**
+ * Card `number` in the column displayed as `column`, `stage` its key, with the facts L2's facts
+ * call holds for it: where `sound`, one open pull request whose reviewer's marker at its head is
+ * sound and whose mergeability the forge cannot yet say, and otherwise nothing on the forge.
+ */
+function withFacts(number, column, stage, sound) {
+  const head = 'a'.repeat(40);
+  const marker = composeMarker({ card: number, pull: 10 * number, head, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const read = (value) => ({ status: 'fulfilled', value });
+  const forge = sound
+    ? {
+      stage, line: `rigger-${number}`, branch: true, open: [{ number: 10 * number, head, base: 'main' }], merged: [],
+      pull: read({ number: 10 * number, base: 'c'.repeat(40), head }), diff: read(''), mergeable: read('unknown'), rules: read([]), checks: read({}),
+      comments: read([{ body: marker, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
+    }
+    : { stage, line: `rigger-${number}`, branch: false, open: [], merged: [] };
+  return { ...cardInColumn(number, column), forge };
+}
+
+/** An L5 sink that records nothing, for an answer that records a marker it read. */
+const quiet = { emitter: () => ({ emit: () => {} }) };
+
+test('an unclaimed Coding card and an unclaimed Review card whose markers make them fresh are ignored', () => {
+  for (const [stage, column] of [['coding', COLUMNS.coding], ['review', COLUMNS.review]]) {
+    assert.equal(nextAction(withFacts(20, column, stage, true), KINDS, undefined, { sink: quiet }).action, 'ignore', column);
   }
 });
 
-test('an unclaimed Coding card and an unclaimed Review card that freshness answers "not fresh" for are dispatched under their kind', () => {
-  const fresh = () => false;
-  for (const column of [COLUMNS.coding, COLUMNS.review]) {
-    assert.deepEqual(nextAction(cardInColumn(21, column), KINDS, undefined, { columns: COLUMNS, fresh }), { action: 'dispatch', kind: 'change' }, column);
+test('an unclaimed Coding card and an unclaimed Review card no marker makes fresh are dispatched under their kind', () => {
+  for (const [stage, column] of [['coding', COLUMNS.coding], ['review', COLUMNS.review]]) {
+    assert.deepEqual(nextAction(withFacts(21, column, stage, false), KINDS, undefined, { sink: quiet }), { action: 'dispatch', kind: 'change' }, column);
   }
 });
 
@@ -199,6 +220,23 @@ test('freshness is read for Coding and Review cards alone: a Ready card is dispa
   assert.deepEqual(asked, []);
 });
 
-test('freshness injected with no declared columns is refused, rather than read for no card', () => {
-  assert.throws(() => nextAction(cardInColumn(24, COLUMNS.coding), KINDS, undefined, { fresh: () => true }), /freshness was injected with no declared columns/);
+test('nextAction no longer accepts an injected fresh: given { fresh: () => true } and markers at an older head, it still answers a judge dispatch', () => {
+  const body = PASSING;
+  const older = composeMarker({ card: 25, pull: 250, head: 'b'.repeat(40), digest: acceptanceDigest(body), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const given = {
+    ...cardInColumn(25, COLUMNS.review),
+    forge: {
+      stage: 'review', line: 'rigger-25', branch: true, open: [{ number: 250, head: 'a'.repeat(40), base: 'main' }], merged: [],
+      pull: { status: 'fulfilled', value: { number: 250, base: 'c'.repeat(40), head: 'a'.repeat(40) } },
+      diff: { status: 'fulfilled', value: 'diff --git a/x b/x\n' },
+      comments: { status: 'fulfilled', value: [{ body: older, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }] },
+    },
+  };
+
+  for (const options of [{ fresh: () => true }, { columns: COLUMNS, fresh: () => true }]) {
+    const next = nextAction(given, KINDS, undefined, { ...options, roles: config.roles });
+
+    assert.equal(next.action, 'judge', JSON.stringify(next));
+    assert.deepEqual(next.judges.map((judge) => judge.role), ['reviewer']);
+  }
 });

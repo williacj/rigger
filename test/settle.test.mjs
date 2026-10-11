@@ -78,6 +78,9 @@ const UNREAD = {
   pull: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readMergeBase has nothing to read') },
   diff: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readDiff has nothing to read') },
   comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readComments has nothing to read') },
+  mergeable: { status: 'rejected', reason: new Error('the fake repository holds no pull request #120, so readMergeable has nothing to read') },
+  rules: { status: 'fulfilled', value: [] },
+  checks: { status: 'fulfilled', value: {} },
 };
 
 // proves R-WORK-18
@@ -184,16 +187,16 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
   const comments = [{ body: 'A person\'s note.', createdAt: '2026-10-03T09:00:00Z' }];
   const repository = createFakeRepository({ pullRequests: [{ ...pullFrom(13, 130), diff: 'diff --git a/x b/x\n', mergeBase: base, comments }] });
   const made = [];
-  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, (what) => {
+  const reads = Object.fromEntries(Object.entries(repository.operations).map(([operation, read]) => [operation, (what, ...rest) => {
     made.push([operation, what]);
-    return read(what);
+    return read(what, ...rest);
   }]));
   const l2 = columnChanges({ config, sink: openSink({ directory: temporaryDirectory('rigger-settle-'), run: 'r-test', now: () => 0 }), items: fake.operations, reads });
   const [card] = await fake.operations.readItems();
 
   const facts = await l2.settled(card, exited(0));
 
-  assert.deepEqual(made.sort(), [['readComments', 130], ['readDiff', 130], ['readMergeBase', 130], ['readPullRequests', 'rigger-13']]);
+  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
   assert.deepEqual(facts, {
     line: 'rigger-13',
     open: [{ number: 130, head: pullFrom(13, 130).sha, base: 'main' }],
@@ -201,5 +204,8 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
     pull: { status: 'fulfilled', value: { number: 130, base, head: pullFrom(13, 130).sha } },
     diff: { status: 'fulfilled', value: 'diff --git a/x b/x\n' },
     comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_130_1', author: 'rigger-fake', permission: 'write', edited: false }] },
+    mergeable: { status: 'fulfilled', value: 'unknown' },
+    rules: { status: 'fulfilled', value: [] },
+    checks: { status: 'fulfilled', value: {} },
   });
 });

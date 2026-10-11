@@ -1,5 +1,5 @@
-// ABOUTME: L2's facts call: what the forge holds of each pullable card's line of work, read before
-// L3 claims, and the one read of a card's pull requests, and of the one open among them, L2's settle makes.
+// ABOUTME: L2's facts call: what the forge holds of each card's line of work, read before L3
+// claims, and the one read of a card's pull requests, and of the one open among them, L2's settle makes.
 
 import { worktreeTopic } from '../config/validate.mjs';
 import { topicFor } from '../execution/workspace.mjs';
@@ -18,17 +18,24 @@ async function forCards(cards, read) {
 }
 
 /**
- * What the forge holds of a card's one open pull request `pull`, read through `reads`, the
- * forge adapter's repository reads, each as `Promise.allSettled` records its outcome: `pull`, the
- * pull request's `{ number, base, head }`, `base` the merge base its diff is taken from and `head`
- * its head SHA, both as the forge answers them; `diff`; and `comments`. These are the facts L2's
- * judge answer reads, and a read that fails is answered as its failure, which the judge answer
- * names (`judgeAnswer`).
+ * What the forge holds of a card's one open pull request `pull`, `{ number, head, base }` as
+ * `readPullRequests` answers it, read through `reads`, the forge adapter's repository reads, each
+ * as `Promise.allSettled` records its outcome: `pull`, the pull request's `{ number, base, head }`,
+ * `base` the merge base its diff is taken from and `head` its head SHA, both as the forge answers
+ * them; `diff`; `comments`, which hold its markers; `mergeable`, the forge's mergeability answer;
+ * `rules`, the effective rules of its base branch, by name; and `checks`, the states at its head
+ * of the checks those rules require, which a failed read of the rules leaves unread, failing as
+ * that read did. These are the facts L2's review loop reads, and a read that fails is answered as
+ * its failure, which the review loop names (`reviewAnswer`).
  */
 async function reviewed(pull, reads) {
-  const [base, diff, comments] = await Promise.allSettled([reads.readMergeBase(pull.number), reads.readDiff(pull.number), reads.readComments(pull.number)]);
+  const [base, diff, comments, mergeable, rules] = await Promise.allSettled([
+    reads.readMergeBase(pull.number), reads.readDiff(pull.number), reads.readComments(pull.number),
+    reads.readMergeable(pull.number), reads.readEffectiveRules(pull.base),
+  ]);
+  const [checks] = rules.status === 'fulfilled' ? await Promise.allSettled([reads.readCheckStates(pull.head, rules.value)]) : [rules];
   const read = base.status === 'fulfilled' ? { status: 'fulfilled', value: { number: pull.number, base: base.value.mergeBase, head: base.value.head } } : base;
-  return { pull: read, diff, comments };
+  return { pull: read, diff, comments, mergeable, rules, checks };
 }
 
 /**
@@ -47,12 +54,12 @@ export async function pullRequestsFrom(number, line, reads, review = true) {
  * reads (`repositoryReads`). `decide` is
  * L2's next action for a card, as the verb built it.
  *
- * Handed the cards L3 read, it reads, for each card in the `ready`, `coding` or `review` column,
+ * Handed the cards L3 read, it reads, for each card in the `ready`, `coding`, `review` or `owner` column,
  * what the forge holds of its line of work, the branch the topic rule names: whether the branch is
  * there, read once for every such card, and the open and merged pull requests from it, read for
- * each card in turn (the architect's ruling 2, P1, on #467). For a card in the `review` column
- * holding exactly one open pull request from it, it also reads what `reviewed` reads of that pull
- * request, the facts L2's judge answer reads. A read of the branches or the pull requests that
+ * each card in turn (the architect's ruling 2, P1, on #467). For a card in the `coding`, `review`
+ * or `owner` column holding exactly one open pull request from it, it also reads what `reviewed`
+ * reads of that pull request, the facts L2's review loop reads. A read of the branches or the pull requests that
  * fails rejects naming each card it was reading for and the read, and answers no facts at all.
  *
  * It answers the `decide` L3 calls at the pull, synchronously: `decide` handed each card read with
@@ -63,7 +70,7 @@ export async function pullRequestsFrom(number, line, reads, review = true) {
 export function factsCall({ config, reads, decide }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
-  const stages = new Map(['ready', 'coding', 'review'].map((stage) => [columns[stage], stage]));
+  const stages = new Map(['ready', 'coding', 'review', 'owner'].map((stage) => [columns[stage], stage]));
   return async (cards) => {
     const offered = cards.filter((card) => stages.has(card.column));
     const lines = new Map(offered.map((card) => [card.number, topicFor(topic, card.number)]));
@@ -72,7 +79,7 @@ export function factsCall({ config, reads, decide }) {
     for (const card of offered) {
       const line = lines.get(card.number);
       const stage = stages.get(card.column);
-      const facts = await pullRequestsFrom(card.number, line, reads, stage === 'review');
+      const facts = await pullRequestsFrom(card.number, line, reads, stage !== 'ready');
       held.set(card.number, { stage, branch: branches[line] === true, ...facts });
     }
     return (card, ...rest) => decide(held.has(card.number) ? { ...card, forge: held.get(card.number) } : card, ...rest);

@@ -1,10 +1,12 @@
-// ABOUTME: L2's judge answer for a Review card: the agent judges owed a verdict marker at its pull
-// request's head and acceptance digest, each with its steps, the evidence they all share, and the
-// instruction asking each for its marker.
+// ABOUTME: L2's review loop for a card with one open pull request: its answer from the verdict
+// markers at the pull request's head and acceptance digest, its rounds, the forge's mergeability
+// and the gate rule; and its judge answer, naming the agent judges owed a marker, each with its
+// steps, the evidence they all share, and the instruction asking each for its marker.
 
 import { OWNER, roleTimeout, workRequires } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
+import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
 import { failed, kindOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
 
@@ -12,6 +14,9 @@ import { failed, kindOf, selectedSteps, stepAnswer, tierOf } from './next-action
 const READS = {
   pull: 'the pull request',
   comments: 'the pull request\'s comments',
+  mergeable: 'the pull request\'s mergeability',
+  rules: 'the base branch\'s effective rules',
+  checks: 'the pull request\'s check states',
 };
 
 /**
@@ -27,12 +32,13 @@ function held(card, read) {
 }
 
 /**
- * Records the L2 event `name` with `fields` under `card` through `sink`. A sink that refuses it has
- * L2 answer no action, naming the card, `what` it was recording and the refusal.
+ * Records the L2 event `name` with `fields` under `card`, and under `dispatch` where one is given,
+ * through `sink`. A sink that refuses it has L2 answer no action, naming the card, `what` it was
+ * recording and the refusal.
  */
-function record(sink, card, name, fields, what) {
+function record(sink, card, name, fields, what, dispatch) {
   try {
-    sink.emitter({ layer: 'L2', card: card.number }).emit(name, fields);
+    sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) }).emit(name, fields);
   } catch (refusal) {
     throw new Error(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
   }
@@ -191,4 +197,248 @@ function judgeOf(role, declared, tier, pull, evidence, facts, items) {
     '',
   ].join('\n');
   return { role, agent: declared.agent, provider: declared.provider, tier, timeout: roleTimeout(declared), instruction, evidence, digest, facts };
+}
+
+/**
+ * L2's review loop: its answer for `card`, a Review, Owner or Coding card whose one open pull
+ * request L2's facts call read, under a config's `kinds` and `epicLabel`, from the markers at that
+ * pull request's head and the card's acceptance digest, as `readMarkers` governs them. `options` are
+ * `judgeAnswer`'s, and its `sink` records one `marker.read` event per governing marker read, as
+ * `markerRead` says: every agent judge's, and in Owner the owner's too. In Review the owner's marker
+ * is never read.
+ *
+ * A Coding card is answered as `codingAnswer` says, and an Owner card whose agent judges are all
+ * sound as `ownerAnswer` says. Otherwise L2 takes the first rule that applies (architect review B's
+ * R3 on #642):
+ * 1. a governing critical marker escalates the card as `critical`, spending no round (`R-ESCALATE-6`);
+ * 2. an Owner card any of whose agent markers no longer governs, or is not sound, moves to Review;
+ * 3. agent judges owed a marker, absent, unreadable or edited, are dispatched, and only they, as
+ *    `judgeAnswer` answers them, spending no round (the architect's r2 ruling 7);
+ * 4. coverage ruled insufficient returns the acceptance to its author, as `returned` says (`R-LOOP-6`);
+ * 5. needs revision, or sound with an item unmet, is a continuing attempt, as `continued` says,
+ *    unless the kind's rounds, three where it declares none, are spent: then the card escalates as
+ *    `ambiguous` (`R-LOOP-9`), its rounds counted as `roundsOf` counts them;
+ * 6. every agent judge sound under a kind naming the owner moves the card to Owner, and nothing is
+ *    dispatched for the owner (`R-LOOP-11`);
+ * 7. every judge sound goes to the merge decision, as `mergeAnswer` says.
+ *
+ * Each answer is one of `{ action: 'judge', kind, judges }`, `{ action: 'refuse', card, reason }`,
+ * `{ action: 'move', to }`, `{ action: 'continue', pull, head, markers }`, `{ action: 'return',
+ * pull, comment }`, `{ action: 'escalate', category }`, `{ action: 'merge', pull, head }` and
+ * `{ action: 'ignore', reason }`, which L3 carries out.
+ */
+export function reviewAnswer(card, kinds, epicLabel, options = {}) {
+  const { kind, answer } = kindOf(card, kinds, epicLabel);
+  if (answer !== undefined) return answer;
+  const declared = kinds[kind];
+  const agents = declared.judges.filter((role) => role !== OWNER);
+  // In Review the owner's marker is never read, so a kind naming the owner alone reads no marker,
+  // and moves to Owner once the forge facts every advance rests on are served.
+  if (agents.length === 0 && card.forge.stage === 'review') return advanced(card, { action: 'move', to: 'owner' });
+  // The pull request's number and head as L2's facts call read them from its line of work: only
+  // a judge's evidence needs the merge base, which `judgeAnswer` reads.
+  const [pull] = card.forge.open;
+  const comments = held(card, 'comments');
+  const items = acceptanceItems(card.body);
+  const digest = acceptanceDigest(card.body);
+  const round = { card: card.number, pull: pull.number, head: pull.head, digest, count: items.length };
+  const { governing } = readMarkers(comments, round);
+  const read = card.forge.stage === 'owner' ? [...agents, OWNER] : agents;
+  for (const role of read.filter((each) => governing.has(each))) markerRead(options.sink, card, pull, round, role, governing.get(role));
+  const states = agents.map((role) => stateOf(governing.get(role)));
+  if (card.forge.stage === 'coding') return codingAnswer(card, pull, states, agents.map((role) => governing.get(role)), items);
+  if (states.includes('critical')) return { action: 'escalate', category: 'critical' };
+  if (card.forge.stage === 'owner') {
+    if (!states.every((state) => state === 'sound')) return { action: 'move', to: 'review' };
+    return ownerAnswer(card, declared.judges, pull, comments, round, governing.get(OWNER), items);
+  }
+  if (states.includes('owed')) return judgeAnswer(card, kinds, epicLabel, options);
+  const insufficient = agents.find((role, at) => states[at] === 'insufficient');
+  if (insufficient !== undefined) return returned(card, pull, comments, governing.get(insufficient).marker);
+  const revising = agents.filter((role, at) => states[at] === 'revision');
+  if (revising.length > 0 && roundsOf(comments, round, agents) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
+  if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
+  if (declared.judges.includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
+  return mergeAnswer(card, declared.judges, pull, comments, round);
+}
+
+/**
+ * Records, through `sink`, the L2 `marker.read` event for `role`'s marker `governing`, governing at
+ * `round` on `card`'s pull request `pull`: its role, head, digest, verdict, dispatch id and
+ * evidence digest, a field it lacks as null, and whether its comment was edited. An unreadable
+ * marker is recorded with verdict null and its parse reason. The dispatch id is the event's own
+ * `dispatch`, which the sink stamps.
+ */
+function markerRead(sink, card, pull, round, role, governing) {
+  const fields = governing.marker ?? {};
+  const unreadable = governing.state === 'marker' ? {} : { reason: governing.reason };
+  const event = { pull: pull.number, role, head: round.head, digest: round.digest, verdict: fields.verdict ?? null, evidence: fields.evidence ?? null, edited: governing.edited, ...unreadable };
+  // The sink stamps the dispatch id, as the dispatch the marker arose under.
+  record(sink, card, 'marker.read', event, `${role}'s marker at head ${round.head} was read`, fields.dispatch ?? null);
+}
+
+/**
+ * L2's answer for `card` in the Coding column with one open pull request, from `states`, its agent
+ * judges' states, and `governing`, their governing markers: a continuing attempt where one needs
+ * revision, or where every one is sound and the forge reads the pull request as conflicting
+ * (`R-CONFLICT-1`); `ignore` where every one is sound and the forge cannot yet say whether it
+ * conflicts; and otherwise refused as at the base, since its work would start again from the
+ * beginning over what was pushed (`R-WORK-19`).
+ */
+function codingAnswer(card, pull, states, governing, items) {
+  const revising = governing.filter((held, at) => states[at] === 'revision');
+  if (revising.length > 0) return continued(pull, revising.map((held) => held.marker), items);
+  if (states.every((state) => state === 'sound')) {
+    const mergeable = held(card, 'mergeable');
+    if (mergeable === 'conflicting') return continued(pull, [], items);
+    if (mergeable === 'unknown') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as unknown` };
+  }
+  return { action: 'refuse', card: card.number, reason: `the forge holds its line of work, ${card.forge.line}, so its work would not start from the beginning` };
+}
+
+/**
+ * L2's answer for `card` in the Owner column, every agent judge sound, from `owner`, the owner's
+ * governing marker at the head and digest: with none, the card stays in Owner and nothing is
+ * dispatched, since the owner is never dispatched (`R-LOOP-11`); an unreadable or edited one is
+ * named and left for the owner; otherwise the marker is answered as an agent judge's would be,
+ * with no bound on rounds, and a sound one goes to the merge decision under `judges`.
+ */
+function ownerAnswer(card, judges, pull, comments, round, owner, items) {
+  const at = `at head ${pull.head}, acceptance digest ${round.digest}`;
+  if (owner === undefined) return { action: 'ignore', reason: `every agent judge is sound, and the owner has written no marker ${at}` };
+  const state = stateOf(owner);
+  if (state === 'owed') {
+    const why = owner.state === 'marker' ? 'edited' : `unreadable: ${owner.reason}`;
+    return { action: 'ignore', reason: `the owner's marker ${at} is ${why}` };
+  }
+  if (state === 'critical') return { action: 'escalate', category: 'critical' };
+  if (state === 'insufficient') return returned(card, pull, comments, owner.marker);
+  if (state === 'revision') return continued(pull, [owner.marker], items);
+  return mergeAnswer(card, judges, pull, comments, round);
+}
+
+/**
+ * The permissions on the repository whose holders' comments can be the engine's earlier return:
+ * the engine posts with write access, as a judge's marker counts only from an account holding one
+ * of these (`readMarkers`).
+ */
+const RETURNERS = ['admin', 'maintain', 'write'];
+
+/**
+ * L2's answer returning `card`'s acceptance to its author for `marker`, which rules its coverage
+ * insufficient: one comment on `pull`, the card's open pull request, quoting the marker's role and
+ * its `coverageReason` (`R-LOOP-6`). Its first line names the marker's role, head and digest, so
+ * the comment is the one return for that marker: where `comments` already hold it, written by an
+ * account with write access and its text the same but for line endings and trailing whitespace,
+ * L2 answers `ignore` and no second comment. A copy by any other account, or another comment
+ * opening on that line, is no return and stops none. Its second line opens no marker block, so it
+ * parses as no marker and never governs.
+ */
+function returned(card, pull, comments, { role, head, digest, coverageReason }) {
+  const first = `Rigger returns card #${card.number}'s acceptance to its author: the judge ${role} ruled its coverage insufficient at head ${head}, acceptance digest ${digest}.`;
+  const comment = [first, '', `${role}'s reason: ${coverageReason}`, '', 'The acceptance returns to its author, who revises it. No judge rewrites it.', ''].join('\n');
+  const same = (body) => String(body).replace(/\r\n/g, '\n').trimEnd() === comment.trimEnd();
+  if (comments.some((each) => each.author !== null && RETURNERS.includes(each.permission) && same(each.body))) {
+    return { action: 'ignore', reason: `pull request #${pull.number} already holds the comment returning the acceptance for ${role}'s marker at head ${head}, acceptance digest ${digest}` };
+  }
+  return { action: 'return', pull: pull.number, comment };
+}
+
+/** The rounds a kind gets where it declares none (`R-LOOP-9`). */
+const ROUNDS = 3;
+
+/** The lines of a comment's text that look like a marker's item line, `item <n>: …`, inside its block or not. */
+const ITEM_LINE = /^item \d+:/gm;
+
+/**
+ * The readable markers `comment` holds for `round`, read against the item count its own block
+ * rules on, whatever acceptance it ruled against. A block parses against exactly the count of the
+ * items it rules on, so it is read against each count up to the item-like lines the comment holds,
+ * prose after the block included, and the count it parses against is its own.
+ */
+function readableAtAnyCount(comment, round) {
+  for (let count = (String(comment.body).match(ITEM_LINE) ?? []).length; count >= 0; count -= 1) {
+    const { markers } = readMarkers([comment], { ...round, count });
+    if (markers.length > 0) return markers;
+  }
+  return [];
+}
+
+/**
+ * The rounds a card's pull request has spent, from its `comments` read for `round`: the distinct
+ * (head, digest) pairs at which a readable, unedited marker of one of `agents` stands, a pair at a
+ * head the pull request no longer holds included (the architect's r2 ruling 7 on #642). A marker
+ * from an earlier acceptance ruled on that acceptance's items, however many it held, so each is
+ * read as `readableAtAnyCount` reads it: a marker valid against its own acceptance spends its round
+ * after an item is added or removed, and whatever prose its comment holds.
+ */
+function roundsOf(comments, round, agents) {
+  const pairs = comments.filter((comment) => !comment.edited).flatMap((comment) => readableAtAnyCount(comment, round));
+  return new Set(pairs.filter((marker) => agents.includes(marker.role)).map((marker) => `${marker.head} ${marker.digest}`)).size;
+}
+
+/**
+ * L2's continuing attempt on `pull`, the card's open pull request, at the head L2 read: the maker
+ * is handed each of `markers`, the governing markers that are not sound, as its role, its verdict,
+ * each unmet item by its ordinal and its text among `items`, and its `toSound` where it gives one.
+ */
+function continued(pull, markers, items) {
+  const handedOf = ({ role, verdict, items: ruled, toSound }) => ({
+    role,
+    verdict,
+    unmet: ruled.flatMap((ruling, at) => (ruling === 'unmet' ? [{ item: at + 1, text: items[at] }] : [])),
+    ...(toSound === undefined ? {} : { toSound }),
+  });
+  return { action: 'continue', pull: pull.number, head: pull.head, markers: markers.map(handedOf) };
+}
+
+/**
+ * What a judge's governing marker `governing`, as `readMarkers` answers it, rules: `owed` where it
+ * is absent, unreadable or edited; `critical`; `insufficient`, coverage ruled insufficient;
+ * `revision`, needs revision or sound with an item unmet; or `sound`.
+ */
+function stateOf(governing) {
+  if (governing?.state !== 'marker' || governing.edited) return 'owed';
+  const { verdict, coverage, items } = governing.marker;
+  if (verdict === 'critical') return 'critical';
+  if (coverage === 'insufficient') return 'insufficient';
+  if (verdict !== 'sound' || items.includes('unmet')) return 'revision';
+  return 'sound';
+}
+
+/**
+ * The forge facts every advance of a Review or Owner card rests on, `card`'s mergeability, its base
+ * branch's effective rules and its check states, each held, so a failed read of any one answers no
+ * action naming it, whatever the others answered (the answers table's failed-read row).
+ */
+function forgeFacts(card) {
+  return { mergeable: held(card, 'mergeable'), rules: held(card, 'rules'), states: held(card, 'checks') };
+}
+
+/** `answer`, L2's advance of `card`, once every read `forgeFacts` holds was served. */
+function advanced(card, answer) {
+  forgeFacts(card);
+  return answer;
+}
+
+/**
+ * L2's merge decision for `card` once every one of `judges` is sound at `pull`'s head. Where the
+ * forge reads the pull request as conflicting, the card's maker continues on it (`R-CONFLICT-1`);
+ * where its mergeability is unknown, L2 answers `ignore`, naming it (the architect's r2 ruling 5).
+ * Otherwise the gate rule is handed the checks the base branch's effective rules require, less the
+ * gate's own context, each in the state the facts hold, `absent` where they hold none (`ARCHITECTURE.md`,
+ * "The engine's merge decision"): it answers `merge` where the gate admits, and `ignore` naming each
+ * refusal where it does not. L2 judges no status's creator; the forge enforces the pin at the merge.
+ * A failed read of the mergeability, the rules or the check states answers no action, naming it,
+ * whatever the other reads answered.
+ */
+function mergeAnswer(card, judges, pull, comments, round) {
+  const { mergeable, rules, states } = forgeFacts(card);
+  if (mergeable === 'conflicting') return continued(pull, [], []);
+  if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}` };
+  const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
+  const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
+  const gate = gateAnswer({ comments, ...round, judges, checks });
+  if (gate.admit) return { action: 'merge', pull: pull.number, head: pull.head };
+  return { action: 'ignore', reason: gate.refusals.map((refusal) => `${refusal.judge ?? refusal.check}: ${refusal.reason}`).join('; ') };
 }
