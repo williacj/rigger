@@ -63,6 +63,7 @@ never reused.
 | D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended in #319. |
 | D22 | Binding edits need the owner's merge before M5 | Ratified |
 | D23 | The forge refuses a push to the main line | Ratified |
+| D24 | A judge's provider is configured and enforced | Ratified |
 
 ## D1 — Redo over resume
 
@@ -829,3 +830,80 @@ Card #638 records the guarded probe of those routes and of a pull request merge.
 The rule binds this repository's sessions, not a Rigger deployment. It adds no product
 requirement. The distinction between the owner and a session still depends on the sessions
 honouring their roles until a boundary outside their credentials can enforce it.
+
+## D24 — A judge's provider is configured and enforced
+
+**Status:** Ratified.
+
+### Rule
+
+1. A kind names its judges by role. A role's `provider`, or one a card label selects, is the
+   provider it runs on. Each judge entry may carry its own provider rule: a fixed provider, or
+   a map from the maker's provider. A plain role name keeps today's meaning, that role on its
+   role's provider, and the owner is written only that way.
+2. Each agent judge's marker names its provider, and the gate refuses one that is absent or is
+   not the one required. This binds every consumer, whether or not it declares a provider rule.
+   The owner's marker names none.
+3. One provider is required of each judge, never a set, so the dispatch and the gate check the
+   same value.
+4. A card label is the record of the maker's provider. It carries the residual a card's kind
+   already carries.
+5. The governing marker is still the latest of a role's markers. A marker on the wrong provider
+   displaces an earlier one on the right provider.
+6. The engine does not alternate makers between providers. A coordinator that wants alternation
+   records each choice as a card label.
+
+**Reversed by:**
+
+- **Rule 1's per-judge rule:** a judge needing a provider rule that neither a fixed provider nor a
+  map from the maker's provider can express.
+- **Rule 1's plain role names:** a second meaning a plain name would have to carry, or a reader
+  that a plain name leads to treat an agent judge as having no provider rule. Either makes one
+  entry form the clearer config.
+- **Rule 2:** a consumer's hand-written markers refused for a missing provider often enough that
+  scoping the check to entries carrying a rule costs less.
+- **Rule 3:** a judge that must be allowed either of two providers, such as a fallback while one
+  CLI is down.
+- **Rule 4:** a requirement that the gate prove which provider made the work.
+- **Rule 5:** `report` or the coordinator's records showing wrong-provider markers displacing right
+  ones often enough to cost re-dispatches.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| The engine alternating makers between providers (rule 6) | A requirement that the engine itself balance makers across providers |
+
+### Notes
+
+P17 named a Codex judge role on every kind, which refused every card a Codex maker made under
+P35. P39, P40 and P41 replaced it: the provider is configured per judge, recorded in the marker,
+and enforced by the gate. "Model" means the agent CLI. The model behind a tier stays the adapter's
+fact.
+
+Each judge's provider rule sits on its entry in the kind (rule 1). The kind is the one place
+that knows both its maker and its judges, and P41 asked for one Codex and one Claude judge under
+one kind. A label selecting a role's provider is the tier-label mechanism a second time. A plain
+role name stays because it already means "that role on its own provider", and because the owner,
+who has no provider, needs it. Requiring the object everywhere would change every consumer's
+config for no new meaning.
+
+Rule 2 binds every consumer for three reasons. It fails closed, because a marker naming no
+provider is evidence missing. It keeps one rule, where scoping the check to entries that carry a
+rule would add a second code path. And only a hand-written marker
+can lack the field, because L2 composes it into every dispatched judge's instruction.
+
+Rule 3 holds because dispatch must pick exactly one provider, and the gate checks what dispatch
+picks. With one value the two cannot disagree.
+
+A label records the maker's provider (rule 4) because labels are the one card fact the gate
+already reads, for the kind. `ARCHITECTURE.md`'s "Failure model" sets what Rigger stores, and none
+of it could hold the maker's provider instead.
+
+The governing marker stays the latest (rule 5) so that one rule governs every field. Filtering by
+provider before choosing would make `provider` the one field that changes which marker governs.
+
+The engine does not alternate (rule 6) because alternating in dispatch order needs a memory
+across cards, and that memory is not among what `ARCHITECTURE.md`'s "Failure model" lets Rigger
+keep. Should that requirement come, a stateless rule, such as the parity of the card's number, would serve
+without new state.
