@@ -2,6 +2,15 @@
 // requests from them with their head SHAs, diffs and comments. Test-only, never imported from src/.
 
 import { gitIn } from './git-repository.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+
+/** A marker comment at a card's acceptance and pull-request head, with the requested ruling. */
+export function markerComment({ card, pull, head, body, role = 'reviewer', createdAt = '2026-10-01T11:00:00Z', ...ruling }) {
+  return {
+    body: composeMarker({ card, pull, head, digest: acceptanceDigest(body), role, verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, `Ruled, by ${role}`),
+    createdAt,
+  };
+}
 
 /**
  * Everything the fake holds of one pull request. `head` is the branch it is from and `sha` that
@@ -17,6 +26,9 @@ import { gitIn } from './git-repository.mjs';
  * its head, by context, a required context it does not name being `absent`.
  */
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks'];
+
+/** The SHA the fake's merge answers as the merge commit. */
+const MERGE_SHA = 'e'.repeat(40);
 
 /** The fields a comment read selects, filled as the fake forge gives an agent's comment. */
 export function commentOf(comment, number, index) {
@@ -50,15 +62,23 @@ function heldPull(pull) {
  * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
  * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], rules } = {}) {
+export function createFakeRepository({ branches = [], pullRequests = [], rules, origin } = {}) {
   const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull) });
-  const pull = (number) => held.pullRequests.find((candidate) => candidate.number === number) ?? null;
+  const current = (candidate) => {
+    if (candidate === undefined) return null;
+    if (origin !== undefined && !candidate.merged) candidate.sha = headIn(origin, candidate.head) ?? candidate.sha;
+    return candidate;
+  };
+  const pull = (number) => current(held.pullRequests.find((candidate) => candidate.number === number));
   const known = (operation, number) => {
     const found = pull(number);
     if (!found) throw new Error(`the fake repository holds no pull request #${number}, so ${operation} has nothing to read`);
     return found;
   };
-  const asAnswered = ({ number, sha, base }) => ({ number, head: sha, base });
+  const asAnswered = (candidate) => {
+    const { number, sha, base } = current(candidate);
+    return { number, head: sha, base };
+  };
   const operations = {
     readPullRequests: async (branch) => {
       const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null);
@@ -77,7 +97,7 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules }
     },
     readMergeable: async (number) => known('readMergeable', number).mergeable ?? 'unknown',
     readCheckStates: async (sha, required) => {
-      const checks = held.pullRequests.find((candidate) => candidate.sha === sha)?.checks ?? {};
+      const checks = held.pullRequests.find((candidate) => current(candidate).sha === sha)?.checks ?? {};
       return Object.fromEntries(required.map(({ context }) => [context, checks[context] ?? { state: 'absent', creator: null }]));
     },
     readEffectiveRules: async () => structuredClone(rules ?? []),
@@ -99,9 +119,49 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules }
     comments.push({ body, createdAt, id, author: { login: 'rigger-engine' } });
     return { id, body };
   };
+  // Every merge call L2 made, in order, and the answers a test scripted for the next ones.
+  const merges = [];
+  const scripted = [];
+  /**
+   * The forge's own merge of pull request `number` at `expectedHead`, answered as M5-04's
+   * `mergePullRequest` maps the forge's answers: refused `head moved` where its head is not
+   * `expectedHead`, `already merged` where it is merged, refused `unknown` or `conflict` where its
+   * mergeability is unknown or conflicting, and otherwise merged, which the fake then holds.
+   */
+  const forgeMerge = async (number, expectedHead) => {
+    const held = known('mergePullRequest', number);
+    if (held.sha !== expectedHead) return { outcome: 'refused', reason: 'head moved' };
+    if (held.merged) return { outcome: 'already merged', sha: MERGE_SHA };
+    if ((held.mergeable ?? 'unknown') === 'unknown') return { outcome: 'refused', reason: 'unknown' };
+    if (held.mergeable === 'conflicting') return { outcome: 'refused', reason: 'conflict' };
+    held.merged = true;
+    return { outcome: 'merged', sha: MERGE_SHA };
+  };
+  /**
+   * The forge adapter's merge, beside the reads and never among them: records the call, then
+   * answers as the next scripted answer says, or as `forgeMerge` does where none is scripted. A
+   * scripted answer is a function handed `{ number, head, merge }`, `merge` being `forgeMerge` for
+   * this call, so a script can hold, throw, merge and then throw, or answer a refusal of its own.
+   */
+  const mergePullRequest = async (number, expectedHead) => {
+    merges.push({ number, head: expectedHead });
+    const script = scripted.shift();
+    const merge = () => forgeMerge(number, expectedHead);
+    return script === undefined ? merge() : script({ number, head: expectedHead, merge });
+  };
   return {
     operations,
     postComment,
+    mergePullRequest,
+    /** Has the next merge call answer as `script` says, as `mergePullRequest` describes. */
+    answerMerge: (script) => scripted.push(script),
+    /** Every merge call made so far, each `{ number, head }`, in order. */
+    merges: () => structuredClone(merges),
+    /** Sets what the forge holds of pull request `number`, as `PULL_FACTS` names each of `facts`. */
+    update: (number, facts) => {
+      const held = known('update', number);
+      Object.assign(held, heldPull({ ...held, ...facts }));
+    },
     /** Opens a pull request, `PULL_FACTS` as each is given, and holds its branch. */
     open: (opened) => {
       held.pullRequests.push(heldPull(opened));
@@ -112,7 +172,7 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules }
     /** Pull request `number` as the fake holds it, or null where it holds none. */
     pull: (number) => structuredClone(pull(number)),
     /** Everything the repository holds, in the form it was built from. */
-    held: () => structuredClone(held),
+    held: () => structuredClone({ ...held, pullRequests: held.pullRequests.map(current) }),
   };
 }
 

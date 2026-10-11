@@ -47,7 +47,7 @@ test('given an unclaimed Coding card and an unclaimed Review card the forge hold
   assert.deepEqual([...restarted.dispatches.started].sort(), [1, 2]);
 });
 
-test('given an unclaimed Coding card and an unclaimed Review card, each with an open pull request whose markers under its owner-judged kind leave L2 nothing to dispatch, a fresh engine dispatches neither, and neither card\'s column changes', async () => {
+test('given unclaimed Coding and Review cards with open pull requests under an owner-judged kind, a fresh engine dispatches neither and advances Review to Owner', async () => {
   const fake = redoBoard();
   const pullRequests = [1, 2].map((number) => ({ number: 100 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') }));
   const restarted = world({ fake, concurrency: 2, forge: { pullRequests } });
@@ -55,8 +55,8 @@ test('given an unclaimed Coding card and an unclaimed Review card, each with an 
   await pullOnce(restarted);
 
   assert.deepEqual(restarted.dispatches.started, []);
-  assert.deepEqual(await columnsOf(fake), { 1: COLUMNS.coding, 2: COLUMNS.review });
-  assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(await columnsOf(fake), { 1: COLUMNS.coding, 2: COLUMNS.owner });
+  assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: ['item-2', COLUMNS.owner] }]);
 });
 
 // proves R-STATE-2

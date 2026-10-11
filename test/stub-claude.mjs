@@ -70,6 +70,7 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *   so a file written at any moment is seen;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
+ * - `push`: commits and pushes that branch, with its existing pull request staying open;
  * - `findings`: comments on the pull request its prompt's marker block names, with the `gh` first
  *   on its `PATH`, a marker composed from that block's fields, sound and ruling every item met, as
  *   a judge does;
@@ -303,11 +304,11 @@ export async function standInMain() {
   if (act.print !== undefined) process.stdout.write(act.print);
   if (act.write) writeFileSync(marker(dir, 'wrote', card, role), '');
   if (act.await !== undefined) await written(marker(dir, 'wrote', card, act.await));
-  if (act.pr && inWorktree()) {
+  if ((act.pr || act.push) && inWorktree()) {
     const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
     ran('git', ['push', '-q', 'origin', branch]);
-    ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
+    if (act.pr) ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
   }
   if (act.findings) {
     const marker = instructedMarker(input);

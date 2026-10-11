@@ -1,7 +1,7 @@
 // ABOUTME: Tests how L2 settles a dispatch that exited zero, driven through L3's loop over the fake
 // board: a redo pulled from review with no pull request is moved to coding at its claim, then to
-// review on a zero exit with a pull request, a redo pulled from coding moves once to review, and a
-// claimed ready card moves twice, each move with its event.
+// review on a zero exit with a pull request, then to Owner for its owner judge; a redo pulled
+// from coding and a claimed ready card follow that same review move, each move with its event.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -72,59 +72,60 @@ const transitionsOf = (built, number) =>
     .map(({ from, to, cause }) => ({ from, to, cause }));
 
 // proves R-WORK-5, R-WORK-24
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the write record holds two moves for it once L2 has settled the outcome, to coding and then to review', async () => {
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the write record reaches Owner after coding and review', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
-  assert.deepEqual(await writesTo(built, 6), [['moveItem', 'coding'], ['moveItem', 'review']]);
+  assert.deepEqual(await writesTo(built, 6), [['moveItem', 'coding'], ['moveItem', 'review'], ['moveItem', 'owner']]);
 });
 
 // proves R-WORK-5, R-WORK-24
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the event stream holds two L2 transition events for it, review to coding and then coding to review', async () => {
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, the event stream records its moves through coding and review to Owner', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
-  assert.deepEqual(transitionsOf(built, 6).map(({ from, to }) => [from, to]), [['review', 'coding'], ['coding', 'review']]);
+  assert.deepEqual(transitionsOf(built, 6).map(({ from, to }) => [from, to]), [['review', 'coding'], ['coding', 'review'], ['review', 'owner']]);
 });
 
 // proves R-WORK-5
-test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, a read of the board after the outcome is settled shows it in review, after it was done again from coding', async () => {
+test('given a card in review that L3 pulls as a redo and whose dispatch exits zero, a read after the run shows it in Owner', async () => {
   const built = await exitingZero([IN_REVIEW]);
 
   assert.deepEqual(built.dispatches.started, [6]);
-  assert.deepEqual(await columnsOf(built.fake), { 6: COLUMNS.review });
+  assert.deepEqual(await writesTo(built, 6), [['moveItem', 'coding'], ['moveItem', 'review'], ['moveItem', 'owner']]);
+  assert.deepEqual(await columnsOf(built.fake), { 6: COLUMNS.owner });
 });
 
 // proves R-WORK-5
-test('given a card in coding that L3 pulls as a redo and whose dispatch exits zero, the write record holds exactly one write for it, a move to review', async () => {
+test('given a card in coding that L3 pulls as a redo and whose dispatch exits zero, the write record moves it through Review to Owner', async () => {
   const built = await exitingZero([IN_CODING]);
 
   assert.deepEqual(built.dispatches.started, [5]);
-  assert.deepEqual(await writesTo(built, 5), [['moveItem', 'review']]);
+  assert.deepEqual(await writesTo(built, 5), [['moveItem', 'review'], ['moveItem', 'owner']]);
 });
 
 // proves R-WORK-5
-test('given a card in coding that L3 pulls as a redo and whose dispatch exits zero, the event stream holds exactly one L2 transition event for it, from coding to review, cause returned', async () => {
+test('given a card in coding that L3 pulls as a redo and whose dispatch exits zero, the event stream records its return to Review and move to Owner', async () => {
   const built = await exitingZero([IN_CODING]);
 
   assert.deepEqual(built.dispatches.started, [5]);
-  assert.deepEqual(transitionsOf(built, 5), [{ from: 'coding', to: 'review', cause: 'returned' }]);
+  assert.deepEqual(transitionsOf(built, 5), [{ from: 'coding', to: 'review', cause: 'returned' }, { from: 'review', to: 'owner', cause: 'sound' }]);
 });
 
 // proves R-WORK-5
-test('given a card in ready that L3 claims and whose dispatch exits zero, the write record holds exactly two moves for it, to coding and then to review', async () => {
+test('given a card in ready that L3 claims and whose dispatch exits zero, the write record moves it through Coding and Review to Owner', async () => {
   const built = await exitingZero([IN_READY]);
 
   assert.deepEqual(built.dispatches.started, [1]);
-  assert.deepEqual(await writesTo(built, 1), [['moveItem', 'coding'], ['moveItem', 'review']]);
+  assert.deepEqual(await writesTo(built, 1), [['moveItem', 'coding'], ['moveItem', 'review'], ['moveItem', 'owner']]);
 });
 
 // proves R-WORK-5
-test('given a card in ready that L3 claims and whose dispatch exits zero, the event stream holds exactly two L2 transition events for it, ready to coding and then coding to review', async () => {
+test('given a card in ready that L3 claims and whose dispatch exits zero, the event stream records moves through Coding and Review to Owner', async () => {
   const built = await exitingZero([IN_READY]);
 
   assert.deepEqual(built.dispatches.started, [1]);
-  assert.deepEqual(transitionsOf(built, 1).map(({ from, to }) => [from, to]), [['ready', 'coding'], ['coding', 'review']]);
+  assert.deepEqual(transitionsOf(built, 1).map(({ from, to }) => [from, to]), [['ready', 'coding'], ['coding', 'review'], ['review', 'owner']]);
 });
 
 // proves R-WORK-5
@@ -147,6 +148,6 @@ test('in one run over a redo in review, a redo in coding and a claimed ready car
     .filter((event) => event.layer === 'L2' && event.event === 'transition')
     .map(({ card, from, to }) => JSON.stringify({ card, from, to }));
 
-  assert.equal(transitions.length, 5, `five transitions, two for the ready card, one for the coding redo and two for the review redo: ${transitions}`);
+  assert.equal(transitions.length, 8, `eight transitions, three for the ready card, two for the coding redo and three for the review redo: ${transitions}`);
   for (const transition of transitions) assert.ok(moves.includes(transition), `${transition} has no matching move in ${moves}`);
 });
