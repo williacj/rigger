@@ -301,9 +301,10 @@ function readKinds(config, refusals) {
       refusals.push(`\`${where}.judges\` must be an ordered list naming at least one judge`);
       continue;
     }
-    // Every check below reads an entry's role, whichever form names it (`D24` rule 1). An entry
-    // that is neither form earns its one refusal here, and names no role to check.
-    const named = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roles[kind.maker]), refusals));
+    // Every check below reads an entry's role through `judgeRole`, whichever form names it (`D24`
+    // rule 1). An entry that is neither form earns its one refusal here, and names no role to check.
+    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roles[kind.maker]), refusals));
+    const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.
     if (named.includes(kind.maker)) {
@@ -313,13 +314,13 @@ function readKinds(config, refusals) {
     // be two dispatches sharing one directory (ruling 1 Q3 on #467; `R-WORK-12`). The owner is
     // never dispatched, and named twice is named before last, which the owner's own rule below
     // refuses.
-    const repeated = named.filter((judge, position) => judge !== undefined && judge !== OWNER && named.indexOf(judge) !== position);
+    const repeated = named.filter((judge, position) => formed[position] && judge !== undefined && judge !== OWNER && named.indexOf(judge) !== position);
     for (const judge of new Set(repeated)) {
       refusals.push(`\`${where}.judges\` names \`${judge}\` more than once, and each judge of a card has a directory of its own`);
     }
     named.forEach((judge, position) => {
-      if (judge === undefined) return;
-      if (judge !== OWNER && !Object.hasOwn(roles, judge)) {
+      if (!formed[position]) return;
+      if (judge !== OWNER && !(typeof judge === 'string' && Object.hasOwn(roles, judge))) {
         refusals.push(`\`${where}.judges\` names \`${judge}\`, which is no role the config declares`);
       }
       // The owner judges last if at all (`R-LOOP-11`), so the owner is asked once every agent
@@ -360,17 +361,17 @@ function plainWithNamedKeys(value) {
  * exactly `role` and `provider`, whose `provider` is a provider Rigger has an adapter for, or a map
  * from each provider in `providers`, those the kind's maker can run on, to one (`D24` rule 1). The
  * entry object and a map are read as a role's `labels` is (`mapsNamesToStrings`). The owner has no
- * provider, so it is written only as a plain name. It answers the role the entry names, or nothing
- * where the entry is neither form.
+ * provider, so it is written only as a plain name. It answers whether the entry is either form, so
+ * the kind's checks read a role from it through `judgeRole`.
  */
 function readJudgeEntry(entry, where, providers, refusals) {
-  if (typeof entry === 'string') return entry;
+  if (typeof entry === 'string') return true;
   if (!declares(entry)) {
     refusals.push(`\`${where}\` is neither a role name nor \`{ role, provider }\`, and the config gives ${inspect(entry)}`);
-    return undefined;
+    return false;
   }
   readShape(entry, 'judge', where, refusals);
-  if (entry.role === OWNER) {
+  if (judgeRole(entry) === OWNER) {
     refusals.push(`\`${where}\` names \`${OWNER}\` as \`{ role, provider }\`, and the owner, who has no provider, is written only as a plain name`);
   }
   const { provider } = entry;
@@ -392,7 +393,7 @@ function readJudgeEntry(entry, where, providers, refusals) {
       }
     }
   }
-  return entry.role;
+  return true;
 }
 
 /**

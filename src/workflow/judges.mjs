@@ -275,7 +275,7 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const revising = agents.filter((role, at) => states[at] === 'revision');
   if (revising.length > 0 && roundsOf(comments, round, required) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
   if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
-  if (declared.judges.includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
+  if (declared.judges.map(judgeRole).includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
   return mergeAnswer(card, panel, pull, comments, round);
 }
 

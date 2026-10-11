@@ -276,7 +276,10 @@ test('a card carrying two labels that select different providers for one role is
 // proves R-LOOP-16
 test('nextAction refuses a card whose labels select two providers for its maker, naming the role and each label, and dispatches its maker on the provider providerOf answers', () => {
   const kinds = { change: judgedBy(['reviewer']) };
-  const refused = nextAction(card(30, ['type:change', 'maker:codex', 'maker:claude']), kinds, undefined, { roles: PROVIDER_ROLES });
+  const given = card(30, ['type:change', 'maker:codex', 'maker:claude']);
+  const before = structuredClone(given);
+  const refused = nextAction(given, kinds, undefined, { roles: PROVIDER_ROLES });
+  assert.deepEqual(given, before, 'L2 changed the card it refused');
   assert.equal(refused.action, 'refuse', JSON.stringify(refused));
   assert.match(refused.reason, /`engineer`.*maker:codex \(codex\).*maker:claude \(claude\)/);
   const sink = { emitter: () => ({ emit: () => {} }) };

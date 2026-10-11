@@ -298,6 +298,17 @@ test('two runs of the gate on the same inputs give equal answers', () => {
   assert.deepEqual(gateAnswer(facts), gateAnswer(facts));
 });
 
+/**
+ * The gate's answer for `facts`, asserting the rule left its inputs as they were: the comments,
+ * the judges and the checks deep-equal their copies from before it ran.
+ */
+function answered(facts) {
+  const before = structuredClone(facts);
+  const answer = gateAnswer(facts);
+  assert.deepEqual(facts, before, 'the gate rule changed the facts it was handed');
+  return answer;
+}
+
 /** An agent judge entry, as the panel function hands the rule one, and the owner's. */
 const agent = (role, provider) => ({ role, provider });
 const OWNER_ENTRY = { role: 'owner' };
@@ -311,15 +322,15 @@ function withProviderLines(role, lines) {
 
 // proves R-GATE-9
 test('an agent judge\'s marker naming no provider refuses, naming the provider the config requires; the owner\'s naming none admits', () => {
-  assert.deepEqual(gateAnswer(input([withProviderLines('reviewer', [])], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'names no provider; the config requires codex' }] });
-  assert.deepEqual(gateAnswer(input([withProviderLines('owner', [])], { judges: [OWNER_ENTRY] })), { admit: true });
+  assert.deepEqual(answered(input([withProviderLines('reviewer', [])], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'names no provider; the config requires codex' }] });
+  assert.deepEqual(answered(input([withProviderLines('owner', [])], { judges: [OWNER_ENTRY] })), { admit: true });
 });
 
 // proves R-GATE-9, R-VERDICT-7
 test('a marker whose provider is empty, holds whitespace or is given twice refuses as unreadable, for an agent judge and for the owner', () => {
   for (const lines of [[''], [' codex'], ['co dex'], ['codex', 'codex']]) {
     for (const [role, judges] of [['reviewer', [agent('reviewer', 'codex')]], ['owner', [OWNER_ENTRY]]]) {
-      const answer = gateAnswer(input([withProviderLines(role, lines)], { judges }));
+      const answer = answered(input([withProviderLines(role, lines)], { judges }));
       assert.equal(answer.admit, false, `${role}: ${JSON.stringify(lines)}`);
       assert.equal(answer.refusals.length, 1, JSON.stringify(answer));
       assert.match(answer.refusals[0].reason, /^unreadable: .*\bprovider\b/, `${role}: ${JSON.stringify(lines)}`);
@@ -329,23 +340,23 @@ test('a marker whose provider is empty, holds whitespace or is given twice refus
 
 // proves R-GATE-9
 test('an agent judge\'s marker on the provider the config requires admits, and one on another provider, a case difference included, refuses naming both', () => {
-  assert.deepEqual(gateAnswer(input([marker('reviewer', { provider: 'codex' })], { judges: [agent('reviewer', 'codex')] })), { admit: true });
+  assert.deepEqual(answered(input([marker('reviewer', { provider: 'codex' })], { judges: [agent('reviewer', 'codex')] })), { admit: true });
   for (const provider of ['claude', 'Codex']) {
-    assert.deepEqual(gateAnswer(input([marker('reviewer', { provider })], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: `provider ${provider}; the config requires codex` }] }, provider);
+    assert.deepEqual(answered(input([marker('reviewer', { provider })], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: `provider ${provider}; the config requires codex` }] }, provider);
   }
 });
 
 // proves R-GATE-9
 test('an owner\'s marker naming any well-formed provider refuses, naming it', () => {
   for (const provider of ['codex', 'claude', 'Codex']) {
-    assert.deepEqual(gateAnswer(input([marker('owner', { provider })], { judges: [OWNER_ENTRY] })), { admit: false, refusals: [{ judge: 'owner', reason: `the owner's marker names a provider: ${provider}` }] }, provider);
+    assert.deepEqual(answered(input([marker('owner', { provider })], { judges: [OWNER_ENTRY] })), { admit: false, refusals: [{ judge: 'owner', reason: `the owner's marker names a provider: ${provider}` }] }, provider);
   }
 });
 
 // proves R-GATE-9
 test('an agent entry handed no provider, or one that is not a well-formed name, refuses naming the judge, as a malformed panel', () => {
   for (const entry of [{ role: 'reviewer' }, agent('reviewer', ''), agent('reviewer', 'co dex'), agent('reviewer', 7), agent('reviewer', null)]) {
-    assert.deepEqual(gateAnswer(input([marker('reviewer')], { judges: [entry] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'no provider is required of it, so the panel is malformed' }] }, JSON.stringify(entry));
+    assert.deepEqual(answered(input([marker('reviewer')], { judges: [entry] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'no provider is required of it, so the panel is malformed' }] }, JSON.stringify(entry));
   }
 });
 
@@ -353,23 +364,23 @@ test('an agent entry handed no provider, or one that is not a well-formed name, 
 test('a conflict in place of every entry refuses the card with the conflict\'s reason and reads no marker', () => {
   const conflict = 'carries labels selecting different providers for its maker role `engineer`: maker:codex (codex), maker:claude (claude)';
   // `null` comments would throw were any marker read.
-  assert.deepEqual(gateAnswer(input(null, { judges: [{ conflict }], checks: {} })), { admit: false, refusals: [{ judge: '(panel)', reason: conflict }] });
+  assert.deepEqual(answered(input(null, { judges: [{ conflict }], checks: {} })), { admit: false, refusals: [{ judge: '(panel)', reason: conflict }] });
 });
 
 // proves R-GATE-9
 test('a later marker on another provider displaces an earlier sound one on the required provider, and the gate refuses naming the provider', () => {
   const earlier = marker('reviewer', { provider: 'codex' }, { id: 'IC_1', createdAt: '2026-10-10T11:00:00Z' });
   const later = marker('reviewer', { provider: 'claude' }, { id: 'IC_2', createdAt: '2026-10-10T12:00:00Z' });
-  assert.deepEqual(gateAnswer(input([earlier, later], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
+  assert.deepEqual(answered(input([earlier, later], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
 });
 
 // proves R-GATE-9
 test('a marker on the wrong provider with verdict critical refuses naming the provider, not the verdict, and an unreadable one refuses as unreadable first', () => {
   const critical = marker('reviewer', { provider: 'claude', verdict: 'critical', toSound: 'Resolve the blocker.' });
-  assert.deepEqual(gateAnswer(input([critical], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
+  assert.deepEqual(answered(input([critical], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'provider claude; the config requires codex' }] });
   const unreadable = marker('reviewer', { provider: 'claude' });
   unreadable.body = unreadable.body.replace('coverage: covered\n', '');
-  assert.deepEqual(gateAnswer(input([unreadable], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'unreadable: the field coverage is missing' }] });
+  assert.deepEqual(answered(input([unreadable], { judges: [agent('reviewer', 'codex')] })), { admit: false, refusals: [{ judge: 'reviewer', reason: 'unreadable: the field coverage is missing' }] });
 });
 
 test('the owner\'s name the gate rule spells equals OWNER as the config validator spells it', () => {

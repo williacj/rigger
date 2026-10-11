@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
+import { parse } from 'acorn';
 
 import { CATEGORIES, SHAPES, declaredLabels, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
@@ -1069,9 +1070,25 @@ const judgedBy = (judges, providerLabels) => ({
   kinds: { ...rigger.kinds, change: { ...rigger.kinds.change, judges } },
 });
 
-/** Every refusal `config` earns, asserting at least one names `pattern`. */
+/**
+ * What `config` holds, every key included, hidden and symbol keys and a Map's entries too: two
+ * equal snapshots are a config the validator left as it was.
+ */
+const snapshot = (config) => inspect(config, { depth: Infinity, showHidden: true, sorted: false });
+
+/** The one refusal `config` earns, as `refusal` answers it, asserting the validator left `config` unchanged. */
+function refusedUnchanged(config) {
+  const before = snapshot(config);
+  const earned = refusal(config);
+  assert.equal(snapshot(config), before, 'the validator changed the config it refused');
+  return earned;
+}
+
+/** Every refusal `config` earns, asserting at least one names `pattern` and the validator left `config` unchanged. */
 function refusedNaming(config, pattern, what) {
+  const before = snapshot(config);
   const refusals = validate(config);
+  assert.equal(snapshot(config), before, `${what}: the validator changed the config it refused`);
   assert.ok(refusals.some((each) => pattern.test(each)), `${what}: no refusal matches ${pattern}: ${refusals.join('; ') || 'none'}`);
   return refusals;
 }
@@ -1104,22 +1121,22 @@ test('a judge entry whose provider maps every provider the maker can run on is a
 
 // proves R-LOOP-17
 test('a judge map missing a key for a provider the maker can run on is refused, naming the kind, the position and the provider', () => {
-  const missingOwn = refusal(judgedBy(['architect', { role: 'reviewer', provider: { [other]: one } }]));
+  const missingOwn = refusedUnchanged(judgedBy(['architect', { role: 'reviewer', provider: { [other]: one } }]));
   assert.match(missingOwn, /`kinds\.change\.judges\[1\]/);
   assert.ok(missingOwn.includes(`\`${one}\``), missingOwn);
-  const missingLabelled = refusal(judgedBy([{ role: 'reviewer', provider: { [one]: other } }], { 'maker:other': other }));
+  const missingLabelled = refusedUnchanged(judgedBy([{ role: 'reviewer', provider: { [one]: other } }], { 'maker:other': other }));
   assert.match(missingLabelled, /`kinds\.change\.judges\[0\]/);
   assert.ok(missingLabelled.includes(`\`${other}\``), missingLabelled);
 });
 
 test('a judge entry object holding a key other than role and provider, or no provider, is refused, naming the kind and the position', () => {
-  assert.match(refusal(judgedBy(['architect', { role: 'reviewer', provider: other, tier: 'high' }])), /`kinds\.change\.judges\[1\]\.tier`/);
-  assert.match(refusal(judgedBy([{ role: 'reviewer' }])), /`kinds\.change\.judges\[0\]\.provider` is required/);
+  assert.match(refusedUnchanged(judgedBy(['architect', { role: 'reviewer', provider: other, tier: 'high' }])), /`kinds\.change\.judges\[1\]\.tier`/);
+  assert.match(refusedUnchanged(judgedBy([{ role: 'reviewer' }])), /`kinds\.change\.judges\[0\]\.provider` is required/);
 });
 
 // proves R-LOOP-11
 test('a judge entry object whose role is the owner is refused, because the owner has no provider', () => {
-  const earned = refusal(judgedBy(['reviewer', { role: 'owner', provider: other }]));
+  const earned = refusedUnchanged(judgedBy(['reviewer', { role: 'owner', provider: other }]));
   assert.match(earned, /`kinds\.change\.judges\[1\]`/);
   assert.match(earned, /owner/);
 });
@@ -1127,7 +1144,7 @@ test('a judge entry object whose role is the owner is refused, because the owner
 // proves R-SCHED-10
 test('a role named twice in one kind is refused whichever form names it', () => {
   for (const judges of [['reviewer', { role: 'reviewer', provider: other }], [{ role: 'reviewer', provider: one }, { role: 'reviewer', provider: other }]]) {
-    const earned = refusal(judgedBy(judges));
+    const earned = refusedUnchanged(judgedBy(judges));
     assert.match(earned, /`reviewer` more than once/, inspect(judges));
   }
 });
@@ -1135,24 +1152,24 @@ test('a role named twice in one kind is refused whichever form names it', () => 
 // proves R-LOOP-3
 test('a judge entry object naming the kind\'s maker is refused, whatever provider it names', () => {
   for (const provider of [one, other, { [one]: other }]) {
-    const earned = refusal(judgedBy([{ role: 'engineer', provider }]));
+    const earned = refusedUnchanged(judgedBy([{ role: 'engineer', provider }]));
     assert.match(earned, /`kinds\.change` names `engineer` as both its maker and one of its judges/, inspect(provider));
   }
 });
 
 // proves R-SCHED-10
 test('a judge entry object whose role the config does not declare is refused, naming it', () => {
-  const earned = refusal(judgedBy([{ role: 'adjudicator', provider: other }]));
+  const earned = refusedUnchanged(judgedBy([{ role: 'adjudicator', provider: other }]));
   assert.match(earned, /`kinds\.change\.judges`/);
   assert.match(earned, /adjudicator/);
 });
 
 // proves R-SCHED-10
 test('a fixed provider, a map key or value, or a providerLabels value no adapter is held for is refused, naming it', () => {
-  assert.match(refusal(judgedBy([{ role: 'reviewer', provider: 'unheld' }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
-  assert.match(refusal(judgedBy([{ role: 'reviewer', provider: { [one]: other, unheld: one } }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
-  assert.match(refusal(judgedBy([{ role: 'reviewer', provider: { [one]: 'unheld' } }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
-  assert.match(refusal(judgedBy(['reviewer'], { 'maker:other': 'unheld' })), /`roles\.engineer\.providerLabels`.*'unheld'/);
+  assert.match(refusedUnchanged(judgedBy([{ role: 'reviewer', provider: 'unheld' }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
+  assert.match(refusedUnchanged(judgedBy([{ role: 'reviewer', provider: { [one]: other, unheld: one } }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
+  assert.match(refusedUnchanged(judgedBy([{ role: 'reviewer', provider: { [one]: 'unheld' } }])), /`kinds\.change\.judges\[0\]\.provider`.*'unheld'/);
+  assert.match(refusedUnchanged(judgedBy(['reviewer'], { 'maker:other': 'unheld' })), /`roles\.engineer\.providerLabels`.*'unheld'/);
 });
 
 test('a fixed-provider judge entry that is no plain object of names to strings is refused, naming the kind and the position', () => {
@@ -1177,7 +1194,7 @@ test('a map-rule judge entry failing its plain-object or key tests, or whose map
 
 test('a judge entry that is neither a role name nor an object is refused, naming the kind and the position', () => {
   for (const entry of [7, null, ['reviewer']]) {
-    const earned = refusal(judgedBy(['reviewer', entry]));
+    const earned = refusedUnchanged(judgedBy(['reviewer', entry]));
     assert.match(earned, /`kinds\.change\.judges\[1\]`/, inspect(entry));
   }
 });
@@ -1191,7 +1208,7 @@ test('a role\'s providerLabels mapping label names to providers the adapter map 
 // proves R-LOOP-16
 test('a role\'s providerLabels that is no plain object of label names to strings is refused, naming the path', () => {
   for (const providerLabels of [new Map([['maker:other', other]]), { 'maker:other': 7 }, other, { ' ': other }, { '': other }]) {
-    const earned = refusal(withRole({ providerLabels }));
+    const earned = refusedUnchanged(withRole({ providerLabels }));
     assert.match(earned, /`roles\.engineer\.providerLabels`/, inspect(providerLabels));
   }
 });
@@ -1202,4 +1219,28 @@ test('the labels a config declares include each role\'s providerLabels keys, eac
   assert.deepEqual(declaredLabels(config), [
     'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'maker:codex',
   ]);
+});
+
+// proves R-SCHED-10
+test('a judge entry object whose role is undefined is refused as no role the config declares, naming the kind\'s judges', () => {
+  for (const entry of [{ role: undefined, provider: { [one]: other } }, { role: undefined, provider: other }]) {
+    refusedNaming(judgedBy([entry]), /`kinds\.change\.judges` names `undefined`, which is no role the config declares/, inspect(entry));
+  }
+});
+
+test('every judge check in the validator reads an entry\'s role through judgeRole: no other code in validate.mjs reads a role property', () => {
+  const source = readFileSync(join(root, 'src', 'config', 'validate.mjs'), 'utf8');
+  const tree = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true });
+  const outside = [];
+  const visit = (node, inside) => {
+    if (!node || typeof node !== 'object') return;
+    const here = inside || (node.type === 'VariableDeclarator' && node.id.name === 'judgeRole');
+    if (node.type === 'MemberExpression' && !node.computed && node.property.name === 'role' && !here) outside.push(node.loc.start.line);
+    for (const child of Object.values(node)) {
+      for (const held of Array.isArray(child) ? child : [child]) if (held && typeof held.type === 'string') visit(held, here);
+    }
+  };
+  visit(tree, false);
+  assert.ok(/judgeRole\(entry\)/.test(source), 'validate.mjs never calls judgeRole on an entry, so nothing was checked');
+  assert.deepEqual(outside, [], `validate.mjs reads a role property outside judgeRole at lines ${outside.join(', ')}`);
 });
