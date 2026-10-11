@@ -9,6 +9,7 @@ import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { judgeAnswer } from './judges.mjs';
+import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
@@ -267,7 +268,8 @@ export function tierOf(card, name, role, part = 'maker') {
 /**
  * L2's answer for `card`'s maker, the role named `name` and declared as `role`, running at `tier`
  * on the line of work `line`: its name, agent file and provider as declared, its time as
- * `roleTimeout` answers it, and the prompt L2 composes, `instruction` and then `evidence`.
+ * `roleTimeout` answers it, the prompt L2 composes, `instruction` and then `evidence`, and
+ * `digest`, the evidence digest L1 records at `dispatch.start`.
  *
  * The evidence is the card's number, title and acceptance, read as `R-CARD-12` reads it. The
  * instruction is Rigger's contract with every maker, so no role prompt spends words on it (the M4
@@ -287,5 +289,5 @@ function makerAnswer(card, name, role, tier, line) {
     '',
   ].join('\n');
   const evidence = [`Card #${card.number}: ${card.title}`, '', 'Acceptance:', ...acceptanceItems(card.body).map((item) => `- ${item}`), ''].join('\n');
-  return { role: name, agent, provider, tier, timeout: roleTimeout(role), instruction, evidence };
+  return { role: name, agent, provider, tier, timeout: roleTimeout(role), instruction, evidence, digest: evidenceDigest(evidence) };
 }

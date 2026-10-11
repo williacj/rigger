@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { roleDispatch } from '../execution/role.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
+import { dispatched } from '../workflow/marker.mjs';
 import { pullOrder } from './pull-order.mjs';
 
 /** N when the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
@@ -264,9 +265,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * unit, so anything the provider adapter runs runs after that start (the architect's ruling 5 on
    * #467). `roleDispatch` is handed the answer unread, the directories, the scratch base and the
    * repository unread (the architect's rulings 19 and 21, and ruling 3, P8), and `environment`. A
-   * start the sink refuses starts nothing, and rejects naming the card and the role.
+   * start the sink refuses starts nothing, and rejects naming the card and the role. `stamp`, handed
+   * the answer and the id, answers the answer `roleDispatch` is handed, so that L2's `dispatched`
+   * writes a judge's id into its instruction (the architect's r2 ruling 6 on #642).
    */
-  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository }, fields) => {
+  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository }, fields, stamp = (given) => given) => {
     const id = `d-${randomUUID()}`;
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { role: answer.role, tier: answer.tier, ...fields });
@@ -274,7 +277,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       throw refused(`card #${card.number}'s role \`${answer.role}\` was not started, because the event sink refused to record its start`, refusal);
     }
     const run = async () => {
-      const handed = await roleDispatch({ answer, cwd, directory, scratch, repository, reach, env: environment, sink, id, card: card.number });
+      const handed = await roleDispatch({ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, env: environment, sink, id, card: card.number });
       return dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
@@ -383,7 +386,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * is not dispatched once L2's answer no longer names it. Then the judge, as L2 last named it, is
    * dispatched with `main` as its working directory, its judge directory as the dispatch's, and
    * `head` as the directory it may reach, each as L1's make answered it, never from L2's answer (the
-   * architect's ruling 3, P8, and ruling 4's addendum). Answers `{ role, outcome }`, the judge's
+   * architect's ruling 3, P8, and ruling 4's addendum), its instruction carrying its dispatch id as
+   * L2's `dispatched` writes it. Answers `{ role, outcome }`, the judge's
    * outcome as `Promise.allSettled` records it, or, for a judge L2 withheld, `{ role, withheld }`,
    * `withheld` holding what L3 handed L2 that L2 withheld it for: `{ directory }`, L1's failure to
    * make its directory, or `{ step, outcome }`, the step in its `head` whose outcome L2 was handed
@@ -405,7 +409,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       current = named(ask({ judged: { [role]: [...outcomes] } }), role);
       if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) } };
     }
-    return { role, outcome: await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}) };
+    return { role, outcome: await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched) };
   };
 
   /**

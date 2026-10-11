@@ -41,7 +41,7 @@ function walk(given, kinds, provisioning) {
 }
 
 /** The fields of L2's role answer (the M4 decomposition's "The role answer", on #467). */
-const ROLE_FIELDS = ['agent', 'evidence', 'instruction', 'provider', 'role', 'tier', 'timeout'];
+const ROLE_FIELDS = ['agent', 'digest', 'evidence', 'instruction', 'provider', 'role', 'tier', 'timeout'];
 
 /**
  * `next` with its maker, a role answer holding every field `ROLE_FIELDS` names, written as the

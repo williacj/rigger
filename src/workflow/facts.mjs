@@ -18,19 +18,17 @@ async function forCards(cards, read) {
 }
 
 /**
- * What the forge holds of card `number`'s one open pull request `pull`, read through `reads`, the
+ * What the forge holds of a card's one open pull request `pull`, read through `reads`, the
  * forge adapter's repository reads, each as `Promise.allSettled` records its outcome: `pull`, the
  * pull request's `{ number, base, head }`, `base` the merge base its diff is taken from and `head`
- * its head SHA, both as the forge answers them; `diff`; `comments`; and `editedAt`, the card's body's
- * last edit. These are the facts L2's judge answer reads, and a read that fails is answered as its
- * failure, which the judge answer names (`judgeAnswer`).
+ * its head SHA, both as the forge answers them; `diff`; and `comments`. These are the facts L2's
+ * judge answer reads, and a read that fails is answered as its failure, which the judge answer
+ * names (`judgeAnswer`).
  */
-async function reviewed(number, pull, reads) {
-  const [base, diff, comments, editedAt] = await Promise.allSettled([
-    reads.readMergeBase(pull.number), reads.readDiff(pull.number), reads.readComments(pull.number), reads.readEditedAt(number),
-  ]);
+async function reviewed(pull, reads) {
+  const [base, diff, comments] = await Promise.allSettled([reads.readMergeBase(pull.number), reads.readDiff(pull.number), reads.readComments(pull.number)]);
   const read = base.status === 'fulfilled' ? { status: 'fulfilled', value: { number: pull.number, base: base.value.mergeBase, head: base.value.head } } : base;
-  return { pull: read, diff, comments, editedAt };
+  return { pull: read, diff, comments };
 }
 
 /**
@@ -41,7 +39,7 @@ async function reviewed(number, pull, reads) {
  */
 export async function pullRequestsFrom(number, line, reads, review = true) {
   const { open, merged } = await forCards([number], () => reads.readPullRequests(line));
-  return { line, open, merged, ...(review && open.length === 1 ? await reviewed(number, open[0], reads) : {}) };
+  return { line, open, merged, ...(review && open.length === 1 ? await reviewed(open[0], reads) : {}) };
 }
 
 /**

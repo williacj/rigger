@@ -30,7 +30,7 @@ test('given a card whose steps all have outcomes and none required failed, L2 an
 
   assert.equal(next.action, 'dispatch');
   assert.equal(next.kind, 'change');
-  assert.deepEqual(Object.keys(next.maker).sort(), ['agent', 'evidence', 'instruction', 'provider', 'role', 'tier', 'timeout']);
+  assert.deepEqual(Object.keys(next.maker).sort(), ['agent', 'digest', 'evidence', 'instruction', 'provider', 'role', 'tier', 'timeout']);
   const { role, agent, provider, timeout } = next.maker;
   assert.deepEqual({ role, agent, provider, timeout }, { role: 'engineer', agent: '.claude/agents/engineer.md', provider: 'claude', timeout: 3_600_000 });
 });

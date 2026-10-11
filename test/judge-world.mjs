@@ -12,6 +12,8 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { acceptanceItems } from '../src/workflow/form-check.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { COLUMNS, PASSING, boardOf, handleOn, makingJudgeDirectories, makingWorkspaces, waitFor } from './loop-world.mjs';
 import { sweep } from './process-fixtures.mjs';
@@ -38,8 +40,8 @@ export const pullFor = (number) => ({ number: 1000 + number, head: `rigger-${num
  * A loop over a fake board holding `cards`, each a board item as `cardIn` makes one, under `kinds`
  * and `roles`, with `provisioning` the steps those kinds may list, at `concurrency`. The forge holds
  * `forge` as the fake repository's seed, and, once a maker exits 0, the pull request `pullFor` names
- * for its card, as a maker that opened one would leave it, and once a judge exits 0, its findings
- * comment on that pull request at `HEAD`, as a judge that wrote its findings would leave it. L2 is the real one throughout, with no
+ * for its card, as a maker that opened one would leave it, and once a judge exits 0, its sound
+ * marker on that pull request at `HEAD`, as a judge that wrote its marker would leave it. L2 is the real one throughout, with no
  * freshness injected, and every role runs as the stand-in agent `agent` through L1.
  *
  * `workspace` and `judgeDirectory` are the plain-directory stand-ins `makingWorkspaces` and
@@ -98,7 +100,7 @@ export function judgeWorld({
           }
           if (context.layer === 'L1' && event === 'dispatch.end' && fields.exit === 0) {
             if (makers.has(context.dispatch)) repository.open(pullFor(context.card));
-            if (judging.has(context.dispatch)) repository.comment(1000 + context.card, `Findings at ${HEAD} by ${judging.get(context.dispatch)}\n\nSound.`, new Date().toISOString());
+            if (judging.has(context.dispatch)) repository.comment(1000 + context.card, soundMarker(context.card, judging.get(context.dispatch)), new Date().toISOString());
           }
         },
       };
@@ -141,6 +143,11 @@ export function judgeWorld({
     loop: loop(handed),
   };
 }
+
+/** A sound marker of `role` for card `number`'s pull request at `HEAD`, every item of the `PASSING` acceptance met. */
+const soundMarker = (number, role) => composeMarker({
+  card: number, pull: 1000 + number, head: HEAD, digest: acceptanceDigest(PASSING), role, verdict: 'sound', items: acceptanceItems(PASSING).map(() => 'met'), coverage: 'covered',
+}, `Sound, by ${role}`);
 
 /** The events of `events` for which `match` holds, by layer and name, among those `built` recorded. */
 export const recorded = (built, layer, event, match = () => true) => built.events().filter((each) => each.layer === layer && each.event === event && match(each));

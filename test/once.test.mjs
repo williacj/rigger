@@ -539,7 +539,7 @@ test('given once where the maker opens a pull request and the card\'s kind names
     judgeLine(10, 'reviewer', 'exited 0'),
   ], `${code}\n${err}`);
   const { head, bodies } = pullComments(fake, 11);
-  assert.deepEqual(bodies.map((body) => body.split('\n')[0]), [`Findings at ${head} by reviewer`]);
+  assert.deepEqual(bodies.map((body) => body.split('\n').filter((line) => /^(head|role): /.test(line))), [[`head: ${head}`, 'role: reviewer']]);
 });
 
 test('given once where every agent judge exits 0, once exits 0', SETTLES_WITHIN, async (t) => {
@@ -643,7 +643,7 @@ test('given once over a Review card whose every agent judge has findings at the 
   const first = await ran;
   assert.equal(first.code, 0, first.err);
   const { head, bodies } = pullComments(fake, 11);
-  assert.deepEqual(bodies.map((body) => body.split('\n')[0]), [`Findings at ${head} by reviewer`], 'the first once left no findings at the head, so the test proves nothing');
+  assert.deepEqual(bodies.map((body) => body.split('\n').filter((line) => /^(head|role): /.test(line))), [[`head: ${head}`, 'role: reviewer']], 'the first once left no marker at the head, so the test proves nothing');
   const before = eventsOf({ consumer }).length;
 
   const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });

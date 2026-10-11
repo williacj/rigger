@@ -15,6 +15,7 @@ import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeF
 import { mkdirSync } from 'node:fs';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
+import { composeMarker } from '../src/workflow/marker.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -69,8 +70,9 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *   so a file written at any moment is seen;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
- * - `findings`: comments on the pull request its prompt names, with the `gh` first on its `PATH`,
- *   a comment whose first line is the findings line its prompt says to write, as a judge does;
+ * - `findings`: comments on the pull request its prompt's marker block names, with the `gh` first
+ *   on its `PATH`, a marker composed from that block's fields, sound and ruling every item met, as
+ *   a judge does;
  * - `leaveIn`: as `leave`, but on `left-<card>-<role>` and working in `leaveIn`, a path relative
  *   to its working directory, writing the process's pid to `left-pid-<card>-<role>` beside itself;
  * - `leaveInGroup`: as `leaveIn`, but in the run's own process group, with no output held open;
@@ -308,10 +310,9 @@ export async function standInMain() {
     ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
   }
   if (act.findings) {
-    const pull = /pull request #(\d+), at head/.exec(input)?.[1];
-    const line = /whose first line is exactly `([^`]+)`/.exec(input)?.[1];
-    if (pull === undefined || line === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no findings line to write`);
-    ran('gh', ['pr', 'comment', pull, '--body', `${line}\n\nThe stand-in's findings.`]);
+    const marker = instructedMarker(input);
+    if (marker === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no marker block to fill in`);
+    ran('gh', ['pr', 'comment', String(marker.pull), '--body', `${composeMarker(marker, `Sound, by ${marker.role}`)}\nThe stand-in's findings.`]);
   }
   if (act.leave) {
     writeFileSync(join(dir, `left-${card}`), '');
@@ -321,6 +322,32 @@ export async function standInMain() {
   if (act.leaveInGroup !== undefined) leaveTail(dir, card, role, act.leaveInGroup, { detached: false, stdio: 'ignore' });
   if (act.forever) setInterval(() => {}, 2 ** 30);
   else process.exitCode = act.exit ?? 0;
+}
+
+/**
+ * The marker a judge handed `input` writes from the marker block its instruction shows: the
+ * block's card, pull request, head, digest, role and evidence digest, its dispatch id where L3
+ * filled one in, sound, every item it lists met, and the acceptance covered. Nothing where the
+ * input shows no block.
+ */
+function instructedMarker(input) {
+  const lines = input.split('\n');
+  const open = lines.indexOf('```rigger-marker');
+  if (open === -1) return undefined;
+  const block = lines.slice(open + 1, lines.indexOf('```', open + 1));
+  const given = Object.fromEntries(block.map((line) => /^(\w+): (.*)$/.exec(line)).filter(Boolean).map(([, key, value]) => [key, value]));
+  return {
+    card: Number(given.card),
+    pull: Number(given.pull),
+    head: given.head,
+    digest: given.digest,
+    role: given.role,
+    verdict: 'sound',
+    items: block.filter((line) => /^item \d+: /.test(line)).map(() => 'met'),
+    coverage: 'covered',
+    ...(/^d-/.test(given.dispatch ?? '') ? { dispatch: given.dispatch } : {}),
+    evidence: given.evidence,
+  };
 }
 
 /**

@@ -17,6 +17,7 @@ import { readGroups } from '../src/execution/groups.mjs';
 import { roleDispatch } from '../src/execution/role.mjs';
 import { dispatch } from '../src/execution/run.mjs';
 import { stepDispatch } from '../src/execution/step.mjs';
+import { evidenceDigest } from '../src/workflow/marker.mjs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, fixture, leaveWorking, read, scratch, until } from './process-fixtures.mjs';
@@ -26,8 +27,11 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 // holding the suite: nothing waits on it when the dispatch settles.
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
-/** A role answer as L2 gives one, naming the stand-in provider, with `fields` over it. */
-const answerOf = (fields) => ({
+/** `answer` with the digest of its evidence L2's evidence digest answers, which L2 hands beside it, unless it carries one. */
+const withDigest = (answer) => ({ digest: evidenceDigest(answer.evidence), ...answer });
+
+/** A role answer as L2 gives one, naming the stand-in provider, with `fields` over it, and the digest of its evidence. */
+const answerOf = (fields) => withDigest({
   role: 'engineer',
   agent: '.claude/agents/engineer.md',
   provider: 'stand-in',
@@ -504,6 +508,14 @@ test('dispatch.start carries a digest of the role answer\'s evidence alone, and 
 
   assert.equal(start.digest, sha256('The diff.\n'));
   assert.notEqual(start.digest, sha256('Judge it.\nThe diff.\n'));
+});
+
+test('dispatch.start carries the digest L2 handed beside the role answer, as handed, and L1 computes none of its own', SETTLES_WITHIN, async (t) => {
+  const handed = 'f'.repeat(64);
+
+  const { start } = await startOf(t, answerOf({ evidence: 'The diff.\n', digest: handed }));
+
+  assert.equal(start.digest, handed);
 });
 
 // proves R-EVIDENCE-5

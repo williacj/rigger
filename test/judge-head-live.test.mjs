@@ -79,7 +79,6 @@ function promptFor({ main, base, headSha }) {
     forge: {
       pull: read({ number: 70, base, head: headSha }),
       comments: read([]),
-      editedAt: read(null),
       diff: read(gitIn(main, 'diff', base, headSha)),
     },
   };

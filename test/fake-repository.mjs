@@ -1,6 +1,5 @@
-// ABOUTME: The fake repository the fake forge holds beside the fake board: its branches, the pull
-// requests from them with their head SHAs, diffs and comments, and when an issue's body was last
-// edited. Test-only, never imported from src/.
+// ABOUTME: The fake repository the fake forge holds beside the fake board: its branches, and the pull
+// requests from them with their head SHAs, diffs and comments. Test-only, never imported from src/.
 
 import { gitIn } from './git-repository.mjs';
 
@@ -40,15 +39,15 @@ function heldPull(pull) {
 }
 
 /**
- * A repository holding `branches`, by name, `pullRequests` as `PULL_FACTS` describes each, and
- * `edited`, the time each issue's body was last edited, keyed by issue number. By default it holds
- * no branch, no pull request and no edit, which is what the forge holds for a card nobody worked.
+ * A repository holding `branches`, by name, and `pullRequests` as `PULL_FACTS` describes each. By
+ * default it holds no branch and no pull request, which is what the forge holds for a card nobody
+ * worked.
  *
  * Its `operations` are the forge adapter's repository reads, and nothing else is. `open` and
  * `comment` are what an agent does on the forge, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], edited = {} } = {}) {
-  const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull), edited });
+export function createFakeRepository({ branches = [], pullRequests = [] } = {}) {
+  const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull) });
   const pull = (number) => held.pullRequests.find((candidate) => candidate.number === number) ?? null;
   const known = (operation, number) => {
     const found = pull(number);
@@ -62,7 +61,6 @@ export function createFakeRepository({ branches = [], pullRequests = [], edited 
       return { open: from.filter((candidate) => !candidate.merged).map(asAnswered), merged: from.filter((candidate) => candidate.merged).map(asAnswered) };
     },
     readBranches: async (names) => Object.fromEntries(names.map((name) => [name, held.branches.includes(name)])),
-    readEditedAt: async (number) => held.edited[number] ?? null,
     readDiff: async (number) => {
       const { declined, diff } = known('readDiff', number);
       if (declined) throw new Error(`the forge declines to serve pull request #${number}'s diff: ${declined}`);
