@@ -942,7 +942,9 @@ test('G3: an unseen group round without accepted members reaches a cut and an un
     const state = `-ww -g ${group} -o pid=,stat=`;
     const command = `-ww -g ${group} -o pid=,command=`;
     const reads = read(directory, 'group-reads').split('\n');
-    const round = reads.filter((args) => args === state || args === command || args === `-p ${group} -o ucomm=`);
+    const postKillReads = read(directory, 'post-kill-reads').split('\n');
+    assert.deepEqual(reads.slice(-postKillReads.length), postKillReads, 'post-kill reads were not the final group reads');
+    const round = reads.slice(0, -postKillReads.length).filter((args) => args === state || args === command || args === `-p ${group} -o ucomm=`);
     const pairs = linesOf(directory, 'pairs');
     const firstKill = pairs.findIndex(([target, signal]) => target === -group && signal === 'SIGKILL');
     const afterKill = pairs.slice(firstKill + 1);
@@ -954,7 +956,7 @@ test('G3: an unseen group round without accepted members reaches a cut and an un
     assert.equal(existsSync(join(directory, 'group-clock-jump')), true, 'the next C1 was not cut before spawning');
     assert.ok(firstKill >= 0, 'the group kill was not reached');
     assert.ok(afterKill.some(([target, signal]) => target === -group && signal === 0), 'G3 first post-kill probe did not reach O');
-    assert.ok(read(directory, 'post-kill-reads').split('\n').includes(`-g ${group} -o pid=,stat=,xstat=`), 'O did not reach its post-kill group read');
+    assert.ok(postKillReads.includes(`-g ${group} -o pid=,stat=,xstat=`), 'O did not reach its post-kill group read');
     assert.equal(groupEvents.length, 1, 'the rejected round was not recorded once as a group result');
     assert.match(groupEvents[0].census, /the census's reads named no process of the group while it still had one: .*did not finish within 1000 ms/);
     assert.deepEqual(events.filter(({ pid }) => pid !== undefined), [], 'an unseen member was recorded by pid or name');
