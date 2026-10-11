@@ -20,7 +20,7 @@ const DISPATCH = 'd-0f8e3c1a-4b2d-4c6e-9a7b-1d2e3f4a5b6c';
 /** The lines of a well-formed marker block's body for `role`, every item of two ruled met, `changes` replacing or, as null, removing a field. */
 function fieldLines(changes = {}) {
   const fields = {
-    card: '7', pull: '70', head: HEAD, digest: DIGEST, role: 'reviewer', verdict: 'sound', 'item 1': 'met', 'item 2': 'met', coverage: 'covered', dispatch: DISPATCH, evidence: EVIDENCE, ...changes,
+    card: '7', pull: '70', head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'claude', verdict: 'sound', 'item 1': 'met', 'item 2': 'met', coverage: 'covered', dispatch: DISPATCH, evidence: EVIDENCE, ...changes,
   };
   return Object.entries(fields).filter(([, value]) => value !== null).map(([key, value]) => `${key}: ${value}`);
 }
@@ -40,7 +40,7 @@ function unreadable(parsed, names) {
 // proves R-VERDICT-5
 test('a marker composed from the instruction\'s fields, with toSound and coverageReason filled, and parsed back yields every field unchanged', () => {
   const marker = {
-    card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', verdict: 'needs revision', items: ['met', 'unmet'],
+    card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'claude', verdict: 'needs revision', items: ['met', 'unmet'],
     coverage: 'insufficient', coverageReason: 'It asks for help text: but names no exit code | anywhere.', toSound: 'Exit 0 after printing the help.', dispatch: DISPATCH, evidence: EVIDENCE,
   };
 
@@ -87,7 +87,7 @@ test('the marker table: a well-formed marker with every item ruled and coverage 
 
   assert.deepEqual(parsed, {
     state: 'marker',
-    marker: { card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', verdict: 'sound', items: ['met', 'met'], coverage: 'covered', dispatch: DISPATCH, evidence: EVIDENCE },
+    marker: { card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'claude', verdict: 'sound', items: ['met', 'met'], coverage: 'covered', dispatch: DISPATCH, evidence: EVIDENCE },
     absent: [],
   });
 });
@@ -118,7 +118,7 @@ test('the marker table: a marker block quoted inside another fence, such as a fo
 test('the marker table: two marker blocks in one comment are unreadable, naming both', () => {
   const body = [bodyOf(fieldLines()), '```rigger-marker', ...fieldLines(), '```'].join('\n');
 
-  unreadable(parseMarker(body, 2), /two marker blocks.*line 2.*line 17/);
+  unreadable(parseMarker(body, 2), /two marker blocks.*line 2.*line 18/);
 });
 
 test('a second marker block quoted inside another fence after the first leaves the first a marker', () => {
@@ -128,7 +128,7 @@ test('a second marker block quoted inside another fence after the first leaves t
 });
 
 test('the marker table: a block that does not parse is unreadable, naming why', () => {
-  unreadable(parseMarker(bodyOf([...fieldLines(), 'this line is no field']), 2), /line 14.*this line is no field/);
+  unreadable(parseMarker(bodyOf([...fieldLines(), 'this line is no field']), 2), /line 15.*this line is no field/);
   unreadable(parseMarker(['Verdict', '```rigger-marker', ...fieldLines()].join('\n'), 2), /never closed/);
 });
 
@@ -372,4 +372,47 @@ test('the marker table: a head, digest, evidence, card, pull, dispatch, verdict 
 
 test('the marker table: an item ruling holding trailing whitespace is unreadable, naming the item', () => {
   unreadable(parsedWith({ 'item 2': 'met ' }), /item 2/);
+});
+
+/** A well-formed block's field lines for `reviewer` with `provider` lines `providers` written after its role. */
+const withProviders = (...providers) => {
+  const lines = fieldLines({ provider: null });
+  const role = lines.indexOf('role: reviewer');
+  return [...lines.slice(0, role + 1), ...providers.map((provider) => `provider: ${provider}`), ...lines.slice(role + 1)];
+};
+
+// proves R-VERDICT-7
+test('the marker table: a block naming no provider is a marker, naming provider among its absent fields', () => {
+  const parsed = parseMarker(bodyOf(withProviders()), 2);
+  assert.equal(parsed.state, 'marker', JSON.stringify(parsed));
+  assert.equal(parsed.marker.provider, undefined);
+  assert.deepEqual(parsed.absent, ['provider']);
+});
+
+// proves R-VERDICT-7
+test('the marker table: a provider that is empty or holds whitespace, or is given twice, is unreadable, naming the field', () => {
+  for (const lines of [withProviders(''), withProviders(' codex'), withProviders('co dex'), withProviders('codex '), withProviders('codex', 'codex')]) {
+    unreadable(parseMarker(bodyOf(lines), 2), /\bprovider\b/);
+  }
+});
+
+// proves R-VERDICT-7
+test('the marker table: a well-formed provider is a marker holding it as written, a case difference included', () => {
+  for (const provider of ['codex', 'claude', 'Codex']) {
+    const parsed = parseMarker(bodyOf(withProviders(provider)), 2);
+    assert.equal(parsed.state, 'marker', JSON.stringify(parsed));
+    assert.equal(parsed.marker.provider, provider);
+    assert.deepEqual(Object.keys(parsed.marker).slice(4, 7), ['role', 'provider', 'verdict']);
+    assert.deepEqual(parsed.absent, []);
+  }
+});
+
+// proves R-VERDICT-7
+test('the instruction for an agent judge writes provider: <name> after role in the block, and the owner\'s, given none, writes no provider line', () => {
+  const agent = markerInstruction({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'codex', items: ['One.'], evidence: EVIDENCE }).split('\n');
+  assert.equal(agent[agent.indexOf('role: reviewer') + 1], 'provider: codex');
+  const owner = markerInstruction({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'owner', items: ['One.'], evidence: EVIDENCE }).split('\n');
+  assert.ok(!owner.some((line) => line.startsWith('provider')), owner.join('\n'));
+  const composed = composeMarker({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'codex', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound').split('\n');
+  assert.equal(composed[composed.indexOf('role: reviewer') + 1], 'provider: codex');
 });

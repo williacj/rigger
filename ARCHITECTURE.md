@@ -159,7 +159,8 @@ export default {
   concurrency: 3,
   worktrees: { root: '../rigger-worktrees', topic: 'rigger-{number}' },
   roles: {
-    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard', labels: { 'tier:high': 'high' }, timeout: 14400000 },
+    engineer:      { agent: '.claude/agents/engineer.md',       provider: 'claude', tier: 'standard', labels: { 'tier:high': 'high' },
+                     providerLabels: { 'maker:codex': 'codex' }, timeout: 14400000 },
     reviewer:      { agent: '.claude/agents/reviewer.md',       provider: 'claude', tier: 'high' },
     pm:            { agent: '.claude/agents/pm.md',             provider: 'claude', tier: 'high' },
     architect:     { agent: '.claude/agents/architect.md',      provider: 'claude', tier: 'high' },
@@ -167,20 +168,27 @@ export default {
   },
   kinds: {
     // One judge. rounds omitted, so the default of three applies.
-    change:    { select: { labels: ['type:change'] },    maker: 'engineer',      judges: ['reviewer'],
+    change:    { select: { labels: ['type:change'] },    maker: 'engineer',
+                 judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }],
                  provisioning: ['npm-ci', 'vhs'] },
     // The panel case: three agent judges concurrently, the owner last. The architect rules on a
     // proposed requirement here, which is the gate D18 rule 5 puts before the cards are cut.
-    spec:      { select: { labels: ['type:spec'] },      maker: 'pm',            judges: ['reviewer', 'engineer', 'architect', 'owner'],
+    spec:      { select: { labels: ['type:spec'] },      maker: 'pm',
+                 judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } },
+                          { role: 'engineer', provider: { claude: 'codex', codex: 'claude' } },
+                          { role: 'architect', provider: { claude: 'codex', codex: 'claude' } }, 'owner'],
                  rounds: 2, provisioning: ['npm-ci', 'vhs'] },
     // The architect makes this document's own deltas (D18 rule 1).
-    structure: { select: { labels: ['type:structure'] }, maker: 'architect',     judges: ['reviewer', 'owner'],
+    structure: { select: { labels: ['type:structure'] }, maker: 'architect',
+                 judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, 'owner'],
                  provisioning: ['npm-ci', 'vhs'] },
     // Decomposition: the PM cuts larger work into cards (D18 rule 4). A kind no role makes is
     // never dispatched, so the role that decomposes needs a row of its own.
-    intake:    { select: { labels: ['type:intake'] },    maker: 'pm',            judges: ['reviewer', 'owner'],
+    intake:    { select: { labels: ['type:intake'] },    maker: 'pm',
+                 judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, 'owner'],
                  provisioning: ['npm-ci', 'vhs'] },
-    spike:     { select: { labels: ['type:spike'] },     maker: 'spikeEngineer', judges: ['reviewer'],
+    spike:     { select: { labels: ['type:spike'] },     maker: 'spikeEngineer',
+                 judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }],
                  provisioning: ['npm-ci', 'vhs'] },
   },
   epicLabel: 'type:epic',

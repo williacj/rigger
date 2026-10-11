@@ -292,10 +292,12 @@ const folded = (verdicts) => {
 };
 
 /**
- * The adapters whose CLIs `doctor` asks for the consumer in `target`: those of the providers the
- * roles of the config it holds name, where that config earns no refusals, and every adapter in the
- * map otherwise, as where it is handed no `target` (the architect's ruling 18 on #467). A consumer
- * that uses no Codex sees no Codex line it cannot act on (`R-OPTION-1`).
+ * The adapters whose CLIs `doctor` asks for the consumer in `target`: those of every provider the
+ * config it holds can dispatch, where that config earns no refusals, and every adapter in the map
+ * otherwise, as where it is handed no `target` (the architect's ruling 18 on #467). A config can
+ * dispatch each role's `provider` and `providerLabels` values, and each judge entry's fixed
+ * provider and map values (`D24` rule 1). A consumer that uses no Codex sees no Codex line it
+ * cannot act on (`R-OPTION-1`).
  */
 async function adaptersAsked(target) {
   if (target === undefined) return ADAPTERS;
@@ -307,7 +309,14 @@ async function adaptersAsked(target) {
     refusals = undefined;
   }
   if (refusals === undefined || refusals.length > 0) return ADAPTERS;
-  const named = new Set(Object.values(config.roles).map((role) => role.provider));
+  const rules = Object.values(config.kinds).flatMap((kind) => kind.judges.flatMap((entry) => {
+    if (typeof entry === 'string') return [];
+    return typeof entry.provider === 'string' ? [entry.provider] : Object.values(entry.provider);
+  }));
+  const named = new Set([
+    ...Object.values(config.roles).flatMap((role) => [role.provider, ...Object.values(role.providerLabels ?? {})]),
+    ...rules,
+  ]);
   return Object.fromEntries(Object.entries(ADAPTERS).filter(([provider]) => named.has(provider)));
 }
 

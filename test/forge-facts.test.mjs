@@ -89,7 +89,7 @@ const pullFrom = (number, pull, merged = false) => ({ number: pull, head: `rigge
  */
 const soundFrom = (number, pull) => {
   const opened = pullFrom(number, pull);
-  const marker = composeMarker({ card: number, pull, head: opened.sha, digest: acceptanceDigest(PASSING), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
+  const marker = composeMarker({ card: number, pull, head: opened.sha, digest: acceptanceDigest(PASSING), role: 'reviewer', provider: 'claude', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound, by reviewer');
   return { ...opened, diff: DIFF, mergeBase: BASE, mergeable: 'unknown', comments: [{ body: marker, createdAt: '2026-10-01T11:00:00Z' }] };
 };
 

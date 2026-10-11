@@ -5,12 +5,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { composeMarker } from '../src/workflow/marker.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { panelOf } from '../src/workflow/next-action.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 /** A body whose acceptance passes the form check, with two items and a bullet outside it. */
@@ -54,7 +57,7 @@ const failedRead = (message) => ({ status: 'rejected', reason: new Error(message
 const comment = (first, rest = 'Sound.') => ({ body: `${first}\n${rest}`, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false });
 
 /** A comment holding `role`'s sound marker at `head` on card 7's pull request #70, every item met, then `rest`. */
-const verdict = (head, role, rest = 'Sound.') => comment(`Sound, by ${role}`, composeMarker({ card: 7, pull: 70, head, digest: DIGEST, role, verdict: 'sound', items: ['met', 'met'], coverage: 'covered' }, '').slice(1) + rest);
+const verdict = (head, role, rest = 'Sound.') => comment(`Sound, by ${role}`, composeMarker({ card: 7, pull: 70, head, digest: DIGEST, role, provider: 'claude', verdict: 'sound', items: ['met', 'met'], coverage: 'covered' }, '').slice(1) + rest);
 
 /**
  * A Review card numbered 7 carrying `labels` beside `type:spec`, with the facts L2's facts call
@@ -503,8 +506,8 @@ const OTHER_DIGEST = 'f'.repeat(64);
  * A comment holding `role`'s marker on card 7's pull request #70, at `head` and `digest`, ruling
  * `verdict` with `items` and `coverage`, written `at` minutes past 11:00 with comment id `IC_<at>`.
  */
-function markerOf({ role, head = HEAD, digest = DIGEST, verdict = 'sound', items = ['met', 'met'], coverage = 'covered', coverageReason, toSound, at = 1, edited = false, ...fields }) {
-  const marker = { card: 7, pull: 70, head, digest, role, verdict, items, coverage, coverageReason, toSound, ...fields };
+function markerOf({ role, provider = role === 'owner' ? undefined : 'claude', head = HEAD, digest = DIGEST, verdict = 'sound', items = ['met', 'met'], coverage = 'covered', coverageReason, toSound, at = 1, edited = false, ...fields }) {
+  const marker = { card: 7, pull: 70, head, digest, role, provider, verdict, items, coverage, coverageReason, toSound, ...fields };
   const body = composeMarker(marker, `${verdict}, by ${role}`);
   return { body, createdAt: `2026-10-01T11:${String(at).padStart(2, '0')}:00Z`, id: `IC_${at}`, author: 'williacj', permission: 'write', edited };
 }
@@ -1190,4 +1193,209 @@ test('given a Review card whose kind names the owner alone and a failed read of 
     assert.throws(() => loopAnswer(given), (error) => /card #7\b/.test(error.message) && names.test(error.message) && /HTTP 502/.test(error.message), fact);
   }
   assert.deepEqual(loopAnswer(loopCard({ label: 'type:decision' })), { action: 'move', to: 'owner' }, 'with every read served, the card moves');
+});
+
+// The provider each judge runs on (`D24`; the P39 delta's section 4): a kind whose judges carry
+// provider rules, a maker whose `maker:codex` label selects Codex, and the review loop's answers
+// for markers on the required provider, on another, and on none.
+
+/** The roles above, the maker `engineer` selecting `codex` by `maker:codex` and `claude` by `maker:claude`. */
+const PANEL_ROLES = { ...ROLES, engineer: { ...ROLES.engineer, providerLabels: { 'maker:codex': 'codex', 'maker:claude': 'claude' } } };
+
+/** `reviewer` opposite the maker, `architect` always on `claude`; `spec` with the owner last, `bounded` two rounds. */
+const PANEL_JUDGES = [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, { role: 'architect', provider: 'claude' }];
+const PANEL_KINDS = {
+  change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: PANEL_JUDGES },
+  spec: { select: { labels: ['type:spec'] }, maker: 'engineer', judges: [...PANEL_JUDGES, 'owner'] },
+  bounded: { select: { labels: ['type:bounded'] }, maker: 'engineer', judges: PANEL_JUDGES, rounds: 2 },
+};
+
+/** `loopCard(facts)` carrying `labels` beside its kind's label. */
+const labelled = (labels, facts = {}) => {
+  const given = loopCard(facts);
+  return { ...given, labels: [...given.labels, ...labels] };
+};
+
+/** L2's next action for `given` under the panel kinds and roles, through a sink of its own unless `options` names one. */
+const panelAnswer = (given, options = {}) => nextAction(given, PANEL_KINDS, undefined, { roles: PANEL_ROLES, provisioning: PROVISIONING, sink: sinkFor().sink, ...options });
+
+/** Sound markers of `reviewer` on `reviewer` and `architect` on `claude`, the first at `from` minutes. */
+const panelSound = (reviewer, from = 1) => [markerOf({ role: 'reviewer', provider: reviewer, at: from }), markerOf({ role: 'architect', provider: 'claude', at: from + 1 })];
+
+/** `written`, a marker comment, with its `provider` line taken out, so it names no provider. */
+const unnamed = (written) => {
+  const body = written.body.replace(/^provider: .*\n/m, '');
+  assert.notEqual(body, written.body, 'the marker named no provider to take out, so the test proves nothing');
+  return { ...written, body };
+};
+
+/**
+ * L2's answer for `given` under the panel kinds and roles, through a sink of its own, asserting L2
+ * left the card, its facts and its comments as they were; with the L2 events that sink recorded.
+ */
+function answeredUnchanged(given) {
+  const before = structuredClone(given);
+  const { sink, events } = sinkFor();
+  const next = panelAnswer(given, { sink });
+  assert.deepEqual(given, before, 'L2 changed the card it answered');
+  return { next, events: events().map((each) => each.event) };
+}
+
+/** The provider each judge a judge answer names runs on, by role. */
+const providers = (next) => Object.fromEntries((next.judges ?? []).map(({ role, provider }) => [role, provider]));
+
+// proves R-LOOP-17
+test('a judge on Codex by its map still carries its role\'s agent file and tier, and one on a fixed rule runs on its fixed provider', () => {
+  const next = panelAnswer(labelled([]));
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  const reviewer = judge(next, 'reviewer');
+  assert.deepEqual({ provider: reviewer.provider, agent: reviewer.agent, tier: reviewer.tier }, { provider: 'codex', agent: '.claude/agents/reviewer.md', tier: 'standard' });
+  assert.equal(judge(next, 'architect').provider, 'claude');
+  assert.deepEqual(providers(panelAnswer(labelled(['maker:codex']))), { reviewer: 'claude', architect: 'claude' });
+});
+
+// proves R-LOOP-17, R-VERDICT-7, R-GATE-9
+test('the provider in a judge\'s role answer, in its marker instruction and handed the gate rule is one value from the panel function', () => {
+  for (const labels of [[], ['maker:codex']]) {
+    const given = labelled(labels);
+    const panel = panelOf(given, PANEL_KINDS.change, PANEL_ROLES);
+    const next = panelAnswer(given);
+    for (const { role, provider } of panel) {
+      const answered = judge(next, role);
+      const lines = answered.instruction.split('\n');
+      assert.equal(answered.provider, provider, `${labels}: ${role}`);
+      assert.equal(lines[lines.indexOf(`role: ${role}`) + 1], `provider: ${provider}`, `${labels}: ${role}`);
+    }
+    // Markers on the providers the instruction named are what the gate rule admits.
+    const comments = panel.map(({ role, provider }, at) => markerOf({ role, provider, at: at + 1 }));
+    assert.deepEqual(panelAnswer(labelled(labels, { comments })), { action: 'merge', pull: 70, head: HEAD }, String(labels));
+  }
+});
+
+// proves R-LOOP-16
+test('a card whose labels select two providers for its maker is refused in every column, naming the role and each label, ahead of a critical marker\'s escalation', () => {
+  const critical = [markerOf({ role: 'reviewer', provider: 'codex', at: 1, verdict: 'critical', toSound: 'Resolve the blocker.' }), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
+  for (const stage of ['review', 'owner', 'coding']) {
+    const { next, events } = answeredUnchanged(labelled(['maker:codex', 'maker:claude'], { label: 'type:spec', stage, comments: critical }));
+    assert.equal(next.action, 'refuse', `${stage}: ${JSON.stringify(next)}`);
+    assert.match(next.reason, /`engineer`.*maker:codex \(codex\).*maker:claude \(claude\)/, stage);
+    // Refused before any marker is read, L2 records nothing.
+    assert.deepEqual(events, [], stage);
+  }
+});
+
+// proves R-GATE-9
+test('a judge whose governing marker names no provider or another one is owed, so a wrong-provider critical marker is answered by a re-dispatch on the required provider, not an escalation', () => {
+  const wrong = [markerOf({ role: 'reviewer', provider: 'claude', at: 1, verdict: 'critical', toSound: 'Resolve the blocker.' }), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
+  const next = panelAnswer(labelled([], { comments: wrong }));
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  assert.deepEqual(providers(next), { reviewer: 'codex' });
+  const none = [unnamed(markerOf({ role: 'reviewer', provider: 'codex', at: 1 })), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
+  assert.deepEqual(providers(panelAnswer(labelled([], { comments: none }))), { reviewer: 'codex' });
+  const right = [markerOf({ role: 'reviewer', provider: 'codex', at: 1, verdict: 'critical', toSound: 'Resolve the blocker.' }), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
+  assert.deepEqual(panelAnswer(labelled([], { comments: right })), { action: 'escalate', category: 'critical' }, 'on the right provider it escalates, so the row proves something');
+});
+
+// proves R-GATE-9
+test('a later marker on another provider displaces an earlier sound one on the required provider, and L2 dispatches that judge again on the required provider', () => {
+  const comments = [...panelSound('codex'), markerOf({ role: 'reviewer', provider: 'claude', at: 5 })];
+  const next = panelAnswer(labelled([], { comments }));
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  assert.deepEqual(providers(next), { reviewer: 'codex' });
+});
+
+// proves R-LOOP-8, R-GATE-9
+test('under a bound of two rounds, an earlier pair holding only a marker on the wrong provider counts no round', () => {
+  const now = [markerOf({ role: 'reviewer', provider: 'codex', at: 3, ...RULING.m9 }), markerOf({ role: 'architect', provider: 'claude', at: 4 })];
+  const wrong = movedTo(markerOf({ role: 'reviewer', provider: 'claude', ...RULING.m9 }), { head: EARLIER, at: 1 });
+  assert.equal(panelAnswer(labelled([], { label: 'type:bounded', comments: [wrong, ...now] })).action, 'continue');
+  const right = movedTo(markerOf({ role: 'reviewer', provider: 'codex', ...RULING.m9 }), { head: EARLIER, at: 1 });
+  assert.deepEqual(panelAnswer(labelled([], { label: 'type:bounded', comments: [right, ...now] })), { action: 'escalate', category: 'ambiguous' }, 'on the right provider it is a round, so the row proves something');
+});
+
+/** An Owner card of the `spec` panel kind, every agent judge sound on its provider, holding `owner` beside them. */
+const panelOwnerCard = (owner = [], facts = {}) => labelled([], { label: 'type:spec', stage: 'owner', comments: [...panelSound('codex'), ...owner], ...facts });
+
+/** Asserts L2 leaves an Owner card for the owner, answering ignore naming the marker, where the owner's marker names a provider and rules `fields`. */
+function ownerProviderIgnored(fields) {
+  const next = panelAnswer(panelOwnerCard([markerOf({ role: 'owner', provider: 'codex', at: 9, ...fields })]));
+  assert.equal(next.action, 'ignore', JSON.stringify(next));
+  assert.match(next.reason, /owner's marker/);
+  assert.match(next.reason, /provider/);
+}
+
+// proves R-GATE-9
+test('an owner marker naming a provider with verdict critical is left for the owner: L2 answers ignore, naming the marker', () => {
+  ownerProviderIgnored({ verdict: 'critical', toSound: 'Only the owner decides.' });
+});
+
+// proves R-GATE-9
+test('an owner marker naming a provider with coverage insufficient is left for the owner: L2 answers ignore, naming the marker', () => {
+  ownerProviderIgnored({ coverage: 'insufficient', coverageReason: 'The card asked for two verbs.' });
+});
+
+// proves R-GATE-9
+test('an owner marker naming a provider with verdict needs revision is left for the owner: L2 answers ignore, naming the marker', () => {
+  ownerProviderIgnored({ verdict: 'needs revision', toSound: 'Rename the verb.' });
+});
+
+// proves R-GATE-9
+test('given an Owner card with one agent marker on the wrong provider, L2 answers a move to Review, and in Review a re-dispatch of that judge, never an escalation or a return', () => {
+  const wrong = [markerOf({ role: 'reviewer', provider: 'claude', at: 1, verdict: 'critical', toSound: 'Resolve the blocker.' }), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
+  const owner = unnamed(markerOf({ role: 'owner', provider: 'codex', at: 9 }));
+  assert.deepEqual(panelAnswer(labelled([], { label: 'type:spec', stage: 'owner', comments: [...wrong, owner] })), { action: 'move', to: 'review' });
+  const next = panelAnswer(labelled([], { label: 'type:spec', stage: 'review', comments: [...wrong, owner] }));
+  assert.equal(next.action, 'judge', JSON.stringify(next));
+  assert.deepEqual(providers(next), { reviewer: 'codex' });
+});
+
+// proves R-WORK-19, R-GATE-9
+test('a Coding card whose agent marker is on the wrong provider is refused as at the base, where on the right provider it continues', () => {
+  assert.equal(panelAnswer(labelled([], { stage: 'coding', comments: panelSound('codex'), mergeable: 'conflicting' })).action, 'continue');
+  const { next, events } = answeredUnchanged(labelled([], { stage: 'coding', comments: panelSound('claude'), mergeable: 'conflicting' }));
+  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.match(next.reason, /rigger-7/);
+  // As at the base, L2 records the two markers it read, and nothing else: no judge, return or continue.
+  assert.deepEqual(events, ['marker.read', 'marker.read']);
+});
+
+// proves R-VERDICT-7
+test('marker.read records the provider each governing marker names, null where it names none', () => {
+  const { sink, events } = sinkFor();
+  panelAnswer(labelled([], { comments: [markerOf({ role: 'reviewer', provider: 'codex', at: 1 }), unnamed(markerOf({ role: 'architect', provider: 'codex', at: 2 }))] }), { sink });
+  const read = events().filter((each) => each.event === 'marker.read').map(({ role, provider }) => ({ role, provider }));
+  assert.deepEqual(read, [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: null }]);
+});
+
+// proves R-GATE-9
+test('under a kind whose judges are objects, L2 reads each judge\'s role through judgeRole and hands the owner\'s answer, the merge decision and the gate rule the panel function\'s entries', () => {
+  assert.deepEqual(panelAnswer(labelled([], { comments: panelSound('codex') })), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(panelAnswer(labelled([], { label: 'type:spec', comments: panelSound('codex') })), { action: 'move', to: 'owner' });
+  assert.deepEqual(panelAnswer(panelOwnerCard([unnamed(markerOf({ role: 'owner', provider: 'codex', at: 9 }))])), { action: 'merge', pull: 70, head: HEAD });
+  const failing = panelAnswer(labelled([], { comments: panelSound('codex'), rules: requiring('ci'), checks: { ci: { state: 'failed', creator: null } } }));
+  assert.equal(failing.action, 'ignore', JSON.stringify(failing));
+  assert.equal(failing.reason, 'ci: failed');
+});
+
+/** Each `.judges` member read in `source`, with the call made on it where one is: `[line, method, argument]`. */
+function judgesReads(source) {
+  const reads = [];
+  const visit = (node, parent, grand) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'MemberExpression' && !node.computed && node.property.name === 'judges') {
+      const called = parent?.type === 'MemberExpression' && parent.object === node && grand?.type === 'CallExpression' && grand.callee === parent;
+      reads.push([node.loc.start.line, called ? parent.property.name : null, called ? grand.arguments[0]?.name ?? null : null]);
+    }
+    for (const child of Object.values(node)) {
+      for (const held of Array.isArray(child) ? child : [child]) if (held && typeof held.type === 'string') visit(held, node, parent);
+    }
+  };
+  visit(parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true }));
+  return reads;
+}
+
+test('every read of a kind\'s judges in judges.mjs takes each entry\'s role through judgeRole', () => {
+  const reads = judgesReads(readFileSync(new URL('../src/workflow/judges.mjs', import.meta.url), 'utf8'));
+  assert.ok(reads.length > 0, 'judges.mjs reads no kind\'s judges, so nothing was checked');
+  for (const [line, method, argument] of reads) assert.deepEqual([method, argument], ['map', 'judgeRole'], `judges.mjs:${line} reads a kind's judges other than through .map(judgeRole)`);
 });
