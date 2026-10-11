@@ -70,7 +70,7 @@ function unwrittenMarkers(events) {
   const distinct = new Map();
   for (const event of events) {
     if (event.layer !== 'L2' || event.event !== 'marker.read' || event.role === 'owner') continue;
-    const key = JSON.stringify([event.card, event.role, event.head, event.digest, event.evidence, event.dispatch, event.verdict, event.reason, event.edited]);
+    const key = JSON.stringify([event.card, event.role, event.head, event.digest, event.evidence, event.dispatch, event.verdict, event.reason]);
     if (!distinct.has(key)) distinct.set(key, event);
   }
   const uses = new Map();

@@ -379,6 +379,14 @@ test('report does not name an edited marker when its dispatch joins', () => {
   assert.deepEqual(lines, []);
 });
 
+test('report treats one joining marker read before and after an edit as one marker', () => {
+  const before = markerRead({ dispatch: 'd-judge' });
+  const after = markerRead({ dispatch: 'd-judge' });
+  after.fields.edited = true;
+  const { lines } = namedMarkerLines([before, after], judgeStart());
+  assert.deepEqual(lines, []);
+});
+
 test('report states both edges below its marker heading', () => {
   const { out } = namedMarkerLines([markerRead()]);
   assert.match(out, /markers no dispatch wrote\n(?:  card[^\n]*\n)*  only markers L2 recorded in this state directory are named\n  markers of role owner are never checked/);
