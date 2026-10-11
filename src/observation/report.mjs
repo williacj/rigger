@@ -1,6 +1,5 @@
-// ABOUTME: L5's report: the signals derived from the events a state directory's stream holds. L3's
-// two so far, throughput and utilization, per run, as #237 defines them where `ARCHITECTURE.md`,
-// "Telemetry", names them without a definition.
+// ABOUTME: L5's report: L3's per-run signals and marker dispatch checks derived from one state
+// directory's event stream.
 
 import { existsSync } from 'node:fs';
 
@@ -54,14 +53,38 @@ function l3Signals(events) {
   });
 }
 
+/** Whether L3 and L1 recorded the judge dispatch that could have written this marker. */
+function wroteMarker(marker, dispatches, starts) {
+  if (typeof marker.dispatch !== 'string' || marker.dispatch === '') return false;
+  const l3 = dispatches.get(marker.dispatch);
+  const l1 = starts.get(marker.dispatch);
+  return l3?.card === marker.card && l3.role === marker.role
+    && l1?.facts?.pull === marker.pull && l1.facts.head === marker.head
+    && typeof l1.digest === 'string' && l1.digest === marker.evidence;
+}
+
+/** Agent marker reads no recorded judge dispatch wrote, counted once across repeated reads. */
+function unwrittenMarkers(events) {
+  const dispatches = new Map(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => [event.dispatch, event]));
+  const starts = new Map(events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start').map((event) => [event.dispatch, event]));
+  const named = new Map();
+  for (const event of events) {
+    if (event.layer !== 'L2' || event.event !== 'marker.read' || event.role === 'owner' || wroteMarker(event, dispatches, starts)) continue;
+    const key = JSON.stringify([event.card, event.role, event.head, event.digest, event.evidence, event.dispatch, event.verdict, event.reason, event.edited]);
+    if (!named.has(key)) named.set(key, { card: event.card, role: event.role, head: event.head, dispatch: event.dispatch, reason: event.reason });
+  }
+  return [...named.values()];
+}
+
 /**
- * The report over the state directory `directory`: the stream's `path`, and the L3 signals of each
- * run it records as `runs`, or null where there is no stream. It reads the stream through the
- * sink's reader and writes nothing, so a stream with a line that is not an event throws as the
- * reader does, naming that line.
+ * The report over the state directory `directory`: its stream's `path`, L3 signals per run, and
+ * agent markers with no matching recorded dispatch. The latter joins the whole stream, across
+ * runs. It reads through the sink and writes nothing; an unreadable line throws as the reader
+ * does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
-  if (!existsSync(path)) return { path, runs: null };
-  return { path, runs: l3Signals(readEvents(directory)) };
+  if (!existsSync(path)) return { path, runs: null, markers: null };
+  const events = readEvents(directory);
+  return { path, runs: l3Signals(events), markers: unwrittenMarkers(events) };
 }

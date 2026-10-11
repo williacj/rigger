@@ -1,5 +1,5 @@
-// ABOUTME: Tests `rigger report`: the real bin run in a consumer's repository over an event stream
-// L3's loop wrote in a fake-board run, printing L3's throughput and utilization and nothing else.
+// ABOUTME: Tests `rigger report` over real consumer event streams for L3 signals and marker
+// dispatch checks, through the real bin and an isolated fake board.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -238,6 +238,144 @@ function report(cwd) {
   return { out: ran.stdout, err: ran.stderr, code: ran.status };
 }
 
+/** Record the layer events in one run without starting an agent or reaching a forge. */
+function recordEvents(consumer, run, events) {
+  const sink = openSink({ directory: join(consumer, '.rigger'), run, now: () => START });
+  for (const { layer, card, dispatch, event, fields } of events) {
+    sink.emitter({ layer, card, dispatch }).emit(event, fields);
+  }
+}
+
+/** The L2 read of one agent marker, in the shape the review loop records. */
+function markerRead({ card = 660, role = 'reviewer', dispatch = 'd-missing', pull = 42, head = 'head-a', evidence = 'evidence-a', reason } = {}) {
+  return { layer: 'L2', card, dispatch, event: 'marker.read', fields: {
+    role, pull, head, digest: 'acceptance-a', evidence, verdict: reason ? null : 'sound', edited: false,
+    ...(reason ? { reason } : {}),
+  } };
+}
+
+/** One L3 role dispatch and its L1 start, with the facts a judge dispatch records. */
+function judgeStart({ card = 660, role = 'reviewer', dispatch = 'd-judge', pull = 42, head = 'head-a', evidence = 'evidence-a', step } = {}) {
+  return [
+    { layer: 'L3', card, dispatch, event: 'dispatch', fields: step ? { step, role } : { role, tier: 'standard' } },
+    { layer: 'L1', card, dispatch, event: 'dispatch.start', fields: step ? { command: 'npm' } : {
+      command: 'agent', facts: { card, pull, head, revision: 'acceptance-a' }, digest: evidence,
+    } },
+  ];
+}
+
+/** Report an independently written marker stream and return only its named marker lines. */
+function namedMarkerLines(reads, starts = [], { earlier = false } = {}) {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+  if (earlier) recordEvents(consumer, 'r-dispatch', starts);
+  recordEvents(consumer, 'r-read', [...(earlier ? [] : starts), ...reads]);
+  const ran = report(consumer);
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /markers no dispatch wrote/);
+  return { lines: ran.out.split('\n').filter((line) => line.startsWith('  card #')), out: ran.out };
+}
+
+test('report names an agent marker whose dispatch has no recorded start', () => {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+  recordEvents(consumer, 'r-read', [markerRead()]);
+
+  const ran = report(consumer);
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /markers no dispatch wrote/);
+  assert.match(ran.out, /card #660.*reviewer.*head-a.*d-missing/);
+});
+
+test('report names no agent marker whose card, role, pull, head and evidence join its dispatch', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge' })], judgeStart());
+  assert.deepEqual(lines, []);
+});
+
+test('report names a marker whose dispatch started at another head', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge', head: 'head-b' })], judgeStart());
+  assert.match(lines[0], /card #660.*reviewer.*head-b.*d-judge/);
+});
+
+test('report names markers whose dispatch is for another card or role', () => {
+  const reads = [markerRead({ dispatch: 'd-card', card: 661 }), markerRead({ dispatch: 'd-role', role: 'architect' })];
+  const starts = [...judgeStart({ dispatch: 'd-card' }), ...judgeStart({ dispatch: 'd-role' })];
+  const { lines } = namedMarkerLines(reads, starts);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /card #661.*reviewer.*d-card/);
+  assert.match(lines[1], /card #660.*architect.*d-role/);
+});
+
+test('report names a marker whose pull differs from its dispatch start', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge', pull: 43 })], judgeStart());
+  assert.equal(lines.length, 1);
+});
+
+test('report names a marker whose evidence digest differs from its dispatch start', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge', evidence: 'other-evidence' })], judgeStart());
+  assert.equal(lines.length, 1);
+});
+
+test('report names an agent marker with no dispatch id', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: null })]);
+  assert.match(lines[0], /dispatch null/);
+});
+
+test('report names both distinct markers that name one dispatch id', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge', head: 'head-b' }), markerRead({ dispatch: 'd-judge', head: 'head-c' })], judgeStart());
+  assert.equal(lines.length, 2);
+});
+
+test('report names one marker read on three pulls at most once', () => {
+  const reads = [42, 43, 44].map((pull) => markerRead({ pull }));
+  const { lines } = namedMarkerLines(reads);
+  assert.equal(lines.length, 1);
+});
+
+test('report names no owner marker, even without a dispatch', () => {
+  const { lines } = namedMarkerLines([markerRead({ role: 'owner' })]);
+  assert.deepEqual(lines, []);
+});
+
+test('report joins a marker read in a later run to its earlier dispatch', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-judge' })], judgeStart(), { earlier: true });
+  assert.deepEqual(lines, []);
+});
+
+test('report names a marker when L3 recorded a dispatch but L1 refused its start', () => {
+  const [l3] = judgeStart({ dispatch: 'd-refused' });
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-refused' })], [l3]);
+  assert.equal(lines.length, 1);
+});
+
+test('report names a marker using a maker dispatch id', () => {
+  const starts = judgeStart({ dispatch: 'd-maker', role: 'engineer' });
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-maker' })], starts);
+  assert.equal(lines.length, 1);
+});
+
+test('report names a marker using a judge provisioning step dispatch id', () => {
+  const starts = judgeStart({ dispatch: 'd-step', step: 'install' });
+  const { lines } = namedMarkerLines([markerRead({ dispatch: 'd-step' })], starts);
+  assert.equal(lines.length, 1);
+});
+
+test('report names an unreadable agent marker with its recorded reason', () => {
+  const { lines } = namedMarkerLines([markerRead({ dispatch: null, reason: 'marker could not be parsed' })]);
+  assert.match(lines[0], /marker could not be parsed/);
+});
+
+test('report does not name an edited marker when its dispatch joins', () => {
+  const edited = markerRead({ dispatch: 'd-judge' });
+  edited.fields.edited = true;
+  const { lines } = namedMarkerLines([edited], judgeStart());
+  assert.deepEqual(lines, []);
+});
+
+test('report states both edges below its marker heading', () => {
+  const { out } = namedMarkerLines([markerRead()]);
+  assert.match(out, /markers no dispatch wrote\n(?:  card[^\n]*\n)*  only markers L2 recorded in this state directory are named\n  markers of role owner are never checked/);
+});
+
 test('report over a state directory holding no event stream says no events are recorded, naming the path it looked at', () => {
   const consumer = realpathSync(repositoryIn('rigger-report-'));
 
@@ -302,7 +440,7 @@ test('report over a stream holding the layers a maker\'s dispatch records prints
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /\bL3\b/, ran.out);
-  assert.doesNotMatch(ran.out, /\bL[0-24-9]\b/, ran.out);
+  assert.doesNotMatch(ran.out.split('markers no dispatch wrote')[0], /\bL[0-24-9]\b/, ran.out);
 });
 
 test('report over a stream holding a line that does not parse exits non-zero, names that line, and prints no signal', async () => {
