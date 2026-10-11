@@ -853,15 +853,20 @@ honouring their roles until a boundary outside their credentials can enforce it.
 6. The engine does not alternate makers between providers. A coordinator that wants alternation
    records each choice as a card label.
 
-**Reversed by:** for rule 1's per-judge rule, a judge needing a provider rule that neither a
-fixed provider nor a map from the maker's provider can express. For rule 1's plain role names, a
-second meaning a plain name would have to carry, or a reader that a plain name leads to treat an
-agent judge as having no provider rule. Either makes one entry form the clearer config. For rule 2, a consumer's hand-written markers refused
-for a missing provider often enough that scoping the check to entries carrying a rule costs
-less. For rule 3, a judge that must be allowed either of two
-providers, such as a fallback while one CLI is down. For rule 4, a requirement that the gate
-prove which provider made the work. For rule 5, `report` or the coordinator's records showing
-wrong-provider markers displacing right ones often enough to cost re-dispatches.
+**Reversed by:**
+
+- **Rule 1's per-judge rule:** a judge needing a provider rule that neither a fixed provider nor a
+  map from the maker's provider can express.
+- **Rule 1's plain role names:** a second meaning a plain name would have to carry, or a reader
+  that a plain name leads to treat an agent judge as having no provider rule. Either makes one
+  entry form the clearer config.
+- **Rule 2:** a consumer's hand-written markers refused for a missing provider often enough that
+  scoping the check to entries carrying a rule costs less.
+- **Rule 3:** a judge that must be allowed either of two providers, such as a fallback while one
+  CLI is down.
+- **Rule 4:** a requirement that the gate prove which provider made the work.
+- **Rule 5:** `report` or the coordinator's records showing wrong-provider markers displacing right
+  ones often enough to cost re-dispatches.
 
 ### Deferred, and what returns it
 
@@ -892,13 +897,13 @@ Rule 3 holds because dispatch must pick exactly one provider, and the gate check
 picks. With one value the two cannot disagree.
 
 A label records the maker's provider (rule 4) because labels are the one card fact the gate
-already reads, for the kind. Rigger keeps no card state in its state directory, so no stored fact could
-hold it instead.
+already reads, for the kind. `ARCHITECTURE.md`'s "Failure model" sets what Rigger stores, and none
+of it could hold the maker's provider instead.
 
 The governing marker stays the latest (rule 5) so that one rule governs every field. Filtering by
 provider before choosing would make `provider` the one field that changes which marker governs.
 
 The engine does not alternate (rule 6) because alternating in dispatch order needs a memory
-across cards. The state directory holds three things and no others (`ARCHITECTURE.md`, "Failure model"). Should
-that requirement come, a stateless rule, such as the parity of the card's number, would serve
+across cards, and that memory is not among what `ARCHITECTURE.md`'s "Failure model" lets Rigger
+keep. Should that requirement come, a stateless rule, such as the parity of the card's number, would serve
 without new state.
