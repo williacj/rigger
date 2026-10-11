@@ -360,7 +360,7 @@ test('an agent entry handed no provider, or one that is not a well-formed name, 
   }
 });
 
-// proves R-LOOP-16, R-GATE-9
+// proves R-LOOP-16
 test('a conflict in place of every entry refuses the card with the conflict\'s reason and reads no marker', () => {
   const conflict = 'carries labels selecting different providers for its maker role `engineer`: maker:codex (codex), maker:claude (claude)';
   // `null` comments would throw were any marker read.
