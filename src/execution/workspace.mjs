@@ -1,5 +1,5 @@
-// ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, makes it
-// from main or a continuing card head, and makes each judge's directory from main and PR head.
+// ABOUTME: L1 makes card workspaces, judge and scratch directories under their replace rules,
+// and removes a merged card's directories before its move to Done.
 
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -341,7 +341,7 @@ function checkoutIn(path) {
  * either.
  */
 async function judgeChecked({ adapter, path, repository }) {
-  const leaves = (why) => new Error(`${path} ${why}, so L1 leaves it as it is`);
+  const leaves = (why, blocksDone = false) => Object.assign(new Error(`${path} ${why}, so L1 leaves it as it is`), { blocksDone });
   /** `there`'s real path, or, where nothing is there, its parent's joined to its name. */
   const real = (there) => {
     try {
@@ -379,7 +379,7 @@ async function judgeChecked({ adapter, path, repository }) {
   /** Adds `record`'s worktree to those L1 unlocks where `ADDING` locks it, failing on any other lock. */
   const lockOf = (record) => {
     if (record.locked === undefined) return;
-    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`);
+    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`, true);
     unlocking.push(record.real);
   };
   for (const name of names) {
@@ -489,6 +489,124 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
  * addendum on #467).
  */
 export const judgeDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeJudgeDirectory({ root, topic, card, role, head, repository, sink });
+
+/** Removes the directories of a merged card that their replace rules admit, before its Done move. */
+export async function removeCardDirectories({ root, topic, card, repository, sink }) {
+  if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path`);
+  const name = topicFor(topic, card);
+  const events = sink.emitter({ layer: 'L1', card });
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
+  const failures = [];
+  const left = (path, reason, role) => recorded(events, card, 'workspace.left', { path, reason, ...(role === undefined ? {} : { role }) });
+  const removed = (path, role) => recorded(events, card, 'workspace.removed', { path, ...(role === undefined ? {} : { role }) });
+  /** A refusal leaves the path; a removal already begun also prevents the Done move. */
+  const attempt = async (path, role, work) => {
+    let begun = false;
+    try {
+      const gone = await work(() => { begun = true; });
+      if (gone) removed(typeof gone === 'string' ? gone : path, role);
+    } catch (failure) {
+      if (failure.code === EVENT_REFUSED) throw failure;
+      left(path, failure.message, role);
+      if (begun || failure.blocksDone) failures.push(failure);
+    }
+  };
+  const workspace = join(root, name);
+  await attempt(workspace, undefined, async (begin) => {
+    const held = await adapter.registration(workspace);
+    if (held?.locked !== undefined && held.locked !== ADDING) throw Object.assign(new Error(`${workspace} is locked with the reason ${JSON.stringify(held.locked)}`), { blocksDone: true });
+    const gone = await cleared({ adapter, card, branch: name, path: workspace, repository }, async () => {
+      begin();
+      if (held?.locked === ADDING) await adapter.unlock(workspace);
+    });
+    return gone;
+  });
+  /** Removes each disk entry under one topic, then the topic directory once safely empty. */
+  const children = async (kind, remove) => {
+    const parent = join(root, kind);
+    const base = join(parent, name);
+    let names;
+    try {
+      const above = lstatOrAbsent(parent);
+      const there = lstatOrAbsent(base);
+      if (above === undefined || there === undefined) return;
+      if (!above.isDirectory()) throw notDirectory(parent, above);
+      if (!there.isDirectory()) throw notDirectory(base, there);
+      names = readdirSync(base).sort();
+    } catch (failure) {
+      left(base, failure.message);
+      return;
+    }
+    for (const role of names) {
+      const path = join(base, role);
+      await attempt(path, role, (begin) => remove({ path, base, role, begin }));
+    }
+    try {
+      if (readdirSync(base).length > 0) {
+        left(base, `${base} is not empty`);
+        return;
+      }
+      rmdirSync(base);
+      removed(base);
+    } catch (failure) {
+      left(base, failure.message);
+      failures.push(failure);
+    }
+  };
+  await children('judges', async ({ path, begin }) => {
+    const found = await judgeChecked({ adapter, path, repository });
+    if (!found.present) return false;
+    begin();
+    await judgeCleared(adapter, found);
+    return true;
+  });
+  await children('scratch', async ({ path, base, begin }) => {
+    noCheckoutAbove(base, path);
+    const there = scratchChecked(base, path);
+    await unregistered({ path, there, repository, adapter });
+    if (!there) return false;
+    const checkout = checkoutIn(path);
+    if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, so L1 leaves it as it is`);
+    begin();
+    writable(path);
+    rmSync(path, { recursive: true });
+    return true;
+  });
+  const judges = join(root, 'judges');
+  const judgeBase = join(judges, name);
+  try {
+    const parent = lstatOrAbsent(judges);
+    const topicDirectory = lstatOrAbsent(judgeBase);
+    if ((parent === undefined || parent.isDirectory()) && (topicDirectory === undefined || topicDirectory.isDirectory())) {
+      const base = nearestReal(judgeBase);
+      for (const record of await adapter.listing()) {
+        if (record.locked === undefined || lstatOrAbsent(record.at) !== undefined) continue;
+        const at = nearestReal(record.at);
+        if (!underOrAt(at, base) || at === base) continue;
+        const role = relative(base, at).split(sep)[0];
+        if (record.detached && record.locked === ADDING) {
+          await adapter.unlock(record.at);
+          continue;
+        }
+        const failure = new Error(`${record.at} is registered with a person's lock, ${JSON.stringify(record.locked)}`);
+        left(record.at, failure.message, role);
+        failures.push(failure);
+      }
+    }
+  } catch (failure) {
+    if (failure.code === EVENT_REFUSED) throw failure;
+    left(judgeBase, `git could not inspect gone judge worktrees: ${failure.message}`);
+    failures.push(failure);
+  }
+  try {
+    await adapter.prune();
+  } catch (failure) {
+    if (failure.code === EVENT_REFUSED) throw failure;
+    left(workspace, `git could not prune gone worktree registrations: ${failure.message}`);
+    failures.push(failure);
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `L1 could not remove all directories of card #${card}`);
+}
 
 /**
  * Takes away the lock on a registration at `path`, whose directory is gone, where git lists it on

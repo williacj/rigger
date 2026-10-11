@@ -26,6 +26,8 @@ import { lstatSync } from 'node:fs';
 import { childrenIn, gitLeavingChild, gitRacing } from './process-fixtures.mjs';
 import { createHash } from 'node:crypto';
 import { holding, OUTLIVED } from './process-fixtures.mjs';
+import * as workspaceRemoval from '../src/execution/workspace.mjs';
+import { lockWorktreeAt } from './git-repository.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -1540,4 +1542,309 @@ test('L1\'s workspace make answers repository, the path of the repository it mad
   const here = world(t);
   const made = await here.make(42);
   assert.equal(made.repository, here.repository);
+});
+
+// proves R-WORK-30
+test('removing a merged card clears its workspace, judge and scratch directories while leaving another root entry', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const head = here.push('head for a judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  const scratch = await workspaceRemoval.makeScratch({ base: made.scratch, role: 'reviewer', card: 42, repository: here.repository, sink: here.sink });
+  const other = join(here.root, 'unrelated');
+  mkdirSync(other);
+  const before = here.events().length;
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  for (const path of [made.path, judge.path, scratch, join(here.root, 'judges', 'rigger-42'), made.scratch]) assert.equal(existsSync(path), false, path);
+  assert.deepEqual(readdirSync(here.root), ['judges', 'scratch', 'unrelated']);
+  assert.equal(worktreeList(here.repository).includes(made.path), false);
+  assert.equal(worktreeList(here.repository).includes(judge.main), false);
+  assert.equal(worktreeList(here.repository).includes(judge.head), false);
+  assert.equal(gitIn(here.repository, 'show-ref', '--verify', 'refs/heads/rigger-42').trim().length > 0, true);
+  const events = here.events().slice(before).filter(({ layer }) => layer === 'L1');
+  assert.deepEqual(events.map(({ event, path, role }) => ({ event, path, role })), [
+    { event: 'workspace.removed', path: made.path, role: undefined },
+    { event: 'workspace.removed', path: judge.path, role: 'reviewer' },
+    { event: 'workspace.removed', path: join(here.root, 'judges', 'rigger-42'), role: undefined },
+    { event: 'workspace.removed', path: scratch, role: 'reviewer' },
+    { event: 'workspace.removed', path: made.scratch, role: undefined },
+  ]);
+});
+
+// proves R-WORK-30
+test('a person-locked card worktree is left with its lock and blocks the Done move', async (t) => {
+  const here = world(t);
+  mkdirSync(here.root);
+  const path = worktreeAt(here.repository, join(here.root, 'rigger-42'), 'rigger-42', '--lock', '--reason', 'kept by a person');
+  const before = worktreeList(here.repository);
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink }), /could not remove all directories/);
+
+  assert.equal(worktreeList(here.repository), before);
+  assert.equal(existsSync(path), true);
+  assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left').map(({ path: left, reason }) => ({ left, reason: reason.includes('kept by a person') })), [{ left: path, reason: true }]);
+});
+
+// proves R-WORK-30
+test('a card workspace already gone has its stale unlocked registration pruned', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  rmSync(made.path, { recursive: true });
+  assert.equal(worktreeList(here.repository).includes(made.path), true);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(worktreeList(here.repository).includes(made.path), false);
+  assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), []);
+});
+
+// proves R-WORK-30
+test('a person-locked judge worktree is left with its lock and blocks the Done move', async (t) => {
+  const here = world(t);
+  const head = here.push('head for a judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  lockWorktreeAt(here.repository, judge.main, 'kept by a person');
+  const before = worktreeList(here.repository);
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink }), /could not remove all directories/);
+
+  assert.equal(worktreeList(here.repository), before);
+  assert.equal(existsSync(judge.path), true);
+  assert.ok(here.events().some(({ layer, event, path, role }) => layer === 'L1' && event === 'workspace.left' && path === judge.path && role === 'reviewer'));
+});
+
+// proves R-WORK-30
+test('a second removal pass changes nothing and records no removal event', async (t) => {
+  const here = world(t);
+  await here.make(42);
+  const remove = () => workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  await remove();
+  const afterFirst = { entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() };
+
+  await remove();
+
+  assert.deepEqual({ entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() }, afterFirst);
+});
+
+// proves R-WORK-30
+test('a card with no directories can be removed without an event or a failure', async (t) => {
+  const here = world(t);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(here.root), false);
+  assert.deepEqual(here.events(), []);
+});
+
+// proves R-WORK-30
+test('replace-rule refusals leave workspace, judge and scratch paths named without failing removal', async (t) => {
+  const here = world(t);
+  const workspace = join(here.root, 'rigger-42');
+  const judge = join(here.root, 'judges', 'rigger-42', 'reviewer');
+  const scratch = join(here.root, 'scratch', 'rigger-42', 'reviewer');
+  const outside = join(here.directory, 'outside');
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(dirname(judge), { recursive: true });
+  mkdirSync(dirname(scratch), { recursive: true });
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'kept'), 'outside\n');
+  symlinkSync(outside, judge);
+  symlinkSync(outside, scratch);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(workspace), true);
+  assert.equal(readlinkSync(judge), outside);
+  assert.equal(readlinkSync(scratch), outside);
+  assert.equal(readFileSync(join(outside, 'kept'), 'utf8'), 'outside\n');
+  const left = here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left');
+  assert.deepEqual(left.map(({ path, role }) => ({ path, role })), [
+    { path: workspace, role: undefined },
+    { path: judge, role: 'reviewer' },
+    { path: dirname(judge), role: undefined },
+    { path: scratch, role: 'reviewer' },
+    { path: dirname(scratch), role: undefined },
+  ]);
+  assert.ok(left.every(({ reason }) => typeof reason === 'string' && reason.length > 0));
+  assert.equal(here.events().some(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), false);
+});
+
+// proves R-WORK-30
+test('an unrecordable removal event rejects as EVENT_REFUSED and a later pass succeeds', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const refusing = { emitter: (context) => {
+    const emitter = here.sink.emitter(context);
+    return { emit: (event, fields) => {
+      if (context.layer === 'L1' && event === 'workspace.removed') throw new Error('the record is full');
+      emitter.emit(event, fields);
+    } };
+  } };
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: refusing }), (failure) => {
+    assert.equal(failure.code, EVENT_REFUSED);
+    assert.deepEqual(failure.unrecorded.map(({ event, path }) => ({ event, path })), [{ event: 'workspace.removed', path: made.path }]);
+    return true;
+  });
+  assert.equal(existsSync(made.path), false);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  assert.equal(worktreeList(here.repository).includes(made.path), false);
+});
+
+// proves R-WORK-30
+test('a git removal that fails partway leaves the path named and a later pass removes it', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  writeFileSync(join(made.path, 'untracked'), 'work in progress\n');
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = worktree ] && [ "$2" = remove ]; then',
+    '  for last do :; done',
+    '  /bin/rm -f "$last/untracked"',
+    '  echo "git removal stopped after one file" >&2',
+    '  exit 1',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(withFirstOnPath(stand, () => workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink })), /could not remove all directories/);
+  assert.equal(existsSync(join(made.path, 'untracked')), false);
+  assert.equal(existsSync(made.path), true);
+  assert.ok(here.events().some(({ layer, event, path }) => layer === 'L1' && event === 'workspace.left' && path === made.path));
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  assert.equal(existsSync(made.path), false);
+  assert.equal(worktreeList(here.repository).includes(made.path), false);
+});
+
+// proves R-WORK-30
+test('a merged card workspace is removed with uncommitted files and local commits', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  gitIn(made.path, 'commit', '--quiet', '--allow-empty', '-m', 'local work');
+  const local = gitIn(made.path, 'rev-parse', 'HEAD').trim();
+  writeFileSync(join(made.path, 'uncommitted'), 'not on the forge\n');
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(made.path), false);
+  assert.equal(gitIn(here.repository, 'rev-parse', 'refs/heads/rigger-42').trim(), local);
+});
+
+// proves R-WORK-30
+test('a workspace path linked to its card worktree removes both the worktree and the link', async (t) => {
+  const here = world(t);
+  mkdirSync(here.root);
+  const path = join(here.root, 'rigger-42');
+  const tree = worktreeAt(here.repository, join(here.directory, 'linked-worktree'), 'rigger-42');
+  symlinkSync(tree, path);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(path), false);
+  assert.equal(existsSync(tree), false);
+  assert.equal(worktreeList(here.repository).includes(tree), false);
+  assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').map(({ path: removed }) => removed), [tree]);
+});
+
+// proves R-WORK-30
+test('a gone card worktree with a person lock keeps its registration and blocks Done', async (t) => {
+  const here = staleLockWorld(t, 'rigger-44', 'kept by a person');
+  const before = worktreeList(here.repository);
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 44, repository: here.repository, sink: here.sink }), /could not remove all directories/);
+
+  assert.equal(existsSync(here.path), false);
+  assert.equal(worktreeList(here.repository), before);
+  assert.ok(here.events().some(({ layer, event, path }) => layer === 'L1' && event === 'workspace.left' && path === here.path));
+});
+
+// proves R-WORK-30
+test('gone judge worktrees are pruned and their empty topic directory is removed', async (t) => {
+  const here = world(t);
+  const head = here.push('head for a judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  rmSync(judge.path, { recursive: true });
+  assert.equal(worktreeList(here.repository).includes(judge.main), true);
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(dirname(judge.path)), false);
+  assert.equal(worktreeList(here.repository).includes(judge.main), false);
+  assert.equal(worktreeList(here.repository).includes(judge.head), false);
+});
+
+// proves R-WORK-30
+test('a gone judge worktree with a person lock stays registered and blocks Done', async (t) => {
+  const here = world(t);
+  const head = here.push('head for a judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  lockWorktreeAt(here.repository, judge.main, 'kept by a person');
+  rmSync(judge.path, { recursive: true });
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink }), /could not remove all directories/);
+
+  assert.match(worktreeList(here.repository), /locked kept by a person/);
+  assert.ok(here.events().some(({ layer, event, path, role }) => layer === 'L1' && event === 'workspace.left' && path === judge.main && role === 'reviewer'));
+});
+
+// proves R-WORK-30
+test('a gone judge worktree locked by an interrupted add is unlocked and pruned', async (t) => {
+  const here = world(t);
+  const head = here.push('head for a judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  lockWorktreeAt(here.repository, judge.main, ADDING);
+  rmSync(judge.path, { recursive: true });
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(worktreeList(here.repository).includes(judge.main), false);
+  assert.equal(worktreeList(here.repository).includes(judge.head), false);
+});
+
+// proves R-WORK-30
+test('a topic directory or its parent reached through a symbolic link is left and named', async (t) => {
+  const here = world(t);
+  mkdirSync(here.root);
+  const outsideJudges = join(here.directory, 'outside-judges');
+  const outsideScratch = join(here.directory, 'outside-scratch');
+  mkdirSync(join(outsideJudges, 'rigger-42'), { recursive: true });
+  mkdirSync(outsideScratch);
+  symlinkSync(outsideJudges, join(here.root, 'judges'));
+  mkdirSync(join(here.root, 'scratch'));
+  symlinkSync(outsideScratch, join(here.root, 'scratch', 'rigger-42'));
+
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+
+  assert.equal(existsSync(join(outsideJudges, 'rigger-42')), true);
+  assert.equal(existsSync(outsideScratch), true);
+  assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left').map(({ path }) => path), [
+    join(here.root, 'judges', 'rigger-42'), join(here.root, 'scratch', 'rigger-42'),
+  ]);
+});
+
+// proves R-WORK-30
+test('a refused workspace.left record stops removal with the refused path unchanged', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'kept'), 'keep\n');
+  const refusing = { emitter: (context) => {
+    const emitter = here.sink.emitter(context);
+    return { emit: (event, fields) => {
+      if (context.layer === 'L1' && event === 'workspace.left') throw new Error('the record is full');
+      emitter.emit(event, fields);
+    } };
+  } };
+
+  await assert.rejects(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: refusing }), (failure) => {
+    assert.equal(failure.code, EVENT_REFUSED);
+    assert.equal(failure.unrecorded[0].path, path);
+    return true;
+  });
+
+  assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'keep\n');
 });

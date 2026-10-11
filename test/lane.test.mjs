@@ -72,6 +72,140 @@ test('a merge claim records its pull after the claim and before merge.start, hol
   assert.deepEqual(reached.map(({ card, action }) => ({ card, action })), [{ card: 83, action: 'merge' }]);
 });
 
+// proves R-WORK-30
+test('a lane merge records removal after merge.end and before the transition to Done', async () => {
+  let built;
+  built = merging([83], { removeDirectories: async (card) => {
+    built.sink.emitter({ layer: 'L1', card }).emit('workspace.removed', { path: '/card-83' });
+  } });
+
+  await built.loop.pull();
+
+  const events = built.events();
+  const end = events.findIndex(({ layer, event, card }) => layer === 'L3' && event === 'merge.end' && card === 83);
+  const removal = events.findIndex(({ layer, event, card }) => layer === 'L1' && event === 'workspace.removed' && card === 83);
+  const done = events.findIndex(({ layer, event, card, to }) => layer === 'L2' && event === 'transition' && card === 83 && to === 'done');
+  assert.ok(end >= 0 && end < removal && removal < done, JSON.stringify(events));
+});
+
+// proves R-WORK-30
+test('an already-merged answer removes directories before Done without another merge call', async () => {
+  const removed = [];
+  const built = merging([84], { removeDirectories: async (card) => { removed.push(card); } });
+  built.repository.answerMerge(({ repository }) => {
+    built.repository.update(841, { merged: true });
+    return { outcome: 'already merged' };
+  });
+
+  await built.loop.pull();
+
+  assert.deepEqual(removed, [84]);
+  assert.deepEqual(await columnsOf(built.fake), { 84: COLUMNS.done });
+  assert.equal(built.repository.merges().length, 1);
+});
+
+// proves R-WORK-30
+test('a refused lane merge leaves directories until a later pull reads the merge', async () => {
+  const removed = [];
+  const built = merging([85], { removeDirectories: async (card) => { removed.push(card); } });
+  built.repository.answerMerge(() => ({ outcome: 'refused', reason: 'closed' }));
+
+  await built.loop.pull();
+  assert.deepEqual(removed, []);
+  assert.deepEqual(await columnsOf(built.fake), { 85: COLUMNS.review });
+  built.repository.update(851, { merged: true });
+  await built.loop.pull();
+  assert.deepEqual(removed, [85]);
+  assert.deepEqual(await columnsOf(built.fake), { 85: COLUMNS.done });
+});
+
+// proves R-WORK-30
+test('a failed lane merge removes nothing until a later pull reads it as merged', async () => {
+  const removed = [];
+  const built = merging([86], { removeDirectories: async (card) => { removed.push(card); } });
+  built.repository.answerMerge(() => { throw new Error('merge failed'); });
+
+  await assert.rejects(built.loop.pull(), (failure) => leavesOf(failure).some(({ message }) => /merge failed/.test(message)));
+  assert.deepEqual(removed, []);
+  assert.deepEqual(await columnsOf(built.fake), { 86: COLUMNS.review });
+  built.repository.update(861, { merged: true });
+  await built.loop.pull();
+  assert.deepEqual(removed, [86]);
+  assert.deepEqual(await columnsOf(built.fake), { 86: COLUMNS.done });
+});
+
+// proves R-WORK-30
+test('an unrecorded merge end removes nothing until a later pull reads the merge', async () => {
+  const removed = [];
+  const built = merging([87], { removeDirectories: async (card) => { removed.push(card); } });
+  built.repository.answerMerge(() => {
+    built.refuseAppends('the record is full', 1);
+    return { outcome: 'merged' };
+  });
+
+  await assert.rejects(built.loop.pull(), (failure) => leavesOf(failure).some(({ message }) => /refused to record its end/.test(message)));
+  assert.deepEqual(removed, []);
+  assert.deepEqual(await columnsOf(built.fake), { 87: COLUMNS.review });
+  await built.loop.pull();
+  assert.deepEqual(removed, [87]);
+  assert.deepEqual(await columnsOf(built.fake), { 87: COLUMNS.done });
+});
+
+// proves R-WORK-30
+test('a removal failure after one directory was removed leaves Review until a later pull removes the rest', async () => {
+  let built;
+  let calls = 0;
+  built = merging([88], { removeDirectories: async (card) => {
+    calls += 1;
+    built.sink.emitter({ layer: 'L1', card }).emit('workspace.removed', { path: calls === 1 ? '/first' : '/remaining' });
+    if (calls === 1) throw new Error('the second directory could not be removed');
+  } });
+
+  await assert.rejects(built.loop.pull(), (failure) => leavesOf(failure).some(({ message }) => /second directory/.test(message)));
+  assert.deepEqual(await columnsOf(built.fake), { 88: COLUMNS.review });
+  await built.loop.pull();
+
+  assert.equal(calls, 2);
+  assert.deepEqual(await columnsOf(built.fake), { 88: COLUMNS.done });
+  const events = built.events();
+  assert.deepEqual(events.filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').map(({ path }) => path), ['/first', '/remaining']);
+  const done = events.findIndex(({ layer, event, to }) => layer === 'L2' && event === 'transition' && to === 'done');
+  assert.ok(events.findIndex(({ event, path }) => event === 'workspace.removed' && path === '/remaining') < done);
+});
+
+// proves R-WORK-30
+test('a later pull removes directories after the first run ended between merge and removal', async () => {
+  let calls = 0;
+  const built = merging([89], { removeDirectories: async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('the run ended before removal');
+  } });
+
+  await assert.rejects(built.loop.pull(), (failure) => leavesOf(failure).some(({ message }) => /run ended/.test(message)));
+  assert.deepEqual(await columnsOf(built.fake), { 89: COLUMNS.review });
+  await built.loop.pull();
+
+  assert.equal(calls, 2);
+  assert.deepEqual(await columnsOf(built.fake), { 89: COLUMNS.done });
+});
+
+// proves R-WORK-30
+test('a lane merge not made after its card cannot be reread removes nothing until a later pull reads a merge', async () => {
+  const fake = boardOf([cardIn(90, COLUMNS.review)]);
+  const board = { ...handleOn(fake), readItems: async () => [] };
+  const removed = [];
+  const built = merging([90], { fake, board, removeDirectories: async (card) => { removed.push(card); } });
+
+  await assert.rejects(built.loop.pull());
+  assert.deepEqual(removed, []);
+  assert.deepEqual(await columnsOf(fake), { 90: COLUMNS.review });
+  built.repository.update(901, { merged: true });
+  await built.loop.pull();
+
+  assert.deepEqual(removed, [90]);
+  assert.deepEqual(await columnsOf(fake), { 90: COLUMNS.done });
+});
+
 /** A merge script that holds the call until the function it hands `held` is called, then merges as the forge does. */
 const holding = (held) => ({ merge }) => new Promise((resolve) => { held.push(() => resolve(merge())); });
 
@@ -585,7 +719,7 @@ test('given a card returned for a conflict, the next pull has L1 make its worksp
   const heads = [];
   const next = loop({
     config: settings, board: handleOn(built.fake), decide, facts: factsCall({ config: settings, reads: built.repository.operations, decide }),
-    l2: built.l2, sink: built.sink, kill: async () => {}, state: built.directory, environment: {}, judgeDirectory: async () => {},
+    l2: built.l2, sink: built.sink, kill: async () => {}, state: built.directory, environment: {}, judgeDirectory: async () => {}, removeDirectories: async () => {},
     workspace: async (card, head) => {
       heads.push(head);
       throw Object.assign(new Error('the workspace is not made here'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });

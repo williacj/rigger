@@ -341,6 +341,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       return (await listed()).map(({ at }) => at);
     },
 
+    /** Forgets registrations whose directories are gone, leaving person-locked registrations intact. */
+    async prune() {
+      await answer(['worktree', 'prune']);
+    },
+
     /** Takes away the lock on the worktree registered at `path`, whether or not its directory is there. */
     async unlock(path) {
       await answer(['worktree', 'unlock', path]);

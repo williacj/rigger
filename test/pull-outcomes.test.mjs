@@ -53,7 +53,7 @@ async function threeCards(t) {
   const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, reads: readsWith(async () => ({ open: [], merged: [] })) });
   const workspaces = join(directory, 'workspaces');
   const built = loop({
-    config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state,
+    config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state,
     environment: { ...process.env, PATH: agent.first() },
   });
   const failure = await built.pull().then(() => assert.fail('the pull settled, though #20 failed'), (thrown) => thrown);

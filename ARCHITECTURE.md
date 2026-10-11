@@ -516,9 +516,11 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 
 A card L3 pulls from Review starts at step 4.
 
-Once L2 reads a card's pull request as merged, whoever merged it, L2 moves the card to Done. L3 then
-has L1 remove the card's directories: its workspace, and each of its roles' judge and scratch
-directories.
+Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
+directories: its workspace, and each of its roles' judge and scratch directories. L2 moves the card
+to Done once no removal failed. A directory the replace rule refuses is left and named, and does not
+hold the move back. Where a removal failed, the card stays where it is, and the next pull that reads
+it removes again.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies four failures as

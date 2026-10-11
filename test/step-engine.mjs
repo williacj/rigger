@@ -35,5 +35,5 @@ export async function engine({ directory, repository, command }) {
   const provisioning = { hold: { run: command, required: true } };
   const decide = (card, outcomes) => nextAction(card, kinds, config.epicLabel, { provisioning, outcomes, sink });
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), state, environment: process.env }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: process.env }).pull();
 }
