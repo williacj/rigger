@@ -382,7 +382,7 @@ test('a continuing attempt retries L1 at the same head L2 named', async () => {
 });
 
 // proves R-SCHED-6
-test('a merge answer takes no claim and leaves the sole slot for a Ready maker under pull and run', async () => {
+test('a merge answer takes a claim, records its pull and holds no slot, leaving the sole slot for a Ready maker under pull and run', async () => {
   const head = '8'.repeat(40);
   for (const mode of ['pull', 'run']) {
     const built = world({
@@ -392,19 +392,19 @@ test('a merge answer takes no claim and leaves the sole slot for a Ready maker u
         comments: [markerComment({ card: 82, pull: 182, head, body: PASSING, role: 'owner' })],
       }] },
     });
-    const fired = mode === 'pull' ? built.loop.pull(1) : built.loop.run();
+    const fired = mode === 'pull' ? built.loop.pull() : built.loop.run();
     await settling(built, settledOf(fired));
 
     assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head });
     assert.deepEqual(built.dispatches.started, [95], `${mode} starts the Ready maker past merge`);
-    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [95]);
-    assert.deepEqual(built.fake.writes().filter(({ args: [id] }) => id === 'item-82'), []);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card, inFlight }) => ({ card, inFlight })), [{ card: 82, inFlight: 0 }, { card: 95, inFlight: 1 }]);
+    assert.deepEqual(cardsOf(built, 'slot.release').filter((card) => card === 82), []);
     built.dispatches.releaseAll();
     const reached = await fired;
     assert.ok(reached.some(({ card }) => card === 95), `${mode} returns the Ready card`);
-    assert.ok(reached.every(({ card }) => card !== 82), `${mode} takes no merge claim`);
-    assert.ok(built.l3Events().filter(({ event }) => event === 'pull').every(({ card }) => card !== 82));
-    assert.deepEqual(built.fake.writes().filter(({ args: [id] }) => id === 'item-82'), []);
+    assert.ok(reached.some(({ card, action }) => card === 82 && action === 'merge'), `${mode} takes a merge claim`);
+    assert.equal(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 82).length, 1);
+    assert.deepEqual(cardsOf(built, 'slot.release').filter((card) => card === 82), []);
   }
 });
 

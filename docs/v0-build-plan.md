@@ -337,7 +337,7 @@ Exit, against a fixture configured with three agent judges:
   (`R-LOOP-6`).
 - A red CI blocks a merge that every judge has passed (`R-GATE-8`).
 - A verdict written before the card's latest acceptance is stale, and the gate refuses it.
-- Two merges at once serialize (`R-SCHED-9`).
+- Two merges at once serialize (`R-SCHED-15`).
 
 **M6. Escalation and infrastructure hold.**
 
