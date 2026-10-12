@@ -33,9 +33,11 @@ means is never an amendment: a later decision supersedes it, so the original sta
 An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
 it. Those two openings are the only ones it takes, and an amendment adds `Amended in #NNN` after
 `Ratified` rather than a third. A later amendment adds its pull request after the earlier ones, each
-joined to the one before by `and`, in the order the pull requests merged. A superseded decision's
-body moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is
-never reused.
+joined to the one before by `and`, in the order the pull requests merged. A superseded entry's
+status reads `Superseded by D#.` alone, and drops any amendment it recorded. Its row in the table
+below reads `Superseded by D#`, with no period, as every cell does. A superseded decision's body
+moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is never
+reused.
 
 | id | decision | status |
 |---|---|---|
@@ -907,7 +909,7 @@ both cases the check reads the owner's marker, where `D22` relied on sessions ho
 holds no rule on it.
 
 `D23` stands unchanged. Rule 3 meets `D23`'s second reversal for the gate's status alone. Merges
-still use the owner's token (rule 5), so the ruleset still cannot tell the owner's merge from a
+still use the owner's token (rule 3), so the ruleset still cannot tell the owner's merge from a
 session's.
 
 This decision adds no requirement row.
