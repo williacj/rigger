@@ -10,6 +10,7 @@ import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
 import { branchesIn, checkedOut, commentOf, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
+import { defaultBranchIn, entryIn, pullStateOf } from './fake-repository.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -252,10 +253,22 @@ async function labels(board, state, operation) {
 }
 
 /**
- * The repository the fake `gh` answers from: the one the test seeded, as every agent command
- * since has left it. By default it holds no branch, no pull request and no edit.
+ * The test's bare repository the fake `gh` answers from: the `origin` it was installed with, or
+ * else the one the test seeded its repository with, where it was given one.
  */
-const repositoryOf = (state) => createFakeRepository({ ...state.repository, origin: state.origin });
+const originOf = (state) => state.origin ?? state.repository?.origin;
+
+/**
+ * The repository the fake `gh` answers from: the one the test seeded, named as the fake's own, as
+ * every agent command since has left it. By default it holds no branch, no pull request and no edit.
+ */
+const repositoryOf = (state) => createFakeRepository({ ...state.repository, repo: state.repo, origin: originOf(state) });
+
+/**
+ * The repository a pull request's head is in, as GitHub answers it: the fork it is from, this
+ * repository where it is from none, or null where that repository was deleted.
+ */
+const headRepositoryOf = (state, pull) => (pull.headRepositoryDeleted ? null : { nameWithOwner: pull.from ?? state.repo });
 
 /** The address GitHub gives pull request `number` of the fake's repository. */
 const pullUrl = (state, number) => `https://github.com/${state.repo}/pull/${number}`;
@@ -263,13 +276,16 @@ const pullUrl = (state, number) => `https://github.com/${state.repo}/pull/${numb
 /** What the pull request read selects of a page of pull requests. */
 const PULLS = 'pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } }';
 
-/** Answers a page of the pull requests from the branch the read names, open and merged. */
+/**
+ * Answers a page of the pull requests from the branch the read names, open and merged: the states
+ * the read asks for, so a pull request closed without a merge is left out, as GitHub leaves it out.
+ */
 async function pullRequests(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'pullRequests');
   const nodes = repositoryOf(state).held().pullRequests
-    .filter((pull) => pull.head === valueOf(field, 'headRefName'))
-    .map((pull) => ({ number: pull.number, state: pull.merged ? 'MERGED' : 'OPEN', headRefOid: pull.sha, baseRefName: pull.base, headRepository: { nameWithOwner: pull.from ?? state.repo } }));
+    .filter((pull) => pull.head === valueOf(field, 'headRefName') && pullStateOf(pull) !== 'CLOSED')
+    .map((pull) => ({ number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) }));
   return { repository: { pullRequests: page(nodes, field) } };
 }
 
@@ -312,6 +328,57 @@ function pathIn(state, args) {
   const [, owner, name, ...rest] = args[1].split('/');
   if (`${owner}/${name}`.toLowerCase() !== state.repo.toLowerCase()) throw notFound('https://docs.github.com/rest');
   return rest.join('/');
+}
+
+/**
+ * What `gh` answers where GitHub resolves nothing at `path` in a GraphQL read: the response, which
+ * holds `data` and a `NOT_FOUND` error at that path, printed on stdout, and its message on stderr
+ * (measured with gh 2.99.0 on this repository on 2026-10-11, for an issue and a file).
+ */
+const unresolved = (data, path, message) => new GhPrinted(`gh: ${message}`, JSON.stringify({ data, errors: [{ type: 'NOT_FOUND', path, locations: [{ line: 1, column: 1 }], message }] }));
+
+/** What the issue read selects of an issue, but its labels. */
+const ISSUE = 'number body repository { nameWithOwner }';
+
+/** What the issue read selects of a page of an issue's labels. */
+const LABELS = 'pageInfo { hasNextPage endCursor } nodes { name }';
+
+/**
+ * Answers the issue the read names, with a page of its labels, in the repository the forge
+ * answers it in; an issue the repository does not hold, a pull request's number among them, is
+ * answered as GitHub answers one.
+ */
+async function issue(board, state, operation) {
+  inTheRepository(state, operation);
+  const field = fieldIn(operation.selections, 'issue');
+  const number = Number(valueOf(field, 'number'));
+  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
+  if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
+  const labels = page(held.labels.map((name) => ({ name })), fieldIn(field.selections, 'labels'));
+  return { repository: { issue: { number, body: held.body, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
+}
+
+/** What the file read selects of the tree entry at its path. */
+const ENTRY = 'mode type object { ... on Blob { text isBinary isTruncated byteSize } }';
+
+/**
+ * Answers the entry at the path the read names in the commit it names, as git holds it in the
+ * test's `origin`, and as GitHub answers it: an object the repository does not hold as null, an
+ * object that is not a commit as matching no fragment, and a path the commit holds nothing at as
+ * not resolved. A blob is answered whole and never truncated, as no fixture's file is past
+ * GitHub's limit. Where the fake was given no `origin`, it holds no commit.
+ */
+async function fileAt(board, state, operation) {
+  inTheRepository(state, operation);
+  const commit = valueOf(fieldIn(operation.selections, 'object'), 'oid');
+  const path = valueOf(fieldIn(operation.selections, 'file'), 'path');
+  const found = originOf(state) ? entryIn(originOf(state), commit, path) : null;
+  if (!found) return { repository: { object: null } };
+  if (found.type !== 'commit') return { repository: { object: {} } };
+  if (!found.entry) throw unresolved({ repository: { object: { oid: found.oid, file: null } } }, ['repository', 'object', 'file'], `Could not resolve file for path '${path}'.`);
+  const { mode, type, text, byteSize, isBinary } = found.entry;
+  const object = { blob: { text: isBinary ? null : text, isBinary, isTruncated: false, byteSize }, tree: {} }[type] ?? null;
+  return { repository: { object: { oid: found.oid, file: { mode, type, object } } } };
 }
 
 /**
@@ -425,6 +492,23 @@ const COMMANDS = {
     const { base, sha } = pullNamed(state, operation);
     return { repository: { pullRequest: { baseRefName: base, headRefOid: sha } } };
   },
+  // The reads of a pull request, an issue, the default branch and a file at a commit, which #725 added.
+  [graphql(repositoryShape('pullRequest(number: _) { number state headRefOid baseRefName headRepository { nameWithOwner } }'))]: async (board, state, operation) => {
+    inTheRepository(state, operation);
+    const pull = pullNamed(state, operation);
+    return { repository: { pullRequest: { number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) } } };
+  },
+  [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
+  [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,
+  // The default branch is the one the test's `origin` names as its `HEAD`; with no `origin`, or no
+  // commit on that branch, the repository holds none, which GitHub answers as null
+  // (https://docs.github.com/en/graphql/reference/objects#repository).
+  [graphql(repositoryShape('defaultBranchRef { name target { oid } }'))]: async (board, state, operation) => {
+    inTheRepository(state, operation);
+    const branch = originOf(state) ? defaultBranchIn(originOf(state)) : null;
+    return { repository: { defaultBranchRef: branch && { name: branch.name, target: { oid: branch.head } } } };
+  },
+  [graphql(repositoryShape(`object(oid: _) { ... on Commit { oid file(path: _) { ${ENTRY} } } }`))]: fileAt,
   [graphql(repositoryShape('pullRequest(number: _) { mergeable }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const pull = pullNamed(state, operation);
