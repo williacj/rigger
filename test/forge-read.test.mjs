@@ -1579,6 +1579,8 @@ function endings() {
     ['readPullRequestByNumber', 'no pull request, with gh exiting 0', () => ok({ repository: { pullRequest: null } }), 'gh answered no pullRequest'],
     ['readPullRequestByNumber', 'a state that is none of the three', () => ok({ repository: { pullRequest: pullNode({ number: 12, state: 'DRAFT' }) } }), 'gh answered state DRAFT'],
     ['readPullRequestByNumber', 'a number that is no pull request number', null, 'not an issue or pull request number', (r) => r.readPullRequestByNumber(1.5)],
+    ['readFileAt', 'no entry at the path, in the not-found answer gh gave on 2026-10-11', () => ({ status: 1, stdout: captured('rigger-file-absent-2026-10-11.json'), stderr: "gh: Could not resolve file for path 'no/such/file.txt'.\n" }), null, (r) => r.readFileAt(sha, 'no/such/file.txt')],
+    ['readFileAt', 'no entry at the path, in an answer with gh exiting 0', () => file(null), null],
     ['readFileAt', 'no such commit', () => ok({ repository: { object: null } }), `gh answered no commit ${sha}`],
     ['readFileAt', 'an object that is no commit', () => ok({ repository: { object: {} } }), `gh answered no commit ${sha}`],
     ['readFileAt', 'a commit with no file field', () => ok({ repository: { object: { oid: sha } } }), `gh answered no commit ${sha}`],

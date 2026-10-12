@@ -787,3 +787,12 @@ async function assertNothingChanged(fake, before) {
     assert.deepEqual(admitted, [args]);
   }
 }
+
+test("the repository read answers null for a path a commit of the fake gh's origin holds nothing at, and leaves the forge as it held it", async () => {
+  const { fake, head } = withFiles();
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), comments: [{ body: 'x', createdAt: '2026-10-01T09:30:00Z' }] }] });
+  const before = forgeHeld(fake);
+
+  assert.equal(await onPath(fake, () => reads().readFileAt(head, 'config/absent.mjs')), null);
+  await assertNothingChanged(fake, before);
+});
