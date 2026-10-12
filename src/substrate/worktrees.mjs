@@ -2,8 +2,8 @@
 // a detached worktree, removes one, and answers git questions about paths, branches and commits.
 // Every git call it makes runs one at a time.
 
-import { lstatSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { gitEnvironment } from './git-environment.mjs';
 import { EVENT_REFUSED, runCommand } from './process.mjs';
@@ -81,7 +81,7 @@ function queued(step) {
  * runs through L0's process adapter under `gitEnvironment()`, in `repository`, as `git`, for at
  * most `timeout` milliseconds, with its kills recorded through `emitter`.
  * Removal sets `rejectFailedChecks`: a check that gives no answer then rejects, while a missing
- * .git entry or git's definite answer that no repository is there still reads as no linked worktree.
+ * .git entry or administrative directory still reads as no linked worktree.
  */
 export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT, rejectFailedChecks = false }) {
   /** Runs git with `args`, one call at a time, and hands back its result. */
@@ -295,12 +295,13 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * --git-common-dir` prints the three paths a line each. In the main working tree the git
      * directory and the common directory are one; in a linked worktree the git directory is
      * `<common>/worktrees/<name>`; in a directory below either, the top level is the worktree's,
-     * not the directory's; outside every repository git exits 128 with `fatal: not a git
-     * repository (or any of the parent directories): .git`. That definite answer reads as no in
-     * either mode, tied to git's own answer for a dropped registration by `test/workspace.test.mjs`.
-     * Other non-zero exits read as no unless `rejectFailedChecks` is set, when a git or filesystem
-     * check giving no answer rejects. A missing .git entry still answers no. A timeout rejects in either mode. A
-     * path holding a newline would split the answer, and so is read as no.
+     * not the directory's. Non-zero exits read as no unless `rejectFailedChecks` is set, when a
+     * git or filesystem check giving no answer rejects. A missing .git entry still answers no.
+     * After a non-zero exit, only ENOENT from lstat of the `gitdir:` target in the .git file
+     * answers no: an existing but unreadable administrative directory must leave the check failed.
+     * This distinguishes a dropped registration without interpreting git's diagnostic text.
+     * A timeout rejects in either mode. A path holding a newline would split the answer, and so
+     * is read as no.
      */
     async isWorktree(path) {
       const real = realOrNothing(path, rejectFailedChecks);
@@ -319,7 +320,18 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       const there = await call(['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
       if (there.timedOut) throw failed(git, there, timeout);
       if (there.exit !== 0) {
-        if (rejectFailedChecks && !(there.exit === 128 && firstLine(there.stderr).startsWith('fatal: not a git repository'))) throw failed(git, there, timeout);
+        if (rejectFailedChecks) {
+          const target = /^gitdir: (.+)$/.exec(readFileSync(join(real, '.git'), 'utf8').split('\n')[0])?.[1];
+          if (target !== undefined) {
+            try {
+              lstatSync(resolve(real, target));
+            } catch (error) {
+              if (error.code === 'ENOENT') return false;
+              throw error;
+            }
+          }
+          throw failed(git, there, timeout);
+        }
         return false;
       }
       const [top, gitDirectory, common] = there.stdout.split('\n').map((each) => realOrNothing(each, rejectFailedChecks));

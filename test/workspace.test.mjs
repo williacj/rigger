@@ -2120,3 +2120,33 @@ test('a filesystem answer that a scratch path is not a directory leaves it uncha
   assert.match(events[0].reason, /not a directory/);
   assert.match(events[1].reason, /not empty/);
 });
+
+// proves R-WORK-30
+test('an unreadable worktree administrative directory keeps Review until a later pull can remove it', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const admin = gitIn(made.path, 'rev-parse', '--absolute-git-dir').trim();
+  const mode = statSync(admin).mode & 0o777;
+  const before = { files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') };
+  const built = mergedRemoval(here);
+  const beforeEvents = here.events().length;
+  chmodSync(admin, 0o000);
+
+  try {
+    await assert.rejects(built.loop.pull());
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.equal(lstatSync(admin).isDirectory(), true);
+    assert.equal(lstatSync(admin).mode & 0o777, 0);
+    const left = here.events().slice(beforeEvents).filter(({ event, path }) => event === 'workspace.left' && path === made.path);
+    assert.equal(left.length, 1);
+    assert.match(left[0].reason, /exited 128/);
+  } finally {
+    chmodSync(admin, mode);
+  }
+
+  assert.deepEqual({ files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') }, before);
+  await built.loop.pull();
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.equal(existsSync(made.path), false);
+  assert.equal(worktreeList(here.repository).includes(made.path), false);
+});
