@@ -1,6 +1,6 @@
 // ABOUTME: The forge adapter's read side: the board's cards, columns and single-select fields, the
-// repository's labels, branches, pull requests and issue edits, and the IDs a write names, each
-// read through the read runner.
+// repository's labels, branches, default branch, issues, pull requests and files at a commit, and
+// the IDs a write names, each read through the read runner.
 
 import { literal } from './graphql.mjs';
 import { COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
@@ -402,15 +402,43 @@ async function labelled(operation, board, addressed, read) {
   }
 }
 
+/**
+ * The data gh printed where a GraphQL read failed only because the forge holds nothing at
+ * `path`, the field path of what was read, or null where it failed otherwise or did not fail. gh
+ * exits 1 on any GraphQL error, printing the whole response on stdout, and GitHub answers each
+ * thing it holds nothing at as a `NOT_FOUND` error at that field's path, with the field null
+ * (measured with gh 2.99.0 on this repository on 2026-10-11, for an issue and a file).
+ */
+function notFoundAt(said, path) {
+  if (said.status === 0 || said.timedOut) return null;
+  let printed;
+  try {
+    printed = JSON.parse(said.stdout);
+  } catch {
+    return null;
+  }
+  if (printed === null || typeof printed !== 'object') return null;
+  const { errors } = printed;
+  const only = Array.isArray(errors) && errors.length > 0
+    && errors.every((error) => error?.type === 'NOT_FOUND' && JSON.stringify(error.path) === JSON.stringify(path));
+  const data = printed.data;
+  const held = path.reduce((value, key) => (value === null || value === undefined ? undefined : value[key]), data);
+  return only && held === null ? data : null;
+}
+
+/** A commit's full SHA, as the forge answers one and as a read at a commit is given one. */
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+
 /** A pull request as the reads answer it: its number, head SHA and base branch. */
 const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: headRefOid, base: baseRefName });
 
 /**
  * The reads of a card's facts held in the repository `board.repo` names: its line of work's
- * branch and pull requests, a pull request's diff, merge base and comments, and an issue's last
- * edit. Each is sent through the read runner, as `readSide`'s reads are, with `send`, `emitter`
- * and `timeout`. Each is given what it reads, and what a failure says it was reading. A read that
- * fails rejects naming what it read and why, and never answers none in its place.
+ * branch and pull requests, a pull request's diff, merge base and comments, the repository's
+ * default branch, and one issue or pull request by its number. Each is sent through the read
+ * runner, as `readSide`'s reads are, with `send`, `emitter` and `timeout`. Each is given what it
+ * reads, and what a failure says it was reading. A read that fails rejects naming what it read and
+ * why, and never answers none in its place.
  */
 const REPOSITORY_READS = {
   /**
@@ -507,7 +535,105 @@ const REPOSITORY_READS = {
       return comments;
     },
   },
+  /**
+   * The repository's default branch, as `{ name, head }`: its name and the full SHA of its head
+   * commit. A repository with no default branch, as an empty one has none, rejects naming it.
+   */
+  readDefaultBranch: {
+    reading: () => 'the default branch',
+    read: async (board, via, target, addressed) => {
+      const data = await asked('readDefaultBranch', board, repositoryQuery(board, 'defaultBranchRef { name target { oid } }'), via, addressed);
+      if (!data?.repository) fail('readDefaultBranch', board, `${addressed}gh answered no repository`);
+      const branch = data.repository.defaultBranchRef;
+      if (!branch) fail('readDefaultBranch', board, `${addressed}${board.repo} holds no default branch`);
+      if (typeof branch.name !== 'string' || !FULL_SHA.test(branch.target?.oid ?? '')) fail('readDefaultBranch', board, `${addressed}gh answered no name or head commit`);
+      return { name: branch.name, head: branch.target.oid };
+    },
+  },
+  /**
+   * Issue `number`, open or closed, as `{ number, body, labels }`: its body, the empty string
+   * where it has none, and every label's name across pages, in the order gh answers them.
+   */
+  readIssue: {
+    reading: (number) => `issue #${number}`,
+    read: async (board, via, number, addressed) => {
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number body repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
+      const labels = [];
+      for (let after = '';;) {
+        const said = await readRunner(graphqlRequest(query(`first: ${PAGE}${after}`)), via);
+        if (after === '' && notFoundAt(said, ['repository', 'issue'])) return null;
+        const issue = heldIn('readIssue', board, answerOf('readIssue', board, said, addressed), 'issue', addressed);
+        if (!ofRepository(board, issue.repository.nameWithOwner)) return null;
+        labels.push(...issue.labels.nodes.map((label) => label.name));
+        if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, body: issue.body, labels };
+        after = `, after: ${literal(issue.labels.pageInfo.endCursor)}`;
+      }
+    },
+  },
+  /**
+   * Pull request `number`, whatever its state or the repository its head is in, as `{ number,
+   * head, base, state, headRepository, fromRepository }`: `head` and `base` as `pullRequestOf`
+   * names them, `state` one of `open`, `closed` or `merged`, `headRepository` the head's repository
+   * as `owner/name`, or null where it was deleted, and `fromRepository` whether that is the board's
+   * repository. A fork's pull request is answered, not left out: refusing one is its caller's call.
+   */
+  readPullRequestByNumber: {
+    reading: (number) => `pull request #${number}`,
+    read: async (board, via, number, addressed) => {
+      const query = repositoryQuery(board, `pullRequest(number: ${numbered('readPullRequestByNumber', board, number)}) { number state headRefOid baseRefName headRepository { nameWithOwner } }`);
+      const pull = heldIn('readPullRequestByNumber', board, await asked('readPullRequestByNumber', board, query, via, addressed), 'pullRequest', addressed);
+      const states = { OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' };
+      if (!Object.hasOwn(states, pull.state)) fail('readPullRequestByNumber', board, `${addressed}gh answered state ${pull.state}`);
+      const headRepository = pull.headRepository?.nameWithOwner ?? null;
+      return { ...pullRequestOf(pull), state: states[pull.state], headRepository, fromRepository: headRepository !== null && ofRepository(board, headRepository) };
+    },
+  },
 };
+
+/** The git modes of a file whose text a read answers: a regular file, and an executable one. */
+const FILE_MODES = [0o100644, 0o100755];
+
+/** What each other git mode a tree entry can hold is, as a failure names it. */
+const ENTRY_KINDS = { [0o040000]: 'a directory', [0o120000]: 'a symbolic link', [0o160000]: 'a submodule' };
+
+/**
+ * Whether `path` names an entry within a commit's tree as a read sends it: not empty, not from the
+ * root, and with no empty, `.` or `..` segment, each of which names something else or nothing.
+ */
+const withinCommit = (path) => typeof path === 'string' && path !== '' && !path.startsWith('/')
+  && path.split('/').every((segment) => !['', '.', '..'].includes(segment));
+
+/**
+ * The text of the file at `path` in `commit`, or null where the forge's answer shows the commit
+ * holding no entry there. An answer that does not show the commit rejects naming it, so a missing
+ * commit is never read as a missing file. A directory, a symbolic link, a submodule and a binary
+ * file each reject naming the path and what it is, the link's target never answered in its place;
+ * so does a file the forge does not send whole, with no part of its text.
+ */
+async function fileAt(board, via, commit, path, addressed) {
+  const refuse = (why) => fail('readFileAt', board, `${addressed}${why}`);
+  if (typeof commit !== 'string' || !FULL_SHA.test(commit)) refuse(`${commit} is not a commit's full SHA`);
+  if (!withinCommit(path)) refuse(`${JSON.stringify(path)} is not a path within a commit`);
+  const query = repositoryQuery(board, `object(oid: ${literal(commit)}) { ... on Commit { oid file(path: ${literal(path)}) { mode type object { ... on Blob { text isBinary isTruncated byteSize } } } } }`);
+  const said = await readRunner(graphqlRequest(query), via);
+  const data = notFoundAt(said, ['repository', 'object', 'file']) ?? answerOf('readFileAt', board, said, addressed);
+  if (!data?.repository) refuse('gh answered no repository');
+  const { object } = data.repository;
+  if (typeof object?.oid !== 'string' || object.oid.toLowerCase() !== commit.toLowerCase() || !Object.hasOwn(object, 'file')) {
+    refuse(`gh answered no commit ${commit}`);
+  }
+  const { file } = object;
+  if (file === null) return null;
+  if (!FILE_MODES.includes(file?.mode) || file.type !== 'blob') {
+    refuse(`${path} is ${ENTRY_KINDS[file?.mode] ?? `an entry of mode ${file?.mode} and type ${file?.type}`}, not a file`);
+  }
+  const blob = file.object;
+  if (blob?.isBinary !== false) refuse(`${path} is a binary file`);
+  if (blob.isTruncated !== false || typeof blob.text !== 'string' || Buffer.byteLength(blob.text) !== blob.byteSize) {
+    refuse(`gh did not send ${path} whole, ${blob.byteSize} bytes`);
+  }
+  return blob.text;
+}
 
 /**
  * `REPOSITORY_READS` on `board`, each taking what it reads, sent as `send`, `emitter` and
@@ -529,6 +655,10 @@ export function repositoryReads(board, { send, emitter, timeout } = {}) {
   reads.readEffectiveRules = (branch) => {
     const addressed = reading(board, `effective rules for branch ${branch}`);
     return labelled('readEffectiveRules', board, addressed, () => effectiveRules(board, via, branch, addressed));
+  };
+  reads.readFileAt = (commit, path) => {
+    const addressed = reading(board, `${path} at ${commit}`);
+    return labelled('readFileAt', board, addressed, () => fileAt(board, via, commit, path, addressed));
   };
   return reads;
 }

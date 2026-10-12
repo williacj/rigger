@@ -1458,7 +1458,9 @@ test('C615 fixture-read-refusal retains synthetic failed and incomplete returns'
     assert.deepEqual(start.args, ['-p', '42001', '-o', 'lstart=']);
     for (const stream of ['stdout', 'stderr']) {
       const expected = variant.result?.[stream];
-      assert.equal(end.streams[stream].type, typeof expected);
+      const present = variant.result !== undefined && Object.hasOwn(variant.result, stream);
+      assert.equal(end.streams[stream].present, present);
+      assert.equal(end.streams[stream].type, !present ? 'absent' : expected === null ? 'null' : typeof expected);
       if (typeof expected === 'string') {
         assert.equal(end.streams[stream].file, `001.${stream}.utf8`);
         assert.equal(readFileSync(join(prepared, `001.${stream}.utf8`), 'utf8'), expected,
@@ -6238,3 +6240,52 @@ test('C615 G3 no-last C3 later name timeout records an unnamed group result', SE
 test('C615 G3 no-last C4 command timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C4', false); });
 // proves R-STATE-9
 test('C615 G3 no-last C5 state timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C5', false); });
+
+/** Checks synthetic return boundaries without claiming real process-tool or prepared-cell proof. */
+test('C615 preparation streams distinguish absent undefined null and empty returns', SETTLES_WITHIN, () => {
+  const values = [
+    { label: 'absent', present: false, type: 'absent' },
+    { label: 'undefined', present: true, type: 'undefined', value: undefined },
+    { label: 'null', present: true, type: 'null', value: null },
+    { label: 'empty', present: true, type: 'string', value: '' },
+    { label: 'partial', present: true, type: 'string', value: 'partial returned text\n' },
+  ];
+  for (const name of ['stdout', 'stderr']) {
+    for (const boundary of values) {
+      const result = { status: 2, signal: null, stdout: 'other returned stdout\n', stderr: 'other returned stderr\n' };
+      if (boundary.present) result[name] = boundary.value;
+      else delete result[name];
+      const directory = syntheticPreparationDirectory(`stream-${name}-${boundary.label}`);
+      let calls = 0;
+      const reader = (tool, argv) => {
+        calls++;
+        assert.equal(tool, '/bin/ps');
+        assert.deepEqual(argv, ['-p', '42001', '-o', 'lstart=']);
+        return result;
+      };
+      assert.throws(() => prepareSighting(directory, { reader }), /not a product-equivalent answer/);
+      assert.equal(calls, 1, 'a refused return triggered another preparation read');
+      assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false);
+      const prepared = join(directory, 'sighting-prepared');
+      const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
+      assert.equal(end.source, 'synthetic-controlled-return');
+      assert.deepEqual({ present: end.streams[name].present, type: end.streams[name].type },
+        { present: boundary.present, type: boundary.type }, `${name}/${boundary.label}: return boundary was lost`);
+      if (boundary.type === 'string') {
+        assert.equal(end.streams[name].file, `001.${name}.utf8`);
+        assert.equal(readFileSync(join(prepared, end.streams[name].file), 'utf8'), boundary.value);
+      } else {
+        assert.equal(end.streams[name].file, null);
+        assert.equal(existsSync(join(prepared, `001.${name}.utf8`)), false, 'an unreturned stream gained byte originals');
+      }
+    }
+  }
+  const directory = syntheticPreparationDirectory('stream-thrown-before-return');
+  assert.throws(() => prepareSighting(directory, { reader: () => { throw new Error('synthetic pre-return failure'); } }),
+    /threw before returning/);
+  const end = JSON.parse(readFileSync(join(directory, 'sighting-prepared', '001.json'), 'utf8'));
+  for (const name of ['stdout', 'stderr']) {
+    assert.deepEqual(end.streams[name], { present: false, type: 'absent', file: null });
+    assert.equal(existsSync(join(directory, 'sighting-prepared', `001.${name}.utf8`)), false);
+  }
+});

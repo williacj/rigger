@@ -366,7 +366,7 @@ test('a continuing attempt retries L1 at the same head L2 named', async () => {
       heads.push(head);
       throw Object.assign(new Error('workspace unavailable'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });
     },
-    judgeDirectory: async () => {}, state: built.directory, environment: {},
+    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: built.directory, environment: {},
   });
 
   await assert.rejects(l3.pull(), (failure) => {
@@ -448,6 +448,24 @@ for (const { action, method, ruling, merged } of [
     if (action === 'escalate') assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
   });
 }
+
+// proves R-WORK-30
+test('a pull that reads a person-merged pull request records removal before the transition to Done', async () => {
+  let built;
+  built = world({
+    cards: [cardIn(84, COLUMNS.review)],
+    forge: { pullRequests: [{ number: 841, head: 'rigger-84', sha: '8'.repeat(40), merged: true }] },
+    removeDirectories: async (card) => { built.sink.emitter({ layer: 'L1', card }).emit('workspace.removed', { path: '/card-84' }); },
+  });
+
+  await built.loop.pull();
+
+  const events = built.events();
+  const removal = events.findIndex(({ layer, event, card }) => layer === 'L1' && event === 'workspace.removed' && card === 84);
+  assert.deepEqual(events.filter(({ layer, card }) => layer === 'L3' && card === 84).map(({ event }) => event), ['pull', 'slot.release']);
+  const done = events.findIndex(({ layer, event, card, to }) => layer === 'L2' && event === 'transition' && card === 84 && to === 'done');
+  assert.ok(removal >= 0 && removal < done, JSON.stringify(events));
+});
 
 test('a refused move names both columns and leaves another card in the same pull working', async () => {
   const fake = boardOf([cardIn(91, COLUMNS.review), 92]);

@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
-import { judgeDirectoryHandle, workspaceHandle } from '../execution/workspace.mjs';
+import { judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
@@ -191,6 +191,7 @@ async function claiming(verb, limit, opened, {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
   const judgeDirectory = judgeDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
+  const removeDirectories = (card) => removeCardDirectories({ root, topic: worktreeTopic(config), card, repository: named, sink });
 
   const forge = { ...config.board, repo: config.repo };
   const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
@@ -313,7 +314,7 @@ async function claiming(verb, limit, opened, {
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, state, environment: process.env }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, removeDirectories, state, environment: process.env }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start

@@ -1,5 +1,5 @@
-// ABOUTME: L3's repo lane: the merges L2 decides, made one at a time in the order L3 pulled them, each
-// recorded as `merge.start` and `merge.end` around L2's re-run of its rule and L2's merge call.
+// ABOUTME: L3's repo lane merges one card at a time in pull order, records each merge, and asks
+// L1 to remove merged cards' directories before L2 moves them to Done.
 
 /** What `merge.end` names of L2's merge answer `answer`: its outcome, and its reason and context where it gives them. */
 const named = ({ outcome, reason, context }) => ({ outcome, ...(reason === undefined ? {} : { reason }), ...(context === undefined ? {} : { context }) });
@@ -14,7 +14,7 @@ const beside = (first, second, sentence) => (first === null ? second : new Aggre
  * merge queued before it and settles once its own merge has ended, so no two merges overlap
  * (`R-SCHED-15`), as `merged` says.
  */
-export function lane({ board, facts, l2, record, refused }) {
+export function lane({ board, facts, l2, record, refused, removeDirectories }) {
   let tail = Promise.resolve();
 
   /**
@@ -32,9 +32,9 @@ export function lane({ board, facts, l2, record, refused }) {
    * - `not merged`, where L2 answered other than that, with the `action` it answered, or where the
    *   card could not be read again, with why as `reason`.
    *
-   * Only after `merge.end` is recorded does L2 settle the card from the call's answer, as its
-   * `mergeEnded` says. A `merge.end` the sink refuses is the halt: nothing more is done for the card,
-   * and the failure names it. Answers `{ reached, failure }`: `reached`, the card's number, `action`
+   * After a recorded `merge.end` of `merged` or `already merged`, L1 removes the card's directories
+   * before L2 settles it through `mergeEnded`. A `merge.end` the sink refuses is the halt: nothing
+   * more is done for the card, and the failure names it. Answers `{ reached, failure }`: `reached`, the card's number, `action`
    * `merge`, the pull request and head, and `merge`, what `merge.end` named; and `failure`, the
    * failure to report, or null where there was none.
    */
@@ -67,6 +67,7 @@ export function lane({ board, facts, l2, record, refused }) {
     }
     if (answer !== undefined) {
       try {
+        if (answer.outcome === 'merged' || answer.outcome === 'already merged') await removeDirectories(card.number);
         await l2.mergeEnded(item, again, answer);
       } catch (thrown) {
         return { reached, failure: beside(failure, thrown, `card #${card.number}'s merge failed, and so did L2's settle of it`) };

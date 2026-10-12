@@ -116,7 +116,7 @@ function attemptWorld({
     readColumns: () => { requests += 1; return handle.readColumns(); },
     readPriority: () => { requests += 1; return handle.readPriority(); },
   };
-  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: making, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: making, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() } });
   return { directory, fake, loop: built, events, asks, made: making.made, makerCalls, settled: settledCards, requests: () => requests };
 }
 
@@ -141,6 +141,7 @@ const handed = () => ({
   kill: async () => {},
   workspace: async () => ({ path: '/nowhere' }),
   judgeDirectory: async () => ({ path: '/nowhere', main: '/nowhere/main', head: '/nowhere/head' }),
+  removeDirectories: async () => {},
   state: '/nowhere/.rigger',
   environment: {},
 });
@@ -148,6 +149,13 @@ const handed = () => ({
 test('given a workspace handle that is not a function, loop throws when built, naming the handle', () => {
   for (const workspace of [undefined, null, '/a/path', { path: '/a/path' }]) {
     assert.throws(() => loop({ ...handed(), workspace }), /\bworkspace handle\b/, String(workspace));
+  }
+});
+
+// proves R-WORK-30
+test('given a removal handle that is not a function, loop throws when built, naming the handle', () => {
+  for (const removeDirectories of [undefined, null, '/a/path', { path: '/a/path' }]) {
+    assert.throws(() => loop({ ...handed(), removeDirectories }), /\bremoveDirectories\b/, String(removeDirectories));
   }
 });
 

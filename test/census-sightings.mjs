@@ -102,7 +102,8 @@ export function prepareSighting(directory, { reader = spawnSync, clock = process
     const streams = {};
     for (const name of ['stdout', 'stderr']) {
       const value = result?.[name];
-      streams[name] = { type: typeof value, file: null };
+      const present = result !== undefined && result !== null && Object.hasOwn(result, name);
+      streams[name] = { present, type: !present ? 'absent' : value === null ? 'null' : typeof value, file: null };
       if (typeof value === 'string') {
         const file = `${id}.${name}.utf8`;
         writeFileSync(join(output, file), value, { flag: 'wx', mode: 0o600 });

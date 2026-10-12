@@ -698,6 +698,7 @@ function contents(path) {
   return { mode: held.mode, entries: Object.fromEntries(readdirSync(path).sort().map((name) => [name, contents(join(path, name))])) };
 }
 
+// proves R-WORK-26, R-WORK-27
 test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, roleDispatch rejects with NOT_STARTED naming the link, starts no process, and the link and what it points at are unchanged', SETTLES_WITHIN, async (t) => {
   for (const linked of [['scratch'], ['scratch', 'rigger-1412']]) {
     const placed = layout(t);
@@ -734,6 +735,7 @@ test('given a worktree of the repository registered at <scratch>/<role> or insid
   }
 });
 
+// proves R-WORK-26, R-WORK-27
 test('given a file, a symbolic link to a directory, or a symbolic link to nothing at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the path is unchanged', SETTLES_WITHIN, async (t) => {
   for (const put of [
     (path) => writeFileSync(path, 'not a directory\n'),
@@ -973,6 +975,7 @@ test('the Claude Code adapter answers the same invocation with a scratch directo
   assert.deepEqual(given, without);
 });
 
+// proves R-WORK-29
 test('given a worktree of the repository whose .git entry has been moved out of it, registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path and the worktree, starts no process, and the worktree\'s files, its registration and its branch are unchanged', SETTLES_WITHIN, async (t) => {
   for (const under of [[], ['deep', 'tree']]) {
     const placed = layout(t);
@@ -1025,6 +1028,7 @@ test('given a worktree of the repository registered inside <scratch>/<role> whos
   assert.deepEqual(asked, [{ scratch: path, there: true, holds: [] }]);
 });
 
+// proves R-WORK-28
 test('given a worktree of another repository, which the repository\'s git does not list, at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
@@ -1119,6 +1123,7 @@ test('given a scratch base inside a linked worktree of an unrelated repository, 
   assert.equal(existsSync(join(tree, 'scratch')), false, 'L1 made the scratch base inside the unrelated worktree');
 });
 
+// proves R-WORK-28
 test('given a .git file at an ancestor of <scratch>/<role> between it and the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const root = join(placed.root, 'worktrees');
@@ -1159,6 +1164,7 @@ test('given an ancestor of <scratch>/<role> up to the worktree root that L1 cann
   assert.deepEqual(readdirSync(join(base, 'engineer')), []);
 });
 
+// proves R-WORK-29
 test('given a scratch base inside a registered worktree of the repository whose .git was moved aside, not yet made, plain or through a symbolic link, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
   for (const spelled of ['plain', 'through a link']) {
     const placed = layout(t);
