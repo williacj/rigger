@@ -1,5 +1,5 @@
-// ABOUTME: L1's workspace making: derives a card's workspace and branch from the topic, makes it
-// from main or a continuing card head, and makes each judge's directory from main and PR head.
+// ABOUTME: L1 makes card workspaces, judge and scratch directories under their replace rules,
+// and removes a merged card's directories before its move to Done.
 
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -13,6 +13,9 @@ import { ADDING, workspaces } from '../substrate/worktrees.mjs';
  * caller tells it from a command that ran, or never started, without reading the message.
  */
 export const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';
+
+/** A completed replace-rule check that refuses the path, distinct from a check that failed. */
+const replacementRefused = (message) => Object.assign(new Error(message), { code: 'REPLACEMENT_REFUSED' });
 
 /**
  * The name `topic` derives for `card`: the topic with each `{number}` replaced by the card's issue
@@ -136,7 +139,7 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
  * answer (`scratchBase`), and which this makes where it does not exist yet.
  *
  * A directory already there is removed first, without following any symbolic link inside it, once
- * `scratchChecked` has passed what is there. L1
+ * `scratchReplaceable` has passed what is there. L1
  * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
  * the path, and a `workspace.failed` carrying them and why. Every failure rejects with
  * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
@@ -152,13 +155,9 @@ export async function makeScratch({ base, role, card, repository, sink }) {
       throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause);
     }
   };
-  await step(() => noCheckoutAbove(base, path));
-  const there = await step(() => scratchChecked(base, path));
-  await step(() => unregistered({ path, there, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
+  const there = await step(() => scratchReplaceable({ base, path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
   if (there) {
     await step(async () => {
-      const checkout = checkoutIn(path);
-      if (checkout !== undefined) throw new Error(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`);
       writable(path);
       rmSync(path, { recursive: true });
     });
@@ -167,6 +166,18 @@ export async function makeScratch({ base, role, card, repository, sink }) {
   await step(() => mkdirSync(path, { recursive: true }));
   recorded(events, card, 'workspace.made', { role, path });
   return path;
+}
+
+/** The complete scratch replace rule, shared by making a role directory and removing a merged card's. */
+async function scratchReplaceable({ base, path, repository, adapter }) {
+  noCheckoutAbove(base, path);
+  const there = scratchChecked(base, path);
+  await unregistered({ path, there, repository, adapter });
+  if (there) {
+    const checkout = checkoutIn(path);
+    if (checkout !== undefined) throw replacementRefused(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`);
+  }
+  return there;
 }
 
 /**
@@ -201,7 +212,7 @@ function noCheckoutFrom(start, path) {
       if (error.code !== 'ENOENT') throw new Error(`${path} lies under ${ancestor}, where L1 cannot read whether ${git} is there, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
       found = false;
     }
-    if (found) throw new Error(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
+    if (found) throw replacementRefused(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
     if (dirname(ancestor) === ancestor) return;
   }
 }
@@ -222,7 +233,7 @@ function realNamed(path) {
  * and the base must each be a directory, not a symbolic link, where they exist, so nothing L1
  * removes or makes lies elsewhere. At `path` must be nothing, or a directory, not a symbolic link,
  * whose real path resolves. Anything else fails naming the path, as does a path L1 cannot read,
- * since L1 cannot tell what is there. `makeScratch` then asks git (`unregistered`) and walks the
+ * since L1 cannot tell what is there. `scratchReplaceable` then asks git (`unregistered`) and walks the
  * directory (`checkoutIn`) before it removes anything.
  */
 function scratchChecked(base, path) {
@@ -266,8 +277,8 @@ async function unregistered({ path, there, repository, adapter }) {
       if (error.code === 'ENOENT') continue;
       throw new Error(`${path} may lie in or hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
     }
-    if (underOrAt(real, tree)) throw new Error(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`);
-    if (there && underOrAt(tree, real)) throw new Error(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
+    if (underOrAt(real, tree)) throw replacementRefused(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`);
+    if (there && underOrAt(tree, real)) throw replacementRefused(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
   }
 }
 
@@ -285,7 +296,7 @@ function nearestReal(path) {
 }
 
 /** The failure for `path`, which `lstat` read as `there`, no directory: a symbolic link, which is never followed, or anything else. */
-const notDirectory = (path, there) => new Error(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`);
+const notDirectory = (path, there) => replacementRefused(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`);
 
 /** What `lstat` reads at `path`, or nothing where nothing is there; anything else unreadable throws naming it. */
 function lstatOrAbsent(path) {
@@ -341,13 +352,13 @@ function checkoutIn(path) {
  * either.
  */
 async function judgeChecked({ adapter, path, repository }) {
-  const leaves = (why) => new Error(`${path} ${why}, so L1 leaves it as it is`);
+  const leaves = (why, blocksDone = false) => Object.assign(replacementRefused(`${path} ${why}, so L1 leaves it as it is`), { blocksDone });
   /** `there`'s real path, or, where nothing is there, its parent's joined to its name. */
   const real = (there) => {
     try {
       return realpathSync.native(there);
     } catch (error) {
-      if (error.code !== 'ENOENT' || dirname(there) === there) throw leaves(`cannot be read at ${there}: ${error.message}`);
+      if (error.code !== 'ENOENT' || dirname(there) === there) throw new Error(`${path} cannot be read at ${there}: ${error.message}`, { cause: error });
       return join(real(dirname(there)), basename(there));
     }
   };
@@ -355,7 +366,7 @@ async function judgeChecked({ adapter, path, repository }) {
   try {
     there = lstatSync(path);
   } catch (error) {
-    if (error.code !== 'ENOENT') throw leaves(`cannot be read: ${error.message}`);
+    if (error.code !== 'ENOENT') throw new Error(`${path} cannot be read: ${error.message}`, { cause: error });
   }
   if (there !== undefined && !there.isDirectory()) throw leaves('is not a directory');
   const own = real(path);
@@ -364,7 +375,7 @@ async function judgeChecked({ adapter, path, repository }) {
     try {
       names = readdirSync(own);
     } catch (error) {
-      throw leaves(`cannot be read: ${error.message}`);
+      throw new Error(`${path} cannot be read: ${error.message}`, { cause: error });
     }
   }
   const inside = (at) => {
@@ -379,7 +390,7 @@ async function judgeChecked({ adapter, path, repository }) {
   /** Adds `record`'s worktree to those L1 unlocks where `ADDING` locks it, failing on any other lock. */
   const lockOf = (record) => {
     if (record.locked === undefined) return;
-    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`);
+    if (!record.detached || record.locked !== ADDING) throw leaves(`holds ${record.at}, a worktree of the repository locked with the reason ${JSON.stringify(record.locked)}`, true);
     unlocking.push(record.real);
   };
   for (const name of names) {
@@ -426,20 +437,20 @@ async function cleared({ adapter, card, branch, path, repository }, beforeRemove
     return undefined;
   }
   if (!(await adapter.isWorktree(path))) {
-    throw new Error(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
   }
   const real = realpathSync.native(path);
   if (real === (await adapter.topLevel())) {
-    throw new Error(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
   }
   const held = await adapter.registration(real);
   if (held?.branch !== branch) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
-    throw new Error(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
   }
   const nested = (await adapter.registered()).find((listed) => within(path, real, listed));
   if (nested !== undefined) {
-    throw new Error(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
   }
   await beforeRemove();
   writable(real);
@@ -489,6 +500,122 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
  * addendum on #467).
  */
 export const judgeDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeJudgeDirectory({ root, topic, card, role, head, repository, sink });
+
+/** Removes the directories of a merged card that their replace rules admit, before its Done move. */
+export async function removeCardDirectories({ root, topic, card, repository, sink, timeout }) {
+  if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path`);
+  const name = topicFor(topic, card);
+  const events = sink.emitter({ layer: 'L1', card });
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }), timeout, rejectFailedChecks: true });
+  const failures = [];
+  const left = (path, reason, role) => recorded(events, card, 'workspace.left', { path, reason, ...(role === undefined ? {} : { role }) });
+  const removed = (path, role) => recorded(events, card, 'workspace.removed', { path, ...(role === undefined ? {} : { role }) });
+  /** Only a completed rule's refusal leaves Done unblocked; an unread check or failed removal blocks it. */
+  const attempt = async (path, role, work) => {
+    let begun = false;
+    try {
+      const gone = await work(() => { begun = true; });
+      if (gone) removed(typeof gone === 'string' ? gone : path, role);
+    } catch (failure) {
+      if (failure.code === EVENT_REFUSED) throw failure;
+      left(path, failure.message, role);
+      if (begun || failure.blocksDone || failure.code !== 'REPLACEMENT_REFUSED') failures.push(failure);
+    }
+  };
+  const workspace = join(root, name);
+  await attempt(workspace, undefined, async (begin) => {
+    const held = await adapter.registration(workspace);
+    if (held?.locked !== undefined && held.locked !== ADDING) throw Object.assign(new Error(`${workspace} is locked with the reason ${JSON.stringify(held.locked)}`), { blocksDone: true });
+    const gone = await cleared({ adapter, card, branch: name, path: workspace, repository }, async () => {
+      begin();
+      if (held?.locked === ADDING) await adapter.unlock(workspace);
+    });
+    return gone;
+  });
+  /** Removes each disk entry under one topic, then the topic directory once safely empty. */
+  const children = async (kind, remove) => {
+    const parent = join(root, kind);
+    const base = join(parent, name);
+    let names;
+    try {
+      const above = lstatOrAbsent(parent);
+      const there = lstatOrAbsent(base);
+      if (above === undefined || there === undefined) return;
+      if (!above.isDirectory()) throw notDirectory(parent, above);
+      if (!there.isDirectory()) throw notDirectory(base, there);
+      names = readdirSync(base).sort();
+    } catch (failure) {
+      left(base, failure.message);
+      if (failure.code !== 'REPLACEMENT_REFUSED') failures.push(failure);
+      return;
+    }
+    for (const role of names) {
+      const path = join(base, role);
+      await attempt(path, role, (begin) => remove({ path, base, role, begin }));
+    }
+    try {
+      if (readdirSync(base).length > 0) {
+        left(base, `${base} is not empty`);
+        return;
+      }
+      rmdirSync(base);
+      removed(base);
+    } catch (failure) {
+      if (failure.code === EVENT_REFUSED) throw failure;
+      left(base, failure.message);
+      failures.push(failure);
+    }
+  };
+  await children('judges', async ({ path, begin }) => {
+    const found = await judgeChecked({ adapter, path, repository });
+    if (!found.present) return false;
+    begin();
+    await judgeCleared(adapter, found);
+    return true;
+  });
+  await children('scratch', async ({ path, base, begin }) => {
+    const there = await scratchReplaceable({ base, path, repository, adapter });
+    if (!there) return false;
+    begin();
+    writable(path);
+    rmSync(path, { recursive: true });
+    return true;
+  });
+  const judges = join(root, 'judges');
+  const judgeBase = join(judges, name);
+  try {
+    const parent = lstatOrAbsent(judges);
+    const topicDirectory = lstatOrAbsent(judgeBase);
+    if ((parent === undefined || parent.isDirectory()) && (topicDirectory === undefined || topicDirectory.isDirectory())) {
+      const base = nearestReal(judgeBase);
+      for (const record of await adapter.listing()) {
+        if (record.locked === undefined || lstatOrAbsent(record.at) !== undefined) continue;
+        const at = nearestReal(record.at);
+        if (!underOrAt(at, base) || at === base) continue;
+        const role = relative(base, at).split(sep)[0];
+        if (record.detached && record.locked === ADDING) {
+          await adapter.unlock(record.at);
+          continue;
+        }
+        const failure = new Error(`${record.at} is registered with a person's lock, ${JSON.stringify(record.locked)}`);
+        left(record.at, failure.message, role);
+        failures.push(failure);
+      }
+    }
+  } catch (failure) {
+    if (failure.code === EVENT_REFUSED) throw failure;
+    left(judgeBase, `git could not inspect gone judge worktrees: ${failure.message}`);
+    failures.push(failure);
+  }
+  try {
+    await adapter.prune();
+  } catch (failure) {
+    if (failure.code === EVENT_REFUSED) throw failure;
+    left(workspace, `git could not prune gone worktree registrations: ${failure.message}`);
+    failures.push(failure);
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `L1 could not remove all directories of card #${card}`);
+}
 
 /**
  * Takes away the lock on a registration at `path`, whose directory is gone, where git lists it on
@@ -550,12 +677,7 @@ function within(path, real, listed) {
 
 /** Whether anything is at `path`, a symbolic link to nothing included. */
 function present(path) {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
+  return lstatOrAbsent(path) !== undefined;
 }
 
 /**

@@ -398,6 +398,31 @@ test('given N of 1, two pullable cards and loop().run(), card B is not claimed u
   assert.ok(claimB > Math.max(...ends), JSON.stringify(events));
 });
 
+// proves R-WORK-30
+test('a judge still running when its pull request merges is removed only after the judge ends', SETTLES_WITHIN, async () => {
+  const removed = [];
+  const built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] }, removeDirectories: async (card) => { removed.push(card); } });
+  built.agent.plan(7, 'reviewer', { hold: true });
+  built.agent.plan(7, 'architect', { hold: true });
+
+  const first = built.loop.pull();
+  await waitFor(() => built.agent.held(7, 'reviewer') && built.agent.held(7, 'architect'), 20_000);
+  built.repository.update(1007, { merged: true });
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(removed, []);
+  built.agent.release(7, 'reviewer');
+  built.agent.release(7, 'architect');
+  await first;
+  if (removed.length === 0) await built.loop.pull();
+
+  assert.deepEqual(removed, [7]);
+  const events = built.events();
+  const ends = events.filter(({ layer, event, card }) => layer === 'L1' && event === 'dispatch.end' && card === 7);
+  const transition = events.findIndex(({ layer, event, card, to }) => layer === 'L2' && event === 'transition' && card === 7 && to === 'done');
+  assert.equal(ends.length, 2);
+  assert.ok(transition > events.lastIndexOf(ends.at(-1)), JSON.stringify(events));
+});
+
 // proves R-SCHED-2
 test('the card\'s slot is released only once every judge dispatch under its claim has handed back its outcome: slot.release follows every judge\'s dispatch.end', SETTLES_WITHIN, async () => {
   const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)] });

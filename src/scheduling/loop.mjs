@@ -206,13 +206,14 @@ function released(release, claim, failure) {
  * answers the attempt's workspace as `{ path }`, with the card's scratch base as `scratch` and the
  * repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and 21 on
  * #467). `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
- * `judged` says (the architect's ruling 4's addendum on #467). `state` is the state directory L1
- * records each dispatch's process group in, which L3 hands L1's `dispatch` unread (ruling 10).
+ * `judged` says (the architect's ruling 4's addendum on #467). `removeDirectories(card)` is L1's
+ * merged-card removal, injected. `state` is the state directory L1 records each dispatch's process
+ * group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
  * is built where `kill` or the facts call is not a function, checked in that order, and then, each
- * after those, where the workspace handle or `judgeDirectory` is not a function, `state` not a
- * non-empty string, or `environment` not an object.
+ * after those, where the workspace handle, `judgeDirectory` or `removeDirectories` is not a
+ * function, `state` not a non-empty string, or `environment` not an object.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -245,11 +246,12 @@ function released(release, claim, failure) {
  * One run also remembers stopped cards and cards whose
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, state, environment, ps, readTimeout }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, removeDirectories, state, environment, ps, readTimeout }) {
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
-  const { merge } = lane({ board, facts, l2, record, refused });
+  const { merge } = lane({ board, facts, l2, record, refused, removeDirectories });
   if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
   if (typeof judgeDirectory !== 'function') throw new Error(`L3 was handed no judgeDirectory of L1's, so it cannot make a judge's directory: judgeDirectory is ${typeof judgeDirectory}`);
+  if (typeof removeDirectories !== 'function') throw new Error(`L3 was handed no removeDirectories handle of L1's, so it cannot remove a merged card's directories: removeDirectories is ${typeof removeDirectories}`);
   if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
   if (environment === null || typeof environment !== 'object') throw new Error(`L3 was handed no environment for the dispatches it makes, so it cannot dispatch: the environment is ${environment === null ? 'null' : typeof environment}`);
 
@@ -503,6 +505,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       claimed = true;
       const kept = (made) => { reached = made; };
       if (next.action === 'move') {
+        if (next.to === 'done') await removeDirectories(card.number);
         await l2.moved(card, next);
         reached = { card: card.number, ...next };
       } else if (next.action === 'return') {

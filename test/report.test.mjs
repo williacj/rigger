@@ -98,7 +98,7 @@ async function recordRun(directory, { run = 'r-237', concurrency = 3, cards, rel
     mkdirSync(path, { recursive: true });
     return { path, scratch: join(outside, 'scratch', `rigger-${card}`), repository };
   };
-  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
+  const running = loop({ config: settings, board, decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() } })[entry]();
   try {
     // Positive: until every start the loop can make is held.
     await positive(everyStartMade);

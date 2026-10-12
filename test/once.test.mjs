@@ -22,6 +22,7 @@ import { once as onceEvent } from 'node:events';
 import { readdirSync } from 'node:fs';
 import { parse } from 'acorn';
 import { gitIn } from './git-repository.mjs';
+import { detachedWorktreeAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { until } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -224,6 +225,66 @@ for (const { action, ruling, merged, expectedColumn, line } of [
     if (action === 'escalate') assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'review.escalate').map(({ category }) => category), ['critical']);
   });
 }
+
+// proves R-WORK-30
+test('once removes a person-merged card’s real worktrees and scratch before moving it to Done', async () => {
+  const temporary = temporaryDirectory('rigger-once-removal-');
+  const worktrees = join(temporary, 'workspaces');
+  const settings = { ...config(), worktrees: { ...config().worktrees, root: worktrees } };
+  let paths;
+  const ran = once({ items: [card(10, 'Review')] }, {
+    settings,
+    seed: { pullRequests: [{ number: 11, head: 'rigger-10', sha: '6'.repeat(40), merged: true }] },
+    prepare: ({ consumer }) => {
+      const workspace = join(worktrees, 'rigger-10');
+      const judge = join(worktrees, 'judges', 'rigger-10', 'reviewer');
+      const scratch = join(worktrees, 'scratch', 'rigger-10', 'reviewer');
+      mkdirSync(judge, { recursive: true });
+      mkdirSync(scratch, { recursive: true });
+      mkdirSync(join(worktrees, 'unrelated'));
+      worktreeAt(consumer, workspace, 'rigger-10');
+      detachedWorktreeAt(consumer, join(judge, 'main'), 'HEAD');
+      detachedWorktreeAt(consumer, join(judge, 'head'), 'HEAD');
+      paths = { workspace, judge, scratch };
+    },
+  });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Done' });
+  for (const path of Object.values(paths)) assert.equal(existsSync(path), false, path);
+  assert.deepEqual(readdirSync(worktrees), ['judges', 'scratch', 'unrelated']);
+  assert.equal(worktreeList(ran.consumer).includes(paths.workspace), false);
+  const events = eventsOf(ran);
+  const done = events.findIndex(({ layer, event, to }) => layer === 'L2' && event === 'transition' && to === 'done');
+  assert.ok(done > 0, JSON.stringify(events));
+  assert.ok(events.filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').every((event) => events.indexOf(event) < done), JSON.stringify(events));
+});
+
+// proves R-WORK-30
+test('once leaves a closed unmerged pull request’s workspace in place', async () => {
+  const temporary = temporaryDirectory('rigger-once-closed-');
+  const worktrees = join(temporary, 'workspaces');
+  const settings = { ...config(), worktrees: { ...config().worktrees, root: worktrees } };
+  const head = '6'.repeat(40);
+  let workspace;
+  const ran = once({ items: [card(10, 'Review')] }, {
+    settings,
+    seed: {
+      pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments: [markerComment({ card: 10, pull: 11, head, body: ADMITTED })] }],
+      mergeable: { 11: 'MERGEABLE' }, pullStates: { 11: 'closed' },
+    },
+    prepare: ({ consumer }) => {
+      mkdirSync(worktrees);
+      workspace = join(worktrees, 'rigger-10');
+      worktreeAt(consumer, workspace, 'rigger-10');
+    },
+  });
+
+  assert.notEqual(ran.code, 0);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Review' });
+  assert.equal(existsSync(workspace), true);
+  assert.equal(eventsOf(ran).some(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), false);
+});
 
 test('once moves an Owner card to Review, then dispatches its owed reviewer on the next invocation', async () => {
   const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } };

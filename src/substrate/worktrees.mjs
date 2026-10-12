@@ -2,8 +2,8 @@
 // a detached worktree, removes one, and answers git questions about paths, branches and commits.
 // Every git call it makes runs one at a time.
 
-import { realpathSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { gitEnvironment } from './git-environment.mjs';
 import { EVENT_REFUSED, runCommand } from './process.mjs';
@@ -80,8 +80,10 @@ function queued(step) {
  * The adapter over the repository whose working tree is at `repository`. Every git call it makes
  * runs through L0's process adapter under `gitEnvironment()`, in `repository`, as `git`, for at
  * most `timeout` milliseconds, with its kills recorded through `emitter`.
+ * Removal sets `rejectFailedChecks`: a check that gives no answer then rejects, while a missing
+ * .git entry or administrative directory still reads as no linked worktree.
  */
-export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT }) {
+export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT, rejectFailedChecks = false }) {
   /** Runs git with `args`, one call at a time, and hands back its result. */
   const call = (args) => queued(async () => {
     const { exit, timedOut, stdout, stderr } = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });
@@ -293,20 +295,47 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * --git-common-dir` prints the three paths a line each. In the main working tree the git
      * directory and the common directory are one; in a linked worktree the git directory is
      * `<common>/worktrees/<name>`; in a directory below either, the top level is the worktree's,
-     * not the directory's; outside every repository git exits 128 with `fatal: not a git
-     * repository (or any of the parent directories): .git`. Every non-zero exit there is read as
-     * no, so a path git cannot answer for is never taken for a workspace; a timeout rejects. A
-     * path holding a newline would split the answer, and so is read as no.
+     * not the directory's. Non-zero exits read as no unless `rejectFailedChecks` is set, when a
+     * git or filesystem check giving no answer rejects. A missing .git entry still answers no.
+     * After a non-zero exit, only ENOENT from lstat of the `gitdir:` target in the .git file
+     * answers no: an existing but unreadable administrative directory must leave the check failed.
+     * This distinguishes a dropped registration without interpreting git's diagnostic text.
+     * A timeout rejects in either mode. A path holding a newline would split the answer, and so
+     * is read as no.
      */
     async isWorktree(path) {
-      const real = realOrNothing(path);
+      const real = realOrNothing(path, rejectFailedChecks);
       if (real === undefined || !statSync(real).isDirectory()) return false;
+      if (rejectFailedChecks) {
+        // A linked worktree has its .git entry at its root. Absence proves this path is not one;
+        // an unreadable entry or a failed git question proves nothing and must reject.
+        try {
+          lstatSync(join(real, '.git'));
+        } catch (error) {
+          if (error.code === 'ENOENT') return false;
+          throw error;
+        }
+      }
       const own = (await answer(['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
       const there = await call(['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
       if (there.timedOut) throw failed(git, there, timeout);
-      if (there.exit !== 0) return false;
-      const [top, gitDirectory, common] = there.stdout.split('\n').map(realOrNothing);
-      return top === real && common === realOrNothing(own) && common !== undefined && gitDirectory !== common;
+      if (there.exit !== 0) {
+        if (rejectFailedChecks) {
+          const target = /^gitdir: (.+)$/.exec(readFileSync(join(real, '.git'), 'utf8').split('\n')[0])?.[1];
+          if (target !== undefined) {
+            try {
+              lstatSync(resolve(real, target));
+            } catch (error) {
+              if (error.code === 'ENOENT') return false;
+              throw error;
+            }
+          }
+          throw failed(git, there, timeout);
+        }
+        return false;
+      }
+      const [top, gitDirectory, common] = there.stdout.split('\n').map((each) => realOrNothing(each, rejectFailedChecks));
+      return top === real && common === realOrNothing(own, rejectFailedChecks) && common !== undefined && gitDirectory !== common;
     },
 
     /**
@@ -339,6 +368,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      */
     async registered() {
       return (await listed()).map(({ at }) => at);
+    },
+
+    /** Forgets registrations whose directories are gone, leaving person-locked registrations intact. */
+    async prune() {
+      await answer(['worktree', 'prune']);
     },
 
     /** Takes away the lock on the worktree registered at `path`, whether or not its directory is there. */
@@ -387,10 +421,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
  * Node's JavaScript `realpathSync` keeps the case it was handed, so on a volume that folds case
  * two spellings of one directory would compare as two.
  */
-function realOrNothing(path) {
+function realOrNothing(path, rejectFailed = false) {
   try {
     return realpathSync.native(path);
-  } catch {
+  } catch (error) {
+    if (rejectFailed && error.code !== 'ENOENT') throw error;
     return undefined;
   }
 }

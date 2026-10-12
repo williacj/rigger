@@ -326,7 +326,7 @@ export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer = () => ({ exit: 0, output: '' }), run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
-  workspace, judgeDirectory,
+  workspace, judgeDirectory, removeDirectories = async () => {},
 } = {}) {
   // Whether the test that made this world has ended. From then on the sink refuses every append
   // and no workspace is answered, so a run the test left going starts nothing and records
@@ -520,7 +520,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), state: directory, environment: { ...process.env, PATH: agent.first() } }),
+    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() } }),
   };
 }
 

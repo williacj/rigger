@@ -169,6 +169,11 @@ export function detachedWorktreeAt(repository, path, commit, ...flags) {
   return path;
 }
 
+/** Locks a fixture worktree with `reason`, as a person or interrupted add could. */
+export function lockWorktreeAt(repository, path, reason) {
+  gitIn(repository, 'worktree', 'lock', '--reason', reason, path);
+}
+
 /**
  * Makes `branch` the previous checkout in the repository at `repository`, holding a commit its
  * current branch does not, and checks the current branch out again, so `@{-1}` names `branch`.

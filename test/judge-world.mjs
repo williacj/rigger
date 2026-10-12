@@ -57,7 +57,7 @@ export const pullFor = (number) => ({ number: 1000 + number, head: `rigger-${num
  * flight before any directory of the harness is removed.
  */
 export function judgeWorld({
-  cards, forge = {}, kinds = KINDS, roles = config.roles, provisioning = {}, concurrency = 1, workspace, judgeDirectory, refuse = () => false,
+  cards, forge = {}, kinds = KINDS, roles = config.roles, provisioning = {}, concurrency = 1, workspace, judgeDirectory, removeDirectories = async () => {}, refuse = () => false,
 } = {}) {
   after(async () => {
     sweep(agent.dir);
@@ -120,7 +120,7 @@ export function judgeWorld({
     return made;
   };
   const handed = {
-    config: settings, board: handleOn(fake), decide, facts, l2, sink, kill: async () => {}, workspace: workspace ?? makingWorkspaces(join(scratch, 'workspaces')), judgeDirectory: directories, state: directory, environment: { ...process.env, PATH: agent.first() },
+    config: settings, board: handleOn(fake), decide, facts, l2, sink, kill: async () => {}, workspace: workspace ?? makingWorkspaces(join(scratch, 'workspaces')), judgeDirectory: directories, removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() },
   };
   const events = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
   const pid = (card, role) => Number(readFileSync(join(agent.dir, `left-pid-${card}-${role}`), 'utf8'));
