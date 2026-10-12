@@ -80,8 +80,8 @@ function queued(step) {
  * The adapter over the repository whose working tree is at `repository`. Every git call it makes
  * runs through L0's process adapter under `gitEnvironment()`, in `repository`, as `git`, for at
  * most `timeout` milliseconds, with its kills recorded through `emitter`.
- * Removal sets `rejectFailedChecks`: a failed recognition or filesystem read then rejects,
- * while a missing .git entry still answers no to whether a path is a linked worktree.
+ * Removal sets `rejectFailedChecks`: a check that gives no answer then rejects, while a missing
+ * .git entry or git's definite answer that no repository is there still reads as no linked worktree.
  */
 export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT, rejectFailedChecks = false }) {
   /** Runs git with `args`, one call at a time, and hands back its result. */
@@ -296,9 +296,10 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * directory and the common directory are one; in a linked worktree the git directory is
      * `<common>/worktrees/<name>`; in a directory below either, the top level is the worktree's,
      * not the directory's; outside every repository git exits 128 with `fatal: not a git
-     * repository (or any of the parent directories): .git`. A non-zero exit is read as no unless
-     * `rejectFailedChecks` is set, when a failed git or filesystem check rejects. A missing .git
-     * entry still answers no in that mode. A timeout rejects in either mode. A
+     * repository (or any of the parent directories): .git`. That definite answer reads as no in
+     * either mode, tied to git's own answer for a dropped registration by `test/workspace.test.mjs`.
+     * Other non-zero exits read as no unless `rejectFailedChecks` is set, when a git or filesystem
+     * check giving no answer rejects. A missing .git entry still answers no. A timeout rejects in either mode. A
      * path holding a newline would split the answer, and so is read as no.
      */
     async isWorktree(path) {
@@ -318,7 +319,7 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       const there = await call(['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
       if (there.timedOut) throw failed(git, there, timeout);
       if (there.exit !== 0) {
-        if (rejectFailedChecks) throw failed(git, there, timeout);
+        if (rejectFailedChecks && !(there.exit === 128 && firstLine(there.stderr).startsWith('fatal: not a git repository'))) throw failed(git, there, timeout);
         return false;
       }
       const [top, gitDirectory, common] = there.stdout.split('\n').map((each) => realOrNothing(each, rejectFailedChecks));

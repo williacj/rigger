@@ -2068,3 +2068,55 @@ test('real merged-card removal tries later directories after one fails and names
   assert.equal(existsSync(alpha.path), false);
   assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
 });
+
+// proves R-WORK-30
+test('a workspace whose git entry outlives its registration is left named and reaches Done on the first of two pulls', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const admin = gitIn(made.path, 'rev-parse', '--absolute-git-dir').trim();
+  rmSync(admin, { recursive: true });
+  assert.equal(existsSync(join(made.path, '.git')), true);
+  const answer = spawnSync(GIT, ['-C', made.path, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(answer.status, 128);
+  assert.match(answer.stderr, /^fatal: not a git repository/m);
+  const before = { files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') };
+  assert.equal(before.trees.includes(made.path), false);
+  const built = mergedRemoval(here);
+  const beforeEvents = here.events().length;
+  const outcomes = [];
+  const columns = [];
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    outcomes.push(await built.loop.pull().then(() => undefined, (failure) => failure.message));
+    columns.push(await columnsOf(built.fake));
+  }
+
+  assert.deepEqual(outcomes, [undefined, undefined]);
+  assert.deepEqual(columns, [{ 42: COLUMNS.done }, { 42: COLUMNS.done }]);
+  assert.deepEqual({ files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') }, before);
+  const events = here.events().slice(beforeEvents).filter(({ layer }) => layer === 'L1');
+  assert.deepEqual(events.map(({ event, path }) => ({ event, path })), [{ event: 'workspace.left', path: made.path }]);
+  assert.match(events[0].reason, /not a workspace of the repository/);
+});
+
+// proves R-WORK-30
+test('a filesystem answer that a scratch path is not a directory leaves it unchanged and named without holding Done back', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, 'keep the file\n', { mode: 0o444 });
+  const before = { files: held(here.root), trees: worktreeList(here.repository) };
+  const built = mergedRemoval(here);
+
+  await assert.doesNotReject(built.loop.pull());
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.deepEqual({ files: held(here.root), trees: worktreeList(here.repository) }, before);
+  const events = here.events().filter(({ layer }) => layer === 'L1');
+  assert.deepEqual(events.map(({ event, path, role }) => ({ event, path, role })), [
+    { event: 'workspace.left', path, role: 'reviewer' },
+    { event: 'workspace.left', path: dirname(path), role: undefined },
+  ]);
+  assert.match(events[0].reason, /not a directory/);
+  assert.match(events[1].reason, /not empty/);
+});
