@@ -1530,3 +1530,90 @@ test("given gh fails reading a pull request other than by naming no such pull re
     await assertOnlyReads(send.sent);
   }
 });
+
+/**
+ * Every way each of the four reads #702 rules on can end without an answer, or with null, each
+ * row the read, what gh answers each request, and what the read must say. A row whose read
+ * refuses its arguments sends nothing; every other row sends only requests the read runner
+ * admits, so no way a read ends could change the forge.
+ */
+function endings() {
+  const sha = CAPTURED_AT;
+  const line = 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)';
+  const malformed = { status: 0, stdout: '{"data":{"repository"', stderr: '' };
+  const noRepository = ok({ repository: null });
+  const parsedNull = { status: 0, stdout: 'null', stderr: '' };
+  const repositoryNotFound = { status: 1, stdout: JSON.stringify({ data: { repository: null }, errors: [{ type: 'NOT_FOUND', path: ['repository'], message: "Could not resolve to a Repository with the name 'williacj/rigger'." }] }), stderr: "gh: Could not resolve to a Repository with the name 'williacj/rigger'.\n" };
+  const nonObject = { status: 1, stdout: 'null', stderr: `${line}\n` };
+  const unsent = () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); };
+  const reads = {
+    readDefaultBranch: { call: (r) => r.readDefaultBranch(), addressed: 'reading the default branch in williacj/rigger, ' },
+    readIssue: { call: (r, number = 214) => r.readIssue(number), addressed: 'reading issue #214 in williacj/rigger, ' },
+    readPullRequestByNumber: { call: (r, number = 12) => r.readPullRequestByNumber(number), addressed: 'reading pull request #12 in williacj/rigger, ' },
+    readFileAt: { call: (r, commit = sha, path = 'rigger.config.mjs') => r.readFileAt(commit, path), addressed: `reading rigger.config.mjs at ${sha} in williacj/rigger, ` },
+  };
+  const issue = (node) => ok({ repository: { issue: issueNode({ number: 214, ...node }) } });
+  const file = (entry, oid = sha) => ok(fileAnswer(entry, oid));
+  const shared = (read) => [
+    [read, 'gh exits non-zero', () => failed(line), line],
+    [read, 'gh never starts', unsent, 'spawn gh ENOENT'],
+    [read, 'gh exits 0 with text that is not JSON', () => malformed, 'JSON'],
+    [read, 'gh exits 0 with JSON null', () => parsedNull, ''],
+    [read, 'gh answers without the repository', () => noRepository, 'gh answered no repository'],
+    [read, 'gh answers not found for the repository', () => repositoryNotFound, 'Could not resolve to a Repository'],
+    [read, 'gh fails with an answer that is no object', () => nonObject, line],
+  ];
+  const rows = [
+    ...Object.keys(reads).flatMap(shared),
+    ['readDefaultBranch', 'no default branch', () => ok({ repository: { defaultBranchRef: null } }), 'williacj/rigger holds no default branch'],
+    ['readDefaultBranch', 'a branch with no name', () => ok({ repository: { defaultBranchRef: { name: null, target: { oid: sha } } } }), 'gh answered no name or head commit'],
+    ['readDefaultBranch', 'a head that is no full SHA', () => ok({ repository: { defaultBranchRef: { name: 'main', target: { oid: 'f190e5d' } } } }), 'gh answered no name or head commit'],
+    ['readIssue', 'no issue, with gh exiting 0', () => ok({ repository: { issue: null } }), 'gh answered no issue'],
+    ['readIssue', 'a not-found answer beside another error', () => ({ status: 1, stdout: JSON.stringify({ data: { repository: { issue: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'issue'] }, { message: 'Something went wrong.' }] }), stderr: 'gh: Something went wrong.\n' }), 'Something went wrong.'],
+    ['readIssue', 'an issue with no labels field', () => ok({ repository: { issue: { number: 214, body: '', repository: { nameWithOwner: 'williacj/rigger' } } } }), ''],
+    ['readIssue', 'a later label page that fails', (args) => (cursorOf(documentOf(args)) === null ? issue({ labels: ['a'], next: 'MQ' }) : failed(line)), line],
+    ['readIssue', 'a number that is no issue number', null, 'not an issue or pull request number', (r) => r.readIssue(0)],
+    ['readIssue', 'an issue in another repository', () => issue({ repo: 'someone/elsewhere' }), null],
+    ['readIssue', 'a pull request\'s number', () => ({ status: 1, stdout: captured('rigger-issue-of-a-pull-request-2026-10-11.json'), stderr: 'gh: Could not resolve to an Issue with the number of 685.\n' }), null],
+    ['readPullRequestByNumber', 'no such pull request', () => ({ status: 1, stdout: captured('rigger-pull-request-not-found-2026-10-11.json'), stderr: 'gh: Could not resolve to a PullRequest with the number of 999999.\n' }), 'Could not resolve to a PullRequest'],
+    ['readPullRequestByNumber', 'no pull request, with gh exiting 0', () => ok({ repository: { pullRequest: null } }), 'gh answered no pullRequest'],
+    ['readPullRequestByNumber', 'a state that is none of the three', () => ok({ repository: { pullRequest: pullNode({ number: 12, state: 'DRAFT' }) } }), 'gh answered state DRAFT'],
+    ['readPullRequestByNumber', 'a number that is no pull request number', null, 'not an issue or pull request number', (r) => r.readPullRequestByNumber(1.5)],
+    ['readFileAt', 'no such commit', () => ok({ repository: { object: null } }), `gh answered no commit ${sha}`],
+    ['readFileAt', 'an object that is no commit', () => ok({ repository: { object: {} } }), `gh answered no commit ${sha}`],
+    ['readFileAt', 'a commit with no file field', () => ok({ repository: { object: { oid: sha } } }), `gh answered no commit ${sha}`],
+    ['readFileAt', 'another commit', () => file(null, 'b'.repeat(40)), `gh answered no commit ${sha}`],
+    ['readFileAt', 'a not-found answer for a file at another path', () => ({ status: 1, stdout: JSON.stringify({ data: { repository: { object: { oid: sha, file: null } } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'object'] }] }), stderr: 'gh: Could not resolve.\n' }), 'Could not resolve.'],
+    ['readFileAt', 'a directory', () => file({ mode: 0o040000, type: 'tree', object: {} }), 'rigger.config.mjs is a directory, not a file'],
+    ['readFileAt', 'a symbolic link', () => file(blobEntry({ text: 'README', byteSize: 6 }, 0o120000)), 'rigger.config.mjs is a symbolic link, not a file'],
+    ['readFileAt', 'a submodule', () => file({ mode: 0o160000, type: 'commit', object: null }), 'rigger.config.mjs is a submodule, not a file'],
+    ['readFileAt', 'a binary file', () => file(blobEntry({ text: null, isBinary: true, byteSize: 10 })), 'rigger.config.mjs is a binary file'],
+    ['readFileAt', 'a blob with no object', () => file({ mode: 0o100644, type: 'blob', object: null }), 'rigger.config.mjs is a binary file'],
+    ['readFileAt', 'a truncated file', () => file(blobEntry({ text: 'part', isTruncated: true, byteSize: 100 })), 'gh did not send rigger.config.mjs whole'],
+    ['readFileAt', 'a file sent with no text', () => file(blobEntry({ text: null, byteSize: 100 })), 'gh did not send rigger.config.mjs whole'],
+    ['readFileAt', 'a file sent short of its byte size', () => file(blobEntry({ text: 'part', byteSize: 100 })), 'gh did not send rigger.config.mjs whole'],
+    ['readFileAt', 'a commit that is no full SHA', null, "is not a commit's full SHA", (r) => r.readFileAt('main', 'rigger.config.mjs')],
+    ['readFileAt', 'a path with a .. segment', null, 'is not a path within a commit', (r) => r.readFileAt(sha, '../rigger.config.mjs')],
+  ];
+  return rows.map(([read, what, answer, says, call]) => ({ read, what, answer, says, call: call ?? reads[read].call, addressed: reads[read].addressed }));
+}
+
+test('every way each of the four reads ends without an answer, or answers null, sends only reads, and a refusal names the read, what it read and why', async () => {
+  const rows = endings();
+  assert.deepEqual([...new Set(rows.map(({ read }) => read))].sort(), ['readDefaultBranch', 'readFileAt', 'readIssue', 'readPullRequestByNumber']);
+  for (const { read, what, answer, says, call, addressed } of rows) {
+    const named = `${read}: ${what}`;
+    const send = recording((args) => (answer ? answer(args) : assert.fail(`${named} sent ${args.join(' ')}`)));
+    if (says === null) {
+      assert.equal(await call(repositoryReads(BOARD, { send })), null, named);
+    } else {
+      await assert.rejects(call(repositoryReads(BOARD, { send })), (error) => {
+        assert.ok(error.message.startsWith(`${read} on board 6 failed: ${answer ? addressed : ''}`), `${named}: ${error.message}`);
+        assert.ok(error.message.includes(says), `${named}: ${error.message}`);
+        return true;
+      }, named);
+    }
+    if (!answer) assert.deepEqual(send.sent, [], named);
+    else await assertOnlyReads(send.sent).catch((error) => assert.fail(`${named}: ${error.message}`));
+  }
+});
