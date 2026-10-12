@@ -6127,3 +6127,114 @@ test('C615 D9 EPERM command F after returned name keeps only PID and reason', SE
 test('C615 D9 EPERM command T after returned name keeps only PID and reason', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'D9CT');
 });
+
+/** Cuts a named read after a complete unseen round, with or without an accepted earlier round. */
+async function groupPhaseCut(t, phase, accepted) {
+  const outer = sightingEvidenceRoot();
+  assert.ok(outer, 'the G3 phase control needs a private external evidence root');
+  const retained = join(outer, `g3-${accepted ? 'last' : 'no-last'}-${phase}`);
+  mkdirSync(retained, { mode: 0o700 });
+  let directory;
+  let copied = false;
+  let finalized = false;
+  t.after(async () => {
+    if (!directory) return;
+    writeFileSync(join(directory, 'release'), '');
+    const identities = ['group', 'one', 'two'].map((source) => ({ source, pid: pidIn(directory, source) }));
+    const disposition = [];
+    for (const identity of identities) disposition.push({ ...identity, state: identity.pid === undefined ? 'unobserved' : await gone(identity.pid, 3_000) ? 'absent' : 'unresolved' });
+    cpSync(directory, join(retained, 'fixture'), { recursive: true, force: false, errorOnExist: true });
+    copied = true;
+    writeFileSync(join(retained, 'finalizer.json'), JSON.stringify({ identities: disposition, snapshot: 'copied' }) + '\n');
+    assert.ok(disposition.every(({ state }) => state === 'absent'), 'a recorded G3 fixture identity did not finalize');
+    finalized = true;
+  });
+  directory = realpathSync(temporaryDirectory('rigger-g3-phase-', { context: t, beforeRemoval: () => assert.ok(copied && finalized, 'retain unresolved G3 phase scratch') }));
+  writeFileSync(join(directory, 'hold'), '');
+  holdingTwo(directory);
+  const rejectedState = accepted ? 4 : 2;
+  const targetState = rejectedState + 1;
+  const priorNames = accepted ? 6 : 3;
+  const priorCommands = accepted ? 4 : 2;
+  const mark = ': > "$here/group-clock-cut"';
+  fixture(directory, 'ps', [
+    'case "$*" in',
+    '  "-ww -g "*" -o pid=,stat=")',
+    '    count=0; [ ! -f "$here/census-state-count" ] || count=$(< "$here/census-state-count")',
+    '    count=$((count + 1)); printf "%s" "$count" > "$here/census-state-count"',
+    ...(accepted ? ['    if [ "$count" -eq 1 ]; then /bin/ps "$@" | /usr/bin/awk \'NR == 1 { $2 = "?" } { print }\'; exit 0; fi'] : []),
+    `    if [ "$count" -eq ${rejectedState} ]; then exit 1; fi`,
+    ...(phase === 'C2' ? [`    if [ "$count" -eq ${targetState} ]; then ${mark}; fi`] : []),
+    '    ;;',
+    '  "-ww -g "*" -o pid=,command=")',
+    '    count=0; [ ! -f "$here/census-command-count" ] || count=$(< "$here/census-command-count")',
+    '    count=$((count + 1)); printf "%s" "$count" > "$here/census-command-count"',
+    ...(phase === 'C3-first' || phase === 'C5' ? [`    if [ "$count" -eq ${priorCommands + (phase === 'C5' ? 2 : 1)} ]; then ${mark}; fi`] : []),
+    '    ;;',
+    '  "-p "*" -o ucomm=")',
+    '    count=0; [ ! -f "$here/census-name-count" ] || count=$(< "$here/census-name-count")',
+    '    count=$((count + 1)); printf "%s" "$count" > "$here/census-name-count"',
+    ...(phase === 'C3-later' || phase === 'C4' ? [`    if [ "$count" -eq ${priorNames + (phase === 'C4' ? 3 : 1)} ]; then ${mark}; fi`] : []),
+    '    ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const anchor = "phase: 'C2'";
+  assert.equal(GROUP_BOUND_CALLER.split(anchor).length, 2, 'the traced clock phase anchor moved');
+  const caller = GROUP_BOUND_CALLER.replace(anchor, `phase: ${JSON.stringify(phase)}`);
+  const { status, stderr, events } = await cleanedUpBy(caller, directory, { ps: 'ps', groupBoundTrace: true, hangAfter: 'group' });
+  writeFileSync(join(directory, 'caller.stderr'), stderr);
+  assert.equal(status, 0, 'the G3 phase caller failed; inspect retained stderr');
+  const group = pidIn(directory, 'group');
+  const pids = ['group', 'one', 'two'].map((name) => pidIn(directory, name)).sort((a, b) => a - b);
+  assert.ok(pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && new Set(pids).size === 3, 'G3 phase fixture identities are incomplete');
+  const trace = linesOf(directory, 'group-bound.trace.jsonl');
+  const state = ['-ww', '-g', String(group), '-o', 'pid=,stat='];
+  const command = ['-ww', '-g', String(group), '-o', 'pid=,command='];
+  const names = pids.map((pid) => ['-p', String(pid), '-o', 'ucomm=']);
+  const round = [state, command, ...names, command, state];
+  const prefix = [state, ...(phase === 'C2' ? [] : [command]), ...(phase === 'C3-later' ? names.slice(0, 1) : phase === 'C4' || phase === 'C5' ? names : []), ...(phase === 'C5' ? [command] : [])];
+  const kill = trace.find(({ operation, target, name, answer }) => operation === 'signal-answer' && target === -group && name === 'SIGKILL' && answer === true);
+  assert.ok(kill, 'the phase cut did not reach the group kill');
+  const reads = trace.filter(({ operation, tool }, index) => operation === 'read-start' && tool === 'ps' && index < trace.indexOf(kill) && ['-ww', '-p'].includes(trace[index].argv[0]));
+  assert.deepEqual(reads.map(({ argv }) => argv), [...(accepted ? round : []), ...round, ...prefix], 'the cut did not reach the exact G3 round and read position');
+  const ends = trace.filter(({ operation, tool }, index) => operation === 'read-end' && tool === 'ps' && index < trace.indexOf(kill) && ['-ww', '-p'].includes(trace[index].argv[0]));
+  assert.equal(ends[accepted ? 13 : 6].stdout, '', 'the completed unseen round was not rejected at C5');
+  assert.equal(read(directory, 'group-clock-jump'), 'J', 'the phase read was not cut at the unchanged 1000 ms bound');
+  assert.ok(trace.some(({ operation, phase: reached }) => operation === 'clock-cut' && reached === phase), 'the selected phase cut was not traced');
+  const probe = trace.find((entry, index) => index > trace.indexOf(kill) && entry.operation === 'signal-answer' && entry.target === -group && entry.name === 0);
+  assert.ok(probe && (probe.answer === true || probe.answer === false || probe.error === 'EPERM'), 'the first post-kill E/O probe was not observed');
+  if (accepted) {
+    for (const pid of pids) {
+      const name = ends.find(({ argv }) => JSON.stringify(argv) === JSON.stringify(['-p', String(pid), '-o', 'ucomm='])).stdout.replace(/ *\n$/, '');
+      const cmd = ends[5].stdout.split('\n').map((row) => /^\s*(\d+)\s+(.*)$/.exec(row)).find((row) => Number(row?.[1]) === pid)?.[2];
+      assert.ok(name && cmd, 'the accepted round lacked a returned identity');
+      assert.deepEqual(events.filter((event) => event.pid === pid).map(({ event, name: foundName, cmd: foundCmd }) => ({ event, name: foundName, cmd: foundCmd })), [{ event: 'survivor.killed', name, cmd }], 'the accepted member was lost at the phase cut');
+    }
+    assert.equal(events.length, pids.length, 'the retained round invented another event');
+  } else {
+    assert.deepEqual(events.filter(({ pid }) => pid !== undefined), [], 'a no-last cut invented named members');
+    const killed = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+    assert.equal(killed.length, 1, 'the no-last cut did not record exactly one group result');
+    assert.match(killed[0].census, /the census's reads named no process of the group while it still had one: .*did not finish within 1000 ms/);
+  }
+}
+
+// proves R-STATE-9
+test('C615 G3 accepted-last C3 first name timeout keeps returned identities', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C3-first', true); });
+// proves R-STATE-9
+test('C615 G3 accepted-last C3 later name timeout keeps returned identities', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C3-later', true); });
+// proves R-STATE-9
+test('C615 G3 accepted-last C4 command timeout keeps returned identities', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C4', true); });
+// proves R-STATE-9
+test('C615 G3 accepted-last C5 state timeout keeps returned identities', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C5', true); });
+// proves R-STATE-9
+test('C615 G3 no-last C2 command timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C2', false); });
+// proves R-STATE-9
+test('C615 G3 no-last C3 first name timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C3-first', false); });
+// proves R-STATE-9
+test('C615 G3 no-last C3 later name timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C3-later', false); });
+// proves R-STATE-9
+test('C615 G3 no-last C4 command timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C4', false); });
+// proves R-STATE-9
+test('C615 G3 no-last C5 state timeout records an unnamed group result', SETTLES_WITHIN, async (t) => { await groupPhaseCut(t, 'C5', false); });
