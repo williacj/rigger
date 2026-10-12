@@ -1283,12 +1283,13 @@ test("given gh fails in any way but its not-found answer for that issue, readIss
     'gh: Something went wrong while executing your query.': JSON.stringify({ ...notFound, errors: [...notFound.errors, { message: 'Something went wrong while executing your query.' }] }),
   };
   for (const [line, stdout] of Object.entries(failures)) {
-    const send = () => ({ status: 1, stdout, stderr: `${line}\n` });
+    const send = recording(() => ({ status: 1, stdout, stderr: `${line}\n` }));
     await assert.rejects(repositoryReads(BOARD, { send }).readIssue(214), (error) => {
       assert.ok(error.message.startsWith('readIssue on board 6 failed: reading issue #214 in williacj/rigger, '), error.message);
       assert.ok(error.message.includes(line), error.message);
       return true;
     }, line);
+    await assertOnlyReads(send.sent);
   }
 });
 
@@ -1467,7 +1468,8 @@ test("given gh fails with an answer that parses but is no object, readIssue and 
   const line = 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)';
   for (const stdout of ['null', '1', '"text"', '[]']) {
     const said = { status: 1, stdout, stderr: `${line}\nsecond line\n` };
-    const reads = repositoryReads(BOARD, { send: () => said });
+    const send = recording(() => said);
+    const reads = repositoryReads(BOARD, { send });
     await assert.rejects(reads.readIssue(214), (error) => {
       assert.ok(error.message.startsWith('readIssue on board 6 failed: reading issue #214 in williacj/rigger, '), error.message);
       assert.ok(error.message.includes(line), error.message);
@@ -1478,6 +1480,7 @@ test("given gh fails with an answer that parses but is no object, readIssue and 
       assert.ok(error.message.includes(line), error.message);
       return true;
     }, stdout);
+    await assertOnlyReads(send.sent);
   }
 });
 
