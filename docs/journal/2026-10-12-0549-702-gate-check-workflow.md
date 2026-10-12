@@ -29,9 +29,13 @@ survived the first posting test; that test now holds a non-zero exit with no rea
 
 ## Round 1
 
-Both Codex judges ruled the first head critical, for two defects the tests had not reached. The
-topic inverse built `\1` beside a literal digit, so a topic such as `{number}{number}1` that the
-validator admits mapped no branch to a card. That split a card's issue and pull request events
+Both Codex judges ruled the first head critical because of the test-first exception, which only
+the owner could grant. Their verdicts are on #729 (comments 6127450942 and 6127530305), and the
+owner granted it as P47. The judges also found two code defects the tests had not reached, and
+rated those as needing revision.
+
+The topic inverse built `\1` beside a literal digit, so a topic such as `{number}{number}1` that
+the validator admits mapped no branch to a card. That split a card's issue and pull request events
 into two concurrency groups. The prepack script asked git which packed paths differed from `HEAD`,
 but git names an ignored directory rather than the files in it, so a packed file there went
 unseen. The inverse now repeats a named group. The script now holds the pack against `HEAD`'s
