@@ -718,7 +718,6 @@ test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, role
   }
 });
 
-// proves R-WORK-29
 test('given a worktree of the repository registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and that worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
   for (const under of [[], ['deep', 'tree']]) {
     const placed = layout(t);

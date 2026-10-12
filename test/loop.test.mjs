@@ -462,6 +462,7 @@ test('a pull that reads a person-merged pull request records removal before the 
 
   const events = built.events();
   const removal = events.findIndex(({ layer, event, card }) => layer === 'L1' && event === 'workspace.removed' && card === 84);
+  assert.deepEqual(events.filter(({ layer, card }) => layer === 'L3' && card === 84).map(({ event }) => event), ['pull', 'slot.release']);
   const done = events.findIndex(({ layer, event, card, to }) => layer === 'L2' && event === 'transition' && card === 84 && to === 'done');
   assert.ok(removal >= 0 && removal < done, JSON.stringify(events));
 });

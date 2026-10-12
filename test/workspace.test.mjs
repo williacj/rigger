@@ -28,6 +28,8 @@ import { createHash } from 'node:crypto';
 import { holding, OUTLIVED } from './process-fixtures.mjs';
 import * as workspaceRemoval from '../src/execution/workspace.mjs';
 import { lockWorktreeAt } from './git-repository.mjs';
+import { world as schedulingWorld, COLUMNS, cardIn, columnsOf } from './loop-world.mjs';
+import { renameSync } from 'node:fs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -50,6 +52,16 @@ function world(t) {
   };
   const make = (card, over = {}) => makeWorkspace({ root, topic: 'rigger-{number}', card, repository, sink, ...over });
   return { directory, source, origin, repository, root, state, sink, events, push, make };
+}
+
+/** A pull over a merged Review card, handed the real removal over this test's repository and root. */
+function mergedRemoval(here, options = {}) {
+  return schedulingWorld({
+    scratch: here.directory,
+    cards: [cardIn(42, COLUMNS.review)],
+    forge: { pullRequests: [{ number: 421, head: 'rigger-42', sha: '4'.repeat(40), merged: true }] },
+    removeDirectories: (card) => workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card, repository: here.repository, sink: here.sink, ...options }),
+  });
 }
 
 /** The commit a checkout's `HEAD` is at, and the branch it has checked out. */
@@ -1847,4 +1859,212 @@ test('a refused workspace.left record stops removal with the refused path unchan
   });
 
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'keep\n');
+});
+
+// proves R-WORK-30
+test('a failed git replace-rule check leaves the workspace named and Review until a later pull removes it', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const built = mergedRemoval(here);
+  const before = contents(made.path);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = worktree ] && [ "$2" = list ] && [ ! -e "$here/failed" ]; then',
+    '  : > "$here/failed"',
+    '  echo "registration read failed" >&2',
+    '  exit 1',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+  assert.deepEqual(contents(made.path), before);
+  assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === made.path && reason.includes('registration read failed')));
+  await built.loop.pull();
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.equal(existsSync(made.path), false);
+});
+
+// proves R-WORK-30
+test('a git replace-rule check that times out leaves Review and is retried by a later pull', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const options = { timeout: OUTLIVED };
+  const built = mergedRemoval(here, options);
+  const stand = holding(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = worktree ] && [ "$2" = list ] && [ ! -e "$here/failed" ]; then',
+    '  : > "$here/failed"',
+    '  exec /usr/bin/tail -f "$here/hold"',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+  assert.equal(existsSync(made.path), true);
+  assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === made.path && /past its timeout/.test(reason)));
+  options.timeout = undefined;
+  await built.loop.pull();
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.equal(existsSync(made.path), false);
+});
+
+// proves R-WORK-30
+test('a filesystem replace-rule check that cannot read a topic leaves Review until a later pull retries', async (t) => {
+  const here = world(t);
+  const base = join(here.root, 'scratch', 'rigger-42');
+  mkdirSync(join(base, 'reviewer'), { recursive: true });
+  writeFileSync(join(base, 'reviewer', 'kept'), 'keep\n');
+  const before = contents(base);
+  const built = mergedRemoval(here);
+  chmodSync(base, 0o000);
+  try {
+    await assert.rejects(built.loop.pull());
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === base && /permission denied/i.test(reason)));
+  } finally {
+    chmodSync(base, 0o755);
+  }
+  assert.deepEqual(contents(base), before);
+  await built.loop.pull();
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.equal(existsSync(base), false);
+});
+
+// proves R-WORK-30
+test('a refused topic workspace.removed rejects as EVENT_REFUSED and records no false workspace.left', async (t) => {
+  for (const kind of ['judges', 'scratch']) {
+    const here = world(t);
+    const base = join(here.root, kind, 'rigger-42');
+    mkdirSync(base, { recursive: true });
+    const sink = { emitter: (context) => {
+      const emitter = here.sink.emitter(context);
+      return { emit: (event, fields) => {
+        if (context.layer === 'L1' && event === 'workspace.removed' && fields.path === base) throw new Error('topic record refused');
+        emitter.emit(event, fields);
+      } };
+    } };
+
+    const failure = await refusedEvent(workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink }));
+
+    assert.equal(existsSync(base), false);
+    assert.deepEqual(failure.unrecorded.map(({ event, path }) => ({ event, path })), [{ event: 'workspace.removed', path: base }]);
+    assert.equal(here.events().some(({ event, path }) => event === 'workspace.left' && path === base), false);
+    await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  }
+});
+
+// proves R-WORK-30
+test('a failed git worktree recognition check keeps the merged card in Review rather than treating it as refused', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const built = mergedRemoval(here);
+  const before = contents(made.path);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = -C ] && [ ! -e "$here/failed" ]; then',
+    '  : > "$here/failed"',
+    '  echo "worktree recognition failed" >&2',
+    '  exit 1',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+  assert.deepEqual(contents(made.path), before);
+  assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === made.path && reason.includes('worktree recognition failed')));
+  await built.loop.pull();
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+});
+
+/** A scratch refusal keeps its complete contents and registrations and names the role path. */
+async function scratchLeft(here, path) {
+  const before = { files: contents(path), trees: worktreeList(here.repository) };
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  assert.equal(existsSync(path), true, 'the refused scratch path was removed');
+  assert.deepEqual({ files: contents(path), trees: worktreeList(here.repository) }, before);
+  assert.ok(here.events().some(({ event, path: left, role, reason }) => event === 'workspace.left' && left === path && role === 'reviewer' && reason.length > 0));
+  assert.equal(here.events().some(({ event, path: removed }) => event === 'workspace.removed' && removed === path), false);
+}
+
+// proves R-WORK-30
+test('merged-card removal leaves a scratch directory in a checkout unchanged and names it', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'kept'), 'keep\n');
+  writeFileSync(join(here.root, '.git'), 'checkout marker\n');
+  await scratchLeft(here, path);
+  assert.equal(readFileSync(join(here.root, '.git'), 'utf8'), 'checkout marker\n');
+});
+
+// proves R-WORK-30
+test('merged-card removal leaves a scratch directory holding another repository checkout unchanged and names it', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
+  repositoryAt(join(path, 'nested'), { kept: 'keep\n' });
+  await scratchLeft(here, path);
+});
+
+// proves R-WORK-30
+test('merged-card removal leaves scratch at, inside or holding a registered worktree with its git entry moved aside', async (t) => {
+  for (const position of ['above', 'at', 'inside']) {
+    const here = world(t);
+    const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
+    const tree = worktreeAt(here.repository, position === 'above' ? here.root : position === 'at' ? path : join(path, 'nested'), 'held');
+    lockWorktreeAt(here.repository, tree, 'kept by a person');
+    renameSync(join(tree, '.git'), join(here.directory, 'git-entry'));
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'kept'), 'keep\n');
+    const branch = branchAt(here.repository, 'held');
+    await scratchLeft(here, path);
+    assert.equal(branchAt(here.repository, 'held'), branch);
+  }
+});
+
+// proves R-WORK-30
+test('real merged-card removal tries later directories after one fails and names every path remaining', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const head = here.push('judge head');
+  const alpha = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'alpha', head, repository: here.repository, sink: here.sink });
+  const beta = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'beta', head, repository: here.repository, sink: here.sink });
+  const alphaScratch = join(made.scratch, 'alpha');
+  const betaScratch = join(made.scratch, 'beta');
+  mkdirSync(alphaScratch, { recursive: true });
+  writeFileSync(join(alphaScratch, 'output'), 'remove\n');
+  writeFileSync(betaScratch, 'keep the refused file\n');
+  const before = contents(alpha.path);
+  const built = mergedRemoval(here);
+  const stand = scratch(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = worktree ] && [ "$2" = remove ]; then',
+    '  for last do :; done',
+    `  if [ "\${last%/*}" = '${alpha.path}' ]; then echo 'judge removal failed' >&2; exit 1; fi`,
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  const beforeEvents = here.events().length;
+
+  await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+  assert.equal(existsSync(made.path), false);
+  assert.equal(existsSync(beta.path), false, 'the later judge was not tried');
+  assert.equal(existsSync(alphaScratch), false, 'the later scratch directory was not tried');
+  assert.deepEqual(contents(alpha.path), before);
+  assert.equal(readFileSync(betaScratch, 'utf8'), 'keep the refused file\n');
+  const remaining = [alpha.path, dirname(alpha.path), betaScratch, made.scratch];
+  const left = here.events().slice(beforeEvents).filter(({ event }) => event === 'workspace.left');
+  assert.deepEqual(left.map(({ path }) => path), remaining);
+  assert.ok(left.every(({ reason }) => typeof reason === 'string' && reason.length > 0));
+  await built.loop.pull();
+  assert.equal(existsSync(alpha.path), false);
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
 });

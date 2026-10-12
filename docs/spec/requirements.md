@@ -213,6 +213,7 @@ under the test above.
 | the engine killed between the merge and the removal | in: the card stays where it is; removed at a later pull that reads the merge |
 | a removal failing after another of the card's directories was removed | in: the card stays where it is; each remaining path named; a later pull removes them |
 | a removal failing partway through one directory | in: the card stays where it is; the path named; a later pull removes it where its row still lets Rigger replace it, and otherwise leaves and names it |
+| a check `R-WORK-13`, `R-WORK-20` or `R-WORK-26` asks for that Rigger cannot make, because git or the file system fails or does not answer in time | in: a failed removal, not a refusal: the path left and named; the card stays where it is; a later pull removes again |
 | Rigger cannot record an event of the removal | in: the card stays where it is; Rigger says what went unrecorded; a later pull removes again |
 | a second removal pass over a card already removed | in: nothing changes, and nothing fails |
 | none of the card's directories exists | in: nothing changes, and nothing fails |

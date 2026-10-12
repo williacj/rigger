@@ -83,6 +83,7 @@ test('a lane merge records removal after merge.end and before the transition to 
 
   const events = built.events();
   const end = events.findIndex(({ layer, event, card }) => layer === 'L3' && event === 'merge.end' && card === 83);
+  assert.deepEqual(events.filter(({ layer, card }) => layer === 'L3' && card === 83).map(({ event }) => event), ['pull', 'merge.start', 'merge.end']);
   const removal = events.findIndex(({ layer, event, card }) => layer === 'L1' && event === 'workspace.removed' && card === 83);
   const done = events.findIndex(({ layer, event, card, to }) => layer === 'L2' && event === 'transition' && card === 83 && to === 'done');
   assert.ok(end >= 0 && end < removal && removal < done, JSON.stringify(events));

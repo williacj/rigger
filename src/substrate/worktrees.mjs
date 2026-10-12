@@ -2,7 +2,7 @@
 // a detached worktree, removes one, and answers git questions about paths, branches and commits.
 // Every git call it makes runs one at a time.
 
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 import { gitEnvironment } from './git-environment.mjs';
@@ -80,8 +80,10 @@ function queued(step) {
  * The adapter over the repository whose working tree is at `repository`. Every git call it makes
  * runs through L0's process adapter under `gitEnvironment()`, in `repository`, as `git`, for at
  * most `timeout` milliseconds, with its kills recorded through `emitter`.
+ * Removal sets `rejectFailedChecks`: a failed recognition or filesystem read then rejects,
+ * while a missing .git entry still answers no to whether a path is a linked worktree.
  */
-export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT }) {
+export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT, rejectFailedChecks = false }) {
   /** Runs git with `args`, one call at a time, and hands back its result. */
   const call = (args) => queued(async () => {
     const { exit, timedOut, stdout, stderr } = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });
@@ -294,19 +296,33 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
      * directory and the common directory are one; in a linked worktree the git directory is
      * `<common>/worktrees/<name>`; in a directory below either, the top level is the worktree's,
      * not the directory's; outside every repository git exits 128 with `fatal: not a git
-     * repository (or any of the parent directories): .git`. Every non-zero exit there is read as
-     * no, so a path git cannot answer for is never taken for a workspace; a timeout rejects. A
+     * repository (or any of the parent directories): .git`. A non-zero exit is read as no unless
+     * `rejectFailedChecks` is set, when a failed git or filesystem check rejects. A missing .git
+     * entry still answers no in that mode. A timeout rejects in either mode. A
      * path holding a newline would split the answer, and so is read as no.
      */
     async isWorktree(path) {
-      const real = realOrNothing(path);
+      const real = realOrNothing(path, rejectFailedChecks);
       if (real === undefined || !statSync(real).isDirectory()) return false;
+      if (rejectFailedChecks) {
+        // A linked worktree has its .git entry at its root. Absence proves this path is not one;
+        // an unreadable entry or a failed git question proves nothing and must reject.
+        try {
+          lstatSync(join(real, '.git'));
+        } catch (error) {
+          if (error.code === 'ENOENT') return false;
+          throw error;
+        }
+      }
       const own = (await answer(['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim();
       const there = await call(['-C', real, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
       if (there.timedOut) throw failed(git, there, timeout);
-      if (there.exit !== 0) return false;
-      const [top, gitDirectory, common] = there.stdout.split('\n').map(realOrNothing);
-      return top === real && common === realOrNothing(own) && common !== undefined && gitDirectory !== common;
+      if (there.exit !== 0) {
+        if (rejectFailedChecks) throw failed(git, there, timeout);
+        return false;
+      }
+      const [top, gitDirectory, common] = there.stdout.split('\n').map((each) => realOrNothing(each, rejectFailedChecks));
+      return top === real && common === realOrNothing(own, rejectFailedChecks) && common !== undefined && gitDirectory !== common;
     },
 
     /**
@@ -392,10 +408,11 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
  * Node's JavaScript `realpathSync` keeps the case it was handed, so on a volume that folds case
  * two spellings of one directory would compare as two.
  */
-function realOrNothing(path) {
+function realOrNothing(path, rejectFailed = false) {
   try {
     return realpathSync.native(path);
-  } catch {
+  } catch (error) {
+    if (rejectFailed && error.code !== 'ENOENT') throw error;
     return undefined;
   }
 }
