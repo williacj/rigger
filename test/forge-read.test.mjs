@@ -1499,3 +1499,34 @@ test("given an issue's first label page answers and its next fails, readIssue re
   assert.equal(send.sent.length, 2);
   await assertOnlyReads(send.sent);
 });
+
+/** The failures gh gives a read other than a not-found answer for what it read, by gh's first line. */
+const GH_FAILURES = [
+  'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)',
+  'gh: API rate limit exceeded for user ID 1. (HTTP 403)',
+  "gh: Could not resolve to a Repository with the name 'williacj/rigger'.",
+];
+
+test("given gh fails reading the default branch, readDefaultBranch rejects naming the read and gh's first line, and sends only reads", async () => {
+  for (const line of GH_FAILURES) {
+    const send = recording(() => failed(line));
+    await assert.rejects(repositoryReads(BOARD, { send }).readDefaultBranch(), (error) => {
+      assert.ok(error.message.startsWith('readDefaultBranch on board 6 failed: reading the default branch in williacj/rigger, '), error.message);
+      assert.ok(error.message.includes(line), error.message);
+      return true;
+    }, line);
+    await assertOnlyReads(send.sent);
+  }
+});
+
+test("given gh fails reading a pull request other than by naming no such pull request, readPullRequestByNumber rejects naming the pull request and gh's first line, and sends only reads", async () => {
+  for (const line of GH_FAILURES) {
+    const send = recording(() => failed(line));
+    await assert.rejects(repositoryReads(BOARD, { send }).readPullRequestByNumber(12), (error) => {
+      assert.ok(error.message.startsWith('readPullRequestByNumber on board 6 failed: reading pull request #12 in williacj/rigger, '), error.message);
+      assert.ok(error.message.includes(line), error.message);
+      return true;
+    }, line);
+    await assertOnlyReads(send.sent);
+  }
+});
