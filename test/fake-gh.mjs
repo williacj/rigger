@@ -338,7 +338,7 @@ function pathIn(state, args) {
 const unresolved = (data, path, message) => new GhPrinted(`gh: ${message}`, JSON.stringify({ data, errors: [{ type: 'NOT_FOUND', path, locations: [{ line: 1, column: 1 }], message }] }));
 
 /** What the issue read selects of an issue, but its labels. */
-const ISSUE = 'number body repository { nameWithOwner }';
+const ISSUE = 'number title body repository { nameWithOwner }';
 
 /** What the issue read selects of a page of an issue's labels. */
 const LABELS = 'pageInfo { hasNextPage endCursor } nodes { name }';
@@ -355,7 +355,7 @@ async function issue(board, state, operation) {
   const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
   if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
   const labels = page(held.labels.map((name) => ({ name })), fieldIn(field.selections, 'labels'));
-  return { repository: { issue: { number, body: held.body, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
+  return { repository: { issue: { number, title: held.title, body: held.body, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
 }
 
 /** What the file read selects of the tree entry at its path. */
@@ -493,10 +493,10 @@ const COMMANDS = {
     return { repository: { pullRequest: { baseRefName: base, headRefOid: sha } } };
   },
   // The reads of one pull request or issue by its number, the default branch, and a file at a commit.
-  [graphql(repositoryShape('pullRequest(number: _) { number state headRefOid baseRefName headRepository { nameWithOwner } }'))]: async (board, state, operation) => {
+  [graphql(repositoryShape('pullRequest(number: _) { number state headRefOid headRefName baseRefName headRepository { nameWithOwner } }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const pull = pullNamed(state, operation);
-    return { repository: { pullRequest: { number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) } } };
+    return { repository: { pullRequest: { number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, headRefName: pull.head, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) } } };
   },
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,

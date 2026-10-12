@@ -18,6 +18,7 @@ import rigger from '../rigger.config.mjs';
 import { cloneInto, clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
+import { cardOfBranch } from '../src/execution/workspace.mjs';
 import { previousCheckout } from './git-repository.mjs';
 import { removeWorktreeAt } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
@@ -308,6 +309,27 @@ test('for every topic validate accepts here, the names L1 derives for cards 1, 2
     const names = [1, 2, 10, 11].map((card) => topicFor(topic, card));
     assert.equal(new Set(names).size, 4, `${topic} derives ${names.join(', ')}`);
   }
+});
+
+test('cardOfBranch inverts topicFor, for the default topic and for configured ones, and answers no card for a branch the topic does not name', () => {
+  for (const topic of ['rigger-{number}', 'card{number}x', '{number}-{number}', 'a.{number}+b']) {
+    for (const card of [1, 7, 10, 702]) assert.equal(cardOfBranch(topic, topicFor(topic, card)), card, `${topic} ${card}`);
+  }
+  // Written out rather than derived, so the inverse is checked against names, not against topicFor.
+  assert.equal(cardOfBranch('rigger-{number}', 'rigger-702'), 702);
+  assert.equal(cardOfBranch('{number}-{number}', '12-12'), 12);
+  for (const [topic, branch] of [
+    ['rigger-{number}', 'main'],
+    ['rigger-{number}', 'rigger-'],
+    ['rigger-{number}', 'rigger-07'],
+    ['rigger-{number}', 'rigger-0'],
+    ['rigger-{number}', 'rigger-7x'],
+    ['rigger-{number}', 'xrigger-7'],
+    ['rigger-{number}', 'm5/702-gate-workflow'],
+    ['{number}-{number}', '12-13'],
+    ['a.{number}+b', 'aX7+b'],
+    ['a.{number}+b', 'a.7bb'],
+  ]) assert.equal(cardOfBranch(topic, branch), null, `${topic} ${branch}`);
 });
 
 /** What git prints first on standard error refusing `name` as a branch name. */

@@ -24,6 +24,17 @@ const replacementRefused = (message) => Object.assign(new Error(message), { code
 export const topicFor = (topic, card) => topic.replaceAll('{number}', String(card));
 
 /**
+ * The card whose name `topic` derives as `branch`, as `topicFor` derives it, or null where the
+ * topic derives no card's name as that branch. An issue number has no leading zero, and every
+ * `{number}` in the topic stands for the same one.
+ */
+export function cardOfBranch(topic, branch) {
+  const [first, ...rest] = topic.split('{number}').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const found = new RegExp(`^${first}([1-9][0-9]*)${rest.join('\\1')}$`).exec(branch);
+  return found === null ? null : Number(found[1]);
+}
+
+/**
  * The scratch base of card `card`, `<root>/scratch/<topic>`, under which `roleDispatch` makes each
  * role's scratch directory (the architect's ruling 19 on #467). Both makes answer it beside their
  * own paths, and neither creates it. No topic derives `scratch`, since every topic holds a digit.

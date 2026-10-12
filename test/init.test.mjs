@@ -1580,3 +1580,46 @@ test('init forks each provider\'s templates into the directory that provider\'s 
   assert.ok(paths.length > 0);
   for (const path of paths) assert.ok(Object.entries(ADAPTERS).some(([provider, adapter]) => path.startsWith(`${adapter.assets}/`) && existsSync(join(TEMPLATES, provider, path.slice(adapter.assets.length + 1)))), path);
 });
+
+/** A stand-in package root whose prepack recorded `commit`, as `scripts/record-commit.mjs` writes it. */
+const recording = (commit) => repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': `${JSON.stringify({ commit })}\n` });
+
+/** The gate workflow, as the template ships it and as `init` forks it. */
+const WORKFLOW = { template: join(TEMPLATES, 'github', 'workflows', 'rigger-gate.yml'), forked: '.github/workflows/rigger-gate.yml' };
+
+test('init reads the commit the package it is handed recorded, and writes that commit into the gate workflow it forks', async () => {
+  const commit = '0123456789abcdef0123456789abcdef01234567';
+  const consumer = repository('https://github.com/acme/widgets.git');
+
+  const ran = await init({ target: consumer, packageRoot: recording(commit) });
+
+  assert.equal(ran.code, 0, ran.text);
+  const template = readFileSync(WORKFLOW.template, 'utf8');
+  const forked = readFileSync(join(consumer, WORKFLOW.forked), 'utf8');
+  // Written out by hand rather than taken from the plan: the one line the pin changes.
+  assert.ok(template.split('\n').includes('  RIGGER_COMMIT: PINNED_COMMIT'), template);
+  assert.ok(forked.split('\n').includes(`  RIGGER_COMMIT: ${commit}`), forked);
+  assert.equal(forked, template.replace('RIGGER_COMMIT: PINNED_COMMIT', `RIGGER_COMMIT: ${commit}`));
+  assert.ok(ran.text.split('\n').includes(`  ${WORKFLOW.forked}`), ran.text);
+  assert.ok(!ran.text.includes('did not fork'), ran.text);
+});
+
+test('where the package it is handed records no commit, init writes every other file, prints one line naming why it did not fork the gate workflow, and exits 0', async () => {
+  const roots = {
+    'no record': elsewhere(),
+    'a record naming no commit': repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': '{"commit":"main"}\n' }),
+    'a record that is no JSON': repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': 'not json\n' }),
+  };
+  for (const [name, packageRoot] of Object.entries(roots)) {
+    const consumer = repository('https://github.com/acme/widgets.git');
+
+    const ran = await init({ target: consumer, packageRoot });
+
+    assert.equal(ran.code, 0, `${name}: ${ran.text}`);
+    assert.equal(existsSync(join(consumer, '.github')), false, name);
+    for (const file of plan({ repo: 'acme/widgets' })) assert.ok(existsSync(join(consumer, file.path)), `${name}: ${file.path}`);
+    const why = ran.text.split('\n').filter((line) => line.includes(WORKFLOW.forked));
+    assert.equal(why.length, 1, `${name}: ${ran.text}`);
+    assert.match(why[0], /^did not fork `\.github\/workflows\/rigger-gate\.yml`, because the Rigger package records no commit to pin it to: /, name);
+  }
+});

@@ -360,7 +360,9 @@ reads:
 
 - the pull request's base from the pull request, never from `GITHUB_REF`, which names the default
   branch even for another base;
-- the config from the base branch;
+- the config from the default branch, at the commit the run reads at its start, whatever the pull
+  request's base: a base branch other than the default one is not gated, and the config is code the
+  posting job runs before it mints the App's token;
 - the card's markers, its acceptance and its labels.
 
 The script hands the rule no required checks, because the forge enforces those itself. One run of

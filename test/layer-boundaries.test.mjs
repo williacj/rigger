@@ -1632,3 +1632,20 @@ test('the code-generation rule: a module importing node:inspector, inspector, th
     }
   }
 });
+
+test('the parsed set holds the gate check script, which reads through L0\'s read side alone: adding a forge write side to it fails', () => {
+  const tree = sourceTree();
+  assert.ok(tree.has('scripts/gate-check.mjs'), [...tree.keys()].filter((path) => !path.startsWith('src/')).join(', ') || 'nothing outside src/');
+  assert.deepEqual(boundaryReport(tree).violations.map((violation) => violation.message), []);
+  const sides = [
+    ["import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';", 'rule 5'],
+    ["import { itemWriteRunner } from '../src/substrate/forge/runners.mjs';", 'rule 5'],
+    ["import { schemaWriteRunner } from '../src/substrate/forge/runners.mjs';", 'rule 6'],
+  ];
+  for (const [line, rule] of sides) {
+    const mutated = sourceTree();
+    mutated.set('scripts/gate-check.mjs', `${mutated.get('scripts/gate-check.mjs')}\n${line}\n`);
+    const found = boundaryReport(mutated).violations.map((violation) => violation.message);
+    assert.ok(found.some((message) => message.startsWith('scripts/gate-check.mjs ') && message.includes(`breaks ${rule}:`)), `${line}\n${found.join('\n') || '(nothing)'}`);
+  }
+});

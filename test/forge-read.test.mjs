@@ -735,8 +735,9 @@ const PRINTED_REPOSITORY = Object.fromEntries(
     ['compare', 'rigger-compare-2026-10-01.json'],
     // Captured with gh 2.99.0 on 2026-10-11, for the four reads of #725.
     ['default branch', 'rigger-default-branch-2026-10-11.json'],
-    ['pull request', 'rigger-pull-request-2026-10-11.json'],
-    ['issue', 'rigger-issue-2026-10-11.json'],
+    // Captured with gh 2.99.0 on 2026-10-12, once the two reads selected the head branch and the title (#702).
+    ['pull request', 'rigger-pull-request-2026-10-12.json'],
+    ['issue', 'rigger-issue-2026-10-12.json'],
     ['file', 'rigger-file-at-commit-2026-10-11.json'],
   ].map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
@@ -818,8 +819,8 @@ const commentNodes = (comments) => comments.map((comment, index) => ({ ...commen
  * An issue as the issue read answers it: `labels` its page of label names, pointing on to the
  * page `next` when there is one, and `repo` the repository the forge answers it in.
  */
-const issueNode = ({ number, body = '', labels = [], next = null, repo = 'williacj/rigger' }) =>
-  ({ number, body, repository: { nameWithOwner: repo }, labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MQ' }, nodes: labels.map((name) => ({ name })) } });
+const issueNode = ({ number, title = `Card ${number}`, body = '', labels = [], next = null, repo = 'williacj/rigger' }) =>
+  ({ number, title, body, repository: { nameWithOwner: repo }, labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MQ' }, nodes: labels.map((name) => ({ name })) } });
 
 /** The pull requests a read answers, one page of them. */
 const pulls = (...nodes) => ({ paged: { null: pullPage(nodes.map(pullNode)) } });
@@ -1144,25 +1145,25 @@ test('given the forge answers no default branch, as for an empty repository, rea
   await assertOnlyReads(send.sent.map(([, ...args]) => args));
 });
 
-test('readPullRequestByNumber answers a merged pull request and a closed one as gh answered them for this repository on 2026-10-11', async () => {
-  // Captured with gh 2.99.0 on 2026-10-11: #685, merged, and #678, closed without a merge.
-  const recorded = { 685: captured('rigger-pull-request-2026-10-11.json'), 678: captured('rigger-pull-request-closed-2026-10-11.json') };
+test('readPullRequestByNumber answers a merged pull request and a closed one as gh answered them for this repository on 2026-10-12', async () => {
+  // Captured with gh 2.99.0 on 2026-10-12: #685, merged, and #678, closed without a merge.
+  const recorded = { 685: captured('rigger-pull-request-2026-10-12.json'), 678: captured('rigger-pull-request-closed-2026-10-12.json') };
   const send = (command, args) => ({ status: 0, stdout: recorded[documentOf(args).match(/pullRequest\(number: (\d+)\)/)[1]], stderr: '' });
   const reads = repositoryReads(BOARD, { send });
 
-  assert.deepEqual(await reads.readPullRequestByNumber(685), { number: 685, head: '6c84fae979c86d9b44840193063e742b9c00c3a4', base: 'main', state: 'merged', headRepository: 'williacj/rigger', fromRepository: true });
-  assert.deepEqual(await reads.readPullRequestByNumber(678), { number: 678, head: '65b3e0130ec1d815388bcec67744c69628c13956', base: 'main', state: 'closed', headRepository: 'williacj/rigger', fromRepository: true });
+  assert.deepEqual(await reads.readPullRequestByNumber(685), { number: 685, head: '6c84fae979c86d9b44840193063e742b9c00c3a4', branch: 'tq/628-never-stop-700-guard', base: 'main', state: 'merged', headRepository: 'williacj/rigger', fromRepository: true });
+  assert.deepEqual(await reads.readPullRequestByNumber(678), { number: 678, head: '65b3e0130ec1d815388bcec67744c69628c13956', branch: 'rigger-675', base: 'main', state: 'closed', headRepository: 'williacj/rigger', fromRepository: true });
 });
 
 /** The pull request read by number's answer: `node`, as `pullNode` gives one. */
-const pullAnswer = (node) => ({ repository: { pullRequest: { ...pullNode(node) } } });
+const pullAnswer = (node) => ({ repository: { pullRequest: { ...pullNode(node), headRefName: node.branch ?? `topic-${node.number}` } } });
 
 test("readPullRequestByNumber answers a fork's pull request with the fork as its head repository and fromRepository false, and does not leave it out", async () => {
-  const send = repositoryForge({ 'pull request': pullAnswer({ number: 13, head: 'f'.repeat(40), from: 'someone/rigger' }) });
+  const send = repositoryForge({ 'pull request': pullAnswer({ number: 13, head: 'f'.repeat(40), branch: 'rigger-214', from: 'someone/rigger' }) });
 
   const read = await repositoryReads(BOARD, { send }).readPullRequestByNumber(13);
 
-  assert.deepEqual(read, { number: 13, head: 'f'.repeat(40), base: 'main', state: 'open', headRepository: 'someone/rigger', fromRepository: false });
+  assert.deepEqual(read, { number: 13, head: 'f'.repeat(40), branch: 'rigger-214', base: 'main', state: 'open', headRepository: 'someone/rigger', fromRepository: false });
   assert.match(documentOf(send.sent[0].slice(1)), /pullRequest\(number: 13\)/);
 });
 
@@ -1170,11 +1171,11 @@ test('readPullRequestByNumber answers a pull request whose head repository was d
   // Constructed: `PullRequest.headRepository` is nullable, and null where the head repository
   // was deleted (https://docs.github.com/en/graphql/reference/objects#pullrequest). Not captured:
   // this repository holds no such pull request.
-  const send = repositoryForge({ 'pull request': pullAnswer({ number: 14, state: 'CLOSED', from: null }) });
+  const send = repositoryForge({ 'pull request': pullAnswer({ number: 14, state: 'CLOSED', branch: 'rigger-215', from: null }) });
 
   const read = await repositoryReads(BOARD, { send }).readPullRequestByNumber(14);
 
-  assert.deepEqual(read, { number: 14, head: pullNode({ number: 14 }).headRefOid, base: 'main', state: 'closed', headRepository: null, fromRepository: false });
+  assert.deepEqual(read, { number: 14, head: pullNode({ number: 14 }).headRefOid, branch: 'rigger-215', base: 'main', state: 'closed', headRepository: null, fromRepository: false });
 });
 
 test("readPullRequestByNumber answers fromRepository true where the head repository is this repository's name in another letter case", async () => {
@@ -1205,15 +1206,15 @@ test('readPullRequestByNumber rejects a state gh answers that is none of open, c
   await assert.rejects(repositoryReads(BOARD, { send }).readPullRequestByNumber(12), /pull request #12.*gh answered state DRAFT/);
 });
 
-test('readIssue answers a closed issue as an open one, with its number, body and labels in the order gh answered them for this repository on 2026-10-11', async () => {
-  // Captured with gh 2.99.0 on 2026-10-11: #492, closed, labelled type:change and area:demo. The
+test('readIssue answers a closed issue as an open one, with its number, title, body and labels in the order gh answered them for this repository on 2026-10-12', async () => {
+  // Captured with gh 2.99.0 on 2026-10-12: #492, closed, labelled type:change and area:demo. The
   // read selects no state, so a closed issue is answered as an open one is.
-  const recorded = captured('rigger-issue-2026-10-11.json');
+  const recorded = captured('rigger-issue-2026-10-12.json');
   const send = () => ({ status: 0, stdout: recorded, stderr: '' });
 
   const read = await repositoryReads(BOARD, { send }).readIssue(492);
 
-  assert.deepEqual(read, { number: 492, body: JSON.parse(recorded).data.repository.issue.body, labels: ['type:change', 'area:demo'] });
+  assert.deepEqual(read, { number: 492, title: 'M4-11 — The demo tape records `once` dispatching a maker, and the README\'s alt text says so', body: JSON.parse(recorded).data.repository.issue.body, labels: ['type:change', 'area:demo'] });
   assert.ok(read.body.length > 0);
 });
 
@@ -1231,7 +1232,7 @@ test("readIssue answers every label of an issue holding more than gh's first pag
 
   const read = await repositoryReads(BOARD, { send }).readIssue(214);
 
-  assert.deepEqual(read, { number: 214, body: 'Why.', labels });
+  assert.deepEqual(read, { number: 214, title: 'Card 214', body: 'Why.', labels });
   assert.equal(send.sent.length, 2);
   assert.match(documentOf(send.sent[1].slice(1)), /labels\(first: 100, after: "MTAw"\)/);
 });
@@ -1241,7 +1242,7 @@ test('readIssue answers an issue with an empty body with its body as the empty s
 
   const read = await repositoryReads(BOARD, { send }).readIssue(214);
 
-  assert.deepEqual(read, { number: 214, body: '', labels: ['type:change'] });
+  assert.deepEqual(read, { number: 214, title: 'Card 214', body: '', labels: ['type:change'] });
   assert.equal(typeof read.body, 'string');
 });
 
