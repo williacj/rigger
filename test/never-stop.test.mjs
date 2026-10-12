@@ -1216,6 +1216,8 @@ function assertPreparedCache(retained, cell) {
     assert.equal(end.signal, null, `preparation read ${id} was interrupted`);
     assert.ok(start.timeout > 0 && start.timeout <= 500, `preparation read ${id} exceeded its 500 ms admission timeout`);
     assert.ok(BigInt(end.endedNs) >= BigInt(start.startedNs), `preparation read ${id} ended before start`);
+    assert.ok(BigInt(end.endedNs) - BigInt(start.startedNs) <= BigInt(start.timeout) * 1_000_000n,
+      `preparation read ${id} exceeded its actual admission deadline`);
     const returned = {};
     for (const stream of ['stdout', 'stderr']) {
       assert.equal(end.streams[stream].type, 'string', `preparation read ${id} had no returned ${stream}`);
@@ -1320,12 +1322,25 @@ test('C615 fixture-cache-binding rejects a consumed value different from its pre
     { name: 'changed-preparation-original', file: 'sighting-prepared/004.stdout.utf8',
       change: (file) => writeFileSync(file, 'different preparatory return\n') },
     { name: 'absent-ready', file: 'sighting-cache.ready', change: (file) => unlinkSync(file) },
+    { name: 'late-preparation-read', file: 'sighting-prepared/012.json',
+      error: /preparation read 012 exceeded its actual admission deadline/,
+      change: (file) => {
+        const receipt = JSON.parse(readFileSync(file, 'utf8'));
+        const first = JSON.parse(readFileSync(join(file, '..', '001.start.json'), 'utf8'));
+        assert.equal(receipt.timeout, 500);
+        const late = BigInt(receipt.startedNs) + 501_000_000n;
+        assert.notEqual(receipt.endedNs, String(late), 'the late read was not forced');
+        assert.ok(late - BigInt(first.startedNs) <= 6_000_000_000n, 'the control also exceeded the total deadline');
+        receipt.endedNs = String(late);
+        writeFileSync(file, JSON.stringify(receipt) + '\n');
+        assert.equal(JSON.parse(readFileSync(file, 'utf8')).endedNs, String(late));
+      } },
   ];
   for (const mutation of mutations) {
     const candidate = join(observation.root, `cache-${mutation.name}-${randomUUID()}`);
     cpSync(original, candidate, { recursive: true, force: false, errorOnExist: true });
     mutation.change(join(candidate, mutation.file));
-    assert.throws(() => assertPreparedCache(candidate, 'U2'), undefined,
+    assert.throws(() => assertPreparedCache(candidate, 'U2'), mutation.error,
       `${mutation.name}: a bad cache earned prepared credit`);
   }
 });
@@ -6288,4 +6303,30 @@ test('C615 preparation streams distinguish absent undefined null and empty retur
     assert.deepEqual(end.streams[name], { present: false, type: 'absent', file: null });
     assert.equal(existsSync(join(directory, 'sighting-prepared', `001.${name}.utf8`)), false);
   }
+});
+
+
+test('C615 preparation refuses a returned read past its configured deadline', SETTLES_WITHIN, () => {
+  const directory = syntheticPreparationDirectory('per-read-deadline');
+  const birth = 'Mon Oct 11 10:00:00 2026\n';
+  const state = '42001 S\n42002 S\n42003 S\n';
+  const answers = [birth, birth, birth, state, '42001 sh\n42002 tail\n42003 tail\n',
+    'sh\n', 'tail\n', 'tail\n', birth, birth, birth, state];
+  let now = 0n;
+  let calls = 0;
+  const reader = (tool, argv, settings) => {
+    assert.equal(tool, '/bin/ps');
+    assert.equal(settings.timeout, 500);
+    if (calls === 0) now = 501_000_000n;
+    return { status: 0, signal: null, error: undefined, stdout: answers[calls++], stderr: '' };
+  };
+  assert.throws(() => prepareSighting(directory, { reader, clock: () => now }), /exceeded its 500 ms read bound/);
+  assert.equal(calls, 1, 'a late returned read started another preparation read');
+  assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false);
+  const prepared = join(directory, 'sighting-prepared');
+  const receipt = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
+  assert.equal(receipt.clockSource, 'synthetic-clock');
+  assert.equal(BigInt(receipt.endedNs) - BigInt(receipt.startedNs), 501_000_000n);
+  assert.equal(readFileSync(join(prepared, '001.stdout.utf8'), 'utf8'), birth);
+  assert.equal(readFileSync(join(prepared, '001.stderr.utf8'), 'utf8'), '');
 });

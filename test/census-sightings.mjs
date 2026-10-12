@@ -114,6 +114,7 @@ export function prepareSighting(directory, { reader = spawnSync, clock = process
     if (thrown) throw new Error('a controlled sighting preparation read threw before returning');
     if (result.error || result.signal || typeof result.stdout !== 'string' || typeof result.stderr !== 'string' || result.stderr !== '' || (result.status !== 0 && !(result.status === 1 && result.stdout === ''))) throw new Error('a controlled sighting preparation read was not a product-equivalent answer');
     if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
+    if (BigInt(endedNs) - BigInt(startedNs) > BigInt(timeout) * 1_000_000n) throw new Error(`the controlled sighting preparation exceeded its ${timeout} ms read bound`);
     if (result.status !== 0 || result.stdout === '') throw new Error('a controlled sighting preparation read contained no required row');
     return result.stdout;
   };
