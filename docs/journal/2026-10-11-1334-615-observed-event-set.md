@@ -2,7 +2,7 @@
 
 # #615 observed forced-end event set
 
-Independent proof-declaration review found six added `R-STATE-26` tests that checked expected events after filtering by PID or event type. A product mutation that appended a `survivor.killed` event for an unobserved PID left those six tests green. The seventh questioned G2 C2 test already failed on that mutation. The mutation was applied to a disposable product source; it did not change the maker branch.
+Six added `R-STATE-26` tests checked expected events after filtering by PID or event type. A product mutation that appended a `survivor.killed` event for an unobserved PID left those six tests green. The seventh questioned G2 C2 test already failed on that mutation. The mutation was applied to a disposable product source; it did not change the maker branch.
 
 The six controls now check the entire event set. The real Mac directory control requires the directly observed command PID and tail PID only. Its command event name and command line come from returned pre-kill `/bin/ps` group and per-PID rows; its tail identity comes from the returned lsof/ps rows already asserted. The real Mac group and G3 C2 controls require their one observed member result. The three G4 no-last controls allow only the group result and the known outside PID's unended result. No `// proves` declaration was changed.
 
