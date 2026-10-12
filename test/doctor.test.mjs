@@ -701,8 +701,6 @@ test('the whole report is lines, and carries no stack trace', async () => {
  */
 function freshClone() {
   const into = cloneInto(root, join(temporaryDirectory('rigger-clone-'), 'rigger'));
-  // The clone holds HEAD; during a maker edit, exercise the config that will become that head.
-  writeFileSync(join(into, CONFIG), readFileSync(join(root, CONFIG), 'utf8'));
   const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
