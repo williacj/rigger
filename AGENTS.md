@@ -179,20 +179,15 @@ costs a round. Never work around a hook — if a gate stops you, review.
 
 An agent judge rules on every acceptance item and records each met or unmet, rules on whether the
 acceptance covered what the card asked, and returns the card to its author rather than
-rewriting it. Its verdict goes in a marker bound to the work it read. From M5 the gate reads
-those markers against the card's judge list, and admits nothing until the consumer's own checks
-have passed too.
+rewriting it. Its verdict goes in a marker bound to the work it read. The gate reads those
+markers against the card's judge list, and admits nothing until the consumer's own checks have
+passed too.
 
-Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, and never
-otherwise. This permission does not reach a card changing any authored document in "What binds".
-Such a card must have a kind that names `owner` among its judges. A card whose kind does not name
-`owner` cannot merge with that edit. The permission reaches the merge alone: every verdict in
-that evidence is another role's. `D22` records this rule and what ends it.
-
-Until M5, where a card's kind names `owner` among its judges, the owner's merge is the owner's
-verdict. So until M5 only the owner merges that card, and its maker never does. This includes
-every card changing an authored document in "What binds". `D21` records the owner's verdict
-and what M5 must settle in its place.
+Once "rigger/gate" and "self-hosting" are green, anyone may merge: the engine's lane or a
+person. A pull request changing an authored document in "What binds", or a path
+"Self-hosting" lists, merges only with a sound owner marker at its head. Once that marker is there
+and both checks are green, anyone may merge it too. The owner's merge is no verdict; the owner's
+marker is. `D25` rules 5 and 7 record this.
 
 ## Self-hosting
 
@@ -200,24 +195,32 @@ Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this
 (`R-SAFE-5`). The engine runs from a tarball installed outside the source tree, because an
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
 this, and the worktree root belongs outside both the checkout and the package. **The engine
-never merges a change to its own live gate, config, or CLI entry point**, and never dispatches a
-card that makes one. `D22`'s permission, under "Review and merge", reaches a card changing any
-path listed below, subject to the authored-document rule there. Those four, by path:
+never dispatches a card that changes a path listed below.** Such a card merges only with a sound
+owner marker at its head, which the "self-hosting" check enforces. Once "rigger/gate" and
+"self-hosting" are green, the engine's lane may merge it (`D25` rules 5 and 7). The paths:
 
-- The live gate: `.githooks/`.
+- The live gate: `.githooks/`; `templates/githooks/`; `.github/workflows/rigger-gate.yml` and
+  `templates/github/workflows/rigger-gate.yml`; `.github/workflows/self-hosting.yml` and
+  `.github/scripts/self-hosting-check.mjs`; `.github/workflows/ci.yml`.
 - The live config: `rigger.config.mjs`.
-- The live Codex configuration: `.codex/config.toml`, and `templates/codex/config.toml` with it.
-- The CLI entry point: `src/cli/rigger.mjs`, which `package.json` declares as its `bin`.
+- The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
+- The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
+
+The gate's code is owner-judged too, because moving the pin makes it the live gate (`D25` rule 6):
+`src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`, and
+`src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on. None
+of it is live until the pin moves.
 
 ## Version control
 
 Working by hand, create your own worktree; a dispatched session is already in one. The main
 checkout is not a workspace. Branch for every piece of work. Nothing reaches `main` except
-through the gate. Until M5 installs it here that rule is yours to keep and the owner's to
-waive; from M5 it is the hook's, it refuses on missing or stale evidence whoever you are, and
-nobody can wave it through. Commit atomically and often, with messages that say why. `git
-status` before `git add -A`. Commit a journal entry with the work that produced it, as its own
-file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
+through the gate, the forge's required checks "rigger/gate" and "self-hosting". They refuse on
+missing or stale evidence whoever you are, and nobody can wave them through. Every pull request
+into `main` comes from its card's branch, named by the topic rule in `rigger.config.mjs`, and the
+gate refuses a pull request no card matches. Commit atomically and often, with messages that say
+why. `git status` before `git add -A`. Commit a journal entry with the work that produced it, as
+its own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
 
 ## Pointers
 

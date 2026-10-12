@@ -34,6 +34,12 @@
     "docs/spikes/what-unattended-sessions-are-refused.md": "strict"
   },
   "exempt": {
-    "paths": {}
+    "paths": {
+      ".github/workflows/rigger-gate.yml": "The gate workflow, which #702 (M5-10) adds. AGENTS.md lists it under Self-hosting ahead of it (#649).",
+      "templates/github/": "The shipped gate workflow, which #702 (M5-10) adds. AGENTS.md lists it under Self-hosting ahead of it (#649).",
+      "scripts/gate-check.mjs": "The gate script, which #702 (M5-10) adds. AGENTS.md lists it as owner-judged gate code ahead of it (#649).",
+      ".github/workflows/self-hosting.yml": "This repository's self-hosting check, which #662 (M5-13) adds. AGENTS.md lists it under Self-hosting ahead of it (#649).",
+      ".github/scripts/": "The self-hosting check's script, which #662 (M5-13) adds. AGENTS.md lists it under Self-hosting ahead of it (#649)."
+    }
   }
 }
