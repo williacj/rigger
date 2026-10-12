@@ -26,3 +26,14 @@ The two scripts were written before their tests, against the TDD rule. The maker
 mutations instead, logged in the pull request, and the coordinator put that departure to the
 judges. One template mutation, taking the state from the reason rather than the exit status,
 survived the first posting test; that test now holds a non-zero exit with no reason printed.
+
+## Round 1
+
+Both Codex judges ruled the first head critical, for two defects the tests had not reached. The
+topic inverse built `\1` beside a literal digit, so a topic such as `{number}{number}1` that the
+validator admits mapped no branch to a card. That split a card's issue and pull request events
+into two concurrency groups. The prepack script asked git which packed paths differed from `HEAD`,
+but git names an ignored directory rather than the files in it, so a packed file there went
+unseen. The inverse now repeats a named group. The script now holds the pack against `HEAD`'s
+tree itself, so it no longer reads git's status. Each fix began with a test that failed on the
+first head.
