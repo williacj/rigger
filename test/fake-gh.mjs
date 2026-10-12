@@ -492,7 +492,7 @@ const COMMANDS = {
     const { base, sha } = pullNamed(state, operation);
     return { repository: { pullRequest: { baseRefName: base, headRefOid: sha } } };
   },
-  // The reads of a pull request, an issue, the default branch and a file at a commit, which #725 added.
+  // The reads of one pull request or issue by its number, the default branch, and a file at a commit.
   [graphql(repositoryShape('pullRequest(number: _) { number state headRefOid baseRefName headRepository { nameWithOwner } }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const pull = pullNamed(state, operation);

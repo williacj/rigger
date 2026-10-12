@@ -24,6 +24,7 @@ import { writeFileSync } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryIn } from './git-repository.mjs';
+import { readRunner } from '../src/substrate/forge/runners.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -667,7 +668,10 @@ test('the repository read rejects naming the repository as holding no default br
   const origin = repositoryIn('rigger-fake-gh-empty-');
   const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
 
+  const before = forgeHeld(fake);
+
   await onPath(fake, () => assert.rejects(reads().readDefaultBranch(), /readDefaultBranch on board 6 failed: reading the default branch in williacj\/rigger, williacj\/rigger holds no default branch/));
+  await assertNothingChanged(fake, before);
 });
 
 test("the repository read answers a file's text at a commit of the fake gh's origin byte for byte, an empty file as the empty string, and a path holding nothing as null", async () => {
@@ -686,6 +690,7 @@ test("the repository read rejects a file at a commit the fake gh's origin does n
   const { fake, head, origin } = withFiles();
   const tree = gitIn(origin, 'rev-parse', `${head}^{tree}`).trim();
   const missing = '0123456789abcdef0123456789abcdef01234567';
+  const before = forgeHeld(fake);
 
   await onPath(fake, async () => {
     await assert.rejects(reads().readFileAt(missing, 'README'), new RegExp(`reading README at ${missing} in williacj/rigger, gh answered no commit ${missing}$`));
@@ -698,6 +703,7 @@ test("the repository read rejects a file at a commit the fake gh's origin does n
       }, path);
     }
   });
+  await assertNothingChanged(fake, before);
 });
 
 test('the repository read answers each issue the fake gh holds: every label past one page in order, a closed one as an open one, an empty body, and null for an issue in another repository, a pull request and nothing', async () => {
@@ -741,7 +747,9 @@ test('the repository read answers each pull request the fake gh holds by number,
     assert.deepEqual(await reads().readPullRequestByNumber(303), { number: 303, head: sha(303), base: 'main', state: 'open', headRepository: null, fromRepository: false });
     assert.deepEqual(await reads().readPullRequestByNumber(304), { number: 304, head: sha(304), base: 'release', state: 'merged', headRepository: own, fromRepository: true });
     assert.deepEqual(await reads().readPullRequestByNumber(305), { number: 305, head: sha(305), base: 'main', state: 'closed', headRepository: own, fromRepository: true });
+    const before = forgeHeld(fake);
     await assert.rejects(reads().readPullRequestByNumber(306), /pull request #306.*Could not resolve to a PullRequest with the number of 306/);
+    await assertNothingChanged(fake, before);
     // The branch's read leaves out a closed pull request and one whose head repository was deleted, as GitHub does.
     assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }], merged: [{ number: 304, head: sha(304), base: 'release' }] });
   });
@@ -759,3 +767,23 @@ test('each of the four reads answers through the fake gh as it does for the exac
     assert.ok(exact !== null, name);
   }
 });
+
+/** What the fake `gh` holds of the forge: its board, every write made to it, and its repository; all but the commands it was sent. */
+function forgeHeld(fake) {
+  const { sent, ...held } = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8'));
+  return held;
+}
+
+/**
+ * Asserts that the fake `gh` holds the forge as it held it `before`, and that every command it was
+ * sent is one the read runner admits, a query or an explicit GET, so none could change the forge.
+ */
+async function assertNothingChanged(fake, before) {
+  assert.deepEqual(forgeHeld(fake), before);
+  assert.ok(fake.sent().length > 0, 'the fake gh was sent nothing');
+  for (const args of fake.sent()) {
+    const admitted = [];
+    await readRunner(args, { send: (command, handed) => admitted.push(handed) });
+    assert.deepEqual(admitted, [args]);
+  }
+}

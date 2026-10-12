@@ -417,7 +417,8 @@ function notFoundAt(said, path) {
   } catch {
     return null;
   }
-  const errors = printed?.errors;
+  if (printed === null || typeof printed !== 'object') return null;
+  const { errors } = printed;
   const only = Array.isArray(errors) && errors.length > 0
     && errors.every((error) => error?.type === 'NOT_FOUND' && JSON.stringify(error.path) === JSON.stringify(path));
   const data = printed.data;

@@ -1141,6 +1141,7 @@ test('given the forge answers no default branch, as for an empty repository, rea
     assert.match(error.message, /^readDefaultBranch on board 6 failed: reading the default branch in williacj\/rigger, williacj\/rigger holds no default branch$/);
     return true;
   });
+  await assertOnlyReads(send.sent.map(([, ...args]) => args));
 });
 
 test('readPullRequestByNumber answers a merged pull request and a closed one as gh answered them for this repository on 2026-10-11', async () => {
@@ -1188,13 +1189,14 @@ test("readPullRequestByNumber answers fromRepository true where the head reposit
 test('given the number names no pull request, readPullRequestByNumber rejects naming the number, as gh answered for this repository on 2026-10-11', async () => {
   // Captured with gh 2.99.0 on 2026-10-11 for #999999: gh exits 1, printing the response on
   // stdout and its message on stderr.
-  const send = () => ({ status: 1, stdout: captured('rigger-pull-request-not-found-2026-10-11.json'), stderr: 'gh: Could not resolve to a PullRequest with the number of 999999.\n' });
+  const send = recording(() => ({ status: 1, stdout: captured('rigger-pull-request-not-found-2026-10-11.json'), stderr: 'gh: Could not resolve to a PullRequest with the number of 999999.\n' }));
 
   await assert.rejects(repositoryReads(BOARD, { send }).readPullRequestByNumber(999999), (error) => {
     assert.ok(error.message.includes('pull request #999999'), error.message);
     assert.ok(error.message.includes('Could not resolve to a PullRequest with the number of 999999.'), error.message);
     return true;
   });
+  await assertOnlyReads(send.sent);
 });
 
 test('readPullRequestByNumber rejects a state gh answers that is none of open, closed and merged', async () => {
@@ -1355,11 +1357,13 @@ test("readFileAt rejects naming the commit where the forge's answer does not sho
     'a not-found answer showing another commit': absent,
   };
   for (const [what, said] of Object.entries(answers)) {
-    await assert.rejects(repositoryReads(BOARD, { send: () => said }).readFileAt(missing, 'rigger.config.mjs'), (error) => {
+    const send = recording(() => said);
+    await assert.rejects(repositoryReads(BOARD, { send }).readFileAt(missing, 'rigger.config.mjs'), (error) => {
       assert.ok(error.message.startsWith(`readFileAt on board 6 failed: reading rigger.config.mjs at ${missing} in williacj/rigger, `), error.message);
       assert.ok(error.message.endsWith(`gh answered no commit ${missing}`), error.message);
       return true;
     }, what);
+    await assertOnlyReads(send.sent);
   }
 });
 
@@ -1369,11 +1373,12 @@ test('readFileAt rejects a directory and a binary file at the path, naming the p
   const answers = { src: 'rigger-file-directory-2026-10-11.json', 'docs/demo.gif': 'rigger-file-binary-2026-10-11.json' };
   const why = { src: 'src is a directory, not a file', 'docs/demo.gif': 'docs/demo.gif is a binary file' };
   for (const [path, file] of Object.entries(answers)) {
-    const send = () => ({ status: 0, stdout: captured(file), stderr: '' });
+    const send = recording(() => ({ status: 0, stdout: captured(file), stderr: '' }));
     await assert.rejects(repositoryReads(BOARD, { send }).readFileAt(CAPTURED_AT, path), (error) => {
       assert.ok(error.message.endsWith(why[path]), error.message);
       return true;
     }, path);
+    await assertOnlyReads(send.sent);
   }
 });
 
@@ -1384,12 +1389,13 @@ test("readFileAt rejects a symbolic link and a submodule at the path, naming the
   const head = '6de20f6092dcf9bdb1c8efe03db4b70c82b423dd';
   const answers = { RelNotes: ['git-file-symbolic-link-2026-10-11.json', 'a symbolic link'], sha1collisiondetection: ['git-file-submodule-2026-10-11.json', 'a submodule'] };
   for (const [path, [file, what]] of Object.entries(answers)) {
-    const send = () => ({ status: 0, stdout: captured(file), stderr: '' });
+    const send = recording(() => ({ status: 0, stdout: captured(file), stderr: '' }));
     await assert.rejects(repositoryReads({ ...BOARD, repo: 'git/git' }, { send }).readFileAt(head, path), (error) => {
       assert.ok(error.message.endsWith(`${path} is ${what}, not a file`), error.message);
       assert.ok(!error.message.includes('Documentation/RelNotes'), error.message);
       return true;
     }, path);
+    await assertOnlyReads(send.sent);
   }
 });
 
@@ -1415,6 +1421,7 @@ test('readFileAt rejects a file the forge does not send whole, naming the path a
       assert.ok(!error.message.includes('partial'), error.message);
       return true;
     }, what);
+    await assertOnlyReads(send.sent.map(([, ...args]) => args));
   }
 });
 
@@ -1428,4 +1435,64 @@ test('readFileAt refuses a commit that is not a full SHA and a path that is empt
     await assert.rejects(reads.readFileAt(CAPTURED_AT, path), /readFileAt on board 6 failed: .*is not a path within a commit/, String(path));
   }
   assert.deepEqual(sent, []);
+});
+
+/**
+ * A send answering every request with what `answer` gives for its arguments, recording each
+ * request's arguments in `sent`.
+ */
+function recording(answer) {
+  const send = (command, args) => {
+    send.sent.push(args);
+    return answer(args);
+  };
+  send.sent = [];
+  return send;
+}
+
+/**
+ * Asserts that every request in `sent` is one the read runner admits, a query or an explicit GET,
+ * and so none of them could change anything on the forge.
+ */
+async function assertOnlyReads(sent) {
+  assert.ok(sent.length > 0, 'the read sent nothing');
+  for (const args of sent) {
+    const admitted = [];
+    await readRunner(args, { send: (command, handed) => admitted.push(handed) });
+    assert.deepEqual(admitted, [args]);
+  }
+}
+
+test("given gh fails with an answer that parses but is no object, readIssue and readFileAt reject keeping gh's first line", async () => {
+  const line = 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)';
+  for (const stdout of ['null', '1', '"text"', '[]']) {
+    const said = { status: 1, stdout, stderr: `${line}\nsecond line\n` };
+    const reads = repositoryReads(BOARD, { send: () => said });
+    await assert.rejects(reads.readIssue(214), (error) => {
+      assert.ok(error.message.startsWith('readIssue on board 6 failed: reading issue #214 in williacj/rigger, '), error.message);
+      assert.ok(error.message.includes(line), error.message);
+      return true;
+    }, stdout);
+    await assert.rejects(reads.readFileAt(CAPTURED_AT, 'rigger.config.mjs'), (error) => {
+      assert.ok(error.message.startsWith(`readFileAt on board 6 failed: reading rigger.config.mjs at ${CAPTURED_AT} in williacj/rigger, `), error.message);
+      assert.ok(error.message.includes(line), error.message);
+      return true;
+    }, stdout);
+  }
+});
+
+test("given an issue's first label page answers and its next fails, readIssue rejects naming the issue and gh's first line, answers no part of it, and sends only reads", async () => {
+  const line = 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)';
+  const labels = Array.from({ length: 101 }, (_, i) => `label-${i}`);
+  const first = ok({ repository: { issue: issueNode({ number: 214, body: 'Why.', labels: labels.slice(0, 100), next: 'MTAw' }) } });
+  const send = recording((args) => (cursorOf(documentOf(args)) === null ? first : failed(line)));
+
+  await assert.rejects(repositoryReads(BOARD, { send }).readIssue(214), (error) => {
+    assert.ok(error.message.startsWith('readIssue on board 6 failed: reading issue #214 in williacj/rigger, '), error.message);
+    assert.ok(error.message.includes(line), error.message);
+    assert.ok(!error.message.includes('label-'), error.message);
+    return true;
+  });
+  assert.equal(send.sent.length, 2);
+  await assertOnlyReads(send.sent);
 });
