@@ -1,0 +1,11 @@
+<!-- ABOUTME: Records the #615 observed-only event assertions and product mutation evidence. -->
+
+# #615 observed forced-end event set
+
+Independent proof-declaration review found six added `R-STATE-26` tests that checked expected events after filtering by PID or event type. A product mutation that appended a `survivor.killed` event for an unobserved PID left those six tests green. The seventh questioned G2 C2 test already failed on that mutation. The mutation was applied to a disposable product source; it did not change the maker branch.
+
+The six controls now check the entire event set. The real Mac directory control requires the directly observed command PID and tail PID only. Its command event name and command line come from returned pre-kill `/bin/ps` group and per-PID rows; its tail identity comes from the returned lsof/ps rows already asserted. The real Mac group and G3 C2 controls require their one observed member result. The three G4 no-last controls allow only the group result and the known outside PID's unended result. No `// proves` declaration was changed.
+
+The first original run with an overstrict Mac directory guard failed: its private trace showed two legitimate observed events, one for the command and one for the tail. The guard was corrected to require both, with unique PIDs and no event-order assumption. The corrected test source SHA-256 is `7fc6892d48063c1633e9c6c1823259ece1cf7bf4ea4ab95670bb1546607605a6`.
+
+Under O240 host gates, the corrected original run at `/private/tmp/c615-review-guard-head-dktu3gak` passed all eight selected controls; complete stdout SHA-256 is `cdcc7cbd107dad5dae5669ddf3972fc06f19585019e014556f92352095dd6af1`, and closed private manifest SHA-256 is `52cb22d9333b772d9b5139b60292b3e6a8d056ababf5d81c06f43687d073855c`. The same test bytes against the disposable invented-PID product mutation at `/private/tmp/c615-review-guard-mutant-5qubsr40` failed all eight selected controls; stdout SHA-256 is `7fd9057b2d79dcb1df51dde7253fdb8539687d49c2b4a757ff5c31d48cda5d45`, and closed manifest SHA-256 is `3d6c87b6b8967d77729a5f60d2289e51632742ac24bdb70d751da5fcc1e912a6`. Both whole-root checks found zero structural faults and blocked public output on strict privacy checks. The raw originals remain private. Independent review and the full suite still need to rule the eventual candidate.
