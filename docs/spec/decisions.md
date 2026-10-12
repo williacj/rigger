@@ -35,7 +35,7 @@ it. Those two openings are the only ones it takes, and an amendment adds `Amende
 `Ratified` rather than a third. A later amendment adds its pull request after the earlier ones, each
 joined to the one before by `and`, in the order the pull requests merged. A superseded entry's
 status reads `Superseded by D#.` alone, and drops any amendment it recorded. Its row in the table
-below reads `Superseded by D#`, with no period, as every cell does. A superseded decision's body
+below reads `Superseded by D#`, with no period. A superseded decision's body
 moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is never
 reused.
 
