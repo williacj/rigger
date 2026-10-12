@@ -99,6 +99,22 @@ test('the script writes no commit, and removes a record already there, where a p
   }
 });
 
+test('a file the pack carries from under a directory git ignores, absent from HEAD, removes the record', () => {
+  const root = packageAt();
+  record(root);
+  assert.notEqual(recorded(root), null);
+  writeFileSync(join(root, '.git/info/exclude'), 'src/ignored/\n');
+  mkdirSync(join(root, 'src/ignored'));
+  writeFileSync(join(root, 'src/ignored/extra.mjs'), 'export const extra = 1;\n');
+  // npm packs it, though git reports only its directory, and only as ignored.
+  const listed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], { cwd: root, encoding: 'utf8', env: gitEnvironment() }));
+  assert.ok(listed[0].files.some((file) => file.path === 'src/ignored/extra.mjs'), JSON.stringify(listed[0].files.map((file) => file.path)));
+
+  record(root);
+
+  assert.equal(recorded(root), null);
+});
+
 test('a change to a path the pack does not carry leaves the record written', () => {
   const root = packageAt();
   writeFileSync(join(root, 'notes.txt'), 'not packed\n');

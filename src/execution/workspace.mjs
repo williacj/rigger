@@ -29,9 +29,11 @@ export const topicFor = (topic, card) => topic.replaceAll('{number}', String(car
  * `{number}` in the topic stands for the same one.
  */
 export function cardOfBranch(topic, branch) {
+  // The first `{number}` captures the card and each later one must repeat it. The repeat is a named
+  // backreference, so a literal digit after it is never read as part of the reference's number.
   const [first, ...rest] = topic.split('{number}').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const found = new RegExp(`^${first}([1-9][0-9]*)${rest.join('\\1')}$`).exec(branch);
-  return found === null ? null : Number(found[1]);
+  const found = new RegExp(`^${first}(?<card>[1-9][0-9]*)${rest.join('\\k<card>')}$`).exec(branch);
+  return found === null ? null : Number(found.groups.card);
 }
 
 /**

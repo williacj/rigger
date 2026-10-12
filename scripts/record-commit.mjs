@@ -30,30 +30,27 @@ function answer(command, args, env = command === 'git' ? gitEnvironment() : proc
 
 /**
  * The commit to record: `HEAD`'s full SHA, or null where the package is outside a git repository,
- * has no commit, or a path the pack carries differs from `HEAD`. npm is asked what the pack carries
- * (`D16`), with scripts off so this script does not run again; git is asked how each of those paths,
- * and each path under a directory `files` names, stands against `HEAD`, tracked, untracked or
- * ignored.
+ * has no commit, or the pack would not hold exactly `HEAD`'s files. npm is asked what the pack
+ * carries (`D16`), with scripts off so this script does not run again; git is asked what `HEAD`
+ * holds. The pack holds `HEAD`'s files where:
+ * 1. every path the pack carries is a file `HEAD` holds, whatever git's ignore rules say of it;
+ * 2. every file `HEAD` holds under a directory `files` names is one the pack carries;
+ * 3. no path the pack carries differs from `HEAD` in the tree.
  */
 function commitToRecord() {
   const head = answer('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])?.trim();
   if (!head) return null;
   const listed = answer('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error']);
   if (listed === null) return null;
-  const packed = new Set(JSON.parse(listed)[0].files.map((file) => file.path).filter((path) => path !== RECORD));
+  const packed = JSON.parse(listed)[0].files.map((file) => file.path).filter((path) => path !== RECORD);
+  const held = answer('git', ['ls-tree', '-r', '-z', '--name-only', head]);
+  if (held === null) return null;
+  const atHead = new Set(held.split('\0').filter(Boolean));
+  if (!packed.every((path) => atHead.has(path))) return null;
   const declared = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).files ?? [];
-  const status = answer('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching', '--', ...packed, ...declared]);
-  if (status === null) return null;
-  // Each entry is two status letters, a space and a path; a rename or copy carries its source as
-  // the entry after it. A tracked path deleted from the tree is in no pack, so a deletion counts
-  // wherever it is; any other entry counts where the pack carries its path.
-  const entries = status.split('\0').filter(Boolean);
-  const differs = entries.some((entry) => {
-    const [code, path] = [entry.slice(0, 2), entry.slice(3)];
-    if (path === RECORD) return false;
-    return code.includes('D') || code.includes('R') || packed.has(path);
-  });
-  return differs ? null : head;
+  const under = [...atHead].filter((path) => declared.some((directory) => path.startsWith(directory.endsWith('/') ? directory : `${directory}/`)));
+  if (!under.every((path) => packed.includes(path))) return null;
+  return answer('git', ['diff', '--quiet', head, '--', ...packed]) === null ? null : head;
 }
 
 const commit = commitToRecord();

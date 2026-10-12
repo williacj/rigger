@@ -246,6 +246,17 @@ test('a comment on a pull request resolves its card from the branch readPullRequ
   assert.ok(where.fake.sent().some((args) => args.join(' ').includes(`pullRequest(number: ${PULL})`) && args.join(' ').includes('headRefName')));
 });
 
+test('under a topic with a literal digit beside repeated placeholders, a pull request\'s event and its card\'s issue event resolve to one card, so they share one concurrency group', () => {
+  const config = configWith();
+  config.worktrees = { topic: '{number}{number}1' };
+  const where = forge({ main: moduleOf(config), pullRequests: [pullFrom({ head: '771' })] });
+
+  assert.equal(run(where, ['card'], { NUMBER: String(PULL), IS_PULL: 'true' }).stdout, `card=${CARD}\n`);
+  assert.equal(run(where, ['card'], { NUMBER: String(CARD), IS_PULL: 'false' }).stdout, `card=${CARD}\n`);
+  assert.equal(run(where, ['map'], { NUMBER: String(CARD), IS_PULL: 'false' }).stdout, `${PULL}\n`);
+  assert.ok(ruled(where).lines.includes(`card: #${CARD}`));
+});
+
 test('the card run resolves a pull request\'s card from its own number where the default branch\'s config cannot be read, and fails where the pull request cannot be', () => {
   const unread = forge({ main: null, pullRequests: [pullFrom()] });
   assert.equal(run(unread, ['card'], { NUMBER: String(PULL), IS_PULL: 'true' }).stdout, `card=${PULL}\n`);

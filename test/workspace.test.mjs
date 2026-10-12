@@ -312,9 +312,14 @@ test('for every topic validate accepts here, the names L1 derives for cards 1, 2
 });
 
 test('cardOfBranch inverts topicFor, for the default topic and for configured ones, and answers no card for a branch the topic does not name', () => {
-  for (const topic of ['rigger-{number}', 'card{number}x', '{number}-{number}', 'a.{number}+b']) {
-    for (const card of [1, 7, 10, 702]) assert.equal(cardOfBranch(topic, topicFor(topic, card)), card, `${topic} ${card}`);
+  // Literal digits beside a placeholder, and placeholders repeated with nothing between them, are
+  // topics the validator admits, so the inverse holds for them too.
+  for (const topic of ['rigger-{number}', 'card{number}x', '{number}-{number}', 'a.{number}+b', '{number}{number}1', '1{number}', '{number}0{number}', 'r{number}{number}{number}']) {
+    assert.deepEqual(validate({ ...rigger, worktrees: { topic } }), [], topic);
+    for (const card of [1, 7, 10, 11, 702]) assert.equal(cardOfBranch(topic, topicFor(topic, card)), card, `${topic} ${card}`);
   }
+  assert.equal(cardOfBranch('{number}{number}1', '771'), 7);
+  assert.equal(cardOfBranch('{number}{number}1', '772'), null);
   // Written out rather than derived, so the inverse is checked against names, not against topicFor.
   assert.equal(cardOfBranch('rigger-{number}', 'rigger-702'), 702);
   assert.equal(cardOfBranch('{number}-{number}', '12-12'), 12);
