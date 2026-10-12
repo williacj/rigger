@@ -17,6 +17,20 @@ import { judgeRole } from '../src/config/validate.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+test('this repository config assigns opposite-provider agent judges for all five kinds and no codex role', () => {
+  const opposite = (role) => ({ role, provider: { claude: 'codex', codex: 'claude' } });
+  assert.deepEqual(rigger.roles.engineer.providerLabels, { 'maker:codex': 'codex' });
+  assert.equal(Object.hasOwn(rigger.roles, 'codex'), false);
+  assert.deepEqual(Object.fromEntries(Object.entries(rigger.kinds).map(([name, kind]) => [name, kind.judges])), {
+    change: [opposite('reviewer')],
+    spec: [opposite('reviewer'), opposite('engineer'), opposite('architect'), 'owner'],
+    structure: [opposite('reviewer'), 'owner'],
+    intake: [opposite('reviewer'), 'owner'],
+    spike: [opposite('reviewer')],
+  });
+  assert.deepEqual(validate(rigger), []);
+});
+
 /**
  * The config shape `ARCHITECTURE.md` publishes under its extension-point table, run rather than
  * read, so the test compares against the architecture's own object and not a retyping of it.
@@ -334,7 +348,7 @@ test('every kind this repository declares names one maker role and an ordered li
     assert.ok(names.includes(kind.maker), `kinds.${name} makes its work with \`${kind.maker}\`, which is no declared role`);
     assert.ok(Array.isArray(kind.judges) && kind.judges.length > 0, `kinds.${name} names no ordered list of judges`);
     for (const judge of kind.judges) {
-      assert.ok(judge === 'owner' || names.includes(judge), `kinds.${name} is judged by \`${judge}\`, which is no declared role`);
+      assert.ok(judgeRole(judge) === 'owner' || names.includes(judgeRole(judge)), `kinds.${name} is judged by \`${judgeRole(judge)}\`, which is no declared role`);
     }
   }
 });
@@ -692,10 +706,10 @@ test('the labels a config selects are every label its kinds and provisioning ste
 
 test('the labels a config declares are those its kinds and steps select, then its epic label, each once', () => {
   // Written out by hand from this repository's config, which declares `type:epic`.
-  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic']);
+  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'maker:codex']);
   const { epicLabel, ...unmarked } = rigger;
   assert.deepEqual(validate(unmarked), []);
-  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo']);
+  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'maker:codex']);
 });
 
 test('a config with no provisioning selects the labels its kinds select', () => {
@@ -986,7 +1000,7 @@ test('a role named ... or .reviewer is accepted', () => {
 test('a role naming a provider the adapter map does not hold is refused, and the refusal names the role and the provider', () => {
   for (const provider of ['unheld', 'Claude', 'toString', '', 7, null, ['claude']]) {
     assert.ok(!Object.hasOwn(ADAPTERS, provider) || typeof provider !== 'string', `the adapter map holds ${inspect(provider)}`);
-    const earned = refusal(withRole({ provider }));
+    const [earned] = refusedNaming(withRole({ provider }), /`roles\.engineer/, inspect(provider));
     assert.match(earned, /`roles\.engineer/, inspect(provider));
     assert.ok(earned.includes(inspect(provider)), `${earned} does not name ${inspect(provider)}`);
   }
@@ -1024,7 +1038,7 @@ test("the labels a config declares include every label a role's labels names, ea
   };
   assert.deepEqual(validate(config), []);
   assert.deepEqual(declaredLabels(config), [
-    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard',
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard', 'maker:codex',
   ]);
 });
 
@@ -1066,7 +1080,7 @@ test('given a kind declaring verdicts, the validator refuses it, naming the key,
 const [one, other] = Object.keys(ADAPTERS);
 const judgedBy = (judges, providerLabels) => ({
   ...rigger,
-  roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, provider: one, ...(providerLabels === undefined ? {} : { providerLabels }) } },
+  roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, provider: one, providerLabels: providerLabels ?? {} } },
   kinds: { ...rigger.kinds, change: { ...rigger.kinds.change, judges } },
 });
 

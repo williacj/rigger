@@ -205,13 +205,9 @@ card that makes one. `D22`'s permission, under "Review and merge", reaches a car
 path listed below, subject to the authored-document rule there. Those four, by path:
 
 - The live gate: `.githooks/`.
-- The live config: `rigger.config.mjs`, and `templates/rigger.config.mjs` with it.
+- The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and `templates/codex/config.toml` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which `package.json` declares as its `bin`.
-
-The template is in that list because `test/init.test.mjs` compares this repository's config
-against what `init` would write from the template, byte for byte. So a card that changes the
-template changes the live config, whichever file it opens.
 
 ## Version control
 

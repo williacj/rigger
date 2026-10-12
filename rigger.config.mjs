@@ -9,17 +9,16 @@
 // `rigger init` wrote this file, and filled `repo` in from this repository's `origin` remote. It
 // left the board number as `PROJECT_NUMBER`, because a board number is GitHub's and nothing
 // `init` can read names it: set it to the number your board's URL ends in, and until you do
-// Rigger refuses this config rather than work a board nobody chose. Everything else arrives as
-// the template had it, so the column display names, the roles and the kinds of work are starting
-// points rather than answers: change them to match your board, and run `rigger doctor` to check
-// what you changed.
+// Rigger refuses this config rather than work a board nobody chose. The template's column display
+// names, roles and kinds of work are starting points rather than answers: change them to match
+// your board, and run `rigger doctor` to check what you changed.
 export default {
   repo: 'williacj/rigger',
   board: { project: 6, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' }, priority: { field: 'Priority', options: ['High', 'Normal', 'Low'] } },
   concurrency: 3,
   worktrees: { topic: 'rigger-{number}' },
   roles: {
-    engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard' },
+    engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard', providerLabels: { 'maker:codex': 'codex' } },
     reviewer: { agent: '.claude/agents/reviewer.md', provider: 'claude', tier: 'high' },
     pm: { agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high' },
     architect: { agent: '.claude/agents/architect.md', provider: 'claude', tier: 'high' },
@@ -30,7 +29,7 @@ export default {
     change: {
       select: { labels: ['type:change'] },
       maker: 'engineer',
-      judges: ['reviewer'],
+      judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }],
       provisioning: ['npm-ci', 'vhs'],
     },
     // The panel case: three agent judges concurrently, the owner last. The architect rules on a
@@ -38,7 +37,12 @@ export default {
     spec: {
       select: { labels: ['type:spec'] },
       maker: 'pm',
-      judges: ['reviewer', 'engineer', 'architect', 'owner'],
+      judges: [
+        { role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } },
+        { role: 'engineer', provider: { claude: 'codex', codex: 'claude' } },
+        { role: 'architect', provider: { claude: 'codex', codex: 'claude' } },
+        'owner',
+      ],
       rounds: 2,
       provisioning: ['npm-ci', 'vhs'],
     },
@@ -46,7 +50,7 @@ export default {
     structure: {
       select: { labels: ['type:structure'] },
       maker: 'architect',
-      judges: ['reviewer', 'owner'],
+      judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, 'owner'],
       provisioning: ['npm-ci', 'vhs'],
     },
     // Decomposition: the PM cuts larger work into cards (`D18` rule 4). A kind no role makes is
@@ -54,13 +58,13 @@ export default {
     intake: {
       select: { labels: ['type:intake'] },
       maker: 'pm',
-      judges: ['reviewer', 'owner'],
+      judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }, 'owner'],
       provisioning: ['npm-ci', 'vhs'],
     },
     spike: {
       select: { labels: ['type:spike'] },
       maker: 'spikeEngineer',
-      judges: ['reviewer'],
+      judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }],
       provisioning: ['npm-ci', 'vhs'],
     },
   },
