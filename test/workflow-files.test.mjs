@@ -6,12 +6,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { symlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { GATE_CONTEXT } from '../src/workflow/gate.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import rigger from '../rigger.config.mjs';
+import { installFakeGh, seedRepository } from './fake-gh.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
+import { fixture } from './process-fixtures.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
@@ -428,4 +433,302 @@ test('the post goes on the SHA the script read, whatever the head is by the time
   const { posts } = gateAndPost({ 12: { printed: `head: ${SHA}\nrefused: reviewer: no marker\n`, status: 1 } });
   assert.deepEqual(posts.map((each) => each.url), [`https://api.github.com/repos/acme/widgets/statuses/${SHA}`]);
   assert.doesNotMatch(stepNamed(posting(template), 'Post rigger/gate on each head the check read').run, /pulls\/|gh /);
+});
+
+// This repository's own self-hosting workflow, which posts `self-hosting` as the gate workflow
+// posts `rigger/gate`, from the tree fetched at the commit its own file was read from.
+
+const SELF_HOSTING = join(ROOT, '.github', 'workflows', 'self-hosting.yml');
+
+/** The self-hosting workflow, parsed when a test reads it. */
+const selfHosting = () => parseWorkflow(readFileSync(SELF_HOSTING, 'utf8'));
+
+/** The scripts the self-hosting workflow runs, by their paths inside the tree it fetched. */
+const TREE_SCRIPTS = /node "\$\{RUNNER_TEMP\}\/\$\{TREE\}\/(scripts\/gate-check\.mjs|\.github\/scripts\/self-hosting-check\.mjs)"/;
+
+/** The self-hosting workflow's step names, which the tests below find its steps by. */
+const FETCH = 'Fetch the tree this workflow was read from';
+const CHECK = 'Run the self-hosting check on each pull request';
+const MINT = 'Mint the gate App\'s token';
+const POST = 'Post self-hosting on each head the check read';
+
+test('the self-hosting workflow triggers on the gate workflow\'s event set, and on no pull_request event', () => {
+  assert.deepEqual(selfHosting().on, live.on);
+  assert.deepEqual(Object.keys(selfHosting().on), ['pull_request_target', 'issue_comment', 'issues']);
+});
+
+test('no step in any job of the self-hosting workflow has a uses:', () => {
+  const steps = stepsOf(selfHosting());
+  assert.ok(steps.length > 0);
+  for (const step of steps) assert.equal(step.uses, undefined, `${step.job}: ${step.name}`);
+});
+
+test('the self-hosting workflow runs the self-hosting script and the gate script by their paths in the tree an inline step of the same job fetched, and never from the head\'s tree, the base ref or a pinned install', () => {
+  const workflow = selfHosting();
+  assert.match(workflow.env.TREE, /^[a-z-]+$/);
+  const ran = new Set();
+  for (const job of jobsOf(workflow)) {
+    const fetched = job.steps.findIndex((step) => step.name === FETCH);
+    for (const [at, step] of job.steps.entries()) {
+      const run = step.run ?? '';
+      // The version check is the gate workflow's own, which names node only to ask its version.
+      if (step.name === 'Check the Node version') {
+        assert.equal(run, stepNamed(posting(live), step.name).run);
+        continue;
+      }
+      assert.doesNotMatch(run, /npm (install|ci)|RIGGER_COMMIT|node_modules|GITHUB_BASE_REF|github\.base_ref|\bgit (clone|checkout|fetch|switch|worktree)\b/, `${job.id}: ${step.name}`);
+      // Every node it runs is the version check, an inline script, or one of the two scripts in the tree.
+      for (const call of run.match(/\bnode [^|;\n]*/g) ?? []) {
+        if (/^node (--version|-e )/.test(call)) continue;
+        const script = TREE_SCRIPTS.exec(call);
+        assert.ok(script, `${job.id}: ${step.name} runs ${call}`);
+        assert.ok(fetched !== -1 && fetched < at, `${job.id}: ${step.name} runs before the tree is fetched`);
+        ran.add(script[1]);
+      }
+    }
+  }
+  assert.deepEqual([...ran].sort(), ['.github/scripts/self-hosting-check.mjs', 'scripts/gate-check.mjs']);
+});
+
+test('the fetch step names GITHUB_WORKFLOW_SHA as the commit it fetches, and never GITHUB_SHA, github.sha, a github.event field or a branch name, and nothing redefines GITHUB_WORKFLOW_SHA', () => {
+  const workflow = selfHosting();
+  for (const job of jobsOf(workflow)) {
+    const fetch = stepNamed(job, FETCH);
+    assert.match(fetch.run, /"https:\/\/codeload\.github\.com\/\$\{GITHUB_REPOSITORY\}\/tar\.gz\/\$\{GITHUB_WORKFLOW_SHA\}"/);
+    assert.doesNotMatch(fetch.run, /\bGITHUB_SHA\b|github\.sha|github\.event|GITHUB_REF|GITHUB_HEAD_REF|GITHUB_BASE_REF|github\.ref|refs\/|\bmain\b|\$\{\{/, job.id);
+    assert.equal(fetch.env, undefined, job.id);
+  }
+  const envs = [workflow.env, ...jobsOf(workflow).flatMap((job) => [job.env, ...job.steps.map((step) => step.env)])];
+  for (const env of envs) assert.ok(!Object.hasOwn(env ?? {}, 'GITHUB_WORKFLOW_SHA'), JSON.stringify(env));
+});
+
+test('run as the runner runs it, the fetch step unpacks the tarball the forge serves for that commit into the tree the scripts run from', () => {
+  const fetch = stepNamed(posting(selfHosting()), FETCH);
+  const runner = temporaryDirectory('rigger-workflow-runner-');
+  const source = join(runner, 'source', 'rigger-0123456');
+  mkdirSync(join(source, '.github', 'scripts'), { recursive: true });
+  writeFileSync(join(source, '.github', 'scripts', 'self-hosting-check.mjs'), 'the script\n');
+  const tarball = join(runner, 'tree.tar.gz');
+  assert.equal(spawnSync('tar', ['-czf', tarball, '-C', join(runner, 'source'), 'rigger-0123456']).status, 0);
+  const curl = `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(join(runner, 'curl-args'))}\ncat ${JSON.stringify(tarball)}\n`;
+
+  const ran = runStep(fetch, { TREE: selfHosting().env.TREE, GITHUB_WORKFLOW_SHA: '0123456789abcdef0123456789abcdef01234567', GITHUB_SHA: 'f'.repeat(40) }, { curl }, runner);
+
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  assert.ok(readFileSync(join(runner, 'curl-args'), 'utf8').split('\n').includes('https://codeload.github.com/acme/widgets/tar.gz/0123456789abcdef0123456789abcdef01234567'));
+  assert.equal(readFileSync(join(ran.RUNNER_TEMP, selfHosting().env.TREE, '.github', 'scripts', 'self-hosting-check.mjs'), 'utf8'), 'the script\n');
+});
+
+test('no step of the self-hosting workflow checks out, or runs code from, the pull request\'s head', () => {
+  const workflow = selfHosting();
+  assert.doesNotMatch(JSON.stringify(workflow), /github\.event\.pull_request\.head|github\.head_ref|GITHUB_HEAD_REF/);
+  for (const step of stepsOf(workflow)) assert.doesNotMatch(step.run ?? '', /\bgit (clone|checkout|fetch|switch)\b/, step.name);
+});
+
+test('the self-hosting workflow\'s permissions grant its GITHUB_TOKEN read scopes only, at the top level and in every job', () => {
+  const workflow = selfHosting();
+  for (const [where, permissions] of [['top level', workflow.permissions], ...jobsOf(workflow).map((job) => [job.id, job.permissions])]) {
+    assert.ok(permissions && typeof permissions === 'object' && Object.keys(permissions).length > 0, `${where} declares no permissions`);
+    for (const [scope, granted] of Object.entries(permissions)) assert.equal(granted, 'read', `${where}: ${scope}`);
+  }
+});
+
+test('the self-hosting posting job declares environment gate, and after the script runs, an inline step mints the App\'s token from GATE_APP_ID and GATE_APP_PRIVATE_KEY, and the post step posts self-hosting with it', () => {
+  const job = posting(selfHosting());
+  const names = job.steps.map((step) => step.name);
+  const [checkedAt, mintedAt, postedAt] = [CHECK, MINT, POST].map((name) => names.indexOf(name));
+  assert.ok(checkedAt !== -1 && checkedAt < mintedAt && mintedAt < postedAt, names.join(', '));
+  const mint = job.steps[mintedAt];
+  assert.equal(mint.uses, undefined);
+  assert.deepEqual(mint.env, { GATE_APP_ID: '${{ vars.GATE_APP_ID }}', GATE_APP_PRIVATE_KEY: '${{ secrets.GATE_APP_PRIVATE_KEY }}' });
+  const post = job.steps[postedAt];
+  assert.equal(post.env.CONTEXT, 'self-hosting');
+  assert.equal(post.env.TOKEN, `\${{ steps.${mint.id}.outputs.token }}`);
+  assert.match(post.run, /Authorization: Bearer \$\{TOKEN\}/);
+});
+
+test('the self-hosting mint step\'s run: is identical to the gate workflow\'s', () => {
+  assert.equal(stepNamed(posting(selfHosting()), MINT).run, stepNamed(posting(live), MINT).run);
+});
+
+test('in the self-hosting workflow, the private key and the minted token appear only in the mint and post steps\' env, and in no other step', () => {
+  const workflow = selfHosting();
+  for (const step of stepsOf(workflow)) {
+    const env = Object.values(step.env ?? {}).join('\n');
+    const named = `${env}\n${step.run ?? ''}\n${step.if ?? ''}`;
+    const holdsKey = /secrets\.GATE_APP_PRIVATE_KEY/.test(named);
+    const holdsToken = /steps\.mint\.outputs\.token/.test(named);
+    if (step.name === MINT) assert.ok(holdsKey && !holdsToken && /secrets\./.test(env), step.name);
+    else if (step.name === POST) assert.ok(holdsToken && !holdsKey && /steps\.mint\.outputs\.token/.test(env), step.name);
+    else assert.ok(!holdsKey && !holdsToken && !/secrets\./.test(named), step.name);
+  }
+  const above = JSON.stringify([workflow.env, ...jobsOf(workflow).map((job) => [job.env, job.outputs])]);
+  assert.doesNotMatch(above, /secrets\.|steps\.mint/);
+});
+
+test('no run: step of the self-hosting workflow interpolates a github.event expression, and event fields reach the scripts through env', () => {
+  const workflow = selfHosting();
+  for (const step of stepsOf(workflow)) assert.doesNotMatch(step.run ?? '', /\$\{\{/, `${step.job}: ${step.name}`);
+  assert.equal(workflow.env.NUMBER, live.env.NUMBER);
+  assert.equal(workflow.env.IS_PULL, live.env.IS_PULL);
+});
+
+test('the self-hosting workflow\'s first job runs the gate script\'s card mode by its path in the fetched tree, and hands the posting job that card\'s number alone as its output', () => {
+  const workflow = selfHosting();
+  const [first] = jobsOf(workflow);
+  assert.deepEqual(first.outputs, { card: '${{ steps.card.outputs.card }}' });
+  assert.equal(stepNamed(first, 'Resolve the card').run, 'node "${RUNNER_TEMP}/${TREE}/scripts/gate-check.mjs" card >> "${GITHUB_OUTPUT}"');
+  assert.equal(posting(workflow).needs, first.id);
+  assert.equal(first.environment, undefined);
+});
+
+test('the self-hosting posting job\'s mapping step runs the gate script\'s map mode by its path in the fetched tree', () => {
+  assert.match(stepNamed(posting(selfHosting()), 'Map the event to its pull requests').run, /^node "\$\{RUNNER_TEMP\}\/\$\{TREE\}\/scripts\/gate-check\.mjs" map > /);
+});
+
+test('every self-hosting posting job runs in a concurrency group keyed on the workflow and the first job\'s output, never cancelled in progress, whose key for one card differs from the gate workflow\'s', () => {
+  const workflow = selfHosting();
+  const posters = jobsOf(workflow).filter((job) => job.steps.some((step) => /\/statuses\//.test(step.run ?? '')));
+  assert.deepEqual(posters.map((job) => job.id), [posting(workflow).id]);
+  const group = '${{ github.workflow }}-${{ needs.card.outputs.card }}';
+  for (const job of posters) {
+    assert.deepEqual(job.concurrency, { group, 'cancel-in-progress': 'false' });
+    assert.equal(job.env.GROUP, group);
+  }
+  // For one card, the group each workflow's run waits in is the expression with its own name in it.
+  const keyed = (named) => posting(named).concurrency.group.replace('${{ github.workflow }}', named.name).replace('${{ needs.card.outputs.card }}', '662');
+  assert.equal(posting(live).concurrency.group, group);
+  assert.notEqual(keyed(workflow), keyed(live));
+});
+
+test('no step or condition of the self-hosting workflow depends on a run being cancelled, and each run reads its facts at its start and posts on the SHA it read', () => {
+  const workflow = selfHosting();
+  assert.doesNotMatch(JSON.stringify(workflow), /cancelled\(\)|cancel-in-progress":"true/);
+  // The facts are read by the script, which the check step runs once the job has started; the post step reads none.
+  const post = stepNamed(posting(workflow), POST);
+  assert.doesNotMatch(post.run, /pulls\/|gh |node "\$\{RUNNER_TEMP\}\/\$\{TREE\}/);
+  assert.match(post.run, /statuses\/\$\{head\}/);
+});
+
+test('the self-hosting mint and post steps run only where every step before them succeeded and the event concerns a pull request, so a failed read of the card\'s pull requests or of a pull request posts nothing', () => {
+  const job = posting(selfHosting());
+  for (const name of [MINT, POST]) assert.equal(stepNamed(job, name).if, 'success() && steps.map.outputs.pulls != \'\'');
+  for (const name of ['Map the event to its pull requests', CHECK]) assert.equal(stepNamed(job, name).if, undefined);
+});
+
+test('no job of the self-hosting workflow has an id or name equal to rigger/gate or self-hosting', () => {
+  for (const job of jobsOf(selfHosting())) {
+    for (const named of [job.id, job.name]) assert.ok(!['rigger/gate', 'self-hosting'].includes(named), named);
+  }
+});
+
+/**
+ * Runs the self-hosting posting job's check step on `pulls` with the scripts in `tree` and `env`
+ * beside, then, where it succeeded, its post step, with stand-in curl first on PATH recording what
+ * it posts. `env` is not handed to the post step, so no PATH it names can put the real curl first.
+ */
+function checkAndPost(pulls, tree, env = {}) {
+  const job = posting(selfHosting());
+  const runner = temporaryDirectory('rigger-workflow-runner-');
+  mkdirSync(join(runner, 'temp'), { recursive: true });
+  symlinkSync(tree, join(runner, 'temp', selfHosting().env.TREE));
+  const check = runStep(stepNamed(job, CHECK), { TREE: selfHosting().env.TREE, PULLS: pulls.join(' '), ...env }, {}, runner);
+  const post = check.status === 0
+    ? runStep(stepNamed(job, POST), { CONTEXT: 'self-hosting', TOKEN: 'minted', GITHUB_REPOSITORY: env.GITHUB_REPOSITORY ?? 'acme/widgets' }, { curl: curlRecording(runner) }, runner)
+    : null;
+  return { check, post, posts: postsOf(runner) };
+}
+
+/** A tree holding a stand-in self-hosting script that prints, for each pull request, what `answers` gives it, and exits with its status. */
+function standInTree(answers) {
+  const tree = temporaryDirectory('rigger-workflow-tree-');
+  mkdirSync(join(tree, '.github', 'scripts'), { recursive: true });
+  writeFileSync(join(tree, '.github', 'scripts', 'self-hosting-check.mjs'), `const answers = ${JSON.stringify(answers)};\nconst { printed, status } = answers[process.argv[2]];\nprocess.stdout.write(printed);\nprocess.exitCode = status;\n`);
+  return tree;
+}
+
+test('the self-hosting workflow posts self-hosting on the SHA the script printed: success where it exited 0, failure otherwise, with its first refusal reason, cut to 140 characters, as the description', () => {
+  const long = `owner: ${'é'.repeat(200)}`;
+  const { check, post, posts } = checkAndPost([12, 13], standInTree({
+    12: { printed: `head: ${SHA}\npassed\n`, status: 0 },
+    13: { printed: `head: ${OTHER}\nrefused: ${long}\nrefused: another\n`, status: 1 },
+  }));
+
+  assert.equal(check.status, 0, check.stdout + check.stderr);
+  assert.equal(post.status, 0, post.stdout + post.stderr);
+  assert.deepEqual(posts.map((each) => each.url), [SHA, OTHER].map((sha) => `https://api.github.com/repos/acme/widgets/statuses/${sha}`));
+  const [passed, refused] = posts.map((each) => JSON.parse(each.body));
+  assert.deepEqual({ state: passed.state, context: passed.context }, { state: 'success', context: 'self-hosting' });
+  assert.deepEqual(refused, { state: 'failure', context: 'self-hosting', description: [...long].slice(0, 140).join('') });
+});
+
+/**
+ * A fake forge whose `main` holds this repository's config and an `AGENTS.md` listing
+ * `.githooks/`, with card 7's issue and pull request 12 from `rigger-7` at that branch's head,
+ * holding `pull`'s facts beside.
+ */
+function selfHostingForge(pull) {
+  const agents = '## What binds\n\n| Document | Authority |\n|---|---|\n| `README.md` | The CLI contract |\n\n## Self-hosting\n\n- The live gate: `.githooks/`.\n';
+  const origin = repositoryIn('rigger-workflow-origin-', { 'rigger.config.mjs': `export default ${JSON.stringify(rigger)};\n`, 'AGENTS.md': agents });
+  gitIn(origin, 'branch', '-M', 'main');
+  gitIn(origin, 'switch', '--quiet', '-c', 'rigger-7');
+  gitIn(origin, 'commit', '--allow-empty', '-qm', 'the card\'s work');
+  gitIn(origin, 'switch', '--quiet', 'main');
+  const head = gitIn(origin, 'rev-parse', 'rigger-7').trim();
+  const issues = [{ number: 7, title: 'Card seven', body: '## Acceptance\n\n- The verb prints its help.\n', labels: ['type:change'] }];
+  const fake = installFakeGh(temporaryDirectory('rigger-workflow-gh-'), { repo: 'williacj/rigger', project: 6, board: { columns: ['Review'], items: [] }, origin });
+  seedRepository(fake, { repo: 'williacj/rigger', issues, pullRequests: [{ number: 12, head: 'rigger-7', sha: head, base: 'main', ...pull }] });
+  return { origin, head, fake };
+}
+
+/**
+ * The environment the workflow's steps run the real scripts under against `forge`: a `gh` first on
+ * PATH handing the fake every request, failing one holding `failing` as gh does on a 502, and
+ * running `then` once one holding `after` is answered.
+ */
+function onForge(forge, { failing = 'no request', after = 'no request', then = ':' } = {}) {
+  const directory = temporaryDirectory('rigger-workflow-wrapped-gh-');
+  fixture(directory, 'gh', [
+    'unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY',
+    `case "$*" in *'${failing}'*) echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1 ;; esac`,
+    `'${forge.fake.gh}' "$@"`,
+    'status=$?',
+    `case "$*" in *'${after}'*) ${then} ;; esac`,
+    'exit $status',
+  ].join('\n'));
+  return { PATH: [directory, dirname(forge.fake.gh), process.env.PATH].join(delimiter), GITHUB_REPOSITORY: 'williacj/rigger' };
+}
+
+/** A diff changing `.githooks/pre-commit`, as the forge serves it. */
+const HOOK_DIFF = 'diff --git a/.githooks/pre-commit b/.githooks/pre-commit\nindex 3b18e51..8c7e5a6 100644\n--- a/.githooks/pre-commit\n+++ b/.githooks/pre-commit\n@@ -1 +1 @@\n-one\n+two\n';
+
+test('given the forge answers another head when the script reads the pull request again after its diff, the workflow running the script on it posts no self-hosting status for that event', () => {
+  const forge = selfHostingForge({ diff: HOOK_DIFF });
+  const moved = gitIn(forge.origin, 'commit-tree', '-p', forge.head, '-m', 'moved', `${forge.head}^{tree}`).trim();
+  const env = onForge(forge, { after: 'vnd.github.diff', then: `git -C '${forge.origin}' update-ref refs/heads/rigger-7 ${moved}` });
+
+  const { check, post, posts } = checkAndPost([12], ROOT, env);
+
+  assert.notEqual(check.status, 0, check.stdout + check.stderr);
+  assert.match(check.stderr, new RegExp(`head moved from ${forge.head} to ${moved}`));
+  assert.match(check.stdout, /pull request #12 could not be read, so nothing is posted for this event/);
+  assert.equal(post, null);
+  assert.deepEqual(posts, []);
+});
+
+test('given the diff read fails, or the forge refuses the diff as too large, the workflow running the script posts failure on the head the script read, with a description naming the diff read', () => {
+  for (const [pull, failing, named] of [[{ diff: HOOK_DIFF }, 'vnd.github.diff', /HTTP 502/], [{ declined: 'Sorry, the diff exceeded the maximum number of lines (20000)' }, undefined, /maximum number of lines/]]) {
+    const forge = selfHostingForge(pull);
+
+    const { check, posts } = checkAndPost([12], ROOT, onForge(forge, { failing }));
+
+    assert.equal(check.status, 0, check.stdout + check.stderr);
+    assert.deepEqual(posts.map((each) => each.url), [`https://api.github.com/repos/williacj/rigger/statuses/${forge.head}`]);
+    const posted = JSON.parse(posts[0].body);
+    assert.equal(posted.state, 'failure');
+    assert.equal(posted.context, 'self-hosting');
+    assert.match(posted.description, /^the read of pull request #12's diff failed: /);
+    assert.ok([...posted.description].length <= 140);
+    assert.match(check.stdout, named);
+  }
 });
