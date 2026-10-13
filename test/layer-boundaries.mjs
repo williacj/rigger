@@ -181,14 +181,14 @@ export function sourceTree(root = ROOT) {
     const path = posix.join('src', posix.relative(join(root, 'src'), join(entry.parentPath, entry.name)).split('\\').join('/'));
     tree.set(path, readFileSync(join(root, path), 'utf8'));
   }
-  // The gate check script ships outside src/, and is held to the same rules: it reads through L0's
-  // read side alone, so a write side in its import graph fails as it would under src/ (#702).
-  if (existsSync(join(root, GATE_CHECK))) tree.set(GATE_CHECK, readFileSync(join(root, GATE_CHECK), 'utf8'));
+  // The gate check scripts live outside src/, and are held to the same rules: each reads through
+  // L0's read side alone, so a write side in its import graph fails as it would under src/ (#702, #662).
+  for (const script of GATE_CHECK) if (existsSync(join(root, script))) tree.set(script, readFileSync(join(root, script), 'utf8'));
   return tree;
 }
 
-/** The one module outside src/ the rules parse: the gate check script. */
-const GATE_CHECK = 'scripts/gate-check.mjs';
+/** The modules outside src/ the rules parse: the gate check script, and this repository's self-hosting check. */
+const GATE_CHECK = ['scripts/gate-check.mjs', '.github/scripts/self-hosting-check.mjs'];
 
 /** The syntax nodes directly under `node`, in source order. */
 function childrenOf(node) {
