@@ -60,6 +60,9 @@ class GhFailure extends Error {}
  */
 function pathShapeOf(path) {
   const tail = path.split('/').slice(3).join('/');
+  if (/^environments\/[^/]+$/.test(tail)) return 'repos/_/_/environments/_';
+  if (/^environments\/[^/]+\/deployment-branch-policies\?per_page=100&page=\d+$/.test(tail)) return 'repos/_/_/environments/_/deployment-branch-policies?per_page=100&page=_';
+  if (/^environments\/[^/]+\/(variables|secrets)\/[^/]+$/.test(tail)) return `repos/_/_/environments/_/${tail.split('/')[2]}/_`;
   if (/^rules\/branches\/[^?]+\?per_page=100&page=\d+$/.test(tail)) return 'repos/_/_/rules/branches/_?per_page=100&page=_';
   if (/^branches\/[^/]+\/protection$/.test(tail)) return 'repos/_/_/branches/_/protection';
   if (/^commits\/[^/]+\/(check-runs|statuses)\?per_page=100&page=\d+$/.test(tail)) return `repos/_/_/commits/_/${tail.split('/')[2].replace(/page=\d+$/, 'page=_')}`;
@@ -330,6 +333,16 @@ function pathIn(state, args) {
   return rest.join('/');
 }
 
+/** The environment a REST request names, or the measured not-found answer on #659. */
+function environmentIn(state, args) {
+  const path = pathIn(state, args);
+  const refused = state.repository?.environmentFailures?.[path];
+  if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+  const environment = state.repository?.environments?.[decodeURIComponent(path.split('/')[1])];
+  if (!environment) throw notFound('https://docs.github.com/rest/deployments/environments');
+  return environment;
+}
+
 /**
  * What `gh` answers where GitHub resolves nothing at `path` in a GraphQL read: the response, which
  * holds `data` and a `NOT_FOUND` error at that path, printed on stdout, and its message on stderr
@@ -568,6 +581,26 @@ const COMMANDS = {
     const protection = state.repository?.protections?.[branch];
     if (protection === undefined) throw new GhPrinted('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected', status: '404' }));
     return JSON.stringify(protection);
+  },
+  [commandOf(['api', 'repos/_/_/environments/_', '-X', 'GET'])]: async (board, state, args) => {
+    const { can_admins_bypass, deployment_branch_policy } = environmentIn(state, args);
+    return JSON.stringify({ can_admins_bypass, deployment_branch_policy });
+  },
+  [commandOf(['api', 'repos/_/_/environments/_/deployment-branch-policies?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
+    const policies = environmentIn(state, args).branch_policies ?? [];
+    const number = Number(new URLSearchParams(pathIn(state, args).split('?')[1]).get('page'));
+    return JSON.stringify({ total_count: policies.length, branch_policies: policies.slice((number - 1) * 100, number * 100) });
+  },
+  [commandOf(['api', 'repos/_/_/environments/_/variables/_', '-X', 'GET'])]: async (board, state, args) => {
+    const name = decodeURIComponent(pathIn(state, args).split('/')[3]);
+    const value = environmentIn(state, args).variables?.[name];
+    if (value === undefined) throw notFound('https://docs.github.com/rest/actions/variables');
+    return JSON.stringify({ name, value });
+  },
+  [commandOf(['api', 'repos/_/_/environments/_/secrets/_', '-X', 'GET'])]: async (board, state, args) => {
+    const name = decodeURIComponent(pathIn(state, args).split('/')[3]);
+    if (!environmentIn(state, args).secrets?.includes(name)) throw notFound('https://docs.github.com/rest/actions/secrets');
+    return JSON.stringify({ name, created_at: '2026-10-13T12:00:00Z', updated_at: '2026-10-13T12:00:00Z' });
   },
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);

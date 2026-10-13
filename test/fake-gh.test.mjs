@@ -796,3 +796,24 @@ test("the repository read answers null for a path a commit of the fake gh's orig
   assert.equal(await onPath(fake, () => reads().readFileAt(head, 'config/absent.mjs')), null);
   await assertNothingChanged(fake, before);
 });
+
+test('the fake repository environment reads agree with the real adapter through fake gh for present and absent names', async () => {
+  const seed = { environments: { release: {
+    can_admins_bypass: false,
+    deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+    branch_policies: [{ name: 'trunk', type: 'branch' }],
+    variables: { APP_ID: '12345' },
+    secrets: ['APP_KEY'],
+  } } };
+  const fake = installed();
+  seedRepository(fake, seed);
+  const { operations } = createFakeRepository(seed);
+  for (const [name, ...args] of [
+    ['readEnvironment', 'release'], ['readEnvironment', 'absent'],
+    ['readEnvironmentVariable', 'release', 'APP_ID'], ['readEnvironmentVariable', 'release', 'absent'],
+    ['readEnvironmentSecret', 'release', 'APP_KEY'], ['readEnvironmentSecret', 'release', 'absent'],
+  ]) {
+    assert.deepEqual(await onPath(fake, () => reads()[name](...args)), await operations[name](...args), `${name} ${args.join(' ')}`);
+  }
+  assert.deepEqual((await fake.model()).writes(), []);
+});

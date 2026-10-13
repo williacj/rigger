@@ -13,6 +13,10 @@ import { readSide } from '../src/substrate/forge/read.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import rigger from '../rigger.config.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { installFakeGh, seedRepository } from './fake-gh.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+import { spawnSync } from 'node:child_process';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -985,6 +989,9 @@ test("the repository read answers #503's comments as gh answered them on 2026-10
 
 /** Each repository read, called on what it reads, with what a failure must name of it. */
 const REPOSITORY_READS = {
+  readEnvironment: { call: (reads) => reads.readEnvironment('release/gate'), names: 'environment release/gate' },
+  readEnvironmentVariable: { call: (reads) => reads.readEnvironmentVariable('release/gate', 'APP/ID'), names: 'variable APP/ID' },
+  readEnvironmentSecret: { call: (reads) => reads.readEnvironmentSecret('release/gate', 'APP/KEY'), names: 'secret APP/KEY' },
   readPullRequests: { call: (reads) => reads.readPullRequests('rigger-214'), names: 'branch rigger-214' },
   readBranches: { call: (reads) => reads.readBranches(['rigger-214', 'rigger-215']), names: 'branches rigger-214, rigger-215' },
   readDiff: { call: (reads) => reads.readDiff(12), names: 'pull request #12' },
@@ -1037,6 +1044,9 @@ test('a repository read refuses a number that is not an issue or pull request nu
 test('every request a full repository read issues reaches the spawn through the read runner, which admits it', async () => {
   const head = 'e'.repeat(40);
   const answers = {
+    'repos/williacj/rigger/environments/release%2Fgate': JSON.stringify({ can_admins_bypass: false, deployment_branch_policy: null }),
+    'repos/williacj/rigger/environments/release%2Fgate/variables/APP%2FID': JSON.stringify({ name: 'APP/ID', value: '12345' }),
+    'repos/williacj/rigger/environments/release%2Fgate/secrets/APP%2FKEY': JSON.stringify({ name: 'APP/KEY' }),
     'pull requests': pulls({ number: 12 }),
     branches: { paged: { null: branchPage(['main']) } },
     head: { repository: { pullRequest: { baseRefName: 'main', headRefOid: head } } },
@@ -1619,4 +1629,73 @@ test('every way each of the four reads ends without an answer, or answers null, 
     if (!answer) assert.deepEqual(send.sent, [], named);
     else await assertOnlyReads(send.sent).catch((error) => assert.fail(`${named}: ${error.message}`));
   }
+});
+
+/** REST answers shaped as the environment endpoints measured on #659's attack B1. */
+const environmentAnswer = { can_admins_bypass: false, deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } };
+const environmentPath = 'repos/williacj/rigger/environments/release%2Fgate';
+
+test('readEnvironment answers the bypass setting and every custom deployment branch policy across pages', async () => {
+  const policies = Array.from({ length: 100 }, (_, index) => ({ name: `branch-${index}`, type: 'branch' }));
+  const send = repositoryForge({
+    [environmentPath]: JSON.stringify(environmentAnswer),
+    [`${environmentPath}/deployment-branch-policies?per_page=100&page=1`]: JSON.stringify({ total_count: 101, branch_policies: policies }),
+    [`${environmentPath}/deployment-branch-policies?per_page=100&page=2`]: JSON.stringify({ total_count: 101, branch_policies: [{ name: 'extra', type: 'tag' }] }),
+  });
+  const held = await repositoryReads(BOARD, { send }).readEnvironment('release/gate');
+  assert.deepEqual(held, { canAdminsBypass: false, deploymentBranchPolicy: environmentAnswer.deployment_branch_policy, policies: [...policies, { name: 'extra', type: 'tag' }] });
+  assert.equal(send.sent.length, 3);
+});
+
+test('readEnvironmentVariable answers the named variable value with both names encoded', async () => {
+  const send = repositoryForge({ [`${environmentPath}/variables/APP%2FID`]: JSON.stringify({ name: 'APP/ID', value: '12345' }) });
+  assert.equal(await repositoryReads(BOARD, { send }).readEnvironmentVariable('release/gate', 'APP/ID'), '12345');
+  assert.deepEqual(send.sent, [['gh', 'api', `${environmentPath}/variables/APP%2FID`, '-X', 'GET']]);
+});
+
+test('readEnvironmentSecret answers presence by name and reads no secret value', async () => {
+  const send = repositoryForge({ [`${environmentPath}/secrets/APP%2FKEY`]: JSON.stringify({ name: 'APP/KEY', created_at: '2026-10-13T12:00:00Z', updated_at: '2026-10-13T12:00:00Z' }) });
+  assert.equal(await repositoryReads(BOARD, { send }).readEnvironmentSecret('release/gate', 'APP/KEY'), true);
+  assert.deepEqual(send.sent, [['gh', 'api', `${environmentPath}/secrets/APP%2FKEY`, '-X', 'GET']]);
+});
+
+test('readEnvironment answers absent only for Not Found (HTTP 404), including an absent policy list', async () => {
+  const missing = failed('gh: Not Found (HTTP 404)');
+  assert.equal(await repositoryReads(BOARD, { send: () => missing }).readEnvironment('release/gate'), null);
+  const send = repositoryForge({ [environmentPath]: JSON.stringify(environmentAnswer), [`${environmentPath}/deployment-branch-policies?per_page=100&page=1`]: missing });
+  assert.equal((await repositoryReads(BOARD, { send }).readEnvironment('release/gate')).policies, null);
+});
+
+test('readEnvironmentVariable answers absent for Not Found (HTTP 404)', async () => {
+  assert.equal(await repositoryReads(BOARD, { send: () => failed('gh: Not Found (HTTP 404)') }).readEnvironmentVariable('release/gate', 'APP/ID'), null);
+});
+
+test('readEnvironmentSecret answers absent for Not Found (HTTP 404)', async () => {
+  assert.equal(await repositoryReads(BOARD, { send: () => failed('gh: Not Found (HTTP 404)') }).readEnvironmentSecret('release/gate', 'APP/KEY'), false);
+});
+
+for (const [read, call] of [
+  ['readEnvironment', (r) => r.readEnvironment('release/gate')],
+  ['readEnvironmentVariable', (r) => r.readEnvironmentVariable('release/gate', 'APP/ID')],
+  ['readEnvironmentSecret', (r) => r.readEnvironmentSecret('release/gate', 'APP/KEY')],
+]) {
+  test(`${read} rejects naming its read on every failure other than Not Found (HTTP 404)`, async () => {
+    for (const output of ['gh: Forbidden (HTTP 403)', 'gh: Server error (HTTP 500)', 'gh: Another error (HTTP 404)']) {
+      await assert.rejects(call(repositoryReads(BOARD, { send: () => failed(output) })), (error) => error.message.includes(read) && error.message.includes(output));
+    }
+    await assert.rejects(call(repositoryReads(BOARD, { send: () => ({ ...failed('gh: Not Found (HTTP 404)'), timedOut: true }) })), new RegExp(read));
+    await assert.rejects(call(repositoryReads(BOARD, { send: () => { throw Object.assign(new Error('spawn failed'), { code: 'ENOENT' }); } })), (error) => error.message.includes(read) && error.code === 'ENOENT');
+  });
+}
+
+test('the environment reads cross the real fake gh executable and leave its write record empty', async () => {
+  const fake = installFakeGh(temporaryDirectory('rigger-environment-gh-'), BOARD);
+  seedRepository(fake, { environments: { 'release/gate': { ...environmentAnswer, branch_policies: [{ name: 'trunk', type: 'branch' }], variables: { 'APP/ID': '12345' }, secrets: ['APP/KEY'] } } });
+  const send = (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+  const reads = repositoryReads(BOARD, { send });
+  assert.deepEqual((await reads.readEnvironment('release/gate')).policies, [{ name: 'trunk', type: 'branch' }]);
+  assert.equal(await reads.readEnvironmentVariable('release/gate', 'APP/ID'), '12345');
+  assert.equal(await reads.readEnvironmentSecret('release/gate', 'APP/KEY'), true);
+  assert.deepEqual((await fake.model()).writes(), []);
+  assert.equal(fake.sent().length, 4);
 });

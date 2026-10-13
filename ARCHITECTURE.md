@@ -406,13 +406,16 @@ The forge-side pieces other than the workflow are forge settings the owner provi
 ruleset is (`D23`):
 
 - the gate App, holding Commit statuses (write) and Metadata (read), and its installation;
-- the `gate` environment, with a deployment-branch policy admitting only `main`, and
+- the `gate` environment, with a deployment-branch policy admitting only the default branch, and
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts, each pinned to the App's id.
 
-Of the gate's forge-side pieces, `init` forks only the workflow. `doctor` reads each of those
-settings through L0's read side. No verb writes one.
+Of the gate's forge-side pieces, `init` forks only the workflow.
+
+`doctor` reads each of those settings through L0's read side but the App and its installation,
+which a user's token cannot read (#659). For them it reads each required context's pin against
+the variable `GATE_APP_ID`. No verb writes one.
 
 ### The engine's merge decision
 
