@@ -621,6 +621,15 @@ async function censusExit(t, cell, afterKill = 'omit') {
   const trace = read(directory, 'sighted-ps.log');
   assert.equal(status, 0, stderr);
   assert.ok(existsSync(join(directory, 'sighted-first-stat')), 'the first census state read did not happen');
+  if (prepared && !existsSync(join(directory, 'sighted-live'))) {
+    const probe = join(directory, 'sighted-state-probe');
+    const answer = existsSync(probe) ? readFileSync(probe, 'utf8') : '';
+    const result = /^PER-PID \d+ status=(\d+) stat=([A-Za-z+<> ]*)\n$/.exec(answer);
+    const state = result?.[2].trim();
+    t.diagnostic(JSON.stringify({ sightingState: state === undefined ? 'unavailable'
+      : state === '' ? 'empty' : state.startsWith('Z') ? 'zombie' : 'nonzombie',
+      sightingStatus: result ? Number(result[1]) : null }));
+  }
   if (cell !== 'X') assert.ok(existsSync(join(directory, 'sighted-live')), 'the last read before the kill did not find the member alive');
   assert.ok(groupKills(pairs, group) > 0, 'no group kill was sent');
   if (prepared) {
