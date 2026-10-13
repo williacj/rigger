@@ -1,0 +1,17 @@
+ABOUTME: Records the preparation read deadline repair and its retained discriminating controls on #615.
+
+# Preparation read admission deadline
+
+The filed acceptance on [#615](https://github.com/williacj/rigger/issues/615) defines completion. This work applies its existing F-P1 actual read admission deadline; it changes no acceptance, owner ruling or product timeout.
+
+Independent code inspection of commit `95bbf35c1e7ce3f24858bae29784ad0f2c6e7ace` identified that `prepareSighting` limited the requested timeout but did not reject an otherwise successful return exceeding it. The retained-cache validator likewise checked the requested timeout and total duration without checking each elapsed duration.
+
+The coordinator measured the defect with the named test `C615 preparation refuses a returned read past its configured deadline`. It supplied a synthetic clock and twelve valid controlled answers. The first answer advanced that clock by 501 ms while the configured request timeout was 500 ms. The RED run `c615-deadline-p8e9o2v5` executed one named test and failed with `Missing expected exception`. It retained the returned streams and receipt. After the elapsed-time guard, `c615-deadline-37zjxg7l` executed the same named test and passed, retaining the late return before refusing further preparation or cache readiness. These are synthetic admission controls, without actual Mac or historical-cause credit.
+
+The copied-receipt control in `C615 fixture-cache-binding rejects a consumed value different from its preparatory original` changes only a separate copy of read 012's end receipt to 501 ms. It checks that the mutation landed and the total still fits six seconds. The genuine parent stays untouched. The RED prepared target `c615-prepared-lkvaln1z` measured 44 tests, 43 passed and one failed at that late-read rejection. After the validator's actual elapsed-time assertion, `c615-prepared-m1nb_bjd` measured 44 passed and zero failed. Suite-slot admissions `c615-prepared-76hzjn6z` and `c615-prepared-86iawy64` refused before testing; their complete gates remain retained.
+
+`prepareSighting` records complete returned strings and end metadata before rejecting a read whose elapsed nanoseconds exceed its configured timeout. The existing total deadline check still runs. The retained-cache validator applies the same actual budget when deciding eligibility. The new control is additive; existing protected liveness, result, reason, identity and proof declarations remain effective.
+
+The external auditor also checks the recorded actual elapsed budget. Its labelled in-memory control failed before that check and passed afterward. A separate control verifies the finite copied late receipt's lineage and unchanged genuine parent; it receives no process proof credit. The final captured auditor target `c615-scanner-reconciliation-ak0ajo4n` measured 23 passing controls. Full-byte privacy scans and complete private original access remain required.
+
+Before this repair, ordinary commit and push hooks at the integrated candidate measured 3,236 tests, 3,219 passed, zero failed, zero cancelled and 17 skipped. Those are measurements of the earlier source. The deadline repair still requires its normal suite, ordinary hooks, fresh exact-head proof, CI, independent code review and sole fresh judgment before merge. No green earlier run repairs a missing original or supplies a later-head verdict.

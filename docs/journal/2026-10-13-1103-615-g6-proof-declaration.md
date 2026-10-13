@@ -1,0 +1,13 @@
+<!-- ABOUTME: Corrects the G6 requirement claim to match the successful kill and empty-probe assertions. -->
+
+# G6 proof declaration
+
+Done for this correction means the G6 test declares only requirements its exercised assertions can detect, and the generated test matrix matches that declaration. It does not change the G6 fixture, product behavior, bounds, or any protected existing-base assertion. #615 completion still depends on its filed acceptance, complete evidence, independent review and judgment, CI, and the ordinary merge gate.
+
+The new G6 control in `test/never-stop.test.mjs` reaches a recorded group kill, forces the first group probe to return ESRCH, checks that no post-kill product census read starts, and checks one truthful named `survivor.killed` result. It does not exercise a process Rigger cannot end or an unread group/directory result. `R-STATE-19` governs those outcomes, so the G6 declaration of that requirement was unsupported. The earlier `2026-10-13-0630-615-empty-first-group-probe.md` entry reported that declaration; this entry corrects the claim without changing that historical record.
+
+I removed only `R-STATE-19` from the G6 `// proves` line. `R-STATE-9` and `R-STATE-26` remain because G6 exercises exit cleanup and ties its recorded event to returned census identity. The generated matrix was rebuilt by `npm run matrix`; its captured closed command return is `c615-g6-matrix-r08jeoic`. The generated diff removes the G6 row only from the `R-STATE-19` mapping. The command's originals were preserved byte for byte and privately audited; that privacy result is BLOCKED with no completeness fault.
+
+At exact head `e72144072029a6ea926ef700f3e4094b5e0bca0d`, an official Node `v20.20.2` local full suite completed 3,309 tests, 3,292 pass, zero fail and 17 skip. Its closed roots `c615-normal-w44e_n1z` and `c615-completion-admission-cltubam0` are preserved byte for byte; the pinned whole-byte prepared-original scan reported `critical: {}` and privacy BLOCKED. The staged declaration, generated matrix and this journal's prior draft were then checked by the same full suite: 3,309 tests, 3,292 pass, zero fail and 17 skip, with closed roots `c615-normal-k7oa6dt1` and `c615-completion-admission-ljpw4_ch` preserved byte for byte. The pinned scanner reports `critical: {}` and privacy BLOCKED for that later suite.
+
+The exact-head hosted push Node 20 job remains failed at the separate prepared fixture-root assertion. Its inner cause is unknown from standard logs, and the green local Node 20 run does not repair its required CI status. The complete failed-attempt record is filed on PR #723 at comment `6149561134`; no retry, cause, or merge credit is inferred.
