@@ -5967,7 +5967,7 @@ async function firstDirectoryListing(t, answer) {
   }
 }
 
-// proves R-STATE-19, R-STATE-9, R-STATE-26
+// proves R-STATE-9, R-STATE-26
 test('C615 G6 first kill followed by an empty group probe starts no post-kill read', SETTLES_WITHIN, async (t) => {
   await firstDirectoryListing(t, 'G6');
 });
