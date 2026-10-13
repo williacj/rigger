@@ -551,13 +551,14 @@ const REPOSITORY_READS = {
     },
   },
   /**
-   * Issue `number`, open or closed, as `{ number, body, labels }`: its body, the empty string
-   * where it has none, and every label's name across pages, in the order gh answers them.
+   * Issue `number`, open or closed, as `{ number, title, body, labels }`: its title, its body, the
+   * empty string where it has none, and every label's name across pages, in the order gh answers
+   * them.
    */
   readIssue: {
     reading: (number) => `issue #${number}`,
     read: async (board, via, number, addressed) => {
-      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number body repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number title body repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
       const labels = [];
       for (let after = '';;) {
         const said = await readRunner(graphqlRequest(query(`first: ${PAGE}${after}`)), via);
@@ -565,27 +566,28 @@ const REPOSITORY_READS = {
         const issue = heldIn('readIssue', board, answerOf('readIssue', board, said, addressed), 'issue', addressed);
         if (!ofRepository(board, issue.repository.nameWithOwner)) return null;
         labels.push(...issue.labels.nodes.map((label) => label.name));
-        if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, body: issue.body, labels };
+        if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, title: issue.title, body: issue.body, labels };
         after = `, after: ${literal(issue.labels.pageInfo.endCursor)}`;
       }
     },
   },
   /**
    * Pull request `number`, whatever its state or the repository its head is in, as `{ number,
-   * head, base, state, headRepository, fromRepository }`: `head` and `base` as `pullRequestOf`
-   * names them, `state` one of `open`, `closed` or `merged`, `headRepository` the head's repository
+   * head, branch, base, state, headRepository, fromRepository }`: `head` and `base` as
+   * `pullRequestOf` names them, `branch` its head branch's name, `state` one of `open`, `closed` or `merged`, `headRepository` the head's repository
    * as `owner/name`, or null where it was deleted, and `fromRepository` whether that is the board's
    * repository. A fork's pull request is answered, not left out: refusing one is its caller's call.
    */
   readPullRequestByNumber: {
     reading: (number) => `pull request #${number}`,
     read: async (board, via, number, addressed) => {
-      const query = repositoryQuery(board, `pullRequest(number: ${numbered('readPullRequestByNumber', board, number)}) { number state headRefOid baseRefName headRepository { nameWithOwner } }`);
+      const query = repositoryQuery(board, `pullRequest(number: ${numbered('readPullRequestByNumber', board, number)}) { number state headRefOid headRefName baseRefName headRepository { nameWithOwner } }`);
       const pull = heldIn('readPullRequestByNumber', board, await asked('readPullRequestByNumber', board, query, via, addressed), 'pullRequest', addressed);
       const states = { OPEN: 'open', CLOSED: 'closed', MERGED: 'merged' };
       if (!Object.hasOwn(states, pull.state)) fail('readPullRequestByNumber', board, `${addressed}gh answered state ${pull.state}`);
       const headRepository = pull.headRepository?.nameWithOwner ?? null;
-      return { ...pullRequestOf(pull), state: states[pull.state], headRepository, fromRepository: headRepository !== null && ofRepository(board, headRepository) };
+      const { head, base } = pullRequestOf(pull);
+      return { number: pull.number, head, branch: pull.headRefName, base, state: states[pull.state], headRepository, fromRepository: headRepository !== null && ofRepository(board, headRepository) };
     },
   },
 };

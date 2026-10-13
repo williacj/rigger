@@ -720,8 +720,8 @@ test('the repository read answers each issue the fake gh holds: every label past
   });
 
   await onPath(fake, async () => {
-    assert.deepEqual(await reads().readIssue(214), { number: 214, body: 'Why.', labels });
-    assert.deepEqual(await reads().readIssue(215), { number: 215, body: '', labels: ['type:change'] });
+    assert.deepEqual(await reads().readIssue(214), { number: 214, title: 'Card 214', body: 'Why.', labels });
+    assert.deepEqual(await reads().readIssue(215), { number: 215, title: 'Card 215', body: '', labels: ['type:change'] });
     assert.equal(await reads().readIssue(216), null);
     assert.equal(await reads().readIssue(301), null);
     assert.equal(await reads().readIssue(999), null);
@@ -742,11 +742,11 @@ test('the repository read answers each pull request the fake gh holds by number,
   const own = 'williacj/rigger';
 
   await onPath(fake, async () => {
-    assert.deepEqual(await reads().readPullRequestByNumber(301), { number: 301, head: sha(301), base: 'main', state: 'open', headRepository: own, fromRepository: true });
-    assert.deepEqual(await reads().readPullRequestByNumber(302), { number: 302, head: sha(302), base: 'main', state: 'open', headRepository: 'someone/rigger', fromRepository: false });
-    assert.deepEqual(await reads().readPullRequestByNumber(303), { number: 303, head: sha(303), base: 'main', state: 'open', headRepository: null, fromRepository: false });
-    assert.deepEqual(await reads().readPullRequestByNumber(304), { number: 304, head: sha(304), base: 'release', state: 'merged', headRepository: own, fromRepository: true });
-    assert.deepEqual(await reads().readPullRequestByNumber(305), { number: 305, head: sha(305), base: 'main', state: 'closed', headRepository: own, fromRepository: true });
+    assert.deepEqual(await reads().readPullRequestByNumber(301), { number: 301, head: sha(301), branch: 'rigger-214', base: 'main', state: 'open', headRepository: own, fromRepository: true });
+    assert.deepEqual(await reads().readPullRequestByNumber(302), { number: 302, head: sha(302), branch: 'rigger-214', base: 'main', state: 'open', headRepository: 'someone/rigger', fromRepository: false });
+    assert.deepEqual(await reads().readPullRequestByNumber(303), { number: 303, head: sha(303), branch: 'rigger-214', base: 'main', state: 'open', headRepository: null, fromRepository: false });
+    assert.deepEqual(await reads().readPullRequestByNumber(304), { number: 304, head: sha(304), branch: 'rigger-214', base: 'release', state: 'merged', headRepository: own, fromRepository: true });
+    assert.deepEqual(await reads().readPullRequestByNumber(305), { number: 305, head: sha(305), branch: 'rigger-214', base: 'main', state: 'closed', headRepository: own, fromRepository: true });
     const before = forgeHeld(fake);
     await assert.rejects(reads().readPullRequestByNumber(306), /pull request #306.*Could not resolve to a PullRequest with the number of 306/);
     await assertNothingChanged(fake, before);

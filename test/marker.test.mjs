@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { acceptanceDigest, composeMarker, dispatched, evidenceDigest, markerInstruction, parseMarker, readMarkers, VERDICTS } from '../src/workflow/marker.mjs';
+import { undispatchedInstruction } from '../src/workflow/marker.mjs';
 
 /** A body whose acceptance holds two items, with a section after it, and its digest, from `shasum -a 256` over the two items each followed by LF. */
 const BODY = '## Acceptance\n\n- The verb prints its help.\n- The verb exits 0.\n\n## Notes\n\n- Not an item.\n';
@@ -415,4 +416,34 @@ test('the instruction for an agent judge writes provider: <name> after role in t
   assert.ok(!owner.some((line) => line.startsWith('provider')), owner.join('\n'));
   const composed = composeMarker({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'codex', verdict: 'sound', items: ['met'], coverage: 'covered' }, 'Sound').split('\n');
   assert.equal(composed[composed.indexOf('role: reviewer') + 1], 'provider: codex');
+});
+
+test('the instruction for a judge Rigger did not dispatch writes no dispatch or evidence line, and its block, filled in as its text says, parses as that judge\'s marker', () => {
+  const instruction = undispatchedInstruction({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'codex', items: ['The verb prints its help.', 'The verb exits 0.'] });
+  const lines = instruction.split('\n');
+
+  assert.ok(!lines.some((line) => line.startsWith('dispatch') || line.startsWith('evidence')), instruction);
+  assert.ok(!instruction.includes('<the dispatch id>'), instruction);
+  assert.match(instruction, /one comment on pull request #70/);
+  assert.match(instruction, /leaving out the two optional lines where they do not apply/);
+  for (const line of ['card: 7', 'pull: 70', `head: ${HEAD}`, `digest: ${DIGEST}`, 'role: reviewer', 'provider: codex', 'item 1: <met or unmet>', 'item 2: <met or unmet>']) {
+    assert.ok(lines.includes(line), `${line} is not a line of ${instruction}`);
+  }
+  const block = lines.slice(lines.indexOf('```rigger-marker'), lines.indexOf('```', lines.indexOf('```rigger-marker')) + 1);
+  const filled = block
+    .filter((line) => !line.startsWith('coverageReason:') && !line.startsWith('toSound:'))
+    .map((line) => line.replace(/^verdict: <.*>$/, 'verdict: sound').replace(/^(item \d+): <.*>$/, '$1: met').replace(/^coverage: <.*>$/, 'coverage: covered'));
+  assert.ok(!filled.some((line) => line.includes('<')), filled.join('\n'));
+
+  const parsed = parseMarker(['Sound, by hand.', ...filled].join('\n'), 2);
+
+  assert.equal(parsed.state, 'marker', JSON.stringify(parsed));
+  assert.deepEqual(parsed.absent, ['dispatch', 'evidence']);
+  assert.deepEqual(parsed.marker, { card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'reviewer', provider: 'codex', verdict: 'sound', items: ['met', 'met'], coverage: 'covered' });
+});
+
+test('the instruction for the owner, as a judge Rigger did not dispatch, names no provider', () => {
+  const lines = undispatchedInstruction({ card: 7, pull: 70, head: HEAD, digest: DIGEST, role: 'owner', items: ['One.'] }).split('\n');
+  assert.ok(lines.includes('role: owner'));
+  assert.ok(!lines.some((line) => line.startsWith('provider')), lines.join('\n'));
 });

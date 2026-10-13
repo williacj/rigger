@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PLACEHOLDER } from '../config/validate.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
+import { assets as forgeAssets } from '../substrate/forge/assets.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { PACKAGE, gitAnswer, real, repoRoot, sameTree, sourceTreeRefusal } from './doctor.mjs';
 import { recording } from './recording.mjs';
@@ -26,8 +27,43 @@ export const CONFIG = 'rigger.config.mjs';
  */
 export const PROVIDER_ASSETS = Object.fromEntries(Object.entries(ADAPTERS).map(([provider, adapter]) => [provider, adapter.assets]));
 
-/** The git hook destination belongs to `init`; providers own only their own asset destinations. */
-export const ASSET_DESTINATIONS = { ...PROVIDER_ASSETS, githooks: '.githooks' };
+/**
+ * The git hook destination belongs to `init`; providers own only their own asset destinations, and
+ * the forge adapter its own (`src/substrate/forge/assets.mjs`), where the gate workflow lands.
+ */
+export const ASSET_DESTINATIONS = { ...PROVIDER_ASSETS, githooks: '.githooks', github: forgeAssets };
+
+/** The forge's templates, which ship under `templates/github/` and hold the gate workflow alone. */
+const FORGE_TEMPLATES = 'github';
+
+/** What the gate workflow's template holds where the forked workflow pins Rigger's commit. */
+export const PIN = 'PINNED_COMMIT';
+
+/**
+ * Where a package records the commit it was packed from, as `scripts/record-commit.mjs` writes it
+ * (`{ "commit": "<full SHA>" }`), relative to the package's root.
+ */
+export const COMMIT_RECORD = 'src/package-commit.json';
+
+/**
+ * The commit the package at `packageRoot` records, as `{ commit }`, or `{ why }` saying in one
+ * line why it records none: no record, one that is not JSON, or one naming no full SHA.
+ */
+export function recordedCommit(packageRoot) {
+  let text;
+  try {
+    text = readFileSync(join(packageRoot, COMMIT_RECORD), 'utf8');
+  } catch (failure) {
+    return { why: failure.code === 'ENOENT' ? `it holds no \`${COMMIT_RECORD}\`` : `\`${COMMIT_RECORD}\` could not be read: ${failure.code}` };
+  }
+  let commit;
+  try {
+    commit = JSON.parse(text)?.commit;
+  } catch {
+    return { why: `\`${COMMIT_RECORD}\` is not JSON` };
+  }
+  return typeof commit === 'string' && /^[0-9a-f]{40}$/.test(commit) ? { commit } : { why: `\`${COMMIT_RECORD}\` names no commit's full SHA` };
+}
 
 /**
  * The templates this package ships. Everything `init` writes is read from here and from nowhere
@@ -146,17 +182,24 @@ const fill = (starter, values) =>
  * `repo` is what git says `origin` points at, and `project` is the board number, which no caller
  * inside `init` can know: nothing it reads names a board, so it passes none and the consumer
  * answers it in the file.
+ *
+ * `commit` is the commit the gate workflow pins Rigger to, the one the package records. With none,
+ * the forge's templates are left out, since a workflow pinned to nothing runs no known gate.
  */
-export function plan({ templates = TEMPLATES, repo, project } = {}) {
+export function plan({ templates = TEMPLATES, repo, project, commit } = {}) {
   const starter = readFileSync(join(templates, CONFIG), 'utf8');
   return [
     { path: CONFIG, content: fill(starter, { repo, project }) },
     ...readdirSync(templates, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) => entry.isDirectory() && (entry.name !== FORGE_TEMPLATES || commit !== undefined))
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-      .flatMap((entry) => forks(templates, entry.name)),
+      .flatMap((entry) => forks(templates, entry.name))
+      .map((file) => (file.path.startsWith(`${forgeAssets}/`) ? { ...file, content: file.content.replaceAll(PIN, commit) } : file)),
   ];
 }
+
+/** The paths the forge's templates fork to, as a plan with a commit would write them. */
+const forgeForks = (templates) => (existsSync(join(templates, FORGE_TEMPLATES)) ? forks(templates, FORGE_TEMPLATES).map((file) => file.path) : []);
 
 /** A heading and the paths under it, or nothing at all where there are no paths. */
 const listing = (heading, paths) => (paths.length === 0 ? [] : [heading, ...paths.map((path) => `  ${path}`), '']);
@@ -286,7 +329,8 @@ async function forking({ sink, name }, {
       }
     }
   }
-  const files = plan({ templates, repo });
+  const pinned = recordedCommit(packageRoot);
+  const files = plan({ templates, repo, commit: pinned.commit });
   const wrote = [];
   const skipped = [];
   for (const file of files) {
@@ -320,6 +364,9 @@ async function forking({ sink, name }, {
       ...(skippedHook && !executableHook
         ? ['`.githooks/pre-push` is not executable; git will not run it.'] : []),
       ...(found.root === null ? [`did not set core.hooksPath because ${found.why}.`] : []),
+      // Pinned to no commit, the workflow would run whatever Rigger is newest, so it is not forked.
+      ...forgeForks(templates).filter(() => pinned.commit === undefined)
+        .map((path) => `did not fork \`${path}\`, because the Rigger package records no commit to pin it to: ${pinned.why}.`),
       ...(repo ? [] : [`\`${CONFIG}\` names \`${PLACEHOLDER.repo}\`, because git named no \`origin\` remote to read it from: ${printableGitReason(why)}.`]),
       // Said only where the config was written, because a run that skipped it would be claiming
       // something about a file that is the consumer's by then and that `init` never read.

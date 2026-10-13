@@ -26,6 +26,8 @@
   },
   "scripts": {
     "test": "sh test/suite.sh",
+    "prepack": "node scripts/record-commit.mjs",
+    "gate:check": "node scripts/gate-check.mjs",
     "budget:package": "node scripts/package-budget.mjs",
     "budget:instructions": "node scripts/instruction-budget.mjs",
     "lint:spec-style": "node scripts/spec-style-lint.mjs",
