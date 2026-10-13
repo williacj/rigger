@@ -4970,6 +4970,16 @@ const D3_CONTROL_CALLER = (() => {
   return TRACED_CALLER.replace(anchor, `while (!existsSync(join(here, 'begin-exit'))) await new Promise((resolve) => setImmediate(resolve));\n${anchor}`);
 })();
 
+/**
+ * Models ESRCH at the first group probe after the recorded kill, tracing every unchanged read.
+ * A synchronous exit cannot reap its own leader; this control does not prove native group absence.
+ */
+const G6_CONTROL_CALLER = (() => {
+  const anchor = "try { const answer = signalled(target, name); trace('signal-answer',";
+  assert.equal(D3_CONTROL_CALLER.split(anchor).length, 2, 'the G6 signal answer anchor moved');
+  return D3_CONTROL_CALLER.replace(anchor, `try { if (target === -pidIn('group') && name === 0 && existsSync(join(here, 'hang'))) { appendFileSync(join(here, 'g6-empty-probe'), 'E'); throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); } const answer = signalled(target, name); trace('signal-answer',`);
+})();
+
 /** Reads a directly owned child's settled state without sending it a signal. */
 const d2HasEnded = (child) => child.exitCode !== null || child.signalCode !== null;
 
@@ -5016,12 +5026,13 @@ function d2Spawn(command, args, options, evidence, name, ipc = false) {
 
 /** Exercises one first-listing answer while retaining the directly owned fixture and caller originals. */
 async function firstDirectoryListing(t, answer) {
+  const groupEmpty = answer === 'G6';
   const groupC2Timeout = answer === 'G2C2T';
   const groupC2Failure = answer === 'G4C2F';
   const groupC1Failure = answer === 'G4C1F';
   const groupC3Failure = answer === 'G4C3F';
   const groupC2Read = groupC2Timeout || groupC2Failure || groupC3Failure;
-  const d9Read = answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT' || answer === 'D9NU' || answer === 'D9CF' || answer === 'D9CT' || groupC1Failure || groupC2Read;
+  const d9Read = groupEmpty || answer === 'D9NO' || answer === 'D9EC' || answer === 'D9NF' || answer === 'D9NT' || answer === 'D9NU' || answer === 'D9CF' || answer === 'D9CT' || groupC1Failure || groupC2Read;
   const heldState = answer === 'SF' || answer === 'ST' || answer === 'EHSF' || answer === 'EHST';
   const coListedRefusal = answer === 'EHF' || answer === 'EHT' || answer === 'EHSF' || answer === 'EHST' || answer === 'EHPF' || answer === 'EHPT' || answer === 'EOF' || answer === 'EOT' || answer === 'EOSF' || answer === 'EOST' || answer === 'EOPF' || answer === 'EOPT';
   const heldListing = answer === 'LF' || answer === 'LT' || answer === 'EHF' || answer === 'EHT';
@@ -5043,7 +5054,7 @@ async function firstDirectoryListing(t, answer) {
   assert.ok(scratchRoot !== checkout && !scratchRoot.startsWith(`${checkout}/`) && outer !== checkout && !outer.startsWith(`${checkout}/`), 'first-listing evidence or scratch is inside the checkout');
   assert.ok(lstatSync(process.env.TMPDIR).isDirectory() && !lstatSync(process.env.TMPDIR).isSymbolicLink(), 'first-listing TMPDIR is not a directory');
   assert.ok(lstatSync(process.env.C615_EVIDENCE_ROOT).isDirectory() && !lstatSync(process.env.C615_EVIDENCE_ROOT).isSymbolicLink() && (lstatSync(outer).mode & 0o077) === 0, 'first-listing evidence root is not private');
-  const evidence = join(outer, answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'G2C2T' ? 'g2-c2-timeout' : answer === 'G4C2F' ? 'g4-c2-failure' : answer === 'G4C1F' ? 'g4-c1-failure' : answer === 'G4C3F' ? 'g4-c3-failure' : answer === 'D9NU' ? 'd9-name-cached' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
+  const evidence = join(outer, groupEmpty ? 'g6-empty-first-probe' : answer === 'F' ? 'd2-first-failure' : answer === 'T' ? 'd2-first-timeout' : answer === 'SF' ? 'd4-state-failure' : answer === 'ST' ? 'd4-state-timeout' : answer === 'LF' ? 'd4-listing-failure' : answer === 'LT' ? 'd4-listing-timeout' : answer === 'PF' ? 'd4-per-pid-failure' : answer === 'PT' ? 'd4-per-pid-timeout' : answer === 'OF' ? 'd5-listing-failure' : answer === 'OT' ? 'd5-listing-timeout' : answer === 'OSF' ? 'd5-state-failure' : answer === 'OST' ? 'd5-state-timeout' : answer === 'OPF' ? 'd5-per-pid-failure' : answer === 'OPT' ? 'd5-per-pid-timeout' : heldOmitted ? 'd6-held-omitted' : heldZombie ? 'd6-held-zombie' : ownedOmitted ? 'd6-owned-omitted' : ownedLive ? 'd6-owned-live' : ownedZombie ? 'd6-owned-zombie' : answer === 'EHF' ? 'd8-held-listing-failure' : answer === 'EHT' ? 'd8-held-listing-timeout' : answer === 'EHSF' ? 'd8-held-state-failure' : answer === 'EHST' ? 'd8-held-state-timeout' : answer === 'EHPF' ? 'd8-held-per-pid-failure' : answer === 'EHPT' ? 'd8-held-per-pid-timeout' : answer === 'EOF' ? 'd8-owned-listing-failure' : answer === 'EOT' ? 'd8-owned-listing-timeout' : answer === 'EOSF' ? 'd8-owned-state-failure' : answer === 'EOST' ? 'd8-owned-state-timeout' : answer === 'EOPF' ? 'd8-owned-per-pid-failure' : answer === 'EOPT' ? 'd8-owned-per-pid-timeout' : answer === 'D9CT' ? 'd9-command-timeout' : answer === 'D9CF' ? 'd9-command-failure' : answer === 'G2C2T' ? 'g2-c2-timeout' : answer === 'G4C2F' ? 'g4-c2-failure' : answer === 'G4C1F' ? 'g4-c1-failure' : answer === 'G4C3F' ? 'g4-c3-failure' : answer === 'D9NU' ? 'd9-name-cached' : answer === 'D9NT' ? 'd9-name-timeout' : answer === 'D9NF' ? 'd9-name-failure' : answer === 'D9EC' ? 'd9-empty-name-command-present' : d9Read ? 'd9-name-command-omitted' : 'd3-first-answered');
   mkdirSync(evidence, { mode: 0o700 });
   const nonce = randomUUID();
   let directory;
@@ -5349,8 +5360,8 @@ async function firstDirectoryListing(t, answer) {
     ].join('\n'));
   }
   const callerPath = join(directory, 'caller.mjs');
-  writeFileSync(callerPath, answer === 'A' || heldRead || ownedRead || d9Read ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
-  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedRead || d9Read ? { ps: 'ps' } : { refused: 'outside' }), ...(d9Read ? { refused: 'outside' } : {}), ...(coListedRefusal ? { refused: 'refused' } : {}), ...(ownedRead ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}) };
+  writeFileSync(callerPath, groupEmpty ? G6_CONTROL_CALLER : answer === 'A' || heldRead || ownedRead || d9Read ? D3_CONTROL_CALLER : D2_CONTROL_CALLER);
+  const options = { readTimeout: CLEANUP_BOUND, directory: work, lsof: 'lsof', ...(answer === 'A' || heldRead || ownedRead || d9Read ? { ps: 'ps' } : { refused: 'outside' }), ...(d9Read ? { refused: 'outside' } : {}), ...(coListedRefusal ? { refused: 'refused' } : {}), ...(ownedRead ? { unkept: 'outside', hangAfter: 'outside' } : {}), ...(answer === 'T' ? { censusElapsed: CLEANUP_BOUND + 1 } : {}), ...(groupEmpty ? { directory: undefined, hangAfter: 'group' } : {}) };
   caller = d2Spawn(process.execPath, [callerPath, directory, JSON.stringify(options)], {}, evidence, 'caller');
   caller.on('error', (error) => { callerError = error; });
   callerClosed = new Promise((resolveClose) => caller.once('close', (code, signal) => resolveClose({ code, signal })));
@@ -5371,6 +5382,30 @@ async function firstDirectoryListing(t, answer) {
   const pairs = linesOf(directory, 'pairs');
   const directoryEvents = events.filter(({ directory: at }) => at === work);
   const firstArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
+  if (groupEmpty) {
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    const ps = join(directory, 'ps');
+    const groupReads = trace.filter(({ kind, tool, args }) => kind === 'read-start' && tool === ps && ((args.includes('-g') && args.includes(String(group))) || (args[0] === '-p' && args[1] === String(group) && args.at(-1) === 'ucomm=')));
+    const kill = trace.find(({ kind, target, name, answer: result }) => kind === 'signal-answer' && target === -group && name === 'SIGKILL' && result === true);
+    assert.ok(kill, 'G6 never reached its first group kill');
+    const probe = trace.find(({ kind, target, name, sequence }) => kind === 'signal-answer' && target === -group && name === 0 && sequence > kill.sequence);
+    assert.ok(probe && probe.error === 'ESRCH' && probe.answer === undefined, 'G6 did not reach its controlled empty first probe');
+    assert.equal(read(directory, 'g6-empty-probe'), 'E', 'the empty probe was not forced exactly once');
+    assert.deepEqual(groupReads.filter(({ sequence }) => sequence > kill.sequence), [], 'an empty first probe started a post-kill group read');
+    const state = ['-ww', '-g', String(group), '-o', 'pid=,stat='];
+    const command = ['-ww', '-g', String(group), '-o', 'pid=,command='];
+    const name = ['-p', String(group), '-o', 'ucomm='];
+    assert.deepEqual(groupReads.map(({ args }) => args), [state, command, name, command, state, ['-g', String(group), '-o', 'pid=,stat='], ['-g', String(group), '-o', 'pid=,stat=,xstat=']], 'G6 did not reach its answered census and both pre-kill confirmations');
+    const ends = trace.filter(({ kind, tool, args, sequence }) => kind === 'read-end' && tool === ps && sequence < kill.sequence && groupReads.some((start) => start.sequence < sequence && JSON.stringify(start.args) === JSON.stringify(args)));
+    assert.equal(ends.length, groupReads.length, 'a G6 pre-kill read has no retained answer');
+    assert.ok(ends.every(({ status, error, stderr }) => status === 0 && error === undefined && stderr === ''), 'a G6 pre-kill read did not answer completely');
+    const shownName = ends.find(({ args }) => JSON.stringify(args) === JSON.stringify(name))?.stdout.replace(/ *\n$/, '');
+    const shownCommand = ends.find(({ args }) => JSON.stringify(args) === JSON.stringify(command))?.stdout.match(new RegExp(`^\\s*${group} (.+)$`, 'm'))?.[1];
+    assert.ok(shownName && shownCommand, 'G6 retained no complete returned identity');
+    assert.deepEqual(events.map(({ event, pid, name: foundName, cmd, reason }) => ({ event, pid, name: foundName, cmd, reason })), [{ event: 'survivor.killed', pid: group, name: shownName, cmd: shownCommand, reason: undefined }], 'G6 invented or lost the recorded member result');
+    assert.equal(trace.filter(({ kind, target, name }) => kind === 'signal-answer' && target === -group && name === 'SIGKILL').length, 1, 'G6 sent another group kill after its empty probe');
+    return;
+  }
   if (answer === 'D9NU' || groupC1Failure || groupC2Read) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const ps = join(directory, 'ps');
@@ -5931,6 +5966,11 @@ async function firstDirectoryListing(t, answer) {
     assert.equal(existsSync(join(directory, 'first-listing-entered')), false, 'the pre-spawn T actually started lsof');
   }
 }
+
+// proves R-STATE-19, R-STATE-9, R-STATE-26
+test('C615 G6 first kill followed by an empty group probe starts no post-kill read', SETTLES_WITHIN, async (t) => {
+  await firstDirectoryListing(t, 'G6');
+});
 
 // proves R-STATE-19, R-STATE-9, R-STATE-26
 test('C615 D2 first full lsof F records an unread directory without a named PID', SETTLES_WITHIN, async (t) => {

@@ -33,12 +33,13 @@ export function markerComment({ card, pull, head, body, role = 'reviewer', provi
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks', 'closed', 'headRepositoryDeleted'];
 
 /**
- * Everything the fake holds of one issue: its `number`, its `body`, empty where none is given, its
+ * Everything the fake holds of one issue: its `number`, its `title`, `Card <number>` where none is
+ * given, its `body`, empty where none is given, its
  * `labels` by name, in the order GitHub answers them, and `repository`, the `owner/name` the forge
  * answers it in, which is another repository's for an issue transferred out of this one and null
  * for this repository's own.
  */
-const ISSUE_FACTS = ['number', 'body', 'labels', 'repository'];
+const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository'];
 
 /** The SHA the fake's merge answers as the merge commit. */
 const MERGE_SHA = 'e'.repeat(40);
@@ -70,7 +71,7 @@ function heldIssue(issue) {
   const unmodelled = Object.keys(issue).filter((fact) => !ISSUE_FACTS.includes(fact));
   if (unmodelled.length > 0) throw new Error(`the fake repository does not hold an issue's ${unmodelled.join(', ')}`);
   if (!Number.isInteger(issue.number)) throw new Error('the fake repository holds every issue with its number, and was given one without');
-  return { body: '', labels: [], repository: null, ...issue };
+  return { title: `Card ${issue.number}`, body: '', labels: [], repository: null, ...issue };
 }
 
 /** The state GitHub answers for pull request `pull`, as the fake holds it. */
@@ -142,13 +143,13 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     readIssue: async (number) => {
       const issue = held.issues.find((candidate) => candidate.number === number);
       if (!issue || !isOwn(issue.repository)) return null;
-      return { number, body: issue.body, labels: [...issue.labels] };
+      return { number, title: issue.title, body: issue.body, labels: [...issue.labels] };
     },
     readPullRequestByNumber: async (number) => {
       const found = known('readPullRequestByNumber', number);
       if (repo === undefined) throw new Error(`the fake repository was given no repo, so it cannot name pull request #${number}'s head repository`);
       const headRepository = found.headRepositoryDeleted ? null : found.from ?? repo;
-      return { number, head: found.sha, base: found.base, state: pullStateOf(found).toLowerCase(), headRepository, fromRepository: headRepository !== null && isOwn(found.from) };
+      return { number, head: found.sha, branch: found.head, base: found.base, state: pullStateOf(found).toLowerCase(), headRepository, fromRepository: headRepository !== null && isOwn(found.from) };
     },
     readFileAt: async (commit, path) => {
       const found = origin === undefined ? null : entryIn(origin, commit, path);
