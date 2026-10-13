@@ -19,6 +19,7 @@ import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, t
 import { heldOutput } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
 import { gone } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
@@ -991,6 +992,7 @@ test('G3: a retained group round survives an unseen round and the next read cut'
   const pairs = linesOf(directory, 'pairs');
 
   assert.equal(status, 0, stderr);
+  assert.equal(existsSync(join(directory, 'census-state-count')), true, 'the first group census read was not reached');
   assert.equal(read(directory, 'census-state-count'), '4', 'two complete group rounds were not reached');
   assert.equal(existsSync(join(directory, 'group-clock-jump')), true, 'the next group read was not cut');
   assert.ok(groupKills(pairs, group) > 0, 'the group kill was not reached');
@@ -6169,6 +6171,17 @@ async function groupPhaseCut(t, phase, accepted) {
   directory = realpathSync(temporaryDirectory('rigger-g3-phase-', { context: t, beforeRemoval: () => assert.ok(copied && finalized, 'retain unresolved G3 phase scratch') }));
   writeFileSync(join(directory, 'hold'), '');
   holdingTwo(directory);
+  const commandPath = join(directory, 'command');
+  // On release, the fixture parent ends and reaps its own recorded children.
+  writeFileSync(commandPath, [
+    readFileSync(commandPath, 'utf8'),
+    'one=$(/bin/cat "$here/one.pid")',
+    'two=$(/bin/cat "$here/two.pid")',
+    'kill "$one" "$two"',
+    'wait "$one" "$two"',
+    '',
+  ].join('\n'));
+  warmed(commandPath);
   const rejectedState = accepted ? 4 : 2;
   const targetState = rejectedState + 1;
   const priorNames = accepted ? 6 : 3;

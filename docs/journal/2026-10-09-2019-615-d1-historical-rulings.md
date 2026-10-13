@@ -25,3 +25,31 @@ These are maker evidence rulings against frozen source `e770812ca43c395c980fd450
 | Group [`:2001`](https://github.com/williacj/rigger/blob/e770812ca43c395c980fd45081695d0ad1179812/test/never-stop.test.mjs#L2001) | [#616's earlier `:860`/`:996` account](https://github.com/williacj/rigger/issues/616) and [PR #585's then-`:770` report](https://github.com/williacj/rigger/pull/585#issuecomment-5982395964) give standalone “the process-table read timed out after 1000 ms” instead of `/after its kill failed/` and `/ps: failing on purpose/`. | **Broad pre-kill timeout reason supported; exact G position unknown.** The historical group result order distinguishes a post-kill-only prefixed failure from this standalone reason. C1–C5 G2/G3 and B0/B1 G5 remain; an additional later post-kill read is not ruled out. #621's F1–F3 repair is separate. | Actual ordered `ps` answers/errors, retained last, B reads, kill/stand-in marker, post-kill reads and events are missing. G3 is conditionally relevant only to accepted-last/unseen timeout; D9 is unrelated. |
 
 These seven historical rulings do not establish source-fix completion or replace the remaining D/G controls, two focused real-Mac tests, privacy audits, exact-head suite, failed-run inventory, and sole fresh judge's independent assessment.
+
+
+## Historical ruling correction — 2026-10-12
+
+The two original `:1950` and `:2001` rows above incorrectly list G3's accepted-last/unseen path as a direct source of the bare “the process-table read timed out after 1000 ms” reason. That alternative is withdrawn. The original rows remain as the record of the incorrect ruling; this correction governs their interpretation.
+
+The reopened [historical census wrapper](https://github.com/williacj/rigger/blob/eeac22171d6b5c3bec4506350265b72383e09f45/src/substrate/process.mjs#L672) prefixes a yielded-read error whenever `unseen` is set. With no unseen wrapper and an accepted `last`, its [timeout catch](https://github.com/williacj/rigger/blob/eeac22171d6b5c3bec4506350265b72383e09f45/src/substrate/process.mjs#L693) returns that last round. The same distinction holds in the [frozen census source](https://github.com/williacj/rigger/blob/e770812ca43c395c980fd45081695d0ad1179812/src/substrate/process.mjs#L703). The G3 defect therefore does not directly produce the bare timeout shown by these excerpts.
+
+The supported ruling remains a pre-kill timeout reason with an unknown exact read: an unwrapped C-position read without accepted last, or a separate B0/B1 read, can supply it. An earlier G3 condition could precede a separate B timeout, but that would not make the bare reason evidence of G3. A later additional post-kill failure remains possible because the pre-kill reason takes precedence. Complete historical ordered reads, retained last, signals and full event originals remain unavailable; no exact phase or repaired historical cause is claimed.
+
+
+## Bounded historical check — 2026-10-12
+
+The O240 coordinator ran one ordinary `npm test` at head `44b588741100b2beea17cd39ea1e82045a5cfa60`, selected main `054d54b249145841aeee73620e9e0d9ba0101282`, under the filed O254 body. The completed `suite-iyywr2gf` original contains 3,237 tests, 3,220 passes, zero failures and 17 skips. Each of the seven protected titles below has one explicit passing row. Complete private stdout is 1,006,543 bytes, SHA-256 `3050d1da6f5279793ec1a28248e2fe269c681f53487e760853c626b757bb4bb1`; stderr was produced empty. The original and its per-read files remain privately inspectable. The pinned whole-byte/prepared-schema scan reports no structural faults and privacy BLOCKED; raw originals stay private. Transparent observation records the outer reaper closing normally without a numeric-PID signal sweep.
+
+| Original frozen row | Result in this one ordinary-suite check |
+|---|---|
+| Group `:235` | not reproduced in this bounded check |
+| Group `:644` | not reproduced in this bounded check |
+| Directory `:1024` | not reproduced in this bounded check |
+| Directory `:1038` | not reproduced in this bounded check |
+| Directory `:1270` | not reproduced in this bounded check |
+| Group `:1950` | not reproduced in this bounded check |
+| Group `:2001` | not reproduced in this bounded check |
+
+This measurement concerns current protected tests in one run. It does not recreate unavailable historical input streams, measure recurrence frequency, locate an old read phase or prove an old failure repaired. Prepared exit cells establish fixture stabilization alone. The source-forced selected-base/head D/G pair supplies separate behavior evidence; its deliberately forced red rows are not historical recurrences. Earlier historical observations, unavailable originals and unknown phases above remain unchanged.
+
+The earlier D1 paragraph's claim of required host gates receives no admission or acceptance credit. O254 permanently records those exact older starts' census/reservation gaps. Their authentic returned bytes and controlled behavior facts remain preserved; this correction does not promote them to replacement proof.
