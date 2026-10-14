@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +38,7 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  *   `d-<label>` of card `<label + 6>`, with its record in the state directory.
  * - `spy`: whether the caller writes the record's entries to `record-at-end.<dispatch id>` as each
  *   dispatch-end event is appended.
+ * - `markWait`: whether the command fixture marks that its bare `wait` returned.
  * - `exits`: whether each command started straight through the adapter writes the exit code the
  *   cleanup hands its step to `exit.<label>`.
  * - `exitOnReap`: whether the caller calls process.exit(0) in the turn Node reaps its first command.
@@ -166,10 +168,6 @@ function fixtures(directory) {
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
     'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
-    'exec /bin/ps "$@"',
-  ].join('\n'));
-  fixture(directory, 'ps-after-exit', [
-    'case " $* " in *" -g "*) if [ -f "$here/node-exit.1" ] && [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi ;; esac',
     'exec /bin/ps "$@"',
   ].join('\n'));
   fixture(directory, 'ps-never', 'exec /usr/bin/tail -f "$here/ps-hold"');
@@ -396,6 +394,13 @@ function fixtures(directory) {
 async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
   const directory = scratch(t);
   fixtures(directory);
+  if (options.markWait) {
+    // The signal tests observe the shell after bare wait and before cleanup's kill.
+    const path = join(directory, 'command');
+    const command = readFileSync(path, 'utf8');
+    assert.equal(command.split('\nwait\n').length, 2);
+    writeFileSync(path, command.replace('\nwait\n', '\nwait\n: > "$here/wait-returned.$1"\n'));
+  }
   if (refusing) {
     // The state directory exists and takes no file, so the sink refuses every append.
     mkdirSync(join(directory, 'state'));
@@ -1105,10 +1110,10 @@ for (const ending of ['exit 0', 'exit 1', 'throw', 'reject', ...HANDLED]) {
       '    trace("cleanup.group-kill-attempt", { group, tail });',
       '    sent(tail, "SIGKILL");',
       '    trace("tail.kill-sent", { tail });',
-      '    const deadline = Date.now() + 1_000;',
+      '    const held = existsSync(join(directory, "hold.1"));',
       '    let state;',
       '    do { state = spawnSync("/bin/ps", ["-p", String(group), "-o", "stat=,xstat="], { encoding: "utf8" }).stdout.trim(); }',
-      '    while (state && !state.startsWith("Z") && Date.now() < deadline);',
+      '    while (!existsSync(join(directory, "wait-returned.1")) || (!held && !state.startsWith("Z")));',
       '    writeFileSync(join(directory, "split.1"), JSON.stringify({ tail, state }));',
       '    trace("shell.pre-kill", { group, state });',
       '  }',
@@ -1120,7 +1125,7 @@ for (const ending of ['exit 0', 'exit 1', 'throw', 'reject', ...HANDLED]) {
     const options = { ending: signal === undefined ? ending : 'wait', sink: 'named' };
     const expected = await endCaller(t, { ...options, groups: false }, { signal });
 
-    const { directory, status, signal: killedBy, stderr } = await endCaller(t, { ...options, groups: true, dispatch: [1], spy: true, after: signal === 'SIGINT' ? splitKill : undefined, ps: signal === 'SIGINT' ? 'ps-log' : undefined }, { signal });
+    const { directory, status, signal: killedBy, stderr } = await endCaller(t, { ...options, groups: true, dispatch: [1], spy: true, markWait: signal === 'SIGINT', after: signal === 'SIGINT' ? splitKill : undefined, ps: signal === 'SIGINT' ? 'ps-log' : undefined }, { signal });
 
     assert.deepEqual({ status, signal: killedBy }, { status: expected.status, signal: expected.signal }, stderr);
     await assertNoneAlive(directory);
@@ -1142,14 +1147,14 @@ test('a SIGINT cleanup records the shell kill when its tail ends before Node rep
     'process.kill(tail, "SIGKILL");',
     'trace("tail.kill-sent", { tail });',
     '(async () => {',
-    '  const deadline = Date.now() + 1_000;',
-    '  while (!existsSync(join(directory, "ps-asked")) && Date.now() < deadline) await turn();',
-    '  writeFileSync(join(directory, "route.1"), JSON.stringify({ psAsked: existsSync(join(directory, "ps-asked")), nodeExit: existsSync(join(directory, "node-exit.1")) }));',
+    '  while (!existsSync(join(directory, "wait-returned.1"))) await turn();',
+    '  if (!existsSync(join(directory, "hold.1"))) while (!existsSync(join(directory, "node-exit.1"))) await turn();',
+    '  writeFileSync(join(directory, "route.1"), JSON.stringify({ waitReturned: existsSync(join(directory, "wait-returned.1")), nodeExit: existsSync(join(directory, "node-exit.1")) }));',
     '  trace("SIGINT.sent", { group });',
     '  process.kill(process.pid, "SIGINT");',
     '})();',
   ].join('\n');
-  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, ps: 'ps-after-exit', after });
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, markWait: true, after });
 
   assert.equal(signal, 'SIGINT', stderr);
   await assertNoneAlive(directory);
