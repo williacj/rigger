@@ -46,7 +46,7 @@ never reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended in #498 and #666 and #<PR>. |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended in #498 and #666 and #756. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -188,7 +188,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified. Amended in #498 and #666 and #<PR>.
+**Status:** Ratified. Amended in #498 and #666 and #756.
 
 ### Rule
 
