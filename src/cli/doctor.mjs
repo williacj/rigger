@@ -605,12 +605,14 @@ export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
   if (required?.length === 0) faults.push(`${GATE_CONTEXT} is not required on ${branch.name}; add an active required-status-check rule`);
   const environment = await obtain('readEnvironment', GATE_ENVIRONMENT);
   if (environment === null) faults.push(`environment ${GATE_ENVIRONMENT} is absent, or not readable with this token`);
+  let app;
+  let appKnown = false;
   if (environment !== null) {
-    const app = await obtain('readEnvironmentVariable', GATE_ENVIRONMENT, GATE_APP_ID);
+    app = await obtain('readEnvironmentVariable', GATE_ENVIRONMENT, GATE_APP_ID);
     const secret = await obtain('readEnvironmentSecret', GATE_ENVIRONMENT, GATE_APP_PRIVATE_KEY);
     if (secret === false) faults.push(`${GATE_APP_PRIVATE_KEY} is absent, or not readable with this token`);
     if (environment && environment.canAdminsBypass !== false) faults.push(`environment ${GATE_ENVIRONMENT} requires can_admins_bypass: false`);
-    const appKnown = typeof app === 'string' && /^[0-9]+$/.test(app);
+    appKnown = typeof app === 'string' && /^[0-9]+$/.test(app);
     if (!appKnown && app !== undefined) faults.push(`${GATE_APP_ID} ${app === null ? 'is absent, or not readable with this token' : 'must hold decimal digits only'}`);
     const policy = environment?.deploymentBranchPolicy;
     if (environment?.policies === null) faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy list is absent, or not readable with this token`);
@@ -618,11 +620,11 @@ export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
       || environment.policies[0].type !== 'branch' || environment.policies[0].name !== branch.name)) {
       faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy must admit only branch ${branch.name}`);
     }
-    for (const rule of required ?? []) {
-      if (rule.integration_id === null) faults.push(`${GATE_CONTEXT} has a missing integration pin`);
-      else if (!appKnown) faults.push(`${GATE_CONTEXT}'s integration pin was not judged against ${GATE_APP_ID}`);
-      else if (BigInt(rule.integration_id) !== BigInt(app)) faults.push(`${GATE_CONTEXT} is pinned to integration ${rule.integration_id}, rather than the gate App`);
-    }
+  }
+  for (const rule of required ?? []) {
+    if (rule.integration_id === null) faults.push(`${GATE_CONTEXT} has a missing integration pin`);
+    else if (environment !== null && !appKnown) faults.push(`${GATE_CONTEXT}'s integration pin was not judged against ${GATE_APP_ID}`);
+    else if (environment !== null && BigInt(rule.integration_id) !== BigInt(app)) faults.push(`${GATE_CONTEXT} is pinned to integration ${rule.integration_id}, rather than the gate App`);
   }
   return { name, ok: faults.length === 0, detail: faults.length ? faults.join('; ')
     : `${GATE_CONTEXT} is required on ${branch.name}; environment ${GATE_ENVIRONMENT}, ${GATE_APP_ID} and ${GATE_APP_PRIVATE_KEY} pass` };

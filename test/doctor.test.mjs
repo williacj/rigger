@@ -1421,6 +1421,18 @@ test('gate line fails naming only the absent environment and none of its setting
   assert.deepEqual(sent.filter((args) => args[1].includes('/environments/')).map((args) => args[1]), ['repos/acme/widgets/environments/gate']);
 });
 
+test('gate line names an unpinned ruleset or classic requirement beside an absent environment', async () => {
+  for (const requirement of [
+    { rules: [gateRule(null)] },
+    { rules: [], protection: { required_status_checks: { checks: [{ context: 'rigger/gate', app_id: null }], contexts: ['rigger/gate'] } } },
+  ]) {
+    const { line } = await gateReport({ environment: null, ...requirement });
+    assert.match(line, /^\s*failed\s.*environment gate.*absent, or not readable with this token/);
+    assert.match(line, /rigger\/gate has a missing integration pin/);
+    assert.doesNotMatch(line, /policy|can_admins_bypass|GATE_APP_ID|GATE_APP_PRIVATE_KEY/);
+  }
+});
+
 test('gate line fails naming can_admins_bypass when administrators can bypass the gate environment', async () => {
   const { line } = await gateReport({ environment: { ...gateEnvironment(), can_admins_bypass: true } });
   assert.match(line, /^\s*failed\s.*can_admins_bypass/);
