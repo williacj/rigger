@@ -140,6 +140,15 @@ test("--help describes doctor in the words of the README's comment beside doctor
   assert.equal(helpSummary(shown.out, 'doctor'), usageComment(read('README.md'), manifest.name, 'doctor'));
 });
 
+test('README presents the required forge check as the merge boundary', () => {
+  const readme = read('README.md');
+  const gateRow = readme.split('\n').find((line) => line.startsWith('| **The gate is mechanical**'));
+
+  assert.match(readme, /the merge gate is enforced by a required check on the forge/);
+  assert.match(gateRow, /required check on the forge refuses any merge into the default branch/);
+  assert.match(gateRow, /fresh for both the head commit and the card's current acceptance/);
+});
+
 test("the readers take a verb's description from its own line, whatever that line says", () => {
   // The defect this catches is either reader answering with text of its own, or with another
   // verb's line, which would hold `doctor` to something other than the README's comment on it.
