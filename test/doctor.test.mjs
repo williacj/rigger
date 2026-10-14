@@ -23,6 +23,7 @@ import { stubClaude } from './stub-claude.mjs';
 import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readRunner } from '../src/substrate/forge/runners.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -316,6 +317,10 @@ function answeringEach(answers) {
   const ask = (command, args) => {
     asked.push([command, ...args].join(' '));
     if (command === 'git') return spawnSync(command, args, { encoding: 'utf8', env: gitEnvironment() });
+    if (command === 'gh' && args[0] === 'api') {
+      const gate = gateAnswer(args);
+      if (gate !== null) return gate;
+    }
     if (command === 'gh' && args[0] === 'api') return args[3].includes('fields(') ? STARTER_FIELDS() : UNSHARED_BOARD;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
     // A failure is how L0's process adapter answers a command it could not start.
@@ -573,10 +578,11 @@ const CHECKED = [
   'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
   'board priority',
   'board sharing',
+  'gate check required',
 ];
 
 /** The checks `doctor` reports where the config cannot be read or is refused, written out by hand. */
-const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks'];
+const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required'];
 
 /** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
 const against = (target, answers) => ({
@@ -763,7 +769,7 @@ test('the command runs the checks in the repository it was called in, from outsi
   const [auth, ...reads] = gh.calls();
   assert.equal(auth, 'auth status', printed);
   assert.ok(reads.length > 0, `the board was never read:\n${printed}`);
-  for (const read of reads) assert.ok(read.startsWith('api graphql -f query=query '), read);
+  for (const read of reads) assert.ok(read.startsWith('api graphql -f query=query ') || /^api repos\/\S+ -X GET$/.test(read), read);
   assert.equal(ran.error, undefined);
   assert.doesNotMatch(printed, /not yet implemented/, printed);
   assert.doesNotMatch(printed, /object Promise/, printed);
@@ -819,6 +825,10 @@ async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.
     // A config Rigger refuses has every adapter asked (ruling 18 on #467), Codex among them.
     if (command === 'codex') return CODEX.signedIn;
     if (command === 'gh' && auth && args[0] === 'auth') return RECORDED.ghIn;
+    if (command === 'gh' && args[0] === 'api') {
+      const gate = gateAnswer(args);
+      if (gate !== null) return gate;
+    }
     return spawnSync(command, args, { encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
   };
   const ran = await doctor({ target: checked(source), packageRoot: packageDeclaring('>=0'), ask });
@@ -944,6 +954,7 @@ test('the checks doctor names are the four it named at 434b48b, the board-sharin
     'board column ready', 'board column coding', 'board column review', 'board column owner', 'board column done',
     'board priority',
     'board checks',
+    'gate check required',
   ];
   const { ran } = await sharing([ours(1)]);
   const refused = await sharing([ours(1)], { source: starter().replace(/^\s*repo:.*$/m, '') });
@@ -1324,4 +1335,281 @@ test('given a config whose roles are all claude and whose one codex is a value o
   const config = await starterWith((given) => ({ ...given, kinds: { ...given.kinds, change: { ...given.kinds.change, judges: [{ role: 'reviewer', provider: { claude: 'codex' } }] } } }));
   await rolesAllClaude(config);
   await asksCodex(config);
+});
+
+/** The gate's settings, shaped as #659's attack measured the environment endpoints. */
+const gateEnvironment = () => ({
+  can_admins_bypass: false,
+  deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+  branch_policies: [{ name: 'main', type: 'branch' }],
+  variables: { GATE_APP_ID: '5291719' },
+  secrets: ['GATE_APP_PRIVATE_KEY'],
+});
+const gateRule = (integration_id = 5291719) => ({ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'rigger/gate', integration_id }] } });
+
+/** A recorded-shape gate answer, or null for a request owned by another doctor check. */
+function gateAnswer(args, { branch = 'main', rules = [gateRule()], protection, environment = gateEnvironment(), failures = {} } = {}) {
+  if (args[1] === 'graphql') {
+    if (!args[3].includes('defaultBranchRef')) return null;
+    return failures.defaultBranch ?? answered({ repository: { defaultBranchRef: { name: branch, target: { oid: 'a'.repeat(40) } } } });
+  }
+  const path = args[1].split('/').slice(3).join('/');
+  if (failures[path]) return { status: 1, stdout: '', stderr: failures[path] };
+  const json = (body) => ({ status: 0, stdout: JSON.stringify(body), stderr: '' });
+  const absent = { status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' };
+  if (path === `rules/branches/${encodeURIComponent(branch)}?per_page=100&page=1`) return json(rules.filter((r) => r.enforcement === undefined || r.enforcement === 'active'));
+  if (path === `branches/${encodeURIComponent(branch)}/protection`) return protection ? json(protection) : { ...absent, stderr: 'gh: Branch not protected (HTTP 404)' };
+  if (!path.startsWith('environments/gate')) return null;
+  if (environment === null) return absent;
+  if (path === 'environments/gate') return json(environment);
+  if (path.includes('deployment-branch-policies?')) {
+    const page = Number(new URLSearchParams(path.split('?')[1]).get('page'));
+    return json({ total_count: environment.branch_policies.length, branch_policies: environment.branch_policies.slice((page - 1) * 100, page * 100) });
+  }
+  if (path === 'environments/gate/variables/GATE_APP_ID') return Object.hasOwn(environment.variables, 'GATE_APP_ID') ? json({ name: 'GATE_APP_ID', value: environment.variables.GATE_APP_ID }) : absent;
+  if (path === 'environments/gate/secrets/GATE_APP_PRIVATE_KEY') return environment.secrets.includes('GATE_APP_PRIVATE_KEY') ? json({ name: 'GATE_APP_PRIVATE_KEY' }) : absent;
+  assert.fail(`unexpected gate read: ${args.join(' ')}`);
+}
+
+/** A complete doctor run with each gate read recorded and every other check passing. */
+async function gateReport(state = {}, source = starter()) {
+  const fallback = answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn });
+  const sent = [];
+  const callers = [];
+  const ask = (command, args) => {
+    const gate = command === 'gh' && args[0] === 'api' ? gateAnswer(args, state) : null;
+    if (gate === null) return fallback(command, args);
+    sent.push(args);
+    callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
+    return gate;
+  };
+  const target = source === null ? repositoryIn('rigger-gate-config-') : checked(source);
+  const ran = await doctor({ ...against(target, {}), ask });
+  const lines = linesOf(ran.text, 'gate check required');
+  assert.equal(lines.length, 1, ran.text);
+  return { ran, line: lines[0], sent, callers };
+}
+
+test('gate line passes when an active ruleset pins its context to the gate App and the environment settings pass', async () => {
+  const { ran, line } = await gateReport();
+  assert.match(line, /^\s*ok\s/);
+  assert.equal(ran.code, 0, ran.text);
+});
+
+test('gate line fails naming the context and rule to add when no active ruleset or classic protection requires it', async () => {
+  for (const rules of [[], [{ ...gateRule(), enforcement: 'evaluate' }], [{ ...gateRule(), enforcement: 'disabled' }]]) {
+    const { line, ran } = await gateReport({ rules });
+    assert.match(line, /^\s*failed\s.*rigger\/gate.*add.*rule/);
+    assert.equal(ran.code, 1, ran.text);
+  }
+});
+
+test('gate line fails naming the missing pin when an active ruleset requires its context unpinned', async () => {
+  const { line } = await gateReport({ rules: [gateRule(null)] });
+  assert.match(line, /^\s*failed\s.*missing.*pin/);
+});
+
+test('gate line fails naming another integration when a rule pins its context to it', async () => {
+  const { line } = await gateReport({ rules: [gateRule(15368)] });
+  assert.match(line, /^\s*failed\s.*integration 15368/);
+});
+
+test('gate line fails naming only the absent environment and none of its settings variable or secret', async () => {
+  const { line, sent } = await gateReport({ environment: null });
+  assert.match(line, /^\s*failed\s.*environment gate.*absent, or not readable with this token/);
+  assert.doesNotMatch(line, /policy|can_admins_bypass|GATE_APP_ID|GATE_APP_PRIVATE_KEY/);
+  assert.deepEqual(sent.filter((args) => args[1].includes('/environments/')).map((args) => args[1]), ['repos/acme/widgets/environments/gate']);
+});
+
+test('gate line names an unpinned ruleset or classic requirement beside an absent environment', async () => {
+  for (const requirement of [
+    { rules: [gateRule(null)] },
+    { rules: [], protection: { required_status_checks: { checks: [{ context: 'rigger/gate', app_id: null }], contexts: ['rigger/gate'] } } },
+  ]) {
+    const { line } = await gateReport({ environment: null, ...requirement });
+    assert.match(line, /^\s*failed\s.*environment gate.*absent, or not readable with this token/);
+    assert.match(line, /rigger\/gate has a missing integration pin/);
+    assert.doesNotMatch(line, /policy|can_admins_bypass|GATE_APP_ID|GATE_APP_PRIVATE_KEY/);
+  }
+});
+
+test('gate line fails naming can_admins_bypass when administrators can bypass the gate environment', async () => {
+  const { line } = await gateReport({ environment: { ...gateEnvironment(), can_admins_bypass: true } });
+  assert.match(line, /^\s*failed\s.*can_admins_bypass/);
+});
+
+test('gate line fails naming the deployment branch policy when it admits every branch', async () => {
+  const { line } = await gateReport({ environment: { ...gateEnvironment(), deployment_branch_policy: null } });
+  assert.match(line, /^\s*failed\s.*deployment-branch policy/);
+});
+
+test('gate line fails naming an absent App variable and says the required integration pin was not judged against it', async () => {
+  const { line } = await gateReport({ environment: { ...gateEnvironment(), variables: {} } });
+  assert.match(line, /^\s*failed\s.*GATE_APP_ID.*absent, or not readable with this token/);
+  assert.match(line, /pin was not judged/);
+  assert.doesNotMatch(line, /rather than the gate App/);
+});
+
+test('gate line fails naming an absent private key secret without reading a secret value', async () => {
+  const { line, sent } = await gateReport({ environment: { ...gateEnvironment(), secrets: [] } });
+  assert.match(line, /^\s*failed\s.*GATE_APP_PRIVATE_KEY.*absent, or not readable with this token/);
+  assert.equal(sent.filter((args) => args[1].endsWith('/secrets/GATE_APP_PRIVATE_KEY')).length, 1);
+});
+
+test('gate line fails naming the default branch read and does not judge the deployment policy against a branch when that read fails', async () => {
+  const { line, sent } = await gateReport({ failures: { defaultBranch: { status: 1, stdout: '', stderr: 'gh: default branch denied (HTTP 403)' } }, environment: { ...gateEnvironment(), branch_policies: [{ name: 'wrong', type: 'tag' }] } });
+  assert.match(line, /^\s*failed\s.*readDefaultBranch.*default branch denied/);
+  assert.doesNotMatch(line, /deployment-branch policy.*must/);
+  assert.equal(sent.filter((args) => args[1].includes('/rules/') || args[1].includes('/protection')).length, 0);
+});
+
+test('gate line is not asked and sends no forge command for a missing unreadable refused or throwing config', async () => {
+  const sources = [null, 'export default {', starter().replace(/^\s*repo:.*$/m, ''), 'export default 10n;'];
+  for (const source of sources) {
+    const { line, sent } = await gateReport({}, source);
+    assert.match(line, /^\s*not asked\s.*gate.*not checked.*config/);
+    assert.deepEqual(sent, []);
+  }
+});
+
+test('gate line rejects an empty or nondecimal App id and does not judge a pinned rule against it', async () => {
+  for (const value of ['', '5x', ' 5291719', '5291719\n', '5.0', '-5', '５']) {
+    const { line } = await gateReport({ environment: { ...gateEnvironment(), variables: { GATE_APP_ID: value } } });
+    assert.match(line, /^\s*failed\s.*GATE_APP_ID.*decimal digits/);
+    assert.match(line, /pin was not judged/);
+    assert.doesNotMatch(line, /rather than the gate App/);
+  }
+});
+
+test('gate line says the deployment policy list is absent or unreadable on a policy-list 404', async () => {
+  const { line } = await gateReport({ failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: Not Found (HTTP 404)' } });
+  assert.match(line, /^\s*failed\s.*deployment-branch policy.*absent, or not readable with this token/);
+});
+
+test('gate line passes when classic protection alone pins its context to the gate App', async () => {
+  const { line } = await gateReport({ rules: [], protection: { required_status_checks: { checks: [{ context: 'rigger/gate', app_id: 5291719 }], contexts: ['rigger/gate'] } } });
+  assert.match(line, /^\s*ok\s/);
+});
+
+test('gate line fails naming a missing pin when classic protection alone requires its context unpinned', async () => {
+  const { line } = await gateReport({ rules: [], protection: { required_status_checks: { checks: [{ context: 'rigger/gate', app_id: null }], contexts: ['rigger/gate'] } } });
+  assert.match(line, /^\s*failed\s.*missing.*pin/);
+});
+
+test('gate line fails naming another integration even when a second rule pins its context to the gate App', async () => {
+  const { line } = await gateReport({ rules: [gateRule(), gateRule(15368)] });
+  assert.match(line, /^\s*failed\s.*integration 15368/);
+});
+
+test('gate line passes when one rule pins its context to the gate App and another requires it unpinned', async () => {
+  const { line } = await gateReport({ rules: [gateRule(), gateRule(null)] });
+  assert.match(line, /^\s*ok\s/);
+});
+
+test('gate line reads the non-main default branch rules and accepts its one literal branch policy', async () => {
+  const { line, sent } = await gateReport({ branch: 'release/trunk', environment: { ...gateEnvironment(), branch_policies: [{ name: 'release/trunk', type: 'branch' }] } });
+  assert.match(line, /^\s*ok\s/);
+  assert.ok(sent.some((args) => args[1] === 'repos/acme/widgets/rules/branches/release%2Ftrunk?per_page=100&page=1'));
+  assert.ok(sent.every((args) => !args[1].includes('/branches/main')));
+});
+
+test('gate line rejects a main policy when the repository default branch is trunk', async () => {
+  const { line } = await gateReport({ branch: 'trunk' });
+  assert.match(line, /^\s*failed\s.*deployment-branch policy.*trunk/);
+});
+
+for (const [title, change] of [
+  ['protected branches', { deployment_branch_policy: { protected_branches: true, custom_branch_policies: false } }],
+  ['zero custom policies', { branch_policies: [] }],
+  ['main plus another policy', { branch_policies: [{ name: 'main', type: 'branch' }, { name: 'other', type: 'branch' }] }],
+  ['main as a tag', { branch_policies: [{ name: 'main', type: 'tag' }] }],
+  ['a pattern matching only main', { branch_policies: [{ name: 'mai[n]', type: 'branch' }] }],
+  ['main on page one and another policy on page two', { branch_policies: [...Array.from({ length: 100 }, () => ({ name: 'main', type: 'branch' })), { name: 'other', type: 'branch' }] }],
+]) {
+  test(`gate line rejects the deployment branch policy with ${title}`, async () => {
+    const { line, sent } = await gateReport({ environment: { ...gateEnvironment(), ...change } });
+    assert.match(line, /^\s*failed\s.*deployment-branch policy/);
+    if (title.includes('page two')) assert.ok(sent.some((args) => args[1].endsWith('page=2')));
+  });
+}
+
+test('gate line fails naming a bypass setting missing from the environment answer', async () => {
+  const environment = gateEnvironment();
+  delete environment.can_admins_bypass;
+  const { line } = await gateReport({ environment });
+  assert.match(line, /^\s*failed\s.*can_admins_bypass/);
+});
+
+test('gate line accepts an App id containing decimal digits only including leading zeroes', async () => {
+  for (const [value, pin] of [['0005291719', 5291719], ['0', 0]]) {
+    const { line } = await gateReport({ rules: [gateRule(pin)], environment: { ...gateEnvironment(), variables: { GATE_APP_ID: value } } });
+    assert.match(line, /^\s*ok\s/);
+  }
+});
+
+test('gate line accepts the private key secret present by name and asks no endpoint for its value', async () => {
+  const { line, sent } = await gateReport();
+  assert.match(line, /^\s*ok\s/);
+  assert.deepEqual(sent.filter((args) => args[1].includes('/secrets/')), [['api', 'repos/acme/widgets/environments/gate/secrets/GATE_APP_PRIVATE_KEY', '-X', 'GET']]);
+});
+
+test('gate line names both a missing required context and administrator bypass in its one failed line', async () => {
+  const { line } = await gateReport({ rules: [], environment: { ...gateEnvironment(), can_admins_bypass: true } });
+  assert.match(line, /^\s*failed\s.*rigger\/gate.*add.*rule/);
+  assert.match(line, /can_admins_bypass/);
+});
+
+test('gate line names both an effective rules read failure and an absent secret in its one failed line', async () => {
+  const { line } = await gateReport({ failures: { 'rules/branches/main?per_page=100&page=1': 'gh: rules denied (HTTP 403)' }, environment: { ...gateEnvironment(), secrets: [] } });
+  assert.match(line, /^\s*failed\s.*readEffectiveRules.*rules denied/);
+  assert.match(line, /GATE_APP_PRIVATE_KEY.*absent, or not readable with this token/);
+});
+
+for (const [title, path, names] of [
+  ['environment', 'environments/gate', /readEnvironment.*environment gate/],
+  ['policy list', 'environments/gate/deployment-branch-policies?per_page=100&page=1', /readEnvironment.*deployment-branch policy list/],
+  ['variable', 'environments/gate/variables/GATE_APP_ID', /readEnvironmentVariable.*GATE_APP_ID/],
+  ['secret', 'environments/gate/secrets/GATE_APP_PRIVATE_KEY', /readEnvironmentSecret.*GATE_APP_PRIVATE_KEY/],
+]) {
+  test(`gate line names the ${title} read on non-404 failures`, async () => {
+    for (const failure of ['gh: Forbidden (HTTP 403)', 'gh: Server error (HTTP 500)']) {
+      const { line } = await gateReport({ failures: { [path]: failure } });
+      assert.match(line, /^\s*failed\s/);
+      assert.match(line, names);
+      assert.ok(line.includes(failure));
+      assert.doesNotMatch(line, /absent, or not readable/);
+    }
+  });
+}
+
+test('every gh invocation the gate line causes is admitted by the read runner and reaches the spawn through it', async () => {
+  const { sent, callers } = await gateReport();
+  assert.equal(sent.length, 7);
+  assert.deepEqual([...new Set(callers)], ['readRunner']);
+  for (const args of sent) {
+    const admitted = [];
+    await readRunner(args, { send: (command, handed) => admitted.push([command, ...handed]) });
+    assert.deepEqual(admitted, [['gh', ...args]]);
+  }
+});
+
+test('the gate line checks the environment variable and secret names the gate workflow template declares', async () => {
+  const template = readFileSync(join(root, 'templates/github/workflows/rigger-gate.yml'), 'utf8');
+  const environment = template.match(/^\s*environment: (\S+)/m)[1];
+  const variable = template.match(/vars\.([A-Z_]+)/)[1];
+  const secret = template.match(/secrets\.([A-Z_]+)/)[1];
+  const { sent } = await gateReport();
+  const paths = sent.map((args) => args[1]);
+  assert.ok(paths.includes(`repos/acme/widgets/environments/${encodeURIComponent(environment)}`));
+  assert.ok(paths.includes(`repos/acme/widgets/environments/${encodeURIComponent(environment)}/variables/${encodeURIComponent(variable)}`));
+  assert.ok(paths.includes(`repos/acme/widgets/environments/${encodeURIComponent(environment)}/secrets/${encodeURIComponent(secret)}`));
+  const source = readFileSync(join(root, 'src/cli/doctor.mjs'), 'utf8');
+  assert.match(source, /import \{ GATE_CONTEXT \} from '\.\.\/workflow\/gate\.mjs'/);
+  assert.doesNotMatch(source, /['"`]rigger\/gate['"`]/);
+});
+
+test('gate line names a failed deployment policy read and an absent secret together', async () => {
+  const { line } = await gateReport({ failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: policy denied (HTTP 403)' }, environment: { ...gateEnvironment(), secrets: [] } });
+  assert.match(line, /^\s*failed\s.*readEnvironment.*policy denied/);
+  assert.match(line, /GATE_APP_PRIVATE_KEY.*absent, or not readable with this token/);
 });

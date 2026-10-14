@@ -308,6 +308,35 @@ async function restRead(operation, board, via, path, headers, addressed) {
   return said.stdout;
 }
 
+/** An environment endpoint's JSON answer, or null only on Not Found (HTTP 404). Other failures name the read. */
+async function environmentRead(operation, board, via, path, addressed) {
+  const said = await readRunner(['api', `repos/${board.repo}/${path}`, '-X', 'GET'], via);
+  if (said.status !== 0) {
+    if (!said.timedOut && /Not Found \(HTTP 404\)/.test(firstLine(said))) return null;
+    fail(operation, board, `${addressed}${firstLine(said)}`);
+  }
+  return JSON.parse(said.stdout);
+}
+
+/** The environment's settings and every custom deployment policy, without forge vocabulary above L0. */
+async function environment(board, via, name, addressed) {
+  const path = `environments/${encodeURIComponent(name)}`;
+  const held = await environmentRead('readEnvironment', board, via, path, addressed);
+  if (held === null) return null;
+  if (!Object.hasOwn(held, 'deployment_branch_policy')) fail('readEnvironment', board, `${addressed}gh answered no deployment-branch policy`);
+  let policies = [];
+  if (held.deployment_branch_policy?.custom_branch_policies === true) {
+    for (let page = 1;; page += 1) {
+      const listed = await environmentRead('readEnvironment', board, via, `${path}/deployment-branch-policies?per_page=${PAGE}&page=${page}`, `${addressed}deployment-branch policy list, `);
+      if (listed === null) { policies = null; break; }
+      if (!Array.isArray(listed.branch_policies)) fail('readEnvironment', board, `${addressed}gh answered no deployment-branch policy list`);
+      policies.push(...listed.branch_policies.map(({ name, type }) => ({ name, type })));
+      if (listed.branch_policies.length < PAGE) break;
+    }
+  }
+  return { canAdminsBypass: held.can_admins_bypass, deploymentBranchPolicy: held.deployment_branch_policy, policies };
+}
+
 /** Every REST page of a commit's checks or statuses. */
 async function commitPages(operation, board, via, sha, kind, addressed) {
   const records = [];
@@ -657,6 +686,30 @@ export function repositoryReads(board, { send, emitter, timeout } = {}) {
   reads.readEffectiveRules = (branch) => {
     const addressed = reading(board, `effective rules for branch ${branch}`);
     return labelled('readEffectiveRules', board, addressed, () => effectiveRules(board, via, branch, addressed));
+  };
+  reads.readEnvironment = (name) => {
+    const addressed = reading(board, `environment ${name}`);
+    return labelled('readEnvironment', board, addressed, () => environment(board, via, name, addressed));
+  };
+  /** The named environment variable's value, or null when its endpoint answers not found. */
+  reads.readEnvironmentVariable = (name, variable) => {
+    const addressed = reading(board, `environment ${name}'s variable ${variable}`);
+    return labelled('readEnvironmentVariable', board, addressed, async () => {
+      const held = await environmentRead('readEnvironmentVariable', board, via, `environments/${encodeURIComponent(name)}/variables/${encodeURIComponent(variable)}`, addressed);
+      if (held === null) return null;
+      if (typeof held.value !== 'string') fail('readEnvironmentVariable', board, `${addressed}gh answered no variable value`);
+      return held.value;
+    });
+  };
+  /** Presence by name, without reading a secret value; false only when its endpoint answers not found. */
+  reads.readEnvironmentSecret = (name, secret) => {
+    const addressed = reading(board, `environment ${name}'s secret ${secret}`);
+    return labelled('readEnvironmentSecret', board, addressed, async () => {
+      const held = await environmentRead('readEnvironmentSecret', board, via, `environments/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secret)}`, addressed);
+      if (held === null) return false;
+      if (held.name !== secret) fail('readEnvironmentSecret', board, `${addressed}gh answered no secret name`);
+      return true;
+    });
   };
   reads.readFileAt = (commit, path) => {
     const addressed = reading(board, `${path} at ${commit}`);
