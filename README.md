@@ -14,8 +14,8 @@ agent that approves it, and recognizes the decisions that are not its to make. E
 finishes on its own, or stops and says why.
 
 It is not a kanban UI where a person reviews every diff, and it is not a methodology plugin that
-improves one agent's session. It runs with nobody watching, and the merge gate is enforced by a
-hook, not by a prompt.
+improves one agent's session. It runs with nobody watching, and
+the merge gate is enforced by a required check on the forge, not by a prompt.
 
 ## Table of contents
 
@@ -52,7 +52,7 @@ when to stop and ask. Rigger is that something.
 | **Every card carries its acceptance** | Before any work starts, a card states what done means, as items a judge can test. The maker finishes against that acceptance, each judge rules on every item in it, and a card carrying none is not admitted. |
 | **One worktree per card** | Each card gets an isolated git worktree and a deterministic branch. Agents never share a checkout, so multiple cards run at once on a host, with the local git operations that need serializing serialized. |
 | **One maker, one or more judges** | One agent produces the work and opens a pull request. One or more different agents, each in its own dispatch, review it against the card's acceptance and your procedure, and write a verdict bound to the exact head SHA. A new commit stales it, and so does a revised acceptance. |
-| **The gate is mechanical** | A git hook refuses any merge that lacks a verdict fresh for both the head commit and the card's current acceptance. No prompt can talk it out of that. |
+| **The gate is mechanical** | A required check on the forge refuses any merge into the default branch that lacks a verdict fresh for both the head commit and the card's current acceptance. No prompt can talk it out of that. |
 | **Escalates only what you must decide** | Everything else Rigger finishes. When a card needs a decision only you can make, Rigger escalates it with the reason and the evidence, and nothing proceeds until you answer. Rigger's own documents call you the **owner**. |
 
 ## A piece of work, start to finish
@@ -192,6 +192,9 @@ evidence that would bring it back.
 - Node.js 20 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
   v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
+- The owner provisions the forge settings needed by the required check; see
+  [What the owner provisions](ARCHITECTURE.md#what-the-owner-provisions). Run `rigger doctor` to
+  check that setup.
 
 ## Install and usage
 
@@ -201,7 +204,7 @@ evidence that would bring it back.
 
 ```bash
 npx @williacj/rigger init          # write a starter config, fork the role templates
-npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing
+npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit
@@ -234,9 +237,9 @@ Almost every feature is optional. A project with a dozen roles and binding decis
 the full set. A project with one command that checks its work runs the minimum, and an absent
 block is a tested state, not a degraded one. The exception is acceptance: no card is admitted
 without one. Role
-prompts, the review skill, and the gate hook are forked into your repository by `rigger init` and
-are yours from then on. Rigger ships them as templates and never reads them at runtime from the
-package.
+prompts, the review skill, the default-branch push hook, and the gate workflow are forked into
+your repository by `rigger init` and are yours from then on. Rigger ships them as templates and
+never reads them at runtime from the package.
 
 ## Support
 
