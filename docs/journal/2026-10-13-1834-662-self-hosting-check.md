@@ -56,4 +56,5 @@ with the token `minted`. The post step now gets no `PATH` from its caller.
 P52's ratified sentence, "An inline step fetches the tree at the commit the run's workflow file was
 read from, …", is 42 words long. `npm run lint:spec-style` refuses a sentence past 40, so the suite
 reds with the text as ratified. That conflict between two acceptance items went to the card as
-`ambiguous`.
+`ambiguous`. The owner ruled P52's second amendment: the sentence splits in two after "a commit of
+the default branch", every word kept, and that is the text `ARCHITECTURE.md` now holds.
