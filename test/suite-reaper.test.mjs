@@ -4,7 +4,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { symlinkSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, sep } from 'node:path';
 
 import { scratch, sweep } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
@@ -15,8 +18,30 @@ const agentModule = new URL('./stub-claude.mjs', import.meta.url).href;
 const processModule = new URL('../src/substrate/process.mjs', import.meta.url).href;
 
 let activeTrace;
+function tracePath() {
+  const temporary = process.env.TMPDIR;
+  const supplied = process.env.C667_TRACE_FILE;
+  if (!temporary || !supplied) throw new Error('trace requires TMPDIR and C667_TRACE_FILE');
+  const root = realpathSync(temporary);
+  const destination = resolve(supplied);
+  const parent = realpathSync(dirname(destination));
+  const distance = relative(root, parent);
+  if (distance === '..' || distance.startsWith(`..${sep}`) || isAbsolute(distance)) {
+    throw new Error('trace path must stay under TMPDIR');
+  }
+  for (let directory = parent; ; directory = dirname(directory)) {
+    if (existsSync(join(directory, '.git'))) throw new Error('trace TMPDIR must not be inside a checkout');
+    if (directory === dirname(directory)) break;
+  }
+  try {
+    if (lstatSync(destination).isSymbolicLink()) throw new Error('trace path must stay under TMPDIR');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return destination;
+}
 function trace(event) {
-  if (activeTrace) writeFileSync(process.env.C667_TRACE_FILE, `${JSON.stringify({ at: new Date().toISOString(), ...activeTrace, ...event })}\n`, { flag: 'a' });
+  if (activeTrace) writeFileSync(tracePath(), `${JSON.stringify({ at: new Date().toISOString(), ...activeTrace, ...event })}\n`, { flag: 'a' });
 }
 
 function reaperState(run) {
@@ -367,4 +392,49 @@ test('a reaper seen through ps clears on the next answered poll', async (t) => {
   });
   assert.ok(observations[0].some((row) => row.startsWith(`${child.pid} `)));
   assert.deepEqual(observations.at(-1), []);
+});
+
+test('trace refuses supplied paths outside TMPDIR', (t) => {
+  const directory = scratch(t);
+  const destination = join(directory, 'trace.jsonl');
+  symlinkSync('/dev/null', destination);
+  const previousFile = process.env.C667_TRACE_FILE;
+  const previousTrace = activeTrace;
+  process.env.C667_TRACE_FILE = destination;
+  activeTrace = { eventCase: 'trace-path' };
+  t.after(() => {
+    activeTrace = previousTrace;
+    if (previousFile === undefined) delete process.env.C667_TRACE_FILE;
+    else process.env.C667_TRACE_FILE = previousFile;
+  });
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+  const checkoutPath = resolve('c667-trace-must-not-write.jsonl');
+  process.env.C667_TRACE_FILE = checkoutPath;
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+  assert.equal(existsSync(checkoutPath), false);
+  const safePath = join(directory, 'safe-trace.jsonl');
+  process.env.C667_TRACE_FILE = safePath;
+  trace({ event: 'probe' });
+  assert.match(readFileSync(safePath, 'utf8'), /"event":"probe"/);
+});
+
+test('trace refuses TMPDIR inside a pre-existing checkout', (t) => {
+  const directory = scratch(t);
+  const checkout = join(directory, 'checkout');
+  mkdirSync(checkout);
+  mkdirSync(join(checkout, '.git'));
+  const previousFile = process.env.C667_TRACE_FILE;
+  const previousTmp = process.env.TMPDIR;
+  const previousTrace = activeTrace;
+  process.env.TMPDIR = checkout;
+  process.env.C667_TRACE_FILE = join(checkout, 'trace.jsonl');
+  activeTrace = { eventCase: 'trace-path' };
+  t.after(() => {
+    activeTrace = previousTrace;
+    if (previousFile === undefined) delete process.env.C667_TRACE_FILE;
+    else process.env.C667_TRACE_FILE = previousFile;
+    if (previousTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmp;
+  });
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
 });
