@@ -370,7 +370,7 @@ the script rules on one pull request. It exits 0 to admit, and prints the head S
 reasons. On an `issues` event the script maps the card to its open pull requests itself, because the
 event names none.
 
-The gate workflow's posting job declares `environment: gate`, which admits it only from `main`.
+The gate workflow's posting job declares `environment: gate`, which admits it only from the default branch.
 Its steps run in this order:
 
 1. The gate script runs once for each pull request the event concerns. On an `issues` event, those
@@ -434,7 +434,7 @@ it.
 
 The App design carries one named residual: it is not tested against forging (#642, P29). Either of
 two observations reverses it (#642, P26): any run off `main` obtaining the App's secret, or a job on
-a ref other than `main` admitted to the `gate` environment.
+a ref other than the default branch admitted to the `gate` environment.
 
 The forge check carries two residuals of its own:
 
