@@ -383,7 +383,15 @@ With no pull request open, the script rules on none and the workflow posts nothi
 open, the workflow posts on each one's head the state of that pull request's own run.
 
 The App's private key and its minted token reach only the mint and post steps of each posting job.
-Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's.
+Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's. No step of
+either posting job runs an action, so no code but the workflow's own runs in a job the key reaches.
+
+This repository's `self-hosting` check is its own and does not ship. Its script lives under
+`.github/scripts/`. An inline step fetches the tree at the commit the run's workflow file was read
+from, a commit of the default branch. The check runs from that tree, never from a pinned install,
+because it rules on this repository's own lists. It takes the gate script's card resolution,
+mapping and config read from that tree. It reads the lists at the default-branch commit it read
+the config at, and reaches the forge through L0's read side alone.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
 required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
