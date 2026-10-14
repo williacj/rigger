@@ -164,7 +164,7 @@ function fixtures(directory) {
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
   ].join('\n');
-  fixture(directory, 'command', `echo $$ > "$here/group.$1"\n${child}\n/usr/bin/mkfifo "$here/hold.$1"\nwait\nread answer < "$here/hold.$1"`);
+  fixture(directory, 'command', `echo $$ > "$here/group.$1"\n/usr/bin/mkfifo "$here/hold.$1"\n${child}\nwait\nread answer < "$here/hold.$1"`);
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
     'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
