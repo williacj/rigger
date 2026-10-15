@@ -611,15 +611,20 @@ function signal(group, name, kill = SIGNAL) {
  * found with `git maintenance --detach`. So a process can exec between the reads. One `ps` run
  * reads a process's name from the process table and its arguments a moment later, so a process
  * that execs in between is named by one image and described by the other: the engineer judge on
- * #354 measured that in 16 of 3,000 direct reads. So each round reads the states, the command
- * lines, then each name in a `ps` run of its own, then the command lines and the states again. It
- * keeps a round only where both state reads find the same processes, none caught mid-exec (state
- * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
- * pauses and reads again. A zombie is left out, because it is already dead. Where `deadline` passes
- * first, it keeps what the last round held, each live process the last state read found, by the
- * name and the command line read in that round. Alongside those members it carries every pid a
- * completed round's state or command read showed, with its name and second command line where
- * both answered. The confirming read decides whether an earlier sighting is still alive.
+ * #354 measured that in 16 of 3,000 direct reads. A round first reads the states. Once a whole
+ * round has supplied members, a later first state read containing `?` stops that round there: it
+ * cannot agree, so the census keeps the last whole round. Otherwise the round reads the command
+ * lines, each name in a `ps` run of its own, then the command lines and the states again. It agrees
+ * only where both state reads find the same processes, none caught mid-exec (state `?`), and each
+ * live one's two command lines agree, with its name read between them. A zombie is left out,
+ * because it is already dead. After a round or skipped first read, where the time left can hold
+ * another attempt as long as that one took, the next requested pause is capped to leave that time;
+ * it never exceeds the uncapped pause. Then the census reads again. Where `deadline` passes first,
+ * it keeps the members of the last whole round, each live process that round's final state read
+ * found, by the name and command line read in that round. A skipped first read does not replace
+ * them. Alongside those members it carries every pid a completed round's state or command read
+ * showed, with its name and second command line where both answered. The confirming read decides
+ * whether an earlier sighting is still alive.
  *
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
@@ -627,6 +632,9 @@ function signal(group, name, kill = SIGNAL) {
  * Node 26.5.0 on macOS 27.0 on 2026-10-02, against the suite's survivor that re-executes inside the
  * first read of command lines: over 10 runs, the census recorded the image it became, by its name
  * and command line alike, since its name is read after that read.
+ * A member can exec after the last whole round; if later first state reads report `?`, the
+ * deadline result still carries that earlier round's name and command line. How old that kept
+ * identity can be relative to the last read has not been measured.
  *
  * Reads that agree on no process at all are kept only where signal 0 no longer reaches the group,
  * because a read that failed can list nothing, even one that exits 1 and prints nothing (`run`).
