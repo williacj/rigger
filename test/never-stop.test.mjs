@@ -2649,8 +2649,12 @@ async function answeredRun(t, title) {
   const [code] = await once(run, 'close');
   t.diagnostic(output.split('\n').filter((line) => /^# (tests|pass|fail)|exitSighting/.test(line)).join('\n'));
   assert.equal(code, 0, output);
-  assert.match(output, /^# tests 1$/m, output);
+  // Node 20 counts the tests the pattern skips (CI run 38755885716); Node 26 does not. Either way exactly
+  // one test passed, it is the one named, and none failed or was cancelled.
   assert.match(output, /^# pass 1$/m, output);
+  assert.match(output, /^# fail 0$/m, output);
+  assert.match(output, /^# cancelled 0$/m, output);
+  assert.match(output, new RegExp(`^ok \\d+ - ${pattern.slice(1, -1)}$`, 'm'), output);
 }
 
 for (const title of [
