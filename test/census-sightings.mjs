@@ -55,7 +55,7 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
     '    else case "$cell:$command" in U2:second|C1:second|C2:first|A:*|N:*) cut=yes ;; esac; fi ;;',
     '  "-g "*" -o pid=,stat=")',
     '    if [ -f "$here/hang" ]; then [ "$afterKill" = omit ] && cut=yes;',
-    '    else state=$(/bin/ps -p "$target" -o stat=)',
+    '    else if [ -f "$here/probe-fail" ]; then state=$(/bin/ps -p "$target" -o stat= > /dev/null; exit 1); elif [ -f "$here/probe-hang" ]; then state=$(/usr/bin/perl "$here/probe-hang" "$target" "$$" "$here"); else state=$(/bin/ps -p "$target" -o stat=); fi',
     '      probe_status=$?',
     '      if [ -f "$here/sighting-prepare" ]; then printf "PER-PID %s status=%s stat=%s\\n" "$target" "$probe_status" "$state" >> "$here/sighted-state-probe"; fi',
     "      if [ -f \"$here/sighting-prepare\" ]; then",

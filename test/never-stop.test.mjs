@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -44,6 +45,18 @@ const UNREACHED = 15_000;
 
 /** The exit cleanup's own bound in these tests: the read timeout its caller gives the call. */
 const CLEANUP_BOUND = 1_000;
+
+/**
+ * The exit cells whose ordinary test may take a traced real-deadline cutoff in place of its
+ * answered scenario, as owner ruling O268 allows, and the state that carries that branch: forcing
+ * for a controlled cell, the controlled tests that require an answered confirmation, each exit's
+ * classification, and the result of each exit that took the cutoff.
+ */
+const CUTOFF_CELLS = ['U1', 'U2', 'C1', 'C2', 'B', 'A', 'X'];
+const exitForcings = new WeakMap();
+const exitAnswerRequired = new WeakSet();
+const exitResults = new WeakMap();
+const exitCutoffs = new Set();
 
 /** The pid a fixture in `directory` wrote to `<name>.pid`, or nothing before it has. */
 const pidIn = (directory, name) => (existsSync(join(directory, `${name}.pid`)) ? Number(read(directory, `${name}.pid`)) : undefined);
@@ -211,6 +224,45 @@ const CALLER = [
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) { appendFileSync(join(here, 'hang'), ''); trace('named-kill', { target }); } if (options.postKillTrace) { try { const answer = signalled(target, name); if (name === 0) trace('signal-0', { target, answer: 'yes' }); return answer; } catch (error) { if (name === 0) trace('signal-0', { target, answer: error.code ?? error.message }); throw error; } } return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => { appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`); trace('event', { event, ...fields }); } };",
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
+  "if (options.ps === 'ps-sighted') {",
+  "  const exitTrace = join(here, 'exit-trace.jsonl');",
+  "  const exitPlan = existsSync(join(here, 'exit-forcing.json')) ? JSON.parse(readFileSync(join(here, 'exit-forcing.json'), 'utf8')) : { signals: [] };",
+  "  let exitSeq = 0;",
+  "  const exitNote = (row) => appendFileSync(exitTrace, JSON.stringify({ seq: ++exitSeq, ns: process.hrtime.bigint().toString(), ...row }) + '\\n');",
+  "  const exitFrames = ['within', 'readingNow', 'runNow', 'census', 'beforeKill', 'emptied'];",
+  "  const exitCounts = new Map(); let exitStep = 0; const exitClock = Date.now;",
+  "  Date.now = () => {",
+  "    const caller = new Error().stack?.split('\\n')[2] ?? '';",
+  "    const frame = exitFrames.find((name) => caller.includes(`at ${name} (`));",
+  "    if (frame === undefined) return exitClock();",
+  "    if (frame === 'within') exitStep += 1;",
+  "    const key = `${exitStep}:${frame}`; const nth = (exitCounts.get(key) ?? 0) + 1; exitCounts.set(key, nth);",
+  "    const at = exitClock();",
+  "    exitNote({ kind: 'clock', step: exitStep, frame, nth, at });",
+  "    return at;",
+  "  };",
+  "  const exitSpawn = child.spawnSync;",
+  "  child.spawnSync = function exitObservedRead(tool, argv, settings) {",
+  "    if (tool !== join(here, 'ps-sighted')) return exitSpawn.apply(this, arguments);",
+  "    exitNote({ kind: 'spawn', argv, timeout: settings?.timeout ?? null });",
+  "    let result;",
+  "    try { result = exitSpawn.apply(this, arguments); } catch (error) { exitNote({ kind: 'threw', code: error.code ?? null, message: error.message }); throw error; }",
+  "    exitNote({ kind: 'returned', status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: typeof result.stdout === 'string' ? result.stdout : null, stderr: typeof result.stderr === 'string' ? result.stderr : null });",
+  "    return result;",
+  "  };",
+  "  syncPostKillBuiltinESMExports();",
+  "  const exitSignal = process.kill; const exitSignals = new Map();",
+  "  process.kill = function exitObservedSignal(target, name) {",
+  "    const key = `${exitStep}:${target}:${name}`; const nth = (exitSignals.get(key) ?? 0) + 1; exitSignals.set(key, nth);",
+  "    const fault = exitPlan.signals.find((rule) => rule.step === exitStep && rule.name === name && rule.nth === nth && target === -Number(readFileSync(join(here, 'group.pid'), 'utf8')));",
+  "    try {",
+  "      if (fault) throw Object.assign(new Error(`kill ${fault.code}`), { code: fault.code, syscall: 'kill' });",
+  "      const answer = exitSignal.apply(process, arguments);",
+  "      exitNote({ kind: 'signal', target, name, ok: true });",
+  "      return answer;",
+  "    } catch (error) { exitNote({ kind: 'signal', target, name, ok: false, code: error.code ?? null, message: error.message, forced: Boolean(fault) }); throw error; }",
+  "  };",
+  "}",
   "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "prepareSighting(here);",
@@ -606,7 +658,19 @@ async function censusExit(t, cell, afterKill = 'omit') {
   else if (afterKill === 'zombie') joinedLate(directory);
   else holdingTwo(directory);
   sightingPs(directory, { cell, afterKill, prepared });
+  const forcing = exitForcings.get(t);
+  if (forcing) forceExit(directory, forcing);
   const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
+  if (CUTOFF_CELLS.includes(cell)) {
+    const exit = exitSighting(directory, pidIn(directory, 'group'));
+    exitResults.set(t, { exit, events, directory });
+    t.diagnostic(JSON.stringify({ exitSighting: exitSummary(exit) }));
+    if (exitAnswerRequired.has(t) || process.env.EXIT_SIGHTING_REQUIRES === 'answered') {
+      assert.equal(exit.branch, 'answered', `the controlled answered exit took the ${exit.branch} branch`);
+      assert.equal(exit.partialCensus, false, 'the controlled answered exit returned a partial census, which carries no cache proof');
+    }
+    if (exit.branch === 'cutoff') return exitCutoff(directory, exit, { prepared, status, stderr, events });
+  }
   if (prepared) {
     const observation = sightingAttempts.get(directory);
     const retained = observation?.snapshotReport;
@@ -614,7 +678,8 @@ async function censusExit(t, cell, afterKill = 'omit') {
     assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
     assert.equal(retained.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
     assert.deepEqual(retained.errors, [], 'private retention reported an error');
-    assertPreparedCache(join(observation.target, 'settled', 'fixture'), cell);
+    if (!(cell === 'A' && exitResults.get(t)?.exit.partialCensus)) assertPreparedCache(join(observation.target, 'settled', 'fixture'), cell);
+    else t.diagnostic(JSON.stringify({ exitSighting: 'partial census: O270 C3 window, no prepared-cache proof claimed' }));
   }
   const group = pidIn(directory, 'group');
   const two = pidIn(directory, 'two');
@@ -659,6 +724,394 @@ async function censusExit(t, cell, afterKill = 'omit') {
   t.diagnostic(JSON.stringify({ cell: `${cell}-exit-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: pairs, events }));
   if (afterKill === 'omit' && cell !== 'X') assertPostKillOmission(trace, group, two, 'exit');
   return { directory, events, group, two, trace };
+}
+
+/**
+ * The lines `forceExit` puts at the head of an exit cell's `ps` stand-in, below its warming exit.
+ * Each pre-kill read is counted by kind, and a `force.<kind>.<n>` file in the cell's directory
+ * makes the nth read of that kind hang until L0 kills it, answer with no rows, fail with standard
+ * error, answer as the stand-in does without the group leader, end the target before answering,
+ * or answer as the stand-in does and then fail or hang. Every forced read is logged to `forced`.
+ */
+const EXIT_FORCING = [
+  'case "$*" in',
+  '  "-ww -g "*" -o pid=,stat=") force_kind=state ;;',
+  '  "-ww -g "*" -o pid=,command=") force_kind=command ;;',
+  '  "-p "*" -o ucomm=") force_kind=name ;;',
+  '  "-g "*" -o pid=,stat=") force_kind=confirm ;;',
+  '  "-p "*" -o pid=,stat=") force_kind=fallback ;;',
+  '  *) force_kind=other ;;',
+  'esac',
+  'if [ -z "$EXIT_FORCE_PASS" ] && [ ! -f "$here/hang" ]; then',
+  '  force_n=$(( $(/bin/cat "$here/force-count.$force_kind" 2>/dev/null || echo 0) + 1 ))',
+  '  printf "%s" "$force_n" > "$here/force-count.$force_kind"',
+  '  if [ -f "$here/force.$force_kind.$force_n" ]; then',
+  '    force_action=$(/bin/cat "$here/force.$force_kind.$force_n")',
+  '    printf "%s %s %s\\n" "$force_kind" "$force_n" "$force_action" >> "$here/forced"',
+  '    case "$force_action" in',
+  '      hang) exec /usr/bin/tail -f /dev/null ;;',
+  '      empty) exit 0 ;;',
+  '      fail) printf "forced failure\\n" >&2; exit 2 ;;',
+  '      omit-leader) force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@") || exit $?; printf "%s\\n" "$force_answer" | /usr/bin/awk -v pid="$(/bin/cat "$here/group.pid")" \'$1 != pid\'; exit 0 ;;',
+  '      end-target) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target"; while /bin/kill -0 "$force_target" 2>/dev/null && ! /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= || echo absent)" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      answer-then-fail) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; printf "forced failure\\n" >&2; exit 2 ;;',
+  '      answer-then-hang) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; exec /usr/bin/tail -f /dev/null ;;',
+  '    esac',
+  '  fi',
+  'fi',
+];
+
+/**
+ * Puts `forcing` in place for the exit cell in `directory`: `reads` names the stand-in reads to
+ * force, as `EXIT_FORCING` does; `signals` has the `nth` signal `name` to the group in L0's `step`th
+ * bounded step throw `code`; `probe` makes the confirming read's real per-pid probe `fail` with no
+ * state, or `hang` until its read is ended (`sightingPs`). Each changes what L0 or the stand-in is
+ * given; the exit trace records it. No forcing moves a clock.
+ */
+function forceExit(directory, { reads = [], signals = [], probe }) {
+  const path = join(directory, 'ps-sighted');
+  const lines = readFileSync(path, 'utf8').split('\n');
+  lines.splice(3, 0, ...EXIT_FORCING);
+  writeFileSync(path, lines.join('\n'), { mode: 0o755 });
+  warmed(path);
+  for (const { kind, nth, action } of reads) writeFileSync(join(directory, `force.${kind}.${nth}`), action);
+  writeFileSync(join(directory, 'exit-forcing.json'), JSON.stringify({ signals }));
+  if (probe !== undefined) writeFileSync(join(directory, `probe-${probe}`), probe === 'hang' ? PROBE_HELD : '');
+}
+
+/**
+ * The `probe-hang` program the stand-in runs in place of its own per-pid probe (`sightingPs`): it
+ * fills a FIFO until a write would block, then starts the real `/bin/ps -p <target> -o stat=` with
+ * its output into that FIFO, so the real probe runs and cannot hand its answer back. It records the
+ * probe's pid and executable once the exec has happened, waits for the stand-in to be ended by L0,
+ * then ends the probe, removes the FIFO and records how the probe ended. Its arguments are the target, the stand-in's pid and
+ * the cell's directory. The FIFO and its record, `<directory>.probe-held`, sit beside the directory
+ * rather than in it, since the program outlives the read L0 ends and the directory's retained copy.
+ */
+const PROBE_HELD = [
+  'use strict; use Fcntl;',
+  'my ($target, $standin, $here) = @ARGV;',
+  'my $fifo = "$here.probe-fifo";',
+  'open(my $log, ">>", "$here.probe-held") or die "log: $!"; $log->autoflush(1);',
+  'system("/usr/bin/mkfifo", $fifo) == 0 or die "mkfifo: $?";',
+  'open(my $hold, "+<", $fifo) or die "hold: $!";',
+  'my $flags = fcntl($hold, F_GETFL, 0) or die "flags: $!";',
+  'fcntl($hold, F_SETFL, $flags | O_NONBLOCK) or die "nonblock: $!";',
+  'my $filled = 0;',
+  'while (defined(my $wrote = syswrite($hold, "x" x 4096))) { $filled += $wrote; }',
+  '$!{EAGAIN} or die "fill: $!";',
+  'my $probe = fork() // die "fork: $!";',
+  'if ($probe == 0) { open(STDOUT, ">", $fifo) or die "probe output: $!"; exec("/bin/ps", "-p", $target, "-o", "stat=") or die "exec: $!"; }',
+  'my $comm = "";',
+  'while (kill(0, $standin) && $comm !~ m{(^|/)ps$}) { $comm = `/bin/ps -o comm= -p $probe`; chomp $comm; }',
+  'print $log "started $probe $comm filled=$filled\n";',
+  '1 while kill(0, $standin);',
+  'my $before = `/bin/ps -o stat= -p $probe`; $before =~ s/\\s+//g;',
+  'kill("KILL", $probe); waitpid($probe, 0);',
+  'close($hold); unlink($fifo) or die "unlink: $!";',
+  'print $log "cut $probe before=$before signal=" . ($? & 127) . " exit=" . ($? >> 8) . "\n";',
+].join('\n');
+
+/** L0's words for a read it gave up on, or could not use, in an exit cleanup bounded at `CLEANUP_BOUND`. */
+const EXIT_WORDS = {
+  late: `the reads of the process table did not finish within ${CLEANUP_BOUND} ms`,
+  timeout: `the process-table read timed out after ${CLEANUP_BOUND} ms`,
+  refused: `the process-table read timed out after ${CLEANUP_BOUND} ms earlier in the exit cleanup, which does not wait on it again`,
+  spent: `the reads of the group just before its kill listed no process for ${CLEANUP_BOUND} ms while signal 0 still reached it`,
+  confirmFailed: 'the read of the group just before its kill failed while signal 0 still reached it: ',
+  fallbackAnswered: ', so the kill of the group may have ended a process the census had not named',
+  fallbackFailed: ", and the read of the census's processes by pid failed too: ",
+};
+
+/** The rows of a returned read by pid, as L0 reads them, or the failure L0 makes of one it cannot. */
+function exitRows(printed) {
+  const rows = new Map();
+  for (const line of printed.split('\n').filter(Boolean)) {
+    const row = /^\s*(\d+) (.*)$/.exec(line);
+    if (!row) throw new Error(`the process table held a row the census cannot read: ${JSON.stringify(line)}`);
+    rows.set(Number(row[1]), row[2]);
+  }
+  return rows;
+}
+
+/**
+ * The exit trace's rows as an ordered timeline: each read L0 asked for, with the time it asked, and
+ * what the stand-in returned where L0 started one, beside the clock calls and signals.
+ */
+function exitTimeline(directory) {
+  const items = [];
+  let asking;
+  let current;
+  for (const row of linesOf(directory, 'exit-trace.jsonl')) {
+    if (row.kind === 'clock' && row.frame === 'readingNow') {
+      if (asking) items.push({ ...asking, kind: 'reading' });
+      asking = row;
+      continue;
+    }
+    if (row.kind === 'clock' && row.frame === 'runNow' && asking) {
+      current = { kind: 'request', seq: asking.seq, step: asking.step, at: asking.at, spawned: false };
+      items.push(current);
+      asking = undefined;
+      continue;
+    }
+    if (asking) {
+      items.push({ ...asking, kind: 'reading' });
+      asking = undefined;
+    }
+    if (row.kind === 'spawn') Object.assign(current, { spawned: true, argv: row.argv, timeout: row.timeout });
+    else if (row.kind === 'returned') Object.assign(current, { status: row.status, signal: row.signal, error: row.error, stdout: row.stdout, stderr: row.stderr });
+    else if (row.kind === 'threw') Object.assign(current, { threw: row.code, message: row.message });
+    else if (row.kind !== 'clock' || row.frame !== 'runNow') items.push(row);
+  }
+  if (asking) items.push({ ...asking, kind: 'reading' });
+  return items;
+}
+
+/** What one read gave L0: an answer, or the failure L0 makes of it, with `deadline` its read deadline. */
+function exitOutcome(request, deadline, tool) {
+  if (!request.spawned) return deadline - request.at <= 0 ? { kind: 'late', message: EXIT_WORDS.late } : { kind: 'refused', message: EXIT_WORDS.refused };
+  if (request.error === 'ETIMEDOUT') return { kind: 'timeout', message: EXIT_WORDS.timeout };
+  if (request.threw !== undefined || request.error) return { kind: 'failed', message: request.message ?? String(request.error) };
+  if (request.stderr) return { kind: 'failed', message: `the process-table read failed: ${request.stderr.trim()}` };
+  if (request.status !== 0 && !(request.status === 1 && request.stdout === '')) return { kind: 'failed', message: `${tool} ${request.argv.join(' ')} ended with ${request.status ?? request.signal}` };
+  // A name read's whole output is one process's name, which `namesOf` takes as printed.
+  if (request.argv.at(-1) === 'ucomm=') return { kind: 'answered', printed: request.stdout, status: request.status };
+  try { return { kind: 'answered', rows: exitRows(request.stdout), status: request.status }; }
+  catch (error) { return { kind: 'failed', message: error.message }; }
+}
+
+/** Whether signal `name` to `target` reached it, from the first such record in `items`, as `answers` counts one. */
+function exitAnswers(items, target) {
+  const record = items.find((item) => item.kind === 'signal' && item.target === target && item.name === 0);
+  if (record === undefined) return undefined;
+  return record.ok || record.code === 'EPERM';
+}
+
+/**
+ * Classifies the exit cleanup of the cell in `directory`, whose group is `group`, from L0's own
+ * received originals in the exit trace: how the census ended (C), the `unseen` it kept (N), each
+ * returned-empty confirmation (E), how the confirmation loop ended (F), its fallback (B), the kill
+ * and the first read after it (K), and the complete reason L0 must give the group's kill. The
+ * branch is `answered` only where a confirming read with rows reached L0; `cutoff` only where the
+ * real deadline left no such answer; anything else is `diagnostic`, and a trace that cannot be
+ * read in source order is `unknown`.
+ */
+function exitSighting(directory, group) {
+  const tool = join(directory, 'ps-sighted');
+  const items = exitTimeline(directory);
+  const result = { group, branch: 'unknown', C: undefined, N: 'N0', n: 0, statuses: [], F: undefined, B: undefined, reason: undefined, named: [], identities: new Map(), kill: undefined, postKill: undefined, cut: undefined, why: [] };
+  const fail = (why) => { result.why.push(why); return result; };
+  const withins = items.filter((item) => item.kind === 'clock' && item.frame === 'within');
+  if (withins.length === 0) return fail('no bounded step was traced');
+  const censusDeadline = withins[0].at + CLEANUP_BOUND;
+  result.censusDeadline = censusDeadline;
+  const killAt = items.findIndex((item) => item.kind === 'signal' && item.target === -group && item.name === 'SIGKILL');
+  const beforeKill = killAt < 0 ? items : items.slice(0, killAt);
+  const confirmAt = withins.length > 1 ? items.indexOf(withins[1]) : -1;
+  const censusEnd = confirmAt >= 0 ? confirmAt : (() => { const reading = beforeKill.findIndex((item, index) => index > items.indexOf(withins[0]) && item.kind === 'reading'); return reading < 0 ? beforeKill.length : reading; })();
+  const censusItems = items.slice(items.indexOf(withins[0]) + 1, censusEnd);
+  // Every name and command line a returned read gave L0, by pid.
+  for (const item of items) {
+    if (item.kind !== 'request' || !item.spawned || item.error || item.stderr || (item.status !== 0 && item.status !== 1)) continue;
+    const args = item.argv.join(' ');
+    const known = (pid) => result.identities.get(pid) ?? result.identities.set(pid, { names: new Set(), commands: new Set() }).get(pid);
+    if (/^-p \d+ -o ucomm=$/.test(args)) {
+      const name = (item.stdout ?? '').replace(/ *\n$/, '');
+      if (name !== '') known(Number(item.argv[1])).names.add(name);
+    } else if (args.endsWith('-o pid=,command=')) {
+      let rows;
+      try { rows = exitRows(item.stdout ?? ''); } catch { continue; }
+      for (const [pid, cmd] of rows) known(pid).commands.add(cmd);
+    }
+  }
+  // The census, replayed in source order over the reads it made.
+  const live = (state) => !state.startsWith('Z');
+  const sightings = new Map();
+  let last;
+  let unseen;
+  let round = { position: 'before' };
+  let thrown;
+  let returnedBy;
+  let timedOut = false;
+  const censusRequests = censusItems.filter((item) => item.kind === 'request');
+  result.stateReads = 0;
+  for (const request of censusRequests) {
+    const outcome = exitOutcome(request, censusDeadline, tool);
+    request.outcome = outcome.kind;
+    if (outcome.kind === 'timeout') timedOut = true;
+    if (outcome.kind !== 'answered') {
+      result.cut = { step: 'census', request: request.seq, kind: outcome.kind, at: request.at, deadline: censusDeadline, remaining: censusDeadline - request.at, timeout: request.timeout ?? null };
+      if (last !== undefined && (outcome.kind === 'late' || outcome.kind === 'timeout')) returnedBy = outcome.kind === 'late' ? 'C3' : 'C4';
+      else thrown = { kind: outcome.kind, message: unseen ? `the census's reads ${unseen}: ${outcome.message}` : outcome.message };
+      break;
+    }
+    const { rows } = outcome;
+    if (round.position === 'before' || round.position === 'after') result.stateReads += 1;
+    if (round.position === 'before') round = { position: 'lines', before: rows, names: new Map(), pending: [...rows].filter(([, state]) => live(state)).map(([pid]) => pid) };
+    else if (round.position === 'lines') { round.lines = rows; round.position = round.pending.length ? 'names' : 'commands'; }
+    else if (round.position === 'names') {
+      const pid = round.pending.shift();
+      const name = request.stdout.replace(/ *\n$/, '');
+      if (name !== '') round.names.set(pid, name);
+      if (round.pending.length === 0) round.position = 'commands';
+    } else if (round.position === 'commands') { round.commands = rows; round.position = 'after'; }
+    else {
+      const { before, lines, names, commands } = round;
+      const after = rows;
+      for (const pid of new Set([...before.keys(), ...lines.keys(), ...commands.keys(), ...after.keys()])) {
+        if (!sightings.has(pid)) sightings.set(pid, undefined);
+        if (names.has(pid) && commands.has(pid)) sightings.set(pid, { pid, name: names.get(pid), cmd: commands.get(pid) });
+      }
+      const following = censusItems.slice(censusItems.indexOf(request) + 1);
+      const nextRequest = following.findIndex((item) => item.kind === 'request');
+      const between = nextRequest < 0 ? following : following.slice(0, nextRequest);
+      unseen = after.size === 0 && exitAnswers(between, -group) ? 'named no process of the group while it still had one'
+        : !after.has(group) && exitAnswers(between, group) ? `left out the group's leader, ${group}, while signal 0 still reached its pid`
+          : undefined;
+      if (unseen === undefined) {
+        const living = [...after].filter(([, state]) => live(state)).map(([pid]) => pid);
+        last = living.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
+      }
+      result.N = unseen === undefined ? 'N0' : unseen.startsWith('named') ? 'N1' : 'N2';
+      round = { position: 'before' };
+    }
+  }
+  if (thrown !== undefined) {
+    if (confirmAt >= 0) return fail('a read the census could not keep was followed by the confirmation step');
+    const cutoff = thrown.kind === 'late' || thrown.kind === 'timeout';
+    result.C = cutoff ? (unseen ? 'C2u' : 'C2') : last !== undefined ? 'C5' : 'C1';
+    result.reason = thrown.message;
+    result.unnamed = true;
+    result.branch = cutoff ? 'cutoff' : 'diagnostic';
+  } else {
+    if (confirmAt < 0) return fail('the census returned no traced end');
+    result.C = returnedBy ?? 'C0';
+    if (last === undefined) return fail('the census returned without a completed round');
+    const known = [...new Map([...sightings.values()].filter(Boolean).concat(last).map((member) => [member.pid, member])).values()];
+    const decision = withins[1].at + CLEANUP_BOUND;
+    const readDeadline = decision + CLEANUP_BOUND;
+    result.decisionDeadline = decision;
+    result.readDeadline = readDeadline;
+    const loop = beforeKill.slice(confirmAt + 1);
+    const emptiedAt = loop.findIndex((item) => item.kind === 'reading');
+    const steps = emptiedAt < 0 ? loop : loop.slice(0, emptiedAt);
+    let at = 0;
+    let why;
+    const next = (predicate) => { while (at < steps.length && !predicate(steps[at])) at++; return steps[at++]; };
+    for (;;) {
+      const occupied = next((item) => (item.kind === 'signal' && item.target === -group && item.name === 0) || item.kind === 'request');
+      if (occupied?.kind !== 'signal') return fail('the confirmation step made no occupancy check');
+      if (!occupied.ok && occupied.code === 'ESRCH') { result.F = `F0${result.n ? 'e' : 'z'}`; break; }
+      if (!occupied.ok && occupied.code !== 'EPERM') {
+        result.F = `F6${result.n ? 'e' : 'z'}`;
+        result.reason = occupied.message ?? `kill ${occupied.code}`;
+        result.unnamed = true;
+        break;
+      }
+      const check = next((item) => (item.kind === 'clock' && item.frame === 'beforeKill') || item.kind === 'request');
+      if (check?.kind !== 'clock') return fail('the confirmation step made no deadline check');
+      if (check.at >= decision) {
+        result.F = `F1${result.n ? 'e' : 'z'}`;
+        result.spentAt = check.at;
+        result.cut = { step: 'confirm', kind: 'spent', at: check.at, deadline: decision, remaining: decision - check.at, timeout: null };
+        why = EXIT_WORDS.spent;
+        break;
+      }
+      const request = next((item) => item.kind === 'request');
+      if (request === undefined) return fail('the confirmation step asked for no read before its deadline');
+      const outcome = exitOutcome(request, readDeadline, tool);
+      request.outcome = outcome.kind;
+      if (outcome.kind === 'answered' && outcome.rows.size > 0) { result.F = `F3${result.n ? 'e' : 'z'}`; break; }
+      if (outcome.kind === 'answered') { result.n += 1; result.statuses.push(outcome.status); continue; }
+      if (outcome.kind === 'refused' && !timedOut) return fail('a confirming read was refused with no earlier timeout');
+      if (outcome.kind === 'timeout') timedOut = true;
+      result.cut = { step: 'confirm', request: request.seq, kind: outcome.kind, at: request.at, deadline: readDeadline, remaining: readDeadline - request.at, timeout: request.timeout ?? null };
+      result.F = { late: `F5L${result.C === 'C4' ? '4' : result.n ? 'e' : 'z'}`, timeout: `F5T${result.n ? 'e' : 'z'}`, refused: 'F2z', failed: `F4${result.n ? 'e' : 'z'}` }[outcome.kind];
+      why = EXIT_WORDS.confirmFailed + outcome.message;
+      break;
+    }
+    if (why !== undefined) {
+      if (sightings.size === 0) {
+        result.B = 'B0';
+        result.reason = why + EXIT_WORDS.fallbackAnswered;
+      } else {
+        const request = next((item) => item.kind === 'request');
+        if (request === undefined) return fail('no read of the census sightings by pid followed the confirmation');
+        const outcome = exitOutcome(request, readDeadline, tool);
+        request.outcome = outcome.kind;
+        if (outcome.kind === 'refused' && !timedOut) return fail('the read by pid was refused with no earlier timeout');
+        if (outcome.kind === 'answered') {
+          result.B = outcome.rows.size > 0 ? 'B1' : 'B2';
+          const after = steps.slice(at);
+          result.named = known.filter(({ pid }) => (outcome.rows.has(pid) ? live(outcome.rows.get(pid)) : exitAnswers(after, pid))).map(({ pid }) => pid);
+          result.reason = why + EXIT_WORDS.fallbackAnswered;
+        } else {
+          if (outcome.kind === 'timeout') timedOut = true;
+          result.B = { failed: 'B3', late: 'B4', timeout: 'B5', refused: 'B6' }[outcome.kind];
+          result.reason = why + EXIT_WORDS.fallbackFailed + outcome.message;
+          result.unnamed = true;
+        }
+      }
+    }
+    const cutoff = /^F(1|2|5)/.test(result.F) && (result.F !== 'F2z' || result.C === 'C4');
+    result.branch = result.F.startsWith('F3') ? 'answered' : cutoff ? 'cutoff' : 'diagnostic';
+  }
+  const kill = killAt < 0 ? undefined : items[killAt];
+  result.kill = kill === undefined ? { sent: false } : { sent: true, ok: kill.ok, code: kill.code ?? null };
+  result.kills = items.filter((item) => item.kind === 'signal' && item.target === -group && item.name === 'SIGKILL').map(({ ok, code }) => ({ ok, code: code ?? null }));
+  // O270's ordinary-A0 window: round 1 completed, a later census read cut before it started, fewer
+  // than three state reads returned, and a confirming answer with rows still reached L0.
+  result.partialCensus = result.C === 'C3' && result.cut?.kind === 'late' && result.stateReads < 3 && /^F3/.test(result.F ?? '');
+  if (kill !== undefined) {
+    const readings = items.slice(0, killAt).filter((item) => item.kind === 'reading');
+    const deadline = readings.length ? readings.at(-1).at + CLEANUP_BOUND : undefined;
+    const first = items.slice(killAt + 1).find((item) => item.kind === 'request');
+    result.postKill = first === undefined ? { kind: 'none' } : { ...exitOutcome(first, deadline ?? Infinity, tool), argv: first.argv ?? null, rows: undefined, timedOutBefore: timedOut };
+  }
+  return result;
+}
+
+/** What `exitSighting` found, as one JSON-ready record for a diagnostic. */
+const exitSummary = (exit) => ({ ...exit, identities: Object.fromEntries([...exit.identities].map(([pid, { names, commands }]) => [pid, { names: [...names], commands: [...commands] }])) });
+
+/**
+ * The traced real-deadline cutoff of an exit cell: the exit caller ended, its private retention is
+ * whole, the census or confirmation was cut at its real bound with no confirming answer, L0 sent
+ * the group's kill and it reached the group, and L0 recorded exactly one kill of the group with
+ * the complete reason its branch gives, and named no process by an identity no read returned.
+ */
+function exitCutoff(directory, exit, { prepared, status, stderr, events }) {
+  assert.equal(status, 0, stderr);
+  if (prepared) {
+    const retained = sightingAttempts.get(directory)?.snapshotReport;
+    assert.equal(retained?.close.state, 'closed', 'the exit caller did not close before private retention');
+    assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
+    assert.deepEqual(retained.errors, [], 'private retention reported an error');
+  }
+  const { cut, group } = exit;
+  assert.ok(cut, 'the cutoff names no read that the real bound cut');
+  if (cut.kind === 'timeout') assert.ok(cut.timeout > 0 && cut.timeout === cut.remaining && cut.timeout <= 2 * CLEANUP_BOUND, `the timed-out read was not bounded by its real deadline: ${JSON.stringify(cut)}`);
+  if (cut.kind === 'late' || cut.kind === 'spent') assert.ok(cut.remaining <= 0, `the read cut before it started, or the spent deadline, had time left: ${JSON.stringify(cut)}`);
+  if (cut.kind === 'refused') assert.ok(cut.remaining > 0, `the refused read had no time left: ${JSON.stringify(cut)}`);
+  if (/^F1/.test(exit.F)) assert.ok(exit.spentAt >= exit.decisionDeadline, 'the confirmation deadline was not spent');
+  assert.deepEqual(exit.kill, { sent: true, ok: true, code: null }, 'the group kill was not sent, or did not reach the group');
+  const kills = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+  assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
+  assert.equal(kills[0].census, exit.reason, 'the group kill does not carry the reason its cutoff branch gives');
+  for (const record of events.filter(({ pid }) => pid !== undefined)) {
+    if (record.name === undefined && record.cmd === undefined) continue;
+    const returned = exit.identities.get(record.pid);
+    assert.ok(returned?.names.has(record.name) && returned.commands.has(record.cmd), `an identity no read returned was recorded: ${JSON.stringify(record)}`);
+  }
+  const ended = events.filter(({ event }) => event === 'survivor.killed').map(({ pid }) => pid).sort();
+  const unended = new Set(events.filter(({ event }) => event === 'survivor.unended').map(({ pid }) => pid));
+  assert.deepEqual(ended, exit.unnamed ? [] : exit.named.filter((pid) => !unended.has(pid)).sort(), 'the named kills differ from what the read by pid returned');
+  if (exit.postKill?.timedOutBefore) assert.notEqual(exit.postKill.kind, 'answered', 'a post-kill read answered through a ps already timed out');
+  const trace = existsSync(join(directory, 'sighted-ps.log')) ? read(directory, 'sighted-ps.log') : '';
+  const result = { directory, events, group, two: pidIn(directory, 'two'), trace, exit };
+  exitCutoffs.add(directory);
+  exitCutoffs.add(events);
+  return result;
 }
 
 /** Confirms a refused prepared root leaves no fixture scratch or caller process to account for. */
@@ -1032,6 +1485,7 @@ function assertUnnamedSighting(events, group, two) {
 /** Runs and verifies a member whose census sighting supplied no complete identity. */
 async function unnamedCensusCell(t, path, cell, afterKill = 'omit') {
   const { events, group, two, trace } = await (path === 'call' ? censusCall(t, cell, afterKill) : censusExit(t, cell, afterKill));
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, cell);
   if (afterKill === 'omit') assertPostKillOmission(trace, group, two, path);
   if (afterKill === 'zombie') {
@@ -1297,6 +1751,7 @@ function assertPreparedCache(retained, cell) {
 
 test('C615 fixture-preparation-valid binds the private cache to actual ps returns', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const observation = sightingAttempts.get(directory);
   const retained = join(observation.target, 'settled', 'fixture');
   const { ids, records } = assertPreparedCache(retained, 'U2');
@@ -1306,6 +1761,7 @@ test('C615 fixture-preparation-valid binds the private cache to actual ps return
 
 test('C615 fixture-cache-binding rejects a consumed value different from its preparatory original', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const observation = sightingAttempts.get(directory);
   const original = join(observation.target, 'settled', 'fixture');
   const copy = join(observation.root, `cache-consumed-mismatch-${randomUUID()}`);
@@ -1577,6 +2033,7 @@ test('C615 fixture-read-refusal retains a real ps omitted row after recorded fix
 
 test('C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads', SETTLES_WITHIN, async (t) => {
   const { directory, group, trace } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const before = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat='], 'before-kill');
   const after = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat=,xstat='], 'after-kill');
   assert.notEqual(before.start.id, after.start.id, 'the outer answers reused one read ID');
@@ -1677,6 +2134,7 @@ test('C615 fixture-retention denies failed copies missing bytes and unresolved f
 
 test('C615 fixture-retention reopens actual finalizer and recorded identities after teardown', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const target = sightingAttempts.get(directory)?.target;
   assert.ok(target, 'the actual prepared attempt has no private target');
   t.after(() => t.after(() => {
@@ -1931,6 +2389,7 @@ test('B1 call: a member named by an early census read and left a zombie is recor
 // proves R-STATE-12
 test('B1 exit: a member named by an early census read and left a zombie is recorded by name', SETTLES_WITHIN, async (t) => {
   const { directory, events, two, trace } = await censusExit(t, 'B', 'zombie');
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'B');
   assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
   assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
@@ -1989,6 +2448,7 @@ test('N0 exit: a member every read including the first confirmation omits has no
 /** The shown member exited on its own, and the parent reaped it before confirmation and kill. */
 async function reapedCensusCell(t, path) {
   const { directory, events, group, two, trace } = await (path === 'call' ? censusCall(t, 'X') : censusExit(t, 'X'));
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'X');
   assert.ok(existsSync(join(directory, 'reaped-two')), 'the parent did not mark its successful waitpid');
   const reads = sightingReads(trace);
@@ -2010,9 +2470,204 @@ test('X0 exit: a once-shown member reaped on its own before confirmation has no 
   await reapedCensusCell(t, 'exit');
 });
 
+// The exit-sighting branches of owner ruling O268, each forced on its own. The words below are the
+// reasons `src/substrate/process.mjs` gives, written out here so the classification is checked
+// against them rather than against itself.
+const TIMED_OUT = 'the process-table read timed out after 1000 ms';
+const LATE_READS = 'the reads of the process table did not finish within 1000 ms';
+const REFUSED = `${TIMED_OUT} earlier in the exit cleanup, which does not wait on it again`;
+const FAILED_READ = 'the process-table read failed: forced failure';
+const CONFIRM_FAILED = 'the read of the group just before its kill failed while signal 0 still reached it: ';
+const SPENT = 'the reads of the group just before its kill listed no process for 1000 ms while signal 0 still reached it';
+const BY_PID_FAILED = ", and the read of the census's processes by pid failed too: ";
+const MAY_HAVE = ', so the kill of the group may have ended a process the census had not named';
+
+/** One forced stand-in read: the `nth` read of `kind` before the kill takes `action`. */
+const forced = (kind, nth, action) => ({ kind, nth, action });
+
+/** How each named exit cell's ordinary test runs, as its own test does. */
+const EXIT_RUNS = {
+  U1: (t) => unnamedCensusCell(t, 'exit', 'U1'),
+  U2: (t) => unnamedCensusCell(t, 'exit', 'U2'),
+  C1: (t) => unnamedCensusCell(t, 'exit', 'C1'),
+  C2: (t) => unnamedCensusCell(t, 'exit', 'C2'),
+  A0: (t) => unnamedCensusCell(t, 'exit', 'A'),
+  'A0 zombie': (t) => unnamedCensusCell(t, 'exit', 'A', 'zombie'),
+  B0: async (t) => assert.ok(exitCutoffs.has((await censusExit(t, 'B')).events), 'B0 exit took no cutoff branch'),
+  B1: async (t) => assert.ok(exitCutoffs.has((await censusExit(t, 'B', 'zombie')).events), 'B1 exit took no cutoff branch'),
+  X0: (t) => reapedCensusCell(t, 'exit'),
+};
+
+/** Each named cell's exit census, on the shared helper. */
+const EXIT_CELLS = { U1: ['U1'], U2: ['U2'], C1: ['C1'], C2: ['C2'], A0: ['A'], 'A0 zombie': ['A', 'zombie'], B0: ['B'], B1: ['B', 'zombie'], X0: ['X'] };
+
+/**
+ * Runs `name`'s exit with `forcing` and checks how L0 ended it against `expect`: a `cutoff` or
+ * `answered` run goes through the cell's ordinary test, which must pass; a `diagnostic` run, or one
+ * marked `fails`, must fail that test's answered scenario. Either way the classification and the group's recorded
+ * reason must be the ones expected.
+ */
+async function forcedExit(t, name, forcing, expect) {
+  exitForcings.set(t, forcing);
+  if (expect.fails ?? expect.branch === 'diagnostic') await assert.rejects(censusExit(t, ...EXIT_CELLS[name]));
+  else await EXIT_RUNS[name](t);
+  const { exit, events } = exitResults.get(t);
+  for (const key of ['branch', 'C', 'N', 'F', 'B', 'n']) if (expect[key] !== undefined) assert.equal(exit[key], expect[key], `${key}: ${JSON.stringify(exitSummary(exit))}`);
+  if (expect.reason !== undefined) {
+    const kills = events.filter(({ event, group }) => event === 'group.killed' && group === exit.group);
+    assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
+    assert.equal(kills[0].census, expect.reason(exit.group));
+  }
+  return exit;
+}
+
+const censusTimeout = { branch: 'cutoff', C: 'C2', N: 'N0', reason: () => TIMED_OUT };
+for (const name of Object.keys(EXIT_RUNS)) {
+  test(`${name} exit cut at its first census state read records the census timeout`, SETTLES_WITHIN, async (t) => {
+    await forcedExit(t, name, { reads: [forced('state', 1, 'hang')] }, censusTimeout);
+  });
+}
+
+const confirmRefused = { branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED };
+for (const name of ['U1', 'U2', 'A0', 'A0 zombie', 'B0', 'B1', 'X0']) {
+  test(`${name} exit with its second census round timed out refuses the confirming read`, SETTLES_WITHIN, async (t) => {
+    await forcedExit(t, name, { reads: [forced('state', 3, 'hang')] }, confirmRefused);
+  });
+}
+
+for (const name of ['C1', 'C2']) {
+  test(`${name} exit with its confirming read timed out records the confirmation timeout`, SETTLES_WITHIN, async (t) => {
+    await forcedExit(t, name, { reads: [forced('confirm', 1, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS });
+  });
+}
+
+const A0_CASES = [
+  ['E1: its first command read timed out', { reads: [forced('command', 1, 'hang')] }, censusTimeout],
+  ['E2: its second census state read timed out', { reads: [forced('state', 2, 'hang')] }, censusTimeout],
+  ['N1: an empty completed round then a timed-out read', { reads: [forced('state', 2, 'empty'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => `the census's reads named no process of the group while it still had one: ${TIMED_OUT}` }],
+  ['N2: a leaderless completed round then a timed-out read', { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N2', reason: (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: ${TIMED_OUT}` }],
+  ['C1: its first census read failed', { reads: [forced('state', 1, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
+  ['C5: a census read after a completed round failed', { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
+  ['F5Tz: a confirming read timed out', { reads: [forced('confirm', 1, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
+  ['F5Te: an empty confirming answer then a timed-out read', { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Te', n: 1, B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
+  ['A3 timeout: a confirming read timed out after its live probe', { reads: [forced('confirm', 1, 'answer-then-hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
+  ['B2: a failed confirming read then an empty read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'empty')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B2', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['B3: a failed confirming read then a failed read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
+  ['B5: a failed confirming read then a timed-out read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
+  ['N1 failure: an empty completed round then a failed read', { reads: [forced('state', 2, 'empty'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N1', reason: () => `the census's reads named no process of the group while it still had one: ${FAILED_READ}` }],
+  ['N2 failure: a leaderless completed round then a failed read', { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N2', reason: (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: ${FAILED_READ}` }],
+  ['F4z: a failed confirming read', { reads: [forced('confirm', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F4e: an empty confirming answer then a failed read', { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['A3 failure: a confirming read failed after its live probe', { reads: [forced('confirm', 1, 'answer-then-fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F6z: an occupancy check that fails with another error', { reads: [], signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
+];
+for (const [title, forcing, expect] of A0_CASES) {
+  test(`A0 exit ${title}`, SETTLES_WITHIN, async (t) => {
+    await forcedExit(t, 'A0', forcing, expect);
+  });
+}
+
+test('A0 exit K1: a refused first group kill after a refused confirming read fails the cutoff', SETTLES_WITHIN, async (t) => {
+  const exit = await forcedExit(t, 'A0', { reads: [forced('state', 3, 'hang')], signals: [{ step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' }] },
+    { fails: true, branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED });
+  assert.deepEqual(exit.kills[0], { ok: false, code: 'EPERM' }, 'the first group kill was not the refused one');
+  assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group');
+});
+
+test('A0 exit K1: a refused first group kill after an answered confirmation is recorded as it happened', SETTLES_WITHIN, async (t) => {
+  exitForcings.set(t, { signals: [{ step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' }] });
+  try { await censusExit(t, 'A'); } catch (error) { t.diagnostic(JSON.stringify({ answeredRefusedKill: error.message })); }
+  const { exit, events } = exitResults.get(t);
+  assert.equal(exit.branch, 'answered', JSON.stringify(exitSummary(exit)));
+  assert.deepEqual(exit.kills[0], { ok: false, code: 'EPERM' }, 'the first group kill was not the refused one');
+  assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group');
+  assert.equal(events.filter(({ event, group }) => event === 'group.killed' && group === exit.group).length, 1, JSON.stringify(events));
+});
+
+test('A0 exit A2t: a confirming read timed out while its real probe ran matches the F5T cutoff', SETTLES_WITHIN, async (t) => {
+  await forcedExit(t, 'A0', { probe: 'hang' }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS });
+  const { directory } = exitResults.get(t);
+  const record = `${directory}.probe-held`;
+  await until(() => existsSync(record) && /^cut /m.test(readFileSync(record, 'utf8')), { signal: t.signal });
+  const held = readFileSync(record, 'utf8');
+  unlinkSync(record);
+  t.diagnostic(JSON.stringify({ probeHeld: held }));
+  const started = new RegExp('^started (\\d+) (\\S*/)?ps filled=\\d+$', 'm').exec(held);
+  assert.ok(started, `the real /bin/ps probe never started: ${held}`);
+  assert.match(held, new RegExp(`^cut ${started[1]} before=\\S+ signal=9 exit=0$`, 'm'), `the real probe was not still running when its read was cut: ${held}`);
+  assert.equal(existsSync(join(directory, 'sighted-state-probe')), false, 'a probe result reached the stand-in');
+  assert.equal(existsSync(join(directory, 'sighted-live')), false, 'the live marker was written without a probe result');
+});
+
+test('A0 exit A2p: a real probe that fails with no state while the target remains fails the answered scenario', SETTLES_WITHIN, async (t) => {
+  await forcedExit(t, 'A0', { probe: 'fail' }, { fails: true, branch: 'answered', C: 'C0', F: 'F3z' });
+  const { directory } = exitResults.get(t);
+  const two = pidIn(directory, 'two');
+  assert.equal(read(directory, 'sighted-state-probe'), `PER-PID ${two} status=1 stat=`, 'the probe did not fail plainly with no state');
+  assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a failed probe wrote the live marker');
+  // The stand-in answered only after its real start-time read matched the prepared one, so the
+  // target was still present after the failed probe.
+  assert.match(read(directory, 'sighted-ps.log'), new RegExp(`READ -g \\d+ -o pid=,stat=\nPHASE before-kill`), 'the outer answer was not returned');
+});
+
+test('C1 exit F3e: an empty confirming answer then a live one keeps the answered scenario', SETTLES_WITHIN, async (t) => {
+  await forcedExit(t, 'C1', { reads: [forced('confirm', 1, 'empty')] }, { branch: 'answered', C: 'C0', F: 'F3e', n: 1 });
+});
+
+for (const [name, prepared] of [['A0', true], ['C1', false]]) {
+  test(`${name} exit A1: a target ended before the confirming probe fails the answered scenario`, SETTLES_WITHIN, async (t) => {
+    const exit = await forcedExit(t, name, { reads: [forced('confirm', 1, 'end-target')] }, { fails: true, C: 'C0' });
+    const { directory } = exitResults.get(t);
+    const [, state] = /^target \d+ (.*)$/m.exec(read(directory, 'forced')) ?? [];
+    assert.ok(state === 'absent' || state?.startsWith('Z'), `the ended target was neither absent nor a zombie: ${state}`);
+    if (prepared && state === 'absent') {
+      assert.equal(exit.F, 'F4z', 'a prepared probe of an absent target returned an answer');
+      assert.match(exit.reason, /ended with 79/);
+    } else assert.equal(exit.F, 'F3z', `the probe of a ${state} target returned no answer`);
+  });
+}
+
+test('A0 exit answered control: the after-state sighting is confirmed live before the kill', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  await unnamedCensusCell(t, 'exit', 'A');
+});
+
+test('X0 exit answered control: the reaping read precedes the confirming read', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  await reapedCensusCell(t, 'exit');
+});
+
+/** Runs this file's test `title` alone, in its own runner, with every exit required to answer. */
+async function answeredRun(t, title) {
+  const pattern = `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+  const env = { ...process.env, EXIT_SIGHTING_REQUIRES: 'answered' };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [code] = await once(run, 'close');
+  t.diagnostic(output.split('\n').filter((line) => /^# (tests|pass|fail)|exitSighting/.test(line)).join('\n'));
+  assert.equal(code, 0, output);
+  assert.match(output, /^# tests 1$/m, output);
+  assert.match(output, /^# pass 1$/m, output);
+}
+
+for (const title of [
+  'C615 fixture-preparation-valid binds the private cache to actual ps returns',
+  'C615 fixture-cache-binding rejects a consumed value different from its preparatory original',
+  'C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads',
+  'C615 fixture-retention reopens actual finalizer and recorded identities after teardown',
+]) {
+  test(`${title}, answered control`, SETTLES_WITHIN, async (t) => {
+    await answeredRun(t, title);
+  });
+}
+
 // proves R-STATE-12
 test('B0 exit: a member named by the first census round remains recorded after later reads omit it', SETTLES_WITHIN, async (t) => {
   const { directory, events, two, trace } = await censusExit(t, 'B');
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'B');
   assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
 });
