@@ -1,11 +1,34 @@
 #!/bin/sh
 # ABOUTME: Runs the suite and refuses the git operation that called it when the suite is not
 # green. `AGENTS.md` holds the rule; this is the one place the commit, merge and push hooks
-# enforce it.
+# enforce it. After a green run on a working tree equal to the tree being committed, it records
+# that tree under the git dir, so `pre-push` can skip a suite already passed on it. `pre-push`
+# passes --no-record, because a push commits no tree.
 
 set -u
 
+record=
+if [ "${1-}" != --no-record ]; then
+  record="$(git rev-parse --git-dir)/rigger-suite-green-trees"
+fi
+
+# The tree the index the hook was handed holds, when the working tree holds exactly that: no
+# unstaged change to a tracked file and no untracked file `.gitignore` does not exclude.
+equal_tree() {
+  git diff --quiet --no-ext-diff || return 1
+  [ -z "$(git ls-files --others --exclude-standard)" ] || return 1
+  git write-tree
+}
+
+before=
+if [ -n "$record" ]; then
+  before=$(equal_tree)
+fi
+
 if npm test; then
+  if [ -n "$before" ] && [ "$(equal_tree)" = "$before" ]; then
+    grep -qxF "$before" "$record" 2>/dev/null || printf '%s\n' "$before" >> "$record"
+  fi
   exit 0
 fi
 
