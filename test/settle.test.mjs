@@ -60,6 +60,87 @@ const exited = (exit, stdout = '') => ({ status: 'fulfilled', value: { exit, std
 /** Each card on `fake` by number, with the column it is in now. */
 const columnOf = async (fake) => (await fake.operations.readItems())[0].column;
 
+// proves R-WORK-34, R-RECORD-11
+test('a continuing maker whose new tip is already on the first forge read moves to review at that tip', async () => {
+  const startingHead = pullFrom(12, 120).sha;
+  const tip = pullFrom(12, 121).sha;
+  const w = await world({ seed: { pullRequests: [pullFrom(12, 121)] } });
+
+  await w.l2.settled(w.card, exited(0), { expectedHead: tip, reads: 1, elapsedMs: 0 });
+
+  assert.notEqual(tip, startingHead);
+  assert.equal(await columnOf(w.fake), columns.review);
+  assert.deepEqual(w.reads, ['rigger-12']);
+  assert.equal(w.l2Events()[0].forgeHead, tip);
+});
+
+// proves R-WORK-34, R-RECORD-11
+test('a continuing maker that adds no commit moves to review at the first forge read of its starting head', async () => {
+  const head = pullFrom(12, 120).sha;
+  const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
+
+  await w.l2.settled(w.card, exited(0), { expectedHead: head, reads: 1, elapsedMs: 0 });
+
+  assert.equal(await columnOf(w.fake), columns.review);
+  assert.deepEqual(w.reads, ['rigger-12']);
+  assert.equal(w.l2Events()[0].forgeHead, head);
+});
+
+// proves R-WORK-34
+test('a continuing maker with no readable workspace tip stays in coding and records why', async () => {
+  const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
+
+  await assert.rejects(w.l2.settled(w.card, exited(0), { tipFailure: new Error('the branch has no commit') }), /card #12.*branch has no commit/);
+
+  assert.equal(await columnOf(w.fake), columns.coding);
+  assert.deepEqual(w.fake.writes(), []);
+  assert.deepEqual(w.reads, []);
+  assert.match(w.l2Events()[0].reason, /card #12.*branch has no commit/);
+});
+
+/** Shows a continuing maker left in coding when L2 finds no unique open pull request. */
+async function noUniqueOpen(seed, reason) {
+  const w = await world({ seed });
+  await assert.rejects(w.l2.settled(w.card, exited(0), { expectedHead: 'f'.repeat(40) }), reason);
+  assert.equal(await columnOf(w.fake), columns.coding);
+  assert.deepEqual(w.fake.writes(), []);
+}
+
+// proves R-WORK-34
+test('a continuing maker with no open pull request stays in coding under R-WORK-18', async () => {
+  await noUniqueOpen({}, /no open pull request/);
+});
+
+// proves R-WORK-34
+test('a continuing maker with two open pull requests stays in coding under R-WORK-18', async () => {
+  await noUniqueOpen({ pullRequests: [pullFrom(12, 120), pullFrom(12, 121)] }, /more than one open pull request/);
+});
+
+// proves R-WORK-34
+test('a failed read of a continuing maker’s pull requests keeps the card in coding', async () => {
+  const w = await world({ fail: true });
+
+  await assert.rejects(w.l2.settled(w.card, exited(0), { expectedHead: 'f'.repeat(40) }), /pull requests from branch rigger-12/);
+
+  assert.equal(await columnOf(w.fake), columns.coding);
+  assert.deepEqual(w.fake.writes(), []);
+});
+
+// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+test('a failed second forge read leaves a continuing card in coding and records the read measure', async () => {
+  const old = pullFrom(12, 120).sha;
+  const w = await world({ fail: true });
+
+  await assert.rejects(w.l2.settled(w.card, exited(0), {
+    expectedHead: 'f'.repeat(40), lastForgeHead: old, reads: 2, elapsedMs: 5000,
+  }), /pull requests from branch rigger-12/);
+
+  assert.equal(await columnOf(w.fake), columns.coding);
+  assert.deepEqual(w.fake.writes(), []);
+  assert.deepEqual(w.l2Events()[0].forgeHead, old);
+  assert.deepEqual({ reads: w.l2Events()[0].reads, elapsedMs: w.l2Events()[0].elapsedMs }, { reads: 2, elapsedMs: 5000 });
+});
+
 // proves R-WORK-18
 test('given a maker outcome of exit 0 and an open pull request from the card\'s line of work, L2 moves the card from coding to review', async () => {
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });

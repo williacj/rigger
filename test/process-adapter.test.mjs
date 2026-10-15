@@ -1648,6 +1648,14 @@ function heldTimers() {
   };
 }
 
+test('a forge wait asks whenElapsed to keep its timer alive until the next read', () => {
+  let unrefs = 0;
+  const timer = { unref: () => { unrefs += 1; } };
+  const cancel = whenElapsed(5000, () => {}, { schedule: () => timer, cancel: () => {}, hold: true });
+  cancel();
+  assert.equal(unrefs, 0);
+});
+
 test('a delay past the largest one Node timer keeps elapses over timers each within it, adding up to the delay exactly', () => {
   const timers = heldTimers();
   const total = 2 * TIMER_MAX + 5;

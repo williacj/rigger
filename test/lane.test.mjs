@@ -57,6 +57,275 @@ const triggersOf = (built) => built.l3Events().filter(({ event }) => event === '
 /** The `merge.end` events recorded, in order. */
 const endsOf = (built) => built.l3Events().filter(({ event }) => event === 'merge.end');
 
+/** A clock whose five-second pauses advance only when a test's fake forge is ready for them. */
+function timed(onPause = () => {}) {
+  let elapsed = 0;
+  return {
+    clock: { now: () => elapsed, pause: async (milliseconds) => {
+      assert.equal(milliseconds, 5000);
+      elapsed += milliseconds;
+      await onPause(elapsed);
+    } },
+    elapsed: () => elapsed,
+  };
+}
+
+// proves R-SCHED-26
+test('an unknown mergeability read is served again after five injected seconds and then merges', async () => {
+  const time = timed();
+  const built = merging([110], { clock: time.clock });
+  const read = built.repository.operations.readMergeable;
+  let reads = 0;
+  built.repository.operations.readMergeable = async (pull) => {
+    reads += 1;
+    return reads === 2 ? 'unknown' : read(pull);
+  };
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), [{ number: 1101, head: shaOf(110) }]);
+  assert.equal(endsOf(built)[0].outcome, 'merged');
+  assert.equal(time.elapsed(), 5000);
+  assert.equal(reads, 3);
+});
+
+// proves R-SCHED-26
+test('an unknown merge-call refusal counts as a read and the lane merges after the next forge read', async () => {
+  const time = timed();
+  const built = merging([111], { clock: time.clock });
+  built.repository.answerMerge(() => ({ outcome: 'refused', reason: 'unknown' }));
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), [
+    { number: 1111, head: shaOf(111) },
+    { number: 1111, head: shaOf(111) },
+  ]);
+  assert.equal(endsOf(built)[0].outcome, 'merged');
+  assert.equal(time.elapsed(), 5000);
+});
+
+// proves R-SCHED-26, R-RECORD-10, R-RECORD-12
+test('unknown on every lane read stops at 60 seconds and records the exact reason and wait measure', async () => {
+  const time = timed();
+  const built = merging([112], { clock: time.clock });
+  const read = built.repository.operations.readMergeable;
+  const times = [];
+  built.repository.operations.readMergeable = async (pull) => {
+    times.push(time.elapsed());
+    return times.length === 1 ? read(pull) : 'unknown';
+  };
+
+  await built.loop.pull();
+
+  assert.deepEqual(times.slice(1), Array.from({ length: 13 }, (_, index) => index * 5000));
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal((await columnsOf(built.fake))[112], COLUMNS.review);
+  const [end] = endsOf(built);
+  assert.equal(end.outcome, 'not merged');
+  assert.equal(end.reason, "the forge reads pull request #1121's mergeability as unknown");
+  assert.equal(end.reads, 13);
+  assert.equal(end.elapsedMs, 60_000);
+});
+
+/** A lane whose first post-claim mergeability read is unknown, then follows `change` after 5 seconds. */
+function unknownThen(card, change, answer) {
+  let built;
+  const time = timed(() => change?.(built));
+  built = merging([card], { clock: time.clock });
+  const read = built.repository.operations.readMergeable;
+  let reads = 0;
+  built.repository.operations.readMergeable = async (pull) => {
+    reads += 1;
+    if (reads === 2) return 'unknown';
+    if (reads === 3 && answer !== undefined) return answer(pull);
+    return read(pull);
+  };
+  return { built, elapsed: time.elapsed, reads: () => reads };
+}
+
+// proves R-SCHED-26
+test('the lane reads a mergeable pull request once after its claim and makes its merge call', async () => {
+  const built = merging([120]);
+  const read = built.repository.operations.readMergeable;
+  let reads = 0;
+  built.repository.operations.readMergeable = async (pull) => { reads += 1; return read(pull); };
+
+  await built.loop.pull();
+
+  assert.equal(reads, 2, 'the pull and the lane each read mergeability once');
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1201]);
+});
+
+// proves R-SCHED-26
+test('unknown then mergeable on the next lane read merges at the pulled head', async () => {
+  const { built, elapsed, reads } = unknownThen(121);
+
+  await built.loop.pull();
+
+  assert.equal(elapsed(), 5000);
+  assert.equal(reads(), 3);
+  assert.deepEqual(built.repository.merges(), [{ number: 1211, head: shaOf(121) }]);
+});
+
+/** Reads unknown through 55 seconds, then `last` at 60 seconds, and checks L3's response. */
+async function lastKnown(card, last, outcome) {
+  const time = timed();
+  const built = merging([card], { clock: time.clock });
+  const read = built.repository.operations.readMergeable;
+  let calls = 0;
+  const times = [];
+  built.repository.operations.readMergeable = async (pull) => {
+    calls += 1;
+    if (calls === 1) return read(pull);
+    times.push(time.elapsed());
+    return time.elapsed() < 60000 ? 'unknown' : last;
+  };
+
+  await built.loop.pull();
+
+  assert.deepEqual(times, Array.from({ length: 13 }, (_, index) => index * 5000));
+  assert.equal(endsOf(built)[0].outcome, outcome);
+  assert.equal(built.repository.merges().length, last === 'mergeable' ? 1 : 0);
+}
+
+// proves R-SCHED-26
+test('unknown until the read at 60 seconds, then mergeable, merges at that last read', async () => {
+  await lastKnown(131, 'mergeable', 'merged');
+});
+
+// proves R-SCHED-26
+test('unknown until the read at 60 seconds, then conflicting, ends unmerged at that last read', async () => {
+  await lastKnown(132, 'conflicting', 'not merged');
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('unknown then conflicting ends without a merge and the next pull continues its maker', async () => {
+  const { built } = unknownThen(122, (world) => world.repository.update(1221, { mergeable: 'conflicting' }));
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal((await columnsOf(built.fake))[122], COLUMNS.review);
+  assert.equal(endsOf(built)[0].outcome, 'not merged');
+  assert.match(endsOf(built)[0].reason, /L2 answered continue/);
+  const next = built.loop.pull();
+  await positive(() => built.dispatches.holding().includes(122));
+  built.dispatches.releaseAll();
+  const [reached] = await next;
+  assert.equal(reached.action, 'continue');
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('unknown then a failed forge read ends unmerged with the read failure', async () => {
+  const { built } = unknownThen(123, undefined, () => { throw new Error('mergeability read failed'); });
+
+  await assert.rejects(built.loop.pull(), (failure) => leavesOf(failure).some(({ message }) => /card #123.*mergeability read failed/.test(message)));
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal((await columnsOf(built.fake))[123], COLUMNS.review);
+  assert.equal(endsOf(built)[0].outcome, 'not merged');
+  assert.match(endsOf(built)[0].reason, /mergeability read failed/);
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('unknown then an L2 answer with no reason records the answer that stopped the merge', async () => {
+  const { built } = unknownThen(124, (world) => world.repository.update(1241, { comments: [], mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }));
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal(endsOf(built)[0].outcome, 'not merged');
+  assert.match(endsOf(built)[0].reason, /L2 answered judge/);
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('unknown then another merge head records both the answer and the head originally pulled', async () => {
+  const newer = 'f'.repeat(40);
+  const { built } = unknownThen(125, (world) => world.repository.update(1251, {
+    sha: newer, comments: [markerComment({ card: 125, pull: 1251, head: newer, body: PASSING })],
+  }));
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal(endsOf(built)[0].outcome, 'not merged');
+  assert.match(endsOf(built)[0].reason, /#1251/);
+  assert.match(endsOf(built)[0].reason, new RegExp(newer));
+  assert.match(endsOf(built)[0].reason, new RegExp(shaOf(125)));
+});
+
+// proves R-SCHED-26
+test('unknown then a person merges: the lane sends no merge and a later pull moves the card to Done', async () => {
+  const { built } = unknownThen(126, (world) => world.repository.update(1261, { merged: true }));
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.equal(endsOf(built)[0].outcome, 'not merged');
+  await built.loop.pull();
+  assert.equal((await columnsOf(built.fake))[126], COLUMNS.done);
+});
+
+// proves R-SCHED-26
+test('unknown at the pull starts no merge and leaves the next invocation to read it', async () => {
+  const built = merging([127], { facts: { 127: { mergeable: 'unknown' } } });
+
+  await built.loop.pull();
+
+  assert.deepEqual(built.repository.merges(), []);
+  assert.deepEqual(endsOf(built), []);
+  built.repository.update(1271, { mergeable: 'mergeable' });
+  await built.loop.pull();
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1271]);
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('the final unknown read can be a merge-call refusal, which ends refused at 60 seconds', async () => {
+  const time = timed();
+  const built = merging([128], { clock: time.clock });
+  for (let call = 0; call < 13; call += 1) built.repository.answerMerge(() => ({ outcome: 'refused', reason: 'unknown' }));
+
+  await built.loop.pull();
+
+  const [end] = endsOf(built);
+  assert.equal(time.elapsed(), 60000);
+  assert.equal(end.outcome, 'refused');
+  assert.equal(end.reason, 'unknown');
+  assert.equal(end.elapsedMs, 60000);
+  assert.equal(built.repository.merges().length, 13);
+  assert.equal((await columnsOf(built.fake))[128], COLUMNS.review);
+});
+
+// proves R-SCHED-26
+test('two merge claims in one invocation both merge after the second waits for its known read', async () => {
+  const time = timed();
+  const built = merging([129, 130], { clock: time.clock });
+  const read = built.repository.operations.readMergeable;
+  let firstMergedAt;
+  const secondReads = [];
+  built.repository.answerMerge(async ({ merge }) => {
+    const answer = await merge();
+    firstMergedAt = time.elapsed();
+    return answer;
+  });
+  built.repository.operations.readMergeable = async (pull) => {
+    if (pull === 1301 && firstMergedAt !== undefined) {
+      secondReads.push(time.elapsed());
+      if (time.elapsed() - firstMergedAt < 2000) return 'unknown';
+    }
+    return read(pull);
+  };
+
+  await built.loop.pull();
+
+  assert.equal(time.elapsed(), 5000);
+  assert.equal(firstMergedAt, 0);
+  assert.deepEqual(secondReads, [0, 5000]);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1291, 1301]);
+  assert.deepEqual(endsOf(built).map(({ outcome }) => outcome), ['merged', 'merged']);
+});
+
 test('a merge claim records its pull after the claim and before merge.start, holding no slot, and the forge\'s merge moves the card to Done', async () => {
   const built = merging([83]);
 
@@ -339,7 +608,7 @@ const PASSED = { ci: { state: 'passed', creator: null } };
 async function changedWhileWaiting(change, { board } = {}) {
   const fake = boardOf([cardIn(93, COLUMNS.review), cardIn(94, COLUMNS.review)]);
   const facts = { checks: PASSED, mergeBase: '7'.repeat(40) };
-  const built = merging([93, 94], { fake, rules: CI, facts: { 93: facts, 94: facts }, ...(board === undefined ? {} : { board: board(fake) }) });
+  const built = merging([93, 94], { fake, rules: CI, facts: { 93: facts, 94: facts }, clock: { now: () => 0, pause: async () => { throw new Error('the lane did not read unknown'); } }, ...(board === undefined ? {} : { board: board(fake) }) });
   const held = [];
   built.repository.answerMerge(holding(held));
   const pulled = built.loop.pull();
@@ -381,9 +650,38 @@ for (const { row, change, action, board } of [
     assert.deepEqual(await columnsOf(built.fake), { 93: COLUMNS.done, 94: COLUMNS.review });
     const end = endsOf(built).find(({ card }) => card === 94);
     assert.deepEqual({ outcome: end.outcome, action: end.action }, { outcome: 'not merged', action });
+    assert.ok(end.reason.length > 0);
+    if (row === 'a required check fails') assert.match(end.reason, /failed|failing/);
     assert.deepEqual(eventsOf(built, 94), ['pull', 'merge.start', 'merge.end']);
   });
 }
+
+// proves R-SCHED-26, R-RECORD-10
+test('the first lane read finds conflict and records the answer that stops the merge', async () => {
+  const built = await changedWhileWaiting((repository) => repository.update(941, { mergeable: 'conflicting' }));
+  const end = endsOf(built).find(({ card }) => card === 94);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [931]);
+  assert.equal(end.outcome, 'not merged');
+  assert.match(end.reason, /L2 answered continue/);
+});
+
+// proves R-SCHED-26, R-RECORD-10
+test('a person merging while the lane waits ends without a Rigger merge call', async () => {
+  const built = await changedWhileWaiting((repository) => repository.update(941, { merged: true }));
+  const end = endsOf(built).find(({ card }) => card === 94);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [931]);
+  assert.equal(end.outcome, 'not merged');
+  assert.match(end.reason, /L2 answered move/);
+  assert.match(end.reason, /to done/);
+});
+
+// proves R-RECORD-10
+test('an L2 ignore answer carrying a failed-check reason records that reason with the answer', async () => {
+  const built = await changedWhileWaiting((repository) => repository.update(941, { checks: { ci: { state: 'failed', creator: null } } }));
+  const end = endsOf(built).find(({ card }) => card === 94);
+  assert.equal(end.action, 'ignore');
+  assert.match(end.reason, /failed|failing/);
+});
 
 /**
  * Pulls Review card 101, answered `merge`, whose merge call answers as `script` does, handed the
@@ -391,7 +689,16 @@ for (const { row, change, action, board } of [
  * pull settled, as `Promise.allSettled` records it.
  */
 async function mergedAs(script) {
-  const built = merging([101]);
+  let elapsed = 0;
+  let built;
+  built = merging([101], { clock: {
+    now: () => elapsed,
+    pause: async (milliseconds) => {
+      elapsed += milliseconds;
+      built.repository.update(1011, { mergeable: 'mergeable' });
+      built.repository.answerMerge(() => ({ outcome: 'refused', reason: 'unknown' }));
+    },
+  } });
   built.repository.answerMerge((call) => script({ ...call, repository: built.repository }));
   const [pulled] = await Promise.allSettled([built.loop.pull()]);
   return { built, pulled };
@@ -451,10 +758,17 @@ for (const { row, script, end } of [
     assert.deepEqual(await columnsOf(built.fake), { 101: COLUMNS.review });
     assert.deepEqual(endOf(built), end);
     assert.deepEqual(built.events().filter(({ event }) => event === 'transition'), []);
-    assert.equal(built.repository.merges().length, 1);
+    assert.equal(built.repository.merges().length, row === 'the forge not having computed mergeability' ? 13 : 1);
   });
 }
 
+// proves R-RECORD-10
+test('a refused merge records the refusal and its named check context', async () => {
+  const { built } = await mergedAs(refusing({ reason: 'no record', context: 'rigger/gate' }));
+  assert.deepEqual(endOf(built), { outcome: 'refused', reason: 'no record', context: 'rigger/gate' });
+});
+
+// proves R-RECORD-10
 test('given the fake forge\'s merge throws, as M5-04 answers a message no mapping names, the card stays in its column, merge.end names failed, and the pull\'s failure names the card', async () => {
   const { built, pulled } = await mergedAs(() => {
     throw new Error('mergePullRequest #1011 failed: HTTP 422 an answer nothing maps');
@@ -467,6 +781,7 @@ test('given the fake forge\'s merge throws, as M5-04 answers a message no mappin
   assert.match(endOf(built).reason, /HTTP 422/);
 });
 
+// proves R-RECORD-10
 test('given the forge answers already merged, the card moves to Done and no second merge call is made', async () => {
   const { built, pulled } = await mergedAs(({ repository }) => {
     repository.update(1011, { merged: true });
@@ -474,7 +789,7 @@ test('given the forge answers already merged, the card moves to Done and no seco
   });
 
   assert.equal(pulled.status, 'fulfilled', pulled.reason?.message);
-  assert.deepEqual(endOf(built), { outcome: 'already merged' });
+  assert.deepEqual(endOf(built), { outcome: 'already merged', reason: 'the forge held the pull request as merged already' });
   assert.deepEqual(await columnsOf(built.fake), { 101: COLUMNS.done });
   assert.deepEqual(await built.loop.pull(), []);
   assert.equal(built.repository.merges().length, 1);
@@ -607,6 +922,7 @@ test('given a required check pending at the merge, a run ends with the card wher
   assert.equal((await columnsOf(built.fake))[107], COLUMNS.done);
 });
 
+// proves R-RECORD-10
 test('given the lane cannot read the card again, the forge receives no merge call, merge.end names not merged with why, and the failure names the card', async () => {
   const fake = boardOf([cardIn(108, COLUMNS.review)]);
   const built = merging([108], { fake, board: (() => ({ ...handleOn(fake), readItems: async () => { throw new Error('the board read timed out'); } }))() });
