@@ -25,6 +25,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { mkdirSync } from 'node:fs';
 import { repositoryIn } from './git-repository.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { accessSync, constants } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -341,10 +342,56 @@ function commandsIssuedBy(file) {
     encoding: 'utf8',
     env,
   });
+  if (process.env.C755_TRACE && file === 'forge-runners.test.mjs') process.stderr.write(run.stdout + run.stderr);
   const passed = Number(/^# pass (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
   assert.ok(run.status === 0 && passed > 0, `${file} did not run and pass while it was recorded:\n${run.stdout}${run.stderr}`);
   return JSON.parse(readFileSync(into, 'utf8'));
 }
+
+/** Makes the recorder's target child observe one controlled P2 transition. */
+function withTargetControl(control, use) {
+  const held = process.env.C755_HOOK_CONTROL;
+  process.env.C755_HOOK_CONTROL = control;
+  try {
+    return use();
+  } finally {
+    if (held === undefined) delete process.env.C755_HOOK_CONTROL;
+    else process.env.C755_HOOK_CONTROL = held;
+  }
+}
+
+/** The recorder's direct-suite PATH has no fixture gh beyond the suite's refusing entry. */
+function hasInstalledGh() {
+  return process.env.PATH.split(delimiter).some((entry) => {
+    if (entry === process.env.RIGGER_REFUSING_GH_DIR) return false;
+    try {
+      accessSync(join(entry || '.', 'gh'), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+test('E-C P2-A4m: the recorder sees the target-file failure caused by selected gh loss', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs')), (error) => {
+    assert.match(error.message, /forge-runners\.test\.mjs did not run and pass while it was recorded/);
+    assert.match(error.message, /P2-S control/);
+    assert.match(error.message, /ENOENT/);
+    return true;
+  });
+});
+
+test('E-C P2-A4r: the recorder keeps its target green after a resolver-only change', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs'));
+});
+
+test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  commandsIssuedBy('forge-runners.test.mjs');
+});
 
 test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {
   // Recorded rather than listed: each file runs as it does in the suite, and every request the
@@ -795,4 +842,25 @@ test("the repository read answers null for a path a commit of the fake gh's orig
 
   assert.equal(await onPath(fake, () => reads().readFileAt(head, 'config/absent.mjs')), null);
   await assertNothingChanged(fake, before);
+});
+
+test('the fake repository environment reads agree with the real adapter through fake gh for present and absent names', async () => {
+  const seed = { environments: { release: {
+    can_admins_bypass: false,
+    deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+    branch_policies: [{ name: 'trunk', type: 'branch' }],
+    variables: { APP_ID: '12345' },
+    secrets: ['APP_KEY'],
+  } } };
+  const fake = installed();
+  seedRepository(fake, seed);
+  const { operations } = createFakeRepository(seed);
+  for (const [name, ...args] of [
+    ['readEnvironment', 'release'], ['readEnvironment', 'absent'],
+    ['readEnvironmentVariable', 'release', 'APP_ID'], ['readEnvironmentVariable', 'release', 'absent'],
+    ['readEnvironmentSecret', 'release', 'APP_KEY'], ['readEnvironmentSecret', 'release', 'absent'],
+  ]) {
+    assert.deepEqual(await onPath(fake, () => reads()[name](...args)), await operations[name](...args), `${name} ${args.join(' ')}`);
+  }
+  assert.deepEqual((await fake.model()).writes(), []);
 });

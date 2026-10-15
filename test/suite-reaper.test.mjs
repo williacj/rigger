@@ -4,14 +4,61 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { symlinkSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, sep } from 'node:path';
 
 import { scratch, sweep } from './process-fixtures.mjs';
+import { ended } from './process-fixtures.mjs';
 
 const suite = resolve('test/suite.sh');
 const fixtureModule = new URL('./process-fixtures.mjs', import.meta.url).href;
 const agentModule = new URL('./stub-claude.mjs', import.meta.url).href;
 const processModule = new URL('../src/substrate/process.mjs', import.meta.url).href;
+
+let activeTrace;
+function tracePath() {
+  const temporary = process.env.TMPDIR;
+  const supplied = process.env.C667_TRACE_FILE;
+  if (!temporary || !supplied) throw new Error('trace requires TMPDIR and C667_TRACE_FILE');
+  const root = realpathSync(temporary);
+  const destination = resolve(supplied);
+  const parent = realpathSync(dirname(destination));
+  const distance = relative(root, parent);
+  if (distance === '..' || distance.startsWith(`..${sep}`) || isAbsolute(distance)) {
+    throw new Error('trace path must stay under TMPDIR');
+  }
+  for (let directory = parent; ; directory = dirname(directory)) {
+    if (existsSync(join(directory, '.git'))) throw new Error('trace TMPDIR must not be inside a checkout');
+    if (directory === dirname(directory)) break;
+  }
+  try {
+    if (lstatSync(destination).isSymbolicLink()) throw new Error('trace path must stay under TMPDIR');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return destination;
+}
+function trace(event) {
+  if (activeTrace) writeFileSync(tracePath(), `${JSON.stringify({ at: new Date().toISOString(), ...activeTrace, ...event })}\n`, { flag: 'a' });
+}
+
+function reaperState(run) {
+  const ps = spawnSync('/bin/ps', ['-axo', 'pid=,stat=,command='], { encoding: 'utf8' });
+  const row = ps.stdout.split('\n').find((line) => line.includes('test/suite-reaper') && line.includes(run));
+  return row?.trim() ?? null;
+}
+
+function matchingCwdRows(output, directory) {
+  let pid;
+  const rows = [];
+  for (const line of output.split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    if (line.startsWith('n') && (line.slice(1) === directory || line.slice(1).startsWith(`${directory}/`))) rows.push(`${pid} cwd ${line.slice(1)}`);
+  }
+  return rows;
+}
 
 function processesIn(directory) {
   const ps = spawnSync('/bin/ps', ['-axo', 'pid=,stat=,command='], { encoding: 'utf8' });
@@ -30,6 +77,10 @@ function processesIn(directory) {
       found.set(pid, `${pid} cwd ${line.slice(1)}`);
     }
   }
+  if (activeTrace) {
+    const matchingCwds = matchingCwdRows(lsof.stdout, directory);
+    trace({ event: 'process-check', directoryPresent: existsSync(activeTrace.run), ps: { status: ps.status, error: ps.error?.message ?? null, rows: ps.stdout.split('\n').filter((line) => line.includes(directory)) }, lsof: { status: lsof.status, error: lsof.error?.message ?? null, matchingCwds, otherCwdCount: lsof.stdout.split('\n').filter((line) => line.startsWith('n')).length - matchingCwds.length }, reported: [...found.values()], reaper: reaperState(activeTrace.run) });
+  }
   return [...found.values()];
 }
 
@@ -40,6 +91,32 @@ async function until(condition, within, t) {
     await new Promise((resolve) => setImmediate(resolve));
   }
   return condition();
+}
+
+async function checkEnding(t, tmp, runName, output, { processes = processesIn, exists = existsSync, now = Date.now, turn = () => new Promise((resolve) => setImmediate(resolve)) } = {}) {
+  const run = join(tmp, runName);
+  const deadline = now() + 10_000;
+  let left;
+  let removed;
+  for (;;) {
+    left = processes(tmp);
+    removed = !exists(run);
+    if (removed && activeTrace && !activeTrace.firstRemoval) {
+      activeTrace.firstRemoval = new Date().toISOString();
+      trace({ event: 'directory-removed', reaper: reaperState(run) });
+    }
+    if ((left.length === 0 && removed) || now() >= deadline) break;
+    if (t.signal.aborted) throw new Error('the test ended before its condition held');
+    await turn();
+  }
+  try {
+    assert.deepEqual(left, [], `processes from ${tmp} survived: ${left.join('\n')}\n${readFileSync(output, 'utf8')}`);
+    assert.equal(removed, true, `the suite left ${run}: ${readFileSync(output, 'utf8')}`);
+    trace({ event: 'assertion', result: 'pass', removed, reported: left });
+  } catch (error) {
+    trace({ event: 'assertion', result: 'fail', removed, reported: left, message: error.message.split('\n')[0] });
+    throw error;
+  }
 }
 
 async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
@@ -119,6 +196,14 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
   assert.equal(await until(() => existsSync(join(directory, 'started')), 10_000, t), true, `the fixture never started:\n${readFileSync(output, 'utf8')}`);
   const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
   assert.ok(runName, `the suite made no run directory under ${tmp}`);
+  if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
+    activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: Number(readFileSync(join(directory, 'started'), 'utf8')), evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
+    trace({ event: 'start', reaper: reaperState(activeTrace.run) });
+    t.after(() => {
+      trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
+      activeTrace = undefined;
+    });
+  }
   if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
   if (ending === 'E3' || ending === 'E7') {
     const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
@@ -143,10 +228,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
     assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
     process.kill(filePid, 'SIGKILL');
   }
-  const removed = await until(() => !existsSync(join(tmp, runName)), 10_000, t);
-  const left = processesIn(tmp);
-  assert.deepEqual(left, [], `processes from ${tmp} survived: ${left.join('\n')}\n${readFileSync(output, 'utf8')}`);
-  assert.equal(removed, true, `the suite left ${join(tmp, runName)}: ${readFileSync(output, 'utf8')}`);
+  await checkEnding(t, tmp, runName, output);
 }
 
 test('E6 waits for a complete positive file pid before signaling', { timeout: 30_000 }, (t) => runEnding(t, 'E6', 'F1', { holdPidPublication: true }));
@@ -178,3 +260,181 @@ for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
 for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
   test(`${ending} ends an F7 L0 process group by ten seconds after the run ends`, { timeout: 30_000 }, (t) => runEnding(t, ending, 'F7'));
 }
+
+test('the ending check waits for a transient reaper after removal', async (t) => {
+  const directory = scratch(t);
+  const tmp = join(directory, 'tmp');
+  mkdirSync(tmp);
+  const output = join(directory, 'output');
+  writeFileSync(output, 'nested suite output');
+  const seen = [];
+  await checkEnding(t, tmp, 'run', output, {
+    processes: () => {
+      const rows = seen.length === 0 ? ['123 R node test/suite-reaper'] : [];
+      seen.push(rows);
+      return rows;
+    },
+    now: () => 0,
+    turn: async () => {},
+  });
+  assert.deepEqual(seen, [['123 R node test/suite-reaper'], []]);
+});
+
+test('the final poll selects the process or directory assertion for every reported set', async (t) => {
+  const directory = scratch(t);
+  const tmp = join(directory, 'tmp');
+  mkdirSync(tmp);
+  const output = join(directory, 'output');
+  writeFileSync(output, 'nested suite output');
+  const reaper = '101 R node test/suite-reaper';
+  const runner = '102 S node --require run/runner.cjs --test';
+  const fixture = '103 S fixture';
+  const cases = [
+    ['P0', [], [], []],
+    ['P1', [reaper], [], []],
+    ['P2', [reaper], [reaper], [reaper]],
+    ['P3', [runner], [], []],
+    ['P4', [runner, fixture], [runner], [runner]],
+    ['P5', [reaper, runner], [], []],
+    ['P6', [reaper, runner, fixture], [runner], [runner]],
+    ['P7', [reaper, runner], [reaper], [reaper]],
+    ['P8', [reaper, runner, fixture], [reaper, runner], [reaper, runner]],
+  ];
+  for (const [cell, first, final, survivors] of cases) {
+    for (const directoryPresent of [false, true]) {
+      let clock = 0;
+      let poll = 0;
+      const observations = [];
+      const attempt = checkEnding(t, tmp, 'run', output, {
+        processes: () => {
+          const rows = poll === 0 ? first : final;
+          observations.push(rows);
+          poll += 1;
+          return rows;
+        },
+        exists: () => directoryPresent,
+        now: () => clock,
+        turn: async () => { clock = 10_000; },
+      });
+      if (survivors.length > 0 || directoryPresent) {
+        await assert.rejects(attempt, (error) => {
+          assert.match(error.message, survivors.length > 0 ? /processes from .* survived/ : /the suite left .*run/);
+          for (const member of survivors) assert.ok(error.message.includes(member), `${cell} omitted ${member}`);
+          for (const member of first.filter((row) => !survivors.includes(row))) assert.ok(!error.message.includes(member), `${cell} named cleared ${member}`);
+          assert.ok(error.message.includes('nested suite output'));
+          return true;
+        }, `${cell} with directory ${directoryPresent}`);
+      } else {
+        await attempt;
+      }
+      assert.deepEqual(observations, first.length === 0 && !directoryPresent ? [first] : [first, final], `${cell} with directory ${directoryPresent}`);
+    }
+  }
+});
+
+async function heldMember(t, tmp, source) {
+  const command = source === 'reaper' ? `test/suite-reaper ${tmp}` : source === 'ps' ? `fixture ${tmp}` : 'fixture with cwd only';
+  const child = spawn(process.execPath, ['-e', 'process.stdin.resume()', command], { cwd: source === 'lsof' ? tmp : resolve('.'), stdio: ['pipe', 'ignore', 'ignore'] });
+  t.after(() => ended(child));
+  assert.equal(await until(() => processesIn(tmp).some((row) => row.startsWith(`${child.pid} `)), 10_000, t), true, `${source} member never appeared`);
+  const ps = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'command='], { encoding: 'utf8' });
+  assert.equal(ps.status, 0);
+  assert.equal(ps.stdout.includes(tmp), source !== 'lsof', `${source} ps source`);
+  if (source === 'lsof') {
+    const lsof = spawnSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(child.pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+    assert.equal(lsof.status, 0);
+    assert.ok(lsof.stdout.includes(`n${tmp}`), `${source} cwd source: ${lsof.stdout}`);
+  }
+  return child;
+}
+
+test('a reported reaper, ps fixture, or lsof-only fixture survives the bound with the process message', async (t) => {
+  for (const source of ['reaper', 'ps', 'lsof']) {
+    for (const directoryPresent of [false, true]) {
+      await t.test(`${source} D${directoryPresent ? 1 : 0}`, async (s) => {
+        const directory = scratch(s);
+        const tmp = join(directory, 'tmp');
+        mkdirSync(tmp);
+        if (directoryPresent) mkdirSync(join(tmp, 'run'));
+        const output = join(directory, 'output');
+        writeFileSync(output, 'nested suite output');
+        const child = await heldMember(s, tmp, source);
+        let clock = 0;
+        await assert.rejects(checkEnding(s, tmp, 'run', output, {
+          now: () => clock,
+          turn: async () => { clock = 10_000; },
+        }), (error) => {
+          assert.match(error.message, /processes from .* survived/);
+          assert.ok(error.message.includes(String(child.pid)), `${source} PID missing`);
+          assert.ok(error.message.includes('nested suite output'));
+          return true;
+        });
+      });
+    }
+  }
+});
+
+test('a reaper seen through ps clears on the next answered poll', async (t) => {
+  const directory = scratch(t);
+  const tmp = join(directory, 'tmp');
+  mkdirSync(tmp);
+  const output = join(directory, 'output');
+  writeFileSync(output, 'nested suite output');
+  const child = await heldMember(t, tmp, 'reaper');
+  const observations = [];
+  await checkEnding(t, tmp, 'run', output, {
+    processes: (path) => {
+      const rows = processesIn(path);
+      observations.push(rows);
+      return rows;
+    },
+    turn: async () => { await ended(child); },
+  });
+  assert.ok(observations[0].some((row) => row.startsWith(`${child.pid} `)));
+  assert.deepEqual(observations.at(-1), []);
+});
+
+test('trace refuses supplied paths outside TMPDIR', (t) => {
+  const directory = scratch(t);
+  const destination = join(directory, 'trace.jsonl');
+  symlinkSync('/dev/null', destination);
+  const previousFile = process.env.C667_TRACE_FILE;
+  const previousTrace = activeTrace;
+  process.env.C667_TRACE_FILE = destination;
+  activeTrace = { eventCase: 'trace-path' };
+  t.after(() => {
+    activeTrace = previousTrace;
+    if (previousFile === undefined) delete process.env.C667_TRACE_FILE;
+    else process.env.C667_TRACE_FILE = previousFile;
+  });
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+  const checkoutPath = resolve('c667-trace-must-not-write.jsonl');
+  process.env.C667_TRACE_FILE = checkoutPath;
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+  assert.equal(existsSync(checkoutPath), false);
+  const safePath = join(directory, 'safe-trace.jsonl');
+  process.env.C667_TRACE_FILE = safePath;
+  trace({ event: 'probe' });
+  assert.match(readFileSync(safePath, 'utf8'), /"event":"probe"/);
+});
+
+test('trace refuses TMPDIR inside a pre-existing checkout', (t) => {
+  const directory = scratch(t);
+  const checkout = join(directory, 'checkout');
+  mkdirSync(checkout);
+  mkdirSync(join(checkout, '.git'));
+  const previousFile = process.env.C667_TRACE_FILE;
+  const previousTmp = process.env.TMPDIR;
+  const previousTrace = activeTrace;
+  process.env.TMPDIR = checkout;
+  process.env.C667_TRACE_FILE = join(checkout, 'trace.jsonl');
+  activeTrace = { eventCase: 'trace-path' };
+  t.after(() => {
+    activeTrace = previousTrace;
+    if (previousFile === undefined) delete process.env.C667_TRACE_FILE;
+    else process.env.C667_TRACE_FILE = previousFile;
+    if (previousTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmp;
+  });
+  assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+});

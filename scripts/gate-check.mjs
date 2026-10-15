@@ -10,9 +10,10 @@
 // pull request number the event names, `IS_PULL`, `true` where that number is a pull request's,
 // and `CARD`, the first job's output.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { consumerConfig } from '../src/cli/doctor.mjs';
 import { CONFIG } from '../src/cli/init.mjs';
@@ -32,12 +33,13 @@ const UNREAD = 2;
 const failedRead = (what, error) => `the read of ${what} failed: ${error.message}`;
 
 /**
- * The default branch's config, as `{ config, at }`, or `{ problem }` saying why there is none:
+ * The default branch's config, as `{ config, at, commit }`, or `{ problem }` saying why there is none:
  * read from the default branch at the commit read at the run's start, whatever the pull request's
  * base (`ARCHITECTURE.md`, "The required check on the forge"), through `consumerConfig`, from the
- * one file read at that commit, validated, and naming the repository the event names.
+ * one file read at that commit, validated, and naming the repository the event names. `commit` is
+ * that commit, at which this repository's self-hosting check reads its lists.
  */
-async function defaultConfig(reads, repository) {
+export async function defaultConfig(reads, repository) {
   let branch;
   let text;
   try {
@@ -68,7 +70,7 @@ async function defaultConfig(reads, repository) {
   if (typeof named !== 'string' || named.toLowerCase() !== repository.toLowerCase()) {
     return { problem: `\`${CONFIG}\` on the default branch, ${at}, names the repository ${named}, and the event names ${repository}` };
   }
-  return { config: loaded.config, at };
+  return { config: loaded.config, at, commit: branch.head };
 }
 
 /** The event's number from `NUMBER`, or a throw naming it. */
@@ -83,7 +85,7 @@ function eventNumber(env) {
  * the number the default branch's topic rule names for its head branch, and where none is named,
  * or the config cannot be read, the pull request's own number, so its runs still share one group.
  */
-async function card({ env, reads, out, log }) {
+export async function card({ env, reads, out, log }) {
   const number = eventNumber(env);
   if (env.IS_PULL !== 'true') {
     out(`card=${number}`);
@@ -109,7 +111,7 @@ async function card({ env, reads, out, log }) {
  * concerns that pull request. An issue's concerns the open pull requests from the branch the
  * default branch's topic rule names for it, which may be none.
  */
-async function map({ env, reads, out, log }) {
+export async function map({ env, reads, out, log }) {
   const number = eventNumber(env);
   if (env.IS_PULL === 'true') {
     out(String(number));
@@ -245,4 +247,8 @@ async function main(argv, env) {
   });
 }
 
-process.exitCode = await main(process.argv.slice(2), process.env);
+// Run as a script, it runs the mode its arguments name. Imported, as this repository's
+// self-hosting check imports it, it runs none. The path it was run by is resolved first, because
+// the module's own is.
+const ranDirectly = process.argv[1] !== undefined && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);

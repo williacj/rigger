@@ -90,7 +90,7 @@ export const pullStateOf = (pull) => (pull.merged ? 'MERGED' : pull.closed ? 'CL
  * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
  * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], issues = [], rules, origin, repo } = {}) {
+export function createFakeRepository({ branches = [], pullRequests = [], issues = [], rules, origin, repo, environments = {} } = {}) {
   const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull), issues: issues.map(heldIssue) });
   const current = (candidate) => {
     if (candidate === undefined) return null;
@@ -110,6 +110,17 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     return { number, head: sha, base };
   };
   const operations = {
+    /** The same environment settings the executable fake serves through its REST handlers. */
+    readEnvironment: async (name) => {
+      const environment = environments[name];
+      return environment ? structuredClone({
+        canAdminsBypass: environment.can_admins_bypass,
+        deploymentBranchPolicy: environment.deployment_branch_policy,
+        policies: environment.deployment_branch_policy?.custom_branch_policies === true ? environment.branch_policies ?? [] : [],
+      }) : null;
+    },
+    readEnvironmentVariable: async (name, variable) => environments[name]?.variables?.[variable] ?? null,
+    readEnvironmentSecret: async (name, secret) => environments[name]?.secrets?.includes(secret) ?? false,
     readPullRequests: async (branch) => {
       const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && pullStateOf(candidate) !== 'CLOSED' && !candidate.headRepositoryDeleted);
       return { open: from.filter((candidate) => !candidate.merged).map(asAnswered), merged: from.filter((candidate) => candidate.merged).map(asAnswered) };

@@ -370,7 +370,7 @@ the script rules on one pull request. It exits 0 to admit, and prints the head S
 reasons. On an `issues` event the script maps the card to its open pull requests itself, because the
 event names none.
 
-The gate workflow's posting job declares `environment: gate`, which admits it only from `main`.
+The gate workflow's posting job declares `environment: gate`, which admits it only from the default branch.
 Its steps run in this order:
 
 1. The gate script runs once for each pull request the event concerns. On an `issues` event, those
@@ -383,7 +383,15 @@ With no pull request open, the script rules on none and the workflow posts nothi
 open, the workflow posts on each one's head the state of that pull request's own run.
 
 The App's private key and its minted token reach only the mint and post steps of each posting job.
-Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's.
+Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's. No step of
+either posting job runs an action, so no code but the workflow's own runs in a job the key reaches.
+
+This repository's `self-hosting` check is its own and does not ship. Its script lives under
+`.github/scripts/`. An inline step fetches the tree at the commit the run's workflow file was read
+from, a commit of the default branch. The check runs from that tree, never from a pinned install,
+because it rules on this repository's own lists. It takes the gate script's card resolution,
+mapping and config read from that tree. It reads the lists at the default-branch commit it read
+the config at, and reaches the forge through L0's read side alone.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
 required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
@@ -406,13 +414,16 @@ The forge-side pieces other than the workflow are forge settings the owner provi
 ruleset is (`D23`):
 
 - the gate App, holding Commit statuses (write) and Metadata (read), and its installation;
-- the `gate` environment, with a deployment-branch policy admitting only `main`, and
+- the `gate` environment, with a deployment-branch policy admitting only the default branch, and
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts, each pinned to the App's id.
 
-Of the gate's forge-side pieces, `init` forks only the workflow. `doctor` reads each of those
-settings through L0's read side. No verb writes one.
+Of the gate's forge-side pieces, `init` forks only the workflow.
+
+`doctor` reads each of those settings through L0's read side but the App and its installation,
+which a user's token cannot read (#659). For them it reads each required context's pin against
+the variable `GATE_APP_ID`. No verb writes one.
 
 ### The engine's merge decision
 
@@ -431,7 +442,7 @@ it.
 
 The App design carries one named residual: it is not tested against forging (#642, P29). Either of
 two observations reverses it (#642, P26): any run off `main` obtaining the App's secret, or a job on
-a ref other than `main` admitted to the `gate` environment.
+a ref other than the default branch admitted to the `gate` environment.
 
 The forge check carries two residuals of its own:
 

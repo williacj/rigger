@@ -13,6 +13,8 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 import { recording } from './recording.mjs';
+import { repositoryReads } from '../substrate/forge/read.mjs';
+import { GATE_CONTEXT } from '../workflow/gate.mjs';
 
 /**
  * Runs a command through L0's process adapter and hands back what it answered: its exit code as
@@ -580,6 +582,54 @@ export async function boardChecks({ target = process.cwd(), ask, emitter } = {})
  */
 const SAYS = { true: 'ok', false: 'failed', null: 'not asked' };
 
+/** The owner-provisioned names the gate workflow declares, guarded against the template in tests. */
+const GATE_ENVIRONMENT = 'gate';
+const GATE_APP_ID = 'GATE_APP_ID';
+const GATE_APP_PRIVATE_KEY = 'GATE_APP_PRIVATE_KEY';
+
+/** The required gate context and its environment, read only through L0's repository side. */
+export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
+  const name = 'gate check required';
+  const valid = await configValidity({ target });
+  if (valid.ok !== true) return { name, ok: null, detail: `the gate was not checked, because ${valid.detail}` };
+  const { config } = await consumerConfig(target);
+  const reads = repositoryReads({ repo: config.repo, ...config.board }, { send: ask, emitter });
+  const faults = [];
+  const obtain = async (read, ...args) => {
+    try { return await reads[read](...args); }
+    catch (error) { faults.push(failedRead(name, error).detail); }
+  };
+  const branch = await obtain('readDefaultBranch');
+  const rules = branch ? await obtain('readEffectiveRules', branch.name) : undefined;
+  const required = rules?.filter((rule) => rule.context === GATE_CONTEXT);
+  if (required?.length === 0) faults.push(`${GATE_CONTEXT} is not required on ${branch.name}; add an active required-status-check rule`);
+  const environment = await obtain('readEnvironment', GATE_ENVIRONMENT);
+  if (environment === null) faults.push(`environment ${GATE_ENVIRONMENT} is absent, or not readable with this token`);
+  let app;
+  let appKnown = false;
+  if (environment !== null) {
+    app = await obtain('readEnvironmentVariable', GATE_ENVIRONMENT, GATE_APP_ID);
+    const secret = await obtain('readEnvironmentSecret', GATE_ENVIRONMENT, GATE_APP_PRIVATE_KEY);
+    if (secret === false) faults.push(`${GATE_APP_PRIVATE_KEY} is absent, or not readable with this token`);
+    if (environment && environment.canAdminsBypass !== false) faults.push(`environment ${GATE_ENVIRONMENT} requires can_admins_bypass: false`);
+    appKnown = typeof app === 'string' && /^[0-9]+$/.test(app);
+    if (!appKnown && app !== undefined) faults.push(`${GATE_APP_ID} ${app === null ? 'is absent, or not readable with this token' : 'must hold decimal digits only'}`);
+    const policy = environment?.deploymentBranchPolicy;
+    if (environment?.policies === null) faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy list is absent, or not readable with this token`);
+    else if (environment && branch && (policy?.protected_branches !== false || policy?.custom_branch_policies !== true || environment.policies?.length !== 1
+      || environment.policies[0].type !== 'branch' || environment.policies[0].name !== branch.name)) {
+      faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy must admit only branch ${branch.name}`);
+    }
+  }
+  for (const rule of required ?? []) {
+    if (rule.integration_id === null) faults.push(`${GATE_CONTEXT} has a missing integration pin`);
+    else if (environment !== null && !appKnown) faults.push(`${GATE_CONTEXT}'s integration pin was not judged against ${GATE_APP_ID}`);
+    else if (environment !== null && BigInt(rule.integration_id) !== BigInt(app)) faults.push(`${GATE_CONTEXT} is pinned to integration ${rule.integration_id}, rather than the gate App`);
+  }
+  return { name, ok: faults.length === 0, detail: faults.length ? faults.join('; ')
+    : `${GATE_CONTEXT} is required on ${branch.name}; environment ${GATE_ENVIRONMENT}, ${GATE_APP_ID} and ${GATE_APP_PRIVATE_KEY} pass` };
+}
+
 /**
  * What a run of the checks prints, and the status it exits with.
  *
@@ -602,14 +652,14 @@ export function report(where, results) {
 
 /**
  * The checks `doctor` runs: the four its card lists, in that order, then the board checks, and
- * then the board-sharing check. Both of the last read the board the config names only once the
+ * then the board-sharing check and the required gate check. The forge checks read only once the
  * config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
  * decides which checks there are and what order they are reported in. A check answers one line,
  * a list of lines, or null, which has nothing to report and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing];
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck];
 
 /**
  * What a verb named `verb` prints and exits with where `here` and the source tree this Rigger is

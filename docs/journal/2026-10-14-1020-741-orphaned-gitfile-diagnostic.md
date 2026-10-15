@@ -1,0 +1,11 @@
+ABOUTME: Records why the orphaned-gitfile workspace test failed on Git 2.56, and how card #741 proved the repair.
+
+# The orphaned-gitfile test read Git's wording
+
+The test "a workspace whose git entry outlives its registration is left named and reaches Done on the first of two pulls" asserted that Git's stderr began `fatal: not a git repository`. Git 2.56.0 reports the same orphaned `.git` file as `fatal: gitfile does not point to a valid repository: …`, so the test failed on CI from GitHub's macOS image `20261013.0424.1`, which ships Git 2.56.0. The cause is Git's diagnostic change: tagged [`v2.55.0` `setup.c:939–940`](https://github.com/git/git/blob/v2.55.0/setup.c#L939-L940) and [`v2.56.0` `setup.c:946–948`](https://github.com/git/git/blob/v2.56.0/setup.c#L946-L948) word `READ_GITFILE_ERR_NOT_A_REPO` differently. No code under `src/` reads either wording. L0's `isWorktree` answers no from the missing `gitdir:` target, and L1 names that answer.
+
+The test now asserts that the target named by the still-present `.git` file is absent, under the coordinator's GIT-DIAG grant on #741. Its exit-128, preserved-state, single L1 `workspace.left` and two-pull Done assertions are unchanged. Each run also prints the selected Git, its version, the locale variables, the `.git` contents, whether the target exists, and Git's status and stderr, so an attempt records what it ran against.
+
+The base failure was reproduced, not inferred. At base `b9c254a`, attempt `base-256-01` selected a Git 2.56.0 built from the kernel.org release tarball under the maker's `TMPDIR` and failed at the old assertion with the 2.56 wording. Attempt `base-255-01`, using Git 2.55.0 built the same way, passed. The historical failing CI job [`38577835097` check (24)](https://github.com/williacj/rigger/actions/runs/38577835097/job/115899517250) matches this reproduction; it is inference from a different host, not a reproduction.
+
+The head runs on actual Git 2.55.0 and 2.56.0, the negative control and the complete attempt ledger are in the pull request that closes #741. The negative control made L0 answer yes for the orphaned state in a disposable clone, and the target then failed at a protected assertion. The control was never committed.

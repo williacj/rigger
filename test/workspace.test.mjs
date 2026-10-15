@@ -31,6 +31,7 @@ import * as workspaceRemoval from '../src/execution/workspace.mjs';
 import { lockWorktreeAt } from './git-repository.mjs';
 import { world as schedulingWorld, COLUMNS, cardIn, columnsOf } from './loop-world.mjs';
 import { renameSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -2104,8 +2105,16 @@ test('a workspace whose git entry outlives its registration is left named and re
   rmSync(admin, { recursive: true });
   assert.equal(existsSync(join(made.path, '.git')), true);
   const answer = spawnSync(GIT, ['-C', made.path, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'], { encoding: 'utf8', env: gitEnvironment() });
+  // Git words its diagnostic for this state differently by version (2.55 and 2.56 differ) and
+  // by locale, so nothing here reads it; the run records it beside the selected git and gitfile.
+  const gitFile = readFileSync(join(made.path, '.git'), 'utf8');
+  const named = resolve(made.path, /^gitdir: (.+)$/m.exec(gitFile)?.[1] ?? '');
+  const { LANG, LC_ALL, LC_MESSAGES, LANGUAGE } = gitEnvironment();
+  t.diagnostic(`git ${GIT}: ${spawnSync(GIT, ['--version'], { encoding: 'utf8', env: gitEnvironment() }).stdout.trim()}; locale ${JSON.stringify({ LANG, LC_ALL, LC_MESSAGES, LANGUAGE })}`);
+  t.diagnostic(`.git ${JSON.stringify(gitFile)}; its target ${named} exists: ${existsSync(named)}`);
+  t.diagnostic(`answer status ${answer.status}; stderr ${JSON.stringify(answer.stderr)}`);
   assert.equal(answer.status, 128);
-  assert.match(answer.stderr, /^fatal: not a git repository/m);
+  assert.equal(existsSync(named), false, `the .git entry names ${named}, which is still there`);
   const before = { files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') };
   assert.equal(before.trees.includes(made.path), false);
   const built = mergedRemoval(here);
