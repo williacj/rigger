@@ -2601,8 +2601,9 @@ async function forcedExit(t, name, forcing, expect) {
   const { exit, events, directory } = exitResults.get(t);
   const reached = forcingReached(directory, forcing);
   // A real-deadline cutoff the forcing did not ask for pre-empts any non-cutoff class: `exitCutoff`
-  // has already proved its real bound, and the class's own terminal was never reached.
-  const timingEdge = (exit.branch === 'cutoff' && expect.branch !== 'cutoff') || ['late', 'spent'].includes(exit.censusCut?.kind) || ['late', 'spent'].includes(exit.confirmCut?.kind) || (exit.C === 'C3' && expect.C !== 'C3') || (exit.B === 'B4' && expect.B !== 'B4');
+  // has already proved its real bound, and the class's own terminal was never reached. So does a
+  // census the real bound cut (C2, C2u, C3 or C4) where the class expects another census ending.
+  const timingEdge = (exit.branch === 'cutoff' && expect.branch !== 'cutoff') || ['late', 'spent'].includes(exit.censusCut?.kind) || ['late', 'spent'].includes(exit.confirmCut?.kind) || (expect.C !== undefined && exit.C !== expect.C && exit.censusCut !== undefined) || (exit.B === 'B4' && expect.B !== 'B4');
   // An ordinary-path failure is never skipped: only a forced class the run did not reach is. A
   // failure the class expects is the forcing's own result once the forcing was reached.
   const expectsFailure = expect.fails ?? expect.branch === 'diagnostic';
