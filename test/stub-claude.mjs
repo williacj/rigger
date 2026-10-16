@@ -5,7 +5,6 @@
 
 import { renameSync } from 'node:fs';
 import { join } from 'node:path';
-import { watch } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { stubGh } from './stub-gh.mjs';
@@ -13,6 +12,8 @@ import { execFileSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
+import { closeSync, constants, openSync, rmSync, writeSync } from 'node:fs';
+import { Socket } from 'node:net';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
 import { composeMarker } from '../src/workflow/marker.mjs';
@@ -64,10 +65,10 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  *   the file, so a release sent at any moment after the file appears is heard. A wait on a change
  *   to its directory missed one sent in the moment after (the engineer's review on #556);
  * - `print`: writes that text to its standard output;
- * - `write`: writes `wrote-<card>-<role>` beside itself;
+ * - `write`: writes `wrote-<card>-<role>` beside itself, then tells a run awaiting it that it has;
  * - `await`: waits until `wrote-<card>-<await>` is beside itself, the file the run for the same card
- *   in the role `await` names writes, watching its directory and reading it once the watch is set,
- *   so a file written at any moment is seen;
+ *   in the role `await` names writes, reading it once it can be told of it, so a file written at
+ *   any moment is seen;
  * - `pr`: where its working directory is a git worktree, commits there, pushes its branch to that
  *   worktree's `origin`, and opens a pull request from it with the `gh` first on its `PATH`;
  * - `push`: commits and pushes that branch, with its existing pull request staying open;
@@ -268,22 +269,74 @@ function leaveTail(dir, card, role, cwd, options) {
 }
 
 /**
- * Settles once a file is at `path`, watching its directory first and then reading whether it is
- * there, so a file written before the watch was set or after is seen, and nothing sleeps.
+ * Settles once a file is at `path`. It first makes and opens `awaited(path)`, a FIFO the run that
+ * writes the file writes `w` to once it has (`announce`), and then reads whether the file is there:
+ * a file written before the FIFO was made is read, and one written after is heard of, and nothing
+ * sleeps or polls. It watches no directory: on macOS `fs.watch` returns before the FSEvents stream
+ * behind it starts, on another thread, and that stream never reports a file written before it
+ * started (#622).
+ *
+ * It rejects where the FIFO cannot be made or opened, or carries anything but `w` before the file
+ * is heard of. However it ends, a `SIGTERM` included, it closes the FIFO and removes it, and it
+ * removes no FIFO it did not make.
  */
 function written(path) {
-  return new Promise((resolved) => {
-    const watcher = watch(dirname(path), () => {
-      if (existsSync(path)) {
-        watcher.close();
-        resolved();
-      }
-    });
-    if (existsSync(path)) {
-      watcher.close();
-      resolved();
+  const fifo = awaited(path);
+  return new Promise((resolve, reject) => {
+    let made = false;
+    let heard;
+    const close = () => {
+      process.off('SIGTERM', cancelled);
+      heard?.destroy();
+      if (made) rmSync(fifo, { force: true });
+      made = false;
+    };
+    // Removes the FIFO, then ends the run on the signal as it would have ended without this listener.
+    function cancelled() {
+      close();
+      process.kill(process.pid, 'SIGTERM');
     }
+    const settle = () => { close(); resolve(); };
+    const fail = (failure) => { close(); reject(failure); };
+    process.once('SIGTERM', cancelled);
+    try {
+      execFileSync('/usr/bin/mkfifo', [fifo], { stdio: ['ignore', 'ignore', 'pipe'] });
+      made = true;
+      // Opened for writing too, so the FIFO never reads as ended once a writer has closed it.
+      heard = new Socket({ fd: openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK), readable: true, writable: false });
+    } catch (failure) {
+      fail(new Error(`the wait for ${path} could not open ${fifo} to be told of it`, { cause: failure }));
+      return;
+    }
+    heard.on('data', (said) => (/^w+$/.test(String(said)) ? settle() : fail(new Error(`${fifo} carried ${JSON.stringify(String(said))}, not the word that ${path} is written`))));
+    heard.on('error', (failure) => fail(new Error(`the wait for ${path} lost ${fifo}`, { cause: failure })));
+    heard.on('end', () => fail(new Error(`${fifo} ended before ${path} was written`)));
+    if (existsSync(path)) settle();
   });
+}
+
+/** The FIFO a run awaiting the file at `path` makes beside it, to be told the file is written. */
+const awaited = (path) => `${path}.awaited`;
+
+/**
+ * Tells the run awaiting the file at `path`, written just now, that it is, by writing `w` to the
+ * FIFO that run made (`written`). Where no FIFO is there (`ENOENT`) or none is open (`ENXIO`), no
+ * run awaits the file or the one that does has yet to read whether it is there, and so will see
+ * it. Any other failure throws, so the run that wrote the file fails and says why.
+ */
+function announce(path) {
+  let fd;
+  try {
+    fd = openSync(awaited(path), constants.O_WRONLY | constants.O_NONBLOCK);
+  } catch (failure) {
+    if (failure.code === 'ENOENT' || failure.code === 'ENXIO') return;
+    throw failure;
+  }
+  try {
+    writeSync(fd, 'w');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
@@ -303,6 +356,7 @@ export async function standInMain() {
   }
   if (act.print !== undefined) process.stdout.write(act.print);
   if (act.write) writeFileSync(marker(dir, 'wrote', card, role), '');
+  if (act.write) announce(marker(dir, 'wrote', card, role));
   if (act.await !== undefined) await written(marker(dir, 'wrote', card, act.await));
   if ((act.pr || act.push) && inWorktree()) {
     const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
