@@ -744,7 +744,8 @@ async function censusExit(t, cell, afterKill = 'omit') {
  * The lines `forceExit` puts at the head of an exit cell's `ps` stand-in, below its warming exit.
  * Each pre-kill read is counted by kind, and a `force.<kind>.<n>` file in the cell's directory
  * makes the nth read of that kind hang until L0 kills it, answer with no rows, fail with standard
- * error, answer as the stand-in does without the group leader, end the target and wait until it is
+ * error, answer with no rows and status 1 (an empty answer `runOnce` also accepts), answer as the
+ * stand-in does without the group leader, end the target and wait until it is
  * reaped or (its parent stopped) a zombie before answering, stop X0's reaping parent before the
  * X-reap read waits on it, or answer as the stand-in does and then fail or hang. Every forced read
  * is logged to `forced`.
@@ -767,6 +768,7 @@ const EXIT_FORCING = [
   '    case "$force_action" in',
   '      hang) exec /usr/bin/tail -f /dev/null ;;',
   '      empty) exit 0 ;;',
+  '      empty-status-1) exit 1 ;;',
   '      fail) printf "forced failure\\n" >&2; exit 2 ;;',
   '      omit-leader) force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@") || exit $?; printf "%s\\n" "$force_answer" | /usr/bin/awk -v pid="$(/bin/cat "$here/group.pid")" \'$1 != pid\'; exit 0 ;;',
   '      end-target-absent) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target" 2> /dev/null; while /bin/ps -p "$force_target" > /dev/null 2>&1; do :; done; printf "target %s absent\\n" "$force_target" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
@@ -2617,6 +2619,7 @@ async function forcedExit(t, name, forcing, expect) {
   else if (failure) throw failure;
   for (const key of ['branch', 'C', 'N', 'F', 'B', 'n']) if (expect[key] !== undefined) assert.equal(exit[key], expect[key], `${key}: ${JSON.stringify(exitSummary(exit))}`);
   if (expect.rounds !== undefined) assert.deepEqual(exit.rounds, expect.rounds, `rounds: ${JSON.stringify(exitSummary(exit))}`);
+  if (expect.statuses !== undefined) assert.deepEqual(exit.statuses, expect.statuses, `statuses: ${JSON.stringify(exitSummary(exit))}`);
   if (failure) t.diagnostic(JSON.stringify({ specifiedFailure: failure.message.split('\n')[0] }));
   if (expect.reason !== undefined) {
     const kills = events.filter(({ event, group }) => event === 'group.killed' && group === exit.group);
@@ -2693,7 +2696,7 @@ const CELL_CASES = [
   ['C5: a census read after a completed round failed', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
   ['K1 cutoff: a refused first group kill after a census timeout fails the cutoff', () => true, { reads: [forced('state', 1, 'hang')], signals: [{ ...refusedKill, step: 1 }] }, { fails: true, failure: /did not reach the group/, branch: 'cutoff', C: 'C2', reason: () => TIMED_OUT }, refusedThenSent],
   ['F5Tz: a confirming read timed out', () => true, { reads: [forced('confirm', 1, 'hang')] }, confirmTimedOut],
-  ['F5Te: an empty confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1 }],
+  ['F5Te: an empty confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1, statuses: [0] }],
   ['A3 timeout: a confirming read timed out after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-hang')] }, confirmTimedOut, (exit) => assert.ok(exit.probes.length > 0, 'the confirming read was cut before its probe')],
   ['A2t: a confirming read timed out while its real probe ran', (name) => name !== 'X0', { probe: 'hang' }, confirmTimedOut, async (exit, directory, name, t) => {
     const record = `${directory}.probe-held`;
@@ -2708,13 +2711,19 @@ const CELL_CASES = [
     assert.equal(existsSync(join(directory, 'sighted-live')), false, 'the live marker was written without a probe result');
   }],
   ['F4z: a failed confirming read', () => true, { reads: [forced('confirm', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
-  ['F4e: an empty confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F4e: an empty confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, statuses: [0], B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
   ['A3 failure: a confirming read failed after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }, (exit) => assert.ok(exit.probes.length > 0, 'the failed confirming read made no probe')],
   ['B2: a failed confirming read then an empty read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'empty')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B2', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
   ['B3: a failed confirming read then a failed read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
   ['B5: a failed confirming read then a timed-out read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
   ['F6z: an occupancy check that fails with another error', () => true, { signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
-  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1 }, probed()],
+  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1, statuses: [0] }, probed()],
+  // The same empty-answer prefix with status 1 and no output, which `runOnce:971–980` accepts as an
+  // answer: the status vector L0 kept is asserted alongside each terminal.
+  ['F3e status 1: an empty status-1 confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty-status-1')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1, statuses: [1] }, probed()],
+  ['F4e status 1: an empty status-1 confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty-status-1'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, statuses: [1], B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F5Te status 1: an empty status-1 confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty-status-1'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1, statuses: [1] }],
+  ['N1 status 1: an empty status-1 completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'empty-status-1'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => n1 + TIMED_OUT }],
   ['A2p: a real probe that fails with no state while the member remains', (name) => name !== 'X0', { probe: 'fail' }, { fails: true, failure: /the last read before the kill did not find the member alive/, branch: 'answered', C: 'C0', F: 'F3z' }, (exit, directory) => {
     const probe = probed(1, '')(exit, directory);
     assert.equal(probe.stderr, '', 'the failed probe wrote standard error');
