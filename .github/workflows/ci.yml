@@ -42,6 +42,117 @@ jobs:
       - run: npm run check:words
       - run: npm run check:headers
       - run: npm run matrix:check
+  # Card #735's controlled cells and reproduction attempts, on the runner the demo job uses. Each
+  # attempt is a row in attempts.tsv with its complete output beside it. This job is removed before
+  # the pull request is judged; the card's journal entry records what it found.
+  demo-probe:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: ['1', '2', '3', '4']
+    env:
+      PROBE_CYCLES: '12'
+      PROBE_ROUNDS: '25'
+      PROBE_WIDTH: '12'
+    steps:
+      - run: |
+          set -o pipefail
+          P="$RUNNER_TEMP/probe"
+          mkdir -p "$P/out"
+          ATT="$P/attempts.tsv"
+          printf 'attempt\tcell\tstart_utc\tstart_load\tend_utc\tend_load\texit\th1_signature\teilseq_lines\ttar_failures\ttarget_sha256\tlocale\tconcurrency\tcommand\n' > "$ATT"
+          load() { sysctl -n vm.loadavg | awk '{print $2}'; }
+          now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+          HINTS=d47a37c21db9dab22cadb985245d5f5b775930710a072954b5be930cf0b39a57
+          BOTTLE_SHA=8af6805a4ba6d9cb9cc74706fe55b7ae6580cfea36f6fe8322c6803be07e116e
+          R="r${{ matrix.replica }}"
+          {
+            echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA replica=$R"
+            sw_vers
+            uname -a
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion RUNNER_NAME=$RUNNER_NAME"
+            sysctl -n hw.logicalcpu hw.memsize machdep.cpu.brand_string
+            tar --version
+            locale
+            env | grep -E '^(LANG|LC_|HOMEBREW_)' || true
+            brew --version
+            brew config
+            df -h /private/tmp "$RUNNER_TEMP"
+            mount
+            diskutil info / || true
+          } > "$P/environment.txt" 2>&1
+          cat "$P/environment.txt"
+          B="$P/bottle"
+          mkdir -p "$B"
+          curl -fsSL -H 'Authorization: Bearer QQ==' -o "$B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" "https://ghcr.io/v2/homebrew/core/sdl3/blobs/sha256:$BOTTLE_SHA"
+          curl -fsSL -H 'Authorization: Bearer QQ==' -H 'Accept: application/vnd.oci.image.index.v1+json' -o "$B/manifest-3.4.16.json" https://ghcr.io/v2/homebrew/core/sdl3/manifests/3.4.16
+          shasum -a 256 "$B"/* | tee "$B/digests.txt"
+          python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); print([(m["annotations"]["org.opencontainers.image.ref.name"], m["annotations"]["sh.brew.bottle.digest"]) for m in d["manifests"] if "tahoe" in m["annotations"]["org.opencontainers.image.ref.name"]])' "$B/manifest-3.4.16.json" | tee "$B/manifest-tahoe.txt"
+          if echo "$BOTTLE_SHA  $B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" | shasum -a 256 -c; then echo "V0 integrity: verified" | tee "$B/integrity-v0.txt"; else echo "V0 integrity: FAILED" | tee "$B/integrity-v0.txt"; fi
+          cp "$B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" "$B/damaged.tar.gz"
+          python3 -I -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[4096] ^= 0xFF; open(p, "wb").write(b)' "$B/damaged.tar.gz"
+          shasum -a 256 "$B/damaged.tar.gz" | tee "$B/damaged-digest.txt"
+          if echo "$BOTTLE_SHA  $B/damaged.tar.gz" | shasum -a 256 -c; then echo "D0 integrity: verified" | tee "$B/integrity-d0.txt"; else echo "D0 integrity: FAILED, as the cell requires" | tee "$B/integrity-d0.txt"; fi
+          # One direct extraction, as Homebrew's logged invocation runs it, into a fresh unpack directory.
+          extract() {
+            local a=$1 cell=$2 file=$3 loc=$4 d st sl su el eu target ts
+            d=$(mktemp -d /private/tmp/homebrew-unpack-probe-XXXXXX)
+            sl=$(load); su=$(now)
+            if [ "$loc" = default ]; then
+              if /usr/bin/env tar --extract --no-same-owner --file "$file" --directory "$d" > "$P/out/$a.out" 2>&1; then st=0; else st=$?; fi
+            else
+              if env LC_ALL="$loc" /usr/bin/env tar --extract --no-same-owner --file "$file" --directory "$d" > "$P/out/$a.out" 2>&1; then st=0; else st=$?; fi
+            fi
+            el=$(load); eu=$(now)
+            target="$d/sdl3/3.4.16/include/SDL3/SDL_hints.h"
+            if [ -f "$target" ]; then ts=$(shasum -a 256 "$target" | cut -d' ' -f1); else ts=absent; fi
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$a" "$cell" "$su" "$sl" "$eu" "$el" "$st" \
+              "$(grep -c 'SDL_hints.h: Write failed: Illegal byte sequence' "$P/out/$a.out")" "$(grep -c 'Illegal byte sequence' "$P/out/$a.out")" \
+              "$(grep -c 'Error exit delayed' "$P/out/$a.out")" "$ts" "$loc" direct "tar --extract --no-same-owner --file $(basename "$file") --directory $d" >> "$ATT"
+            rm -rf "$d"
+          }
+          extract "$R-V0" V0 "$B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" default
+          extract "$R-V1" V1 "$B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" C
+          extract "$R-D0" D0 "$B/damaged.tar.gz" default
+          echo "expected SDL_hints.h sha256: $HINTS"
+          cat "$P/out/$R-V0.out" "$P/out/$R-V1.out" "$P/out/$R-D0.out"
+          # Direct extractions run PROBE_WIDTH at a time, as the download queue's pool runs them.
+          for round in $(seq 1 "$PROBE_ROUNDS"); do
+            for lane in $(seq 1 "$PROBE_WIDTH"); do
+              extract "$R-S$round-$lane" S-direct-concurrent "$B/sdl3--3.4.16.arm64_tahoe.bottle.tar.gz" default &
+            done
+            wait
+          done
+          brew list --formula -1 | sort > "$P/formulae-before.txt"
+          mkdir -p "$(brew --cache)"
+          # One brew install vhs from a cold download cache, at the given download concurrency.
+          cycle() {
+            local a=$1 cell=$2 conc=$3 st sl su el eu
+            find "$(brew --cache)" -maxdepth 1 -type l -delete
+            rm -rf "$(brew --cache)/downloads"
+            sl=$(load); su=$(now)
+            if HOMEBREW_DOWNLOAD_CONCURRENCY=$conc brew install vhs 2>&1 | perl -MTime::HiRes=time -pe 'BEGIN { $| = 1 } $_ = sprintf("%.3f ", time) . $_' > "$P/out/$a.out"; then st=0; else st=$?; fi
+            el=$(load); eu=$(now)
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$a" "$cell" "$su" "$sl" "$eu" "$el" "$st" \
+              "$(grep -c 'SDL_hints.h: Write failed: Illegal byte sequence' "$P/out/$a.out")" "$(grep -c 'Illegal byte sequence' "$P/out/$a.out")" \
+              "$(grep -c 'Failure while executing; `/usr/bin/env tar' "$P/out/$a.out")" n/a default "$conc" "HOMEBREW_DOWNLOAD_CONCURRENCY=$conc brew install vhs" >> "$ATT"
+            brew list --formula -1 | sort > "$P/formulae-after.txt"
+            comm -13 "$P/formulae-before.txt" "$P/formulae-after.txt" > "$P/out/$a.installed"
+            if [ -s "$P/out/$a.installed" ]; then brew uninstall --ignore-dependencies --force $(cat "$P/out/$a.installed") > "$P/out/$a.uninstall" 2>&1; fi
+          }
+          for i in $(seq 1 "$PROBE_CYCLES"); do
+            cycle "$R-B$i-auto" B-brew-auto auto
+            cycle "$R-B$i-serial" B-brew-serial 1
+          done
+          cat "$P/out/$R-B1-auto.out"
+          cat "$ATT"
+          awk -F'\t' 'NR > 1 { n[$2]++; if ($7 != 0) f[$2]++; s[$2] += $8; e[$2] += $9 } END { for (c in n) printf "%s attempts=%d nonzero=%d h1_signature=%d eilseq=%d\n", c, n[c], f[c], s[c], e[c] }' "$ATT" | sort | tee "$P/summary.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: probe-${{ matrix.replica }}
+          path: ${{ runner.temp }}/probe
   demo:
     # Regenerates the demo GIF from docs/demo.tape, which records the installed rigger claiming a
     # card in a world test/demo-world.sh builds. The tape leaves its final screen as text beside
