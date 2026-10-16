@@ -50,3 +50,9 @@ Forward-only `Date.now` jumps were tried and withdrawn, because they count as a 
 What remains unproved is listed in the pull request: the residual risks, and the C615-O9 `exiting`
 ENOENT. The six answered controls still depend on the host answering within the bound, so a
 stalled attempt is a failure in the ledger and never answered proof.
+
+A nested answered run that its test abandons at the test's bound used to stay alive. Its pipes
+then held the file's own process from exiting, so `node --test` waited on the file indefinitely.
+This was proved red at `07aeabf` and green with the fix: an abandoned run's group is killed. An
+exit caller abandoned at its bound did not hold the file, because the scratch teardown's sweep
+ends it. Whether this leak is what held PR CI run 38947643018 is not shown.

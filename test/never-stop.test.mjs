@@ -2847,11 +2847,16 @@ async function answeredRun(t, title) {
   const pattern = `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
   const env = { ...process.env, EXIT_SIGHTING_REQUIRES: 'answered' };
   delete env.NODE_TEST_CONTEXT;
-  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // A nested run its test abandons at the test's bound is ended with its group, which it leads,
+  // since a run left alive holds this file's process from exiting.
+  const abandoned = () => { try { process.kill(-run.pid, 'SIGKILL'); } catch {} };
+  t.signal.addEventListener('abort', abandoned, { once: true });
   let output = '';
   run.stdout.on('data', (chunk) => { output += chunk; });
   run.stderr.on('data', (chunk) => { output += chunk; });
   const [code] = await once(run, 'close');
+  t.signal.removeEventListener('abort', abandoned);
   t.diagnostic(output.split('\n').filter((line) => /^# (tests|pass|fail)|exitSighting/.test(line)).join('\n'));
   assert.equal(code, 0, output);
   // Node 20 counts the tests the pattern skips (CI run 38755885716); Node 26 does not. Either way exactly
@@ -2870,6 +2875,56 @@ for (const title of [
 ]) {
   test(`${title}, answered control`, SETTLES_WITHIN, async (t) => {
     await answeredRun(t, title);
+  });
+}
+
+// The tests a nested run of this file defines where `EXIT_LEAK_HARNESS` names them, so that a test
+// below can abandon an answered run, or an exit caller, at its own bound and see whether the file
+// it ran in still exits. `leak hold` holds until its process is killed.
+if (process.env.EXIT_LEAK_HARNESS === 'answered') {
+  test('leak hold', async () => {
+    const hold = spawn('/usr/bin/tail', ['-f', '/dev/null'], { stdio: 'ignore' });
+    await once(hold, 'exit');
+  });
+  test('leak abandoned answered run', { timeout: 1 }, (t) => answeredRun(t, 'leak hold'));
+}
+if (process.env.EXIT_LEAK_HARNESS === 'exit') {
+  test('leak abandoned exit caller', { timeout: 1 }, (t) => {
+    // The callers running under this run's own temporary directory as the bound ends the test.
+    t.signal.addEventListener('abort', () => {
+      const callers = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR) && line.includes('caller.mjs'));
+      process.stderr.write(`leak callers at abort: ${callers.length}\n`);
+    });
+    return censusExit(t, 'U1');
+  });
+}
+
+/**
+ * Runs this file's test `title` in a nested `node --test` whose process group is its own, with
+ * `EXIT_LEAK_HARNESS` set to `harness`, and settles on its exit status and output once it has
+ * closed. The group is killed at teardown, so a run that never closes ends with the test.
+ */
+async function leakRun(t, harness, title) {
+  const env = { ...process.env, EXIT_LEAK_HARNESS: harness, TMPDIR: realpathSync(temporaryDirectory('rigger-leak-', { context: t })) };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${title}$`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let closed = false;
+  t.after(() => { if (!closed) try { process.kill(-run.pid, 'SIGKILL'); } catch {} });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [code] = await once(run, 'close');
+  closed = true;
+  return { code, output };
+}
+
+for (const [harness, title] of [['answered', 'leak abandoned answered run'], ['exit', 'leak abandoned exit caller']]) {
+  test(`a file whose test ${title.replace('leak abandoned ', 'abandons its ')} at the test's bound still exits`, SETTLES_WITHIN, async (t) => {
+    const { code, output } = await leakRun(t, harness, title);
+    assert.equal(code, 1, output);
+    assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
+    assert.match(output, /test timed out after 1ms/, output);
+    if (harness === 'exit') assert.match(output, /leak callers at abort: 1$/m, output);
   });
 }
 
