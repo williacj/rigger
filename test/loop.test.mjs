@@ -480,6 +480,7 @@ test('a failed second forge read keeps a continuing card in coding and records t
   assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
   const withheld = built.events().find(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === card);
   assert.match(withheld.reason, /HTTP 502/);
+  assert.match(withheld.reason, /card #96/);
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
 });
 

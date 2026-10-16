@@ -124,6 +124,7 @@ test('a failed read of a continuing maker’s pull requests keeps the card in co
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
+  assert.match(w.l2Events()[0].reason, /card #12.*pull requests from branch rigger-12/);
 });
 
 // proves R-WORK-34, R-RECORD-11, R-RECORD-12
@@ -137,6 +138,7 @@ test('a failed second forge read leaves a continuing card in coding and records 
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
+  assert.match(w.l2Events()[0].reason, /card #12.*pull requests from branch rigger-12/);
   assert.deepEqual(w.l2Events()[0].forgeHead, old);
   assert.deepEqual({ reads: w.l2Events()[0].reads, elapsedMs: w.l2Events()[0].elapsedMs }, { reads: 2, elapsedMs: 5000 });
 });

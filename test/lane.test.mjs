@@ -237,6 +237,8 @@ test('unknown then an L2 answer with no reason records the answer that stopped t
   assert.deepEqual(built.repository.merges(), []);
   assert.equal(endsOf(built)[0].outcome, 'not merged');
   assert.match(endsOf(built)[0].reason, /L2 answered judge/);
+  assert.match(endsOf(built)[0].reason, /judges reviewer at/);
+  assert.match(endsOf(built)[0].reason, new RegExp(shaOf(124)));
 });
 
 // proves R-SCHED-26, R-RECORD-10
@@ -324,6 +326,38 @@ test('two merge claims in one invocation both merge after the second waits for i
   assert.deepEqual(secondReads, [0, 5000]);
   assert.deepEqual(built.repository.merges().map(({ number }) => number), [1291, 1301]);
   assert.deepEqual(endsOf(built).map(({ outcome }) => outcome), ['merged', 'merged']);
+});
+
+// proves R-SCHED-26, R-SCHED-15
+test('a merge queued behind an unknown-mergeability wait starts only after the waiting merge ends', async () => {
+  let resume;
+  let elapsed = 0;
+  const clock = {
+    now: () => elapsed,
+    pause: (milliseconds) => new Promise((resolve) => {
+      assert.equal(milliseconds, 5000);
+      resume = () => { elapsed += milliseconds; resolve(); };
+    }),
+  };
+  const built = merging([140, 141], { clock });
+  const read = built.repository.operations.readMergeable;
+  let firstReads = 0;
+  built.repository.operations.readMergeable = async (pull) => {
+    if (pull === 1401 && ++firstReads === 2) return 'unknown';
+    return read(pull);
+  };
+
+  const pulled = built.loop.pull();
+  await positive(() => resume !== undefined && cardsOf(built, 'pull').includes(141));
+  await new Promise((resolve) => setImmediate(resolve));
+  const startsWhileWaiting = cardsOf(built, 'merge.start');
+  resume();
+  await pulled;
+
+  assert.deepEqual(startsWhileWaiting, [140]);
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'merge.start' || event === 'merge.end')
+    .map(({ event, card }) => `${event}:${card}`), ['merge.start:140', 'merge.end:140', 'merge.start:141', 'merge.end:141']);
+  assert.deepEqual(built.repository.merges().map(({ number }) => number), [1401, 1411]);
 });
 
 test('a merge claim records its pull after the claim and before merge.start, holding no slot, and the forge\'s merge moves the card to Done', async () => {
