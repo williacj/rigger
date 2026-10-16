@@ -8,10 +8,9 @@ decision proposed and not yet ratified lives in its pull request, never here.
 `docs/spec/requirements.md` rules the same for a requirement, and its preamble carries the
 reasoning.
 
-Until M5, the owner ratifies a proposed decision by merging its pull request, and the entry binds
-from that merge. A merge by anyone else ratifies nothing. A proposal is therefore written as it
-will read once ratified, and the pull request body is what says it is a proposal. `D21` records
-this arrangement, and what M5 must settle in its place.
+The owner ratifies a proposed decision by writing a sound owner marker on its pull request, and
+the entry binds from that pull request's merge (`D25` rule 4). A proposal is therefore written as
+it will read once ratified, and the pull request body is what says it is a proposal.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
 a duplicate id reds the build.
@@ -34,9 +33,11 @@ means is never an amendment: a later decision supersedes it, so the original sta
 An entry's status opens with `Ratified`, or with `Superseded by D#` once a later decision replaces
 it. Those two openings are the only ones it takes, and an amendment adds `Amended in #NNN` after
 `Ratified` rather than a third. A later amendment adds its pull request after the earlier ones, each
-joined to the one before by `and`, in the order the pull requests merged. A superseded decision's
-body moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is
-never reused.
+joined to the one before by `and`, in the order the pull requests merged. A superseded entry's
+status reads `Superseded by D#.` alone, and drops any amendment it recorded. Its row in the table
+below reads `Superseded by D#`, with no period. A superseded decision's body
+moves to `docs/spec/decisions-retired.md`, and its row stays in the table below so its id is never
+reused.
 
 | id | decision | status |
 |---|---|---|
@@ -60,10 +61,11 @@ never reused.
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Superseded by D22 |
 | D20 | A card's author survives its writing session | Ratified |
-| D21 | Until M5, the owner's merge is the owner's ratification | Ratified. Amended in #319. |
-| D22 | Binding edits need the owner's merge before M5 | Ratified |
+| D21 | Until M5, the owner's merge is the owner's ratification | Superseded by D25 |
+| D22 | Binding edits need the owner's merge before M5 | Superseded by D25 |
 | D23 | The forge refuses a push to the main line | Ratified |
 | D24 | A judge's provider is configured and enforced | Ratified |
+| D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
 
 ## D1 — Redo over resume
 
@@ -722,107 +724,6 @@ the authoring role independently of the filing session without adding state beyo
 its history. Either would require a later decision on reassignment or a different authorship
 rule.
 
-## D21 — Until M5, the owner's merge is the owner's ratification
-
-**Status:** Ratified. Amended in #319.
-
-### Rule
-
-1. Until M5, the owner ratifies a proposal by merging its pull request, and needs no separate
-   verdict to do so. Each register's preamble holds it.
-2. Until M5, on a card whose kind names `owner` among its judges, the owner's merge is the owner's
-   verdict.
-3. So the maker of such a card never holds `R-GATE-4`'s evidence before the card merges, and
-   `D22` rule 1 never lets it merge that card. The owner merges it. `AGENTS.md`, under "Review
-   and merge", holds it.
-4. A merge by anyone but the owner ratifies nothing. This decision leaves every other judge's
-   verdict where it found it, and leaves self-ratifying forbidden.
-5. M5 reverses this decision, as it reverses `D22`. `docs/v0-build-plan.md` installs the git gate
-   hook there. What replaces this decision is M5's to settle, and the table below names what that
-   is.
-
-### Deferred, and what returns it
-
-| Deferred | Returns when |
-|---|---|
-| Which record the gate hook here reads as the owner's verdict: a marker, as `README.md` and M5 promise a consumer, or the owner's merge | M5's decomposition is drafted, and the owner rules on it |
-| Whether the hook can tell the owner's merge from a session's, given that sessions act through the owner's forge account and `R-GATE-3` bars the hook from taking an instruction | M5's decomposition is drafted, and the owner rules on it |
-| Whether this repository ratifies the way Rigger ships to a consumer, so that Rigger still exercises its own L7 path on itself | M5's decomposition is drafted, and the owner rules on it |
-| Who merges an owner-judged card once the hook is the gate, and what `AGENTS.md`'s "Review and merge" and the decision replacing `D22` say about it | M5's decomposition is drafted, and the owner rules on it |
-
-### Notes
-
-The owner stated on 2026-09-24 that merging a proposal's pull request ratifies it. That is how
-#193, which added `D20`, and #194, #196, #199 and #200 were ratified. The owner merged each one,
-and none carries a posted owner verdict (card #203).
-
-The preambles described two events where the owner performs one. They had the owner ratify by
-returning a sound verdict, and the entry bind once the pull request merged. A reader holding that
-wording waits for a verdict nobody posts. On 2026-09-24 the M1 coordinator flagged `D20` as merged
-with no verdict. It later relayed a needs revision onto #196 after the owner's merge had ratified
-it. Under rule 2, a verdict returned after the owner's merge rules on nothing.
-
-Rule 3 originally followed from `D19`; `D22` retains that permission only for cards without an
-owner judge and without an authored binding edit. `R-GATE-4`'s evidence holds every configured
-judge's verdict. Where the owner is one of those judges and the merge is the owner's verdict,
-the evidence is complete only once the card has merged.
-
-The whole arrangement ends at M5, and the owner ruled so on 2026-09-24, in the first round of the
-pull request that proposed this decision. From M5 the hook reads verdict markers and nothing else,
-and it binds every route to the main line, the owner's own merge included (`ARCHITECTURE.md`, "The
-gate"). A merge cannot be a verdict that hook reads, so rules 1 to 3 cannot outlive it unexamined.
-The deferred table names what M5 must settle, and this decision settles none of it.
-
-The forge cannot tell the owner's merge from a session's. Sessions here act through the owner's
-account, so rules 3 and 4 hold because sessions honour them, and nothing observes a breach.
-
-This decision adds no requirement. It binds how the owner and the sessions working in this
-repository ratify and merge, and `docs/spec/requirements.md` holds only what binds Rigger.
-
-One signal ends this decision before M5. Where a merge recorded as the owner's proves to be a
-session's, a merge alone is too weak a record of ratification, and the owner withdraws it.
-
-## D22 — Binding edits need the owner's merge before M5
-
-**Status:** Ratified.
-
-### Rule
-
-1. Until M5, a maker merges its own card once `R-GATE-4`'s evidence is in hand, except when
-   its kind names `owner` as a judge or its work changes an authored document in `AGENTS.md`'s
-   "What binds" table. The maker never merges either card.
-2. A card changing any authored document in that table must run under a kind that names `owner`
-   among its judges. A card without that judge does not merge with the edit. Under `D21`, the
-   owner merges the card after its agent judges are sound; that merge is the owner's verdict and
-   ratification.
-3. The maker's permission reaches the merge alone. Every verdict on which it rests comes from
-   another role. This decision leaves self-ratifying and judging one's own work forbidden.
-4. The permission reaches a card changing any path `AGENTS.md`'s "Self-hosting" section lists,
-   subject to rules 1 and 2 when the card also changes an authored document in "What binds".
-5. M5 reverses this decision. `docs/v0-build-plan.md` installs the git gate hook there, and
-   what admits a merge thereafter is M5's to settle.
-
-### Notes
-
-`D19` gave a maker the merge after the configured judges were sound. A `type:change` card names
-only a reviewer, so its maker could merge an edit to a binding document without the owner's
-ratification. Rule 2 closes that route without changing how a card touching no authored binding
-document is judged or merged. This decision supersedes `D19` because it narrows that decision's
-permission, rather than adding within its scope.
-
-The rule binds the sessions working in this repository until M5. A pull request's links
-and labels can be changed by its maker, and no trusted receipt connects a pull request to its
-card yet. The forge also sees sessions and the owner through the same account (`D21`). A
-consumer check cannot prove this process rule from those facts, so the owner and the sessions
-must honour it when choosing the card's kind and who merges.
-
-This decision adds no requirement. It binds work in this repository rather than Rigger's
-behaviour, which `docs/spec/requirements.md` alone records.
-
-The cost is that an authored binding edit under a kind without `owner` must stop and return to
-an owner-judged kind. That card incurs the configured judges and waits for the owner's merge.
-M5 ends the interim process rule; a trusted gate record would replace the human check.
-
 ## D23 — The forge refuses a push to the main line
 
 **Status:** Ratified.
@@ -924,3 +825,109 @@ The engine does not alternate (rule 6) because alternating in dispatch order nee
 across cards, and that memory is not among what `ARCHITECTURE.md`'s "Failure model" lets Rigger
 keep. Should that requirement come, a stateless rule, such as the parity of the card's number, would serve
 without new state.
+
+## D25 — The owner ratifies by marker, and the gate admits the merge
+
+**Status:** Ratified.
+
+### Rule
+
+1. A judge's verdict, the owner's included, is a marker in the schema `ARCHITECTURE.md`'s "The
+   gate" names. The owner's marker carries the role `owner`.
+2. The gate cannot tell the owner's marker from one a session wrote with the owner's token, and
+   Rigger accepts that. The gate refuses an edited marker, and `report` flags an agent marker no
+   dispatch wrote. `report`'s detection has two edges:
+   - it reads only the markers L2 recorded in the state directory it reads;
+   - it never checks a marker of role `owner`.
+3. A dedicated GitHub App posts the gate's statuses, "rigger/gate" and "self-hosting". Its private
+   key is reachable only from the mint and post steps of each posting job: the gate workflow's,
+   and this repository's "self-hosting" check's. Both jobs run from `main` through the `gate`
+   environment, whose deployment-branch policy admits only the default branch. Agents keep the
+   owner's token for everything else. The design carries one named residual: it is not tested
+   against forging.
+4. In this repository the owner ratifies a proposal by writing a sound owner marker on its pull
+   request. The entry binds from the merge.
+5. Once the gate's checks, "rigger/gate" and "self-hosting", are green, anyone may merge: the
+   engine's lane or a person. A card changing a Self-hosting path or an authored "What binds"
+   document merges only under rule 7. The engine still never dispatches a maker for a card
+   changing a Self-hosting path.
+6. The gate's code runs from Rigger at a pinned, promoted commit (`D7` rule 1). Changing the pin
+   changes the live gate.
+7. A pull request changing an authored document in `AGENTS.md`'s "What binds", or a Self-hosting
+   path, merges only with a sound owner marker at its head. This repository's "self-hosting"
+   check enforces it.
+
+A Self-hosting path is one `AGENTS.md`'s "Self-hosting" lists.
+
+**Reversed by:**
+
+- **Rule 1:** owner markers refused for their form often enough that another record of the
+  owner's verdict costs less than writing a marker.
+- **Rule 2:** a session's marker, written with the owner's token, that admitted a merge; or a
+  credential that lets the gate tell the owner's marker from a session's.
+- **Rule 3:** any run off `main` obtaining the App's secret, or a job on a ref other than the
+  default branch admitted to the `gate` environment. The residual returns if a later incident or
+  review shows a forging route.
+- **Rule 4:** an owner marker that proves to be a session's, or Rigger ceasing to ship the owner's
+  marker as a consumer's record of ratification.
+- **Rule 5:** a merge the checks admitted that a judge later shows the gate should have refused.
+- **Rule 6:** a fault in the live gate whose fix the promotion step delays long enough to block
+  merges the fault refuses.
+- **Rule 7:** a record of the owner's verdict on these pull requests that no session can write,
+  which the check would read in the marker's place.
+
+### Notes
+
+The owner ruled each rule on #642: rule 1 is P1, rule 2 is P2, rule 3 is P26 narrowing P3, rule 4
+is P4, rule 5 is P5 with P13, rule 6 is P6, and rule 7 is P15. P29 named rule 3's residual. P14
+adds that every pull request into `main` comes from its card's branch, which `AGENTS.md`'s
+"Version control" holds.
+
+Rule 1 holds because Rigger promises a consumer that the owner's verdict is a marker. One schema
+lets the gate read every verdict the same way, and tell the owner apart by the role alone. The
+owner's merge is not a verdict, because the gate reads no merge.
+
+Rule 2 accepts what the forge cannot show. Sessions here act through the owner's account, so the
+author of a marker proves nothing about its writer. Refusing an edited marker keeps each verdict
+as its judge wrote it. Flagging an undispatched agent marker detects a forgery after the fact,
+which is as far as v0 goes.
+
+Rule 3 narrows P3, under which M5 added no separate agent credential. A status any Actions run
+could post would let a workflow on another branch satisfy the check (#643, Q-a). An App whose key
+only `main`'s jobs reach closes that route for the status alone. It rests on two GitHub
+behaviours. Environment secrets go only to jobs the deployment-branch policy admits, which GitHub
+documents. `pull_request_target` and `issue_comment` runs execute `main`'s workflow, which #643's
+Q-e measured. No agent ran a forging trial (P28, P29), so the residual stays named.
+
+Rule 4 has this repository ratify the way Rigger ships, so Rigger exercises its own gate on
+itself. The gate reads no merge, so ratifying by merge would leave the gate unable to tell a
+ratified proposal from an unratified one.
+
+Rule 5 lets the lane and a person merge on the same evidence, because the required checks bind
+every route to `main` alike (`ARCHITECTURE.md`, "The gate").
+
+Rule 6 keeps a change under review from altering the gate that judges it. A gate run from the base
+branch would take effect the moment a change to it merged, before anyone promoted it.
+
+Rule 7 replaces `D22` rule 2. A change to a "What binds" document is a ratification, which is the
+owner's alone. A change to a Self-hosting path changes what the gate or the engine runs under. In
+both cases the check reads the owner's marker, where `D22` relied on sessions honouring the rule
+(`D22`, notes).
+
+`D21`'s deferred table named four things M5 must settle. Each is settled here:
+
+| `D21` deferred row | Settled by |
+|---|---|
+| Which record the gate reads as the owner's verdict | Rule 1 |
+| Whether the gate can tell the owner's merge from a session's | Rule 2, and rule 3 for the gate's statuses |
+| Whether this repository ratifies the way Rigger ships | Rule 4 |
+| Who merges an owner-judged card, and what "Review and merge" and `D22`'s replacement say | Rules 5 and 7 |
+
+`D24` holds which provider each agent judge runs on, and what its marker names. This decision
+holds no rule on it.
+
+`D23` stands unchanged. Rule 3 meets `D23`'s second reversal for the gate's status alone. Merges
+still use the owner's token (rule 3), so the ruleset still cannot tell the owner's merge from a
+session's.
+
+This decision adds no requirement row.

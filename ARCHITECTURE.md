@@ -448,9 +448,7 @@ where it is.
 - A card's maker provider changed by relabelling, or a label that does not match the maker a
   person dispatched.
 
-The App design carries one named residual: it is not tested against forging (#642, P29). Either of
-two observations reverses it (#642, P26): any run off `main` obtaining the App's secret, or a job on
-a ref other than the default branch admitted to the `gate` environment.
+The App design's named residual, and what reverses the design, are `D25` rule 3's.
 
 The forge check carries three residuals of its own:
 
