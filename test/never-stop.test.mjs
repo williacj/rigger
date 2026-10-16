@@ -3452,6 +3452,15 @@ if (tracePath && !globalThis.c757Observer) {
       if (inTarget(path) && name === 'tail-birth.json' && mode === 'stop-at-caller') stopNewWork();
       return result;
     };
+    // A tail the forcing killed is reported ended only once its handle's exit has been seen, so
+    // the parent's wait on the command boundary holds until then, and its still-running guard
+    // then finds the tail ended.
+    fs.existsSync = function (path) {
+      const result = real.existsSync(path);
+      const tail = handles.tail;
+      if (result && (mode === 'tail-ends' || mode === 'begin-exit-fails') && inTarget(path) && nameOf(path) === 'up' && tail && tail.exitCode === null && tail.signalCode === null) return false;
+      return result;
+    };
     fs.readdirSync = function (path, ...rest) {
       const result = real.readdirSync(path, ...rest);
       if (mode === 'stop-after-root' && typeof path === 'string' && nameOf(path) === 'directory' && result.length === 0 && !real.existsSync(process.env.C615_STOP_MARKER)) stopNewWork();
