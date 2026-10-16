@@ -93,7 +93,9 @@ function claiming({ config, board, facts, l2, sink, kill }) {
       const { items, declared } = await board.readPriority();
       /** A board item neither claimed nor withheld from another pull in this run. */
       const available = (item) => !claims.has(item.number) && !excluded.has(item.number);
+      if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'facts.start', at: performance.now(), cards: items.filter(available).map(({ number }) => number) })}`);
       const decide = await facts(items.filter(available));
+      if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'facts.end', at: performance.now() })}`);
       // Another trigger may have claimed a card while the facts were read, so the cards no claim
       // holds are read again here, in the synchronous step that takes the claims.
       const unclaimed = items.filter(available);
@@ -418,6 +420,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       } else {
         [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
       }
+      if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'l3.continuation.start', at: performance.now(), card: card.number })}`);
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (advance(answer, number)) continue;
@@ -564,8 +567,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       excluded?.add(card.number);
     }
+    if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'l3.continuation.end', at: performance.now(), card: card.number })}`);
     failure = released(release, claim, failure);
+    if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'freed.start', at: performance.now(), card: card.number })}`);
     if (claimed) await freed();
+    if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'freed.end', at: performance.now(), card: card.number })}`);
     return { reached, failure };
   };
 
@@ -633,6 +639,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
     }
     const worked = await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, excluded) : work(claim, freed, excluded))));
+    if (process.env.RIGGER_596_PHASE_ACTIVE) console.error(`RIGGER596_STEP ${JSON.stringify({ phase: 'trigger.worked.end', at: performance.now() })}`);
     const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
