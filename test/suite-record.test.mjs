@@ -172,6 +172,31 @@ test('a green commit whose tracked file changes during the suite and is staged l
   untracked(f);
 });
 
+test('a green commit beside a tracked change git is told to assume unchanged lands and records nothing', () => {
+  const f = fixture();
+  f.write('README', 'changed, hidden from git diff\n');
+  ok(f, 'update-index', '--assume-unchanged', 'README');
+  assert.equal(f.git('diff', '--quiet').status, 0, 'git diff saw the change, so this test proves nothing');
+  const before = f.tree();
+  commit(f, 'one', 'one\n');
+  assert.notEqual(f.tree(), before, 'the commit did not land');
+  assert.ok(!f.recorded().includes(f.tree()), `the record holds a tree the working tree differs from: ${f.recorded()}`);
+  untracked(f);
+});
+
+test('a green commit whose tracked file git assumes unchanged changes during the suite lands and records nothing', () => {
+  const f = fixture();
+  ok(f, 'update-index', '--assume-unchanged', 'README');
+  f.during('printf "changed during the suite, hidden from git diff\\n" > README\n');
+  const before = f.tree();
+  commit(f, 'one', 'one\n');
+  assert.notEqual(f.tree(), before, 'the commit did not land');
+  assert.equal(f.runs(), 1);
+  assert.equal(readFileSync(join(f.clone, 'README'), 'utf8'), 'changed during the suite, hidden from git diff\n');
+  assert.ok(!f.recorded().includes(f.tree()), `the record holds a tree the working tree differs from: ${f.recorded()}`);
+  untracked(f);
+});
+
 test('a red suite refuses a commit with the existing text and records nothing', () => {
   const f = fixture();
   f.red();
@@ -333,6 +358,15 @@ test('a push of several branches with one tip tree unrecorded runs the suite onc
   commit(f, 'unchecked', 'unchecked\n', '--no-verify');
   suiteRan(f, ['origin', 'one', 'two'], 'refs/heads/two');
   assert.equal(gitIn(f.remote, 'rev-parse', 'refs/heads/one'), gitIn(f.clone, 'rev-parse', 'one'));
+});
+
+test('a push of several branches whose first tip tree is unrecorded runs the suite once and leaves the record unchanged', () => {
+  const f = fixture();
+  recordedBranch(f, 'a-unchecked');
+  commit(f, 'unchecked', 'unchecked\n', '--no-verify');
+  recordedBranch(f, 'b-checked');
+  suiteRan(f, ['origin', 'a-unchecked', 'b-checked'], 'refs/heads/a-unchecked');
+  assert.equal(gitIn(f.remote, 'rev-parse', 'refs/heads/b-checked'), gitIn(f.clone, 'rev-parse', 'b-checked'));
 });
 
 test('a push of deletions only skips the suite and deletes each remote ref', () => {

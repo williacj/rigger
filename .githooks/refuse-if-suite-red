@@ -13,11 +13,19 @@ if [ "${1-}" != --no-record ]; then
 fi
 
 # The tree the index the hook was handed holds, when the working tree holds exactly that: no
-# unstaged change to a tracked file and no untracked file `.gitignore` does not exclude.
+# unstaged change to a tracked file and no untracked file `.gitignore` does not exclude. It
+# re-adds the whole working tree to a fresh index read from that tree, so no flag the hook's
+# index carries, such as assume-unchanged or skip-worktree, can hide a difference.
 equal_tree() {
-  git diff --quiet --no-ext-diff || return 1
-  [ -z "$(git ls-files --others --exclude-standard)" ] || return 1
-  git write-tree
+  tree=$(git write-tree) || return 1
+  probe="$(git rev-parse --absolute-git-dir)/rigger-equal-index.$$"
+  GIT_INDEX_FILE=$probe git read-tree "$tree" &&
+    GIT_INDEX_FILE=$probe git add -A &&
+    [ "$(GIT_INDEX_FILE=$probe git write-tree)" = "$tree" ]
+  equal=$?
+  rm -f "$probe"
+  [ "$equal" -eq 0 ] || return 1
+  printf '%s\n' "$tree"
 }
 
 before=
