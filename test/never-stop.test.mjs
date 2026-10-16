@@ -3574,12 +3574,37 @@ async function listingRun(t, mode, { admission = false, shared = false } = {}) {
   run.stdout.on('data', (chunk) => { output += chunk; });
   run.stderr.on('data', (chunk) => { output += chunk; });
   const [status] = await once(run, 'close', { signal: t.signal });
+  const retained = retainNestedRun(t, { mode, admission, shared, status, output, tracePath, evidence });
   assert.deepEqual(running(directory), [], `a process the nested C615 directory run started outlived its own teardown:\n${output}`);
   const trace = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   const root = join(evidence, 'directory');
   const json = (name) => (existsSync(join(root, name)) ? JSON.parse(readFileSync(join(root, name), 'utf8')) : undefined);
   const scratchLeft = readdirSync(scratchTmp).filter((name) => name.startsWith('c615-mac-directory-'));
-  return { status, output, trace, evidence, root, finalizer: json('finalizer.json'), inventory: json('inventory.json'), scratchLeft, events: linesOf(join(root, 'fixture'), 'events') };
+  return { status, output, trace, evidence, root, retained, finalizer: json('finalizer.json'), inventory: json('inventory.json'), scratchLeft, events: linesOf(join(root, 'fixture'), 'events') };
+}
+
+/**
+ * Keeps a nested run's complete output, its ordered observer trace and its private C615 evidence,
+ * with a record of where the nested control first stopped, among the C615 directory control's
+ * private originals: `C615_EVIDENCE_ROOT/directory/nested/<test>`, outside the checkout and the
+ * test's scratch, so each nested invocation can be reopened after its scratch is removed (#757).
+ */
+function retainNestedRun(t, { mode, admission, shared, status, output, tracePath, evidence }) {
+  assert.ok(process.env.C615_EVIDENCE_ROOT, 'a nested C615 directory run needs a private C615_EVIDENCE_ROOT to keep its originals in');
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  assert.equal(lstatSync(outer).mode & 0o077, 0, 'the private evidence root for nested runs is accessible to other users');
+  const kept = join(outer, 'directory', 'nested', t.name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 80));
+  mkdirSync(kept, { recursive: true, mode: 0o700 });
+  assert.equal(readdirSync(kept).length, 0, 'a nested run would overwrite another run of the same control');
+  writeFileSync(join(kept, 'output.txt'), output);
+  if (existsSync(tracePath)) cpSync(tracePath, join(kept, 'trace.jsonl'));
+  cpSync(evidence, join(kept, 'evidence'), { recursive: true });
+  const stopped = /at (?:async )?TestContext\.<anonymous> \(file:\/\/[^)]*never-stop\.test\.mjs:(\d+):\d+\)/.exec(output);
+  const passed = /^✔ C615 Mac directory full tool exit census /m.test(output);
+  const digest = (path) => (existsSync(path) ? { bytes: lstatSync(path).size, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') } : null);
+  const record = { test: t.name, mode, admission, shared, status, firstStop: passed ? 'passed' : stopped ? `never-stop.test.mjs:${stopped[1]}` : 'not-reached', output: digest(join(kept, 'output.txt')), trace: digest(join(kept, 'trace.jsonl')) };
+  writeFileSync(join(kept, 'record.json'), JSON.stringify(record));
+  return { directory: kept, record };
 }
 
 /** The entries of a nested run's trace whose role and event are these. */
@@ -3647,18 +3672,27 @@ const assertKills = (run, expected, why) => assert.deepEqual(tracedAs(run, 'pare
 /** The finalizer's record of each teardown step. */
 const steps = ({ finalizer }) => ({ release: finalizer.release, tail: finalizer.tail, caller: finalizer.caller, command: finalizer.command, snapshot: finalizer.snapshot });
 
-test('C615 directory listing D0: the unforced control passes on its first real full listing, read well within the caller budget with the tail independently in work', SETTLES_WITHIN, async (t) => {
+test('C615 directory listing D0: the unforced control passes on its first real full listing, read within its caller budget with the tail independently in work', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
   const run = await listingRun(t, 'observe');
   assertControlPassed(run);
   const first = firstListing(run);
   assert.ok(first.status === 0 && first.error === null && first.stderr === '' && first.l0 === 'accepted' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real, accepted, selected answer naming the tail in work');
-  assert.ok(first.ms < 5_000, 'the first full listing did not answer within the caller budget');
   const { remaining } = tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1);
-  assert.ok(remaining > CLEANUP_BOUND && remaining <= DIRECTORY_CALLER_BOUND, `the directory caller does not give its census the 5,000 ms read budget: ${remaining} ms remained for its first listing`);
+  assert.ok(first.ms < remaining, 'the first full listing did not answer within the budget it was given');
   assert.equal(tracedAs(run, 'caller', 'tail-state').find(({ ordinal }) => ordinal === 1).cwd, 'work', 'the tail was not independently in work at the first listing');
   const [read] = tracedAs(run, 'parent', 'command-read');
   assert.ok(read && read.status === 1 && read.stdout === '' && read.stderr === '', 'the teardown did not find the command absent on its first read');
+});
+
+test('C615 directory caller budget: the directory control gives its census 5,000 ms, so its first full listing has more than 1,000 ms to answer', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'observe');
+  assertControlPassed(run);
+  const { remaining } = tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1);
+  assert.ok(remaining > CLEANUP_BOUND && remaining <= DIRECTORY_CALLER_BOUND, `the directory caller does not give its census the 5,000 ms read budget: ${remaining} ms remained for its first listing`);
+  const [unread] = run.events.filter(({ event }) => event === 'directory.unread');
+  assert.equal(unread, undefined, 'the census recorded the directory unread');
 });
 
 test('C615 directory listing hold: a real first full listing held over 1,000 ms answers within the 5,000 ms caller budget, and the control passes on that first answer', SETTLES_WITHIN, async (t) => {
@@ -3681,7 +3715,7 @@ test('C615 directory listing D2: a real first full listing that outlasts the cal
   assert.equal(listings.length, 1, 'the census read the full listing again after its timeout');
   assert.ok(listings[0].error?.code === 'ETIMEDOUT' && listings[0].status === null && listings[0].l0 === 'timed-out' && !listings[0].selected, 'the first full listing did not time out unanswered');
   assert.ok(tracedAs(run, 'controller', 'held-ended-unreleased').length === 1 && tracedAs(run, 'controller', 'released').length === 0, 'the held listing was released rather than timed out');
-  assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && /timed out after 5000 ms/.test(census)), 'the caller did not record the directory as unread for its timed-out listing');
+  assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && /timed out after \d+ ms/.test(census)), 'the caller did not record the directory as unread for its timed-out listing');
   assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown did not end the live tail L0 never reached');
   assert.deepEqual(steps(run), { release: 'written', tail: 'reaped', caller: 'reaped', command: 'absent', snapshot: 'closed-copy' }, 'the teardown did not end every process after the failed guard');
   assert.deepEqual(run.scratchLeft, [], 'the scratch was kept after a clean finalization');
