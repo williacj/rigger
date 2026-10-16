@@ -1,5 +1,6 @@
-// ABOUTME: The fake repository the fake forge holds beside the fake board: its branches, and the pull
-// requests from them with their head SHAs, diffs and comments. Test-only, never imported from src/.
+// ABOUTME: The fake repository the fake forge holds beside the fake board: its branches, its issues,
+// and the pull requests from them with their head SHAs, diffs and comments. Test-only, never
+// imported from src/.
 
 import { gitIn } from './git-repository.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
@@ -23,9 +24,22 @@ export function markerComment({ card, pull, head, body, role = 'reviewer', provi
  * request is from, and is null for this
  * repository's own. `title` and `body` are what it was opened with. `mergeable` is the forge's
  * mergeability answer, `unknown` where none is given, and `checks` each context's check state at
- * its head, by context, a required context it does not name being `absent`.
+ * its head, by context, a required context it does not name being `absent`. `closed` is whether it
+ * was closed without a merge, and `headRepositoryDeleted` whether the repository its head is in was
+ * deleted, which GitHub answers as a head repository of null
+ * (https://docs.github.com/en/graphql/reference/objects#pullrequest). The read of a branch's pull
+ * requests leaves out both, as it leaves them out on GitHub.
  */
-const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks'];
+const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks', 'closed', 'headRepositoryDeleted'];
+
+/**
+ * Everything the fake holds of one issue: its `number`, its `title`, `Card <number>` where none is
+ * given, its `body`, empty where none is given, its
+ * `labels` by name, in the order GitHub answers them, and `repository`, the `owner/name` the forge
+ * answers it in, which is another repository's for an issue transferred out of this one and null
+ * for this repository's own.
+ */
+const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository'];
 
 /** The SHA the fake's merge answers as the merge commit. */
 const MERGE_SHA = 'e'.repeat(40);
@@ -49,21 +63,35 @@ function heldPull(pull) {
   for (const fact of ['number', 'head', 'sha']) {
     if (pull[fact] === undefined) throw new Error(`the fake repository holds every pull request with its ${fact}, and was given one without`);
   }
-  return { base: 'main', merged: false, diff: '', declined: null, mergeBase: null, comments: [], from: null, title: '', body: '', ...pull };
+  return { base: 'main', merged: false, diff: '', declined: null, mergeBase: null, comments: [], from: null, title: '', body: '', closed: false, headRepositoryDeleted: false, ...pull };
 }
+
+/** An issue as the fake holds it, with every fact it was not given at its default. */
+function heldIssue(issue) {
+  const unmodelled = Object.keys(issue).filter((fact) => !ISSUE_FACTS.includes(fact));
+  if (unmodelled.length > 0) throw new Error(`the fake repository does not hold an issue's ${unmodelled.join(', ')}`);
+  if (!Number.isInteger(issue.number)) throw new Error('the fake repository holds every issue with its number, and was given one without');
+  return { title: `Card ${issue.number}`, body: '', labels: [], repository: null, ...issue };
+}
+
+/** The state GitHub answers for pull request `pull`, as the fake holds it. */
+export const pullStateOf = (pull) => (pull.merged ? 'MERGED' : pull.closed ? 'CLOSED' : 'OPEN');
 
 /**
  * A repository holding `branches`, by name, and `pullRequests` as `PULL_FACTS` describes each. By
  * default it holds no branch and no pull request, which is what the forge holds for a card nobody
  * worked. `rules` are the effective rules every base branch's required checks come from, as
- * `readEffectiveRules` answers them, none where none are given.
+ * `readEffectiveRules` answers them, none where none are given. `issues` are its issues, as
+ * `ISSUE_FACTS` describes each, none where none are given. `repo` is its own name, as `owner/name`,
+ * which a pull request from it is answered as being from. `origin`, where given, is the test's bare
+ * repository, whose branches, default branch and files the forge holds.
  *
  * Its `operations` are the forge adapter's repository reads, and nothing else is. `open` and
  * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
  * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], rules, origin } = {}) {
-  const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull) });
+export function createFakeRepository({ branches = [], pullRequests = [], issues = [], rules, origin, repo, environments = {} } = {}) {
+  const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull), issues: issues.map(heldIssue) });
   const current = (candidate) => {
     if (candidate === undefined) return null;
     if (origin !== undefined && !candidate.merged) candidate.sha = headIn(origin, candidate.head) ?? candidate.sha;
@@ -75,13 +103,26 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules, 
     if (!found) throw new Error(`the fake repository holds no pull request #${number}, so ${operation} has nothing to read`);
     return found;
   };
+  /** Whether `named`, a repository an issue or pull request is in, is this one: null names it too. */
+  const isOwn = (named) => named === null || (repo !== undefined && named.toLowerCase() === repo.toLowerCase());
   const asAnswered = (candidate) => {
     const { number, sha, base } = current(candidate);
     return { number, head: sha, base };
   };
   const operations = {
+    /** The same environment settings the executable fake serves through its REST handlers. */
+    readEnvironment: async (name) => {
+      const environment = environments[name];
+      return environment ? structuredClone({
+        canAdminsBypass: environment.can_admins_bypass,
+        deploymentBranchPolicy: environment.deployment_branch_policy,
+        policies: environment.deployment_branch_policy?.custom_branch_policies === true ? environment.branch_policies ?? [] : [],
+      }) : null;
+    },
+    readEnvironmentVariable: async (name, variable) => environments[name]?.variables?.[variable] ?? null,
+    readEnvironmentSecret: async (name, secret) => environments[name]?.secrets?.includes(secret) ?? false,
     readPullRequests: async (branch) => {
-      const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null);
+      const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && pullStateOf(candidate) !== 'CLOSED' && !candidate.headRepositoryDeleted);
       return { open: from.filter((candidate) => !candidate.merged).map(asAnswered), merged: from.filter((candidate) => candidate.merged).map(asAnswered) };
     },
     readBranches: async (names) => Object.fromEntries(names.map((name) => [name, held.branches.includes(name)])),
@@ -105,6 +146,32 @@ export function createFakeRepository({ branches = [], pullRequests = [], rules, 
       const node = commentOf(comment, number, index);
       return { body: node.body, createdAt: node.createdAt, id: node.id, author: node.author?.login ?? null, permission: 'write', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
     })),
+    readDefaultBranch: async () => {
+      const branch = origin === undefined ? null : defaultBranchIn(origin);
+      if (!branch) throw new Error('the fake repository holds no default branch');
+      return branch;
+    },
+    readIssue: async (number) => {
+      const issue = held.issues.find((candidate) => candidate.number === number);
+      if (!issue || !isOwn(issue.repository)) return null;
+      return { number, title: issue.title, body: issue.body, labels: [...issue.labels] };
+    },
+    readPullRequestByNumber: async (number) => {
+      const found = known('readPullRequestByNumber', number);
+      if (repo === undefined) throw new Error(`the fake repository was given no repo, so it cannot name pull request #${number}'s head repository`);
+      const headRepository = found.headRepositoryDeleted ? null : found.from ?? repo;
+      return { number, head: found.sha, branch: found.head, base: found.base, state: pullStateOf(found).toLowerCase(), headRepository, fromRepository: headRepository !== null && isOwn(found.from) };
+    },
+    readFileAt: async (commit, path) => {
+      const found = origin === undefined ? null : entryIn(origin, commit, path);
+      if (found?.type !== 'commit') throw new Error(`the fake repository holds no commit ${commit}`);
+      if (found.entry === null) return null;
+      const { mode, text, isBinary } = found.entry;
+      const kind = { [0o040000]: 'a directory', [0o120000]: 'a symbolic link', [0o160000]: 'a submodule' }[mode];
+      if (kind) throw new Error(`${path} is ${kind}, not a file`);
+      if (isBinary) throw new Error(`${path} is a binary file`);
+      return text;
+    },
   };
   /**
    * The forge adapter's comment write, beside the reads and never among them: posts `body` on pull
@@ -202,3 +269,39 @@ export function comparedIn(origin, base, sha) {
 
 /** The branch the repository at the working directory `cwd` has checked out, or null where none is. */
 export const checkedOut = (cwd) => orNull(() => gitIn(cwd, 'symbolic-ref', '--quiet', '--short', 'HEAD'))?.trim() || null;
+
+/**
+ * The default branch of the bare repository at `origin`, which its `HEAD` names, as `{ name, head }`,
+ * or null where that branch holds no commit, as in a repository nothing was pushed to.
+ */
+export function defaultBranchIn(origin) {
+  const name = orNull(() => gitIn(origin, 'symbolic-ref', '--quiet', '--short', 'HEAD'))?.trim() || null;
+  const head = name && headIn(origin, name);
+  return head ? { name, head } : null;
+}
+
+/**
+ * What the repository at `origin` holds at `path` in the object `commit`, as git answers it: null
+ * where it holds no such object, and otherwise `{ type, oid, entry }`, `type` git's type for the
+ * object. For a commit, `entry` is the tree entry at `path`, null where it holds none, and otherwise
+ * `{ mode, type, text, byteSize, isBinary }`: its git mode as a number, its type, and for a blob its
+ * text, its size in bytes and whether it holds a NUL byte, git's own test for a binary file.
+ */
+export function entryIn(origin, commit, path) {
+  const type = orNull(() => gitIn(origin, 'cat-file', '-t', commit))?.trim();
+  if (!type) return null;
+  const oid = gitIn(origin, 'rev-parse', '--verify', `${commit}^{object}`).trim();
+  if (type !== 'commit') return { type, oid, entry: null };
+  const listed = gitIn(origin, 'ls-tree', '-z', oid, '--', path).split('\0').filter(Boolean)
+    .map((line) => {
+      const [described, named] = line.split('\t');
+      const [mode, kind, object] = described.split(' ');
+      return { mode: Number.parseInt(mode, 8), type: kind, object, path: named };
+    })
+    .find((held) => held.path === path);
+  if (!listed) return { type, oid, entry: null };
+  const { mode, type: kind, object } = listed;
+  if (kind !== 'blob') return { type, oid, entry: { mode, type: kind, text: null, byteSize: null, isBinary: false } };
+  const text = gitIn(origin, 'cat-file', 'blob', object);
+  return { type, oid, entry: { mode, type: kind, text, byteSize: Number(gitIn(origin, 'cat-file', '-s', object)), isBinary: text.includes('\0') } };
+}

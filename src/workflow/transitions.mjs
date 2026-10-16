@@ -74,14 +74,14 @@ export function columnChanges({
    * is handed an `L0` emitter L2 opens from `sink` under the card, so every kill L0 makes in it is
    * recorded with the card's number.
    */
-  const change = async (card, cause) => {
+  const change = async (card, cause, fields = {}) => {
     const { from, to } = CHANGES[cause];
     try {
       await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number }));
     } catch (refusal) {
       throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
     }
-    record(card, { from, to, cause });
+    record(card, { from, to, cause, ...fields });
   };
 
   /**
@@ -101,8 +101,8 @@ export function columnChanges({
    * event under the card saying why, and tells its caller the card and why, with the `facts` L2
    * read, as a `REVIEW_WITHHELD` failure.
    */
-  const withheld = (card, why, facts) => {
-    note(card, 'review.withheld', { reason: why });
+  const withheld = (card, why, facts, fields = {}) => {
+    note(card, 'review.withheld', { reason: why, ...fields });
     throw Object.assign(new Error(`card #${card.number} stays in coding: ${why}`), { code: REVIEW_WITHHELD, facts });
   };
 
@@ -141,10 +141,14 @@ export function columnChanges({
 
     /**
      * L3's lane hands over `next`, L2's `merge` answer for `card` from its rule run again at the
-     * lane, unread: L2 merges the pull request it names at the head it names through the
-     * repository-write side, and answers the adapter's answer unread, or rejects as the call did.
+     * lane: L2 merges the pull request it names at the head it names through the repository-write
+     * side, and marks an unknown-mergeability refusal for L3's full re-read. Other answers pass
+     * through unread, and a failed call rejects as it did.
      */
-    merge: (card, next) => repositoryWrites.mergePullRequest(next.pull, next.head),
+    merge: async (card, next) => {
+      const answer = await repositoryWrites.mergePullRequest(next.pull, next.head);
+      return answer.outcome === 'refused' && answer.reason === 'unknown' ? { ...answer, unknownMergeability: true } : answer;
+    },
 
     /**
      * L3's lane hands over `answer`, what L2's `merge` answered for `card` on `next`, once it has
@@ -161,7 +165,7 @@ export function columnChanges({
         await moved(card, { to: 'done' });
         return;
       }
-      if (answer.outcome !== 'refused') return;
+      if (answer.outcome !== 'refused' || answer.unknownMergeability) return;
       let mergeable;
       try {
         mergeable = await reads.readMergeable(next.pull);
@@ -202,16 +206,18 @@ export function columnChanges({
      *
      * For a fulfilled outcome, the exit code and the forge alone decide, never the output (the
      * owner's ruling on #220, refined by O5 on #467). Anything but zero leaves the card in coding,
-     * and the forge is not read. Zero has L2 read once the pull requests from the card's line of
-     * work, and, where exactly one is open, what L2's judge answer reads of it, as
-     * `pullRequestsFrom` reads them: with exactly one open, the card moves to review (`R-WORK-18`),
+     * and the forge is not read. Zero has L2 read the pull requests from the card's line of work
+     * and, where exactly one is open, what L2's judge answer reads of it, as
+     * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
+     * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
+     * With exactly one open at the expected head, the card moves to review (`R-WORK-18`),
      * and L2 answers the facts it read, `{ line, open, merged }` with those beside them, to its
      * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
      * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome) => {
+    settled: async (card, outcome, { expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       if (outcome?.status === 'rejected') {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message });
         return undefined;
@@ -221,11 +227,29 @@ export function columnChanges({
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
       if (exit !== 0) return undefined;
-      const facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
+      if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`);
+      let facts;
+      try {
+        facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
+      } catch (failure) {
+        if (expectedHead === undefined) throw failure;
+        withheld(card, failure.message, undefined, {
+          ...(lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
+          ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
+        });
+      }
       const { line, open } = facts;
-      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts);
-      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts);
-      await change(card, 'returned');
+      const observed = expectedHead === undefined ? {} : {
+        ...(open.length === 1 ? { forgeHead: open[0].head } : lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
+        ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
+      };
+      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts, observed);
+      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts, observed);
+      if (expectedHead !== undefined && open[0].head !== expectedHead) {
+        if (!last) return { waiting: true, forgeHead: open[0].head };
+        withheld(card, `card #${card.number}'s maker exited 0 at head ${expectedHead}, but the forge last showed pull request #${open[0].number} at head ${open[0].head}`, facts, observed);
+      }
+      await change(card, 'returned', observed);
       return facts;
     },
   };

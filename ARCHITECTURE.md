@@ -34,7 +34,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -50,8 +50,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    started. L2 gives L3 next actions. A next action that dispatches a role carries what that
    dispatch is handed, which L2 composes. L1 delivers it unread, through L0's provider adapter. L3
    gives L1 dispatches, and has L1 make the workspace each
-   attempt at a card runs in. L0's workspace adapter, `src/substrate/worktrees.mjs`, makes and
-   removes workspaces, and only L1 reaches it. L0's forge adapter gives L3 the board's items and L2
+   attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
+   continuing attempt's maker exits, and L3 hands it to L2 unread. L0's workspace adapter,
+   `src/substrate/worktrees.mjs`, makes and removes workspaces and reads that tip, and only L1
+   reaches it. L0's forge adapter gives L3 the board's items and L2
    a card's facts. It carries L2's column changes back to the board, and no
    other layer changes a card's column. The forge adapter has four sides. Each sends only through
    its own runner, which refuses any request outside its side:
@@ -360,7 +362,9 @@ reads:
 
 - the pull request's base from the pull request, never from `GITHUB_REF`, which names the default
   branch even for another base;
-- the config from the base branch;
+- the config from the default branch, at the commit the run reads at its start, whatever the pull
+  request's base: a base branch other than the default one is not gated, and the config is code the
+  posting job runs before it mints the App's token;
 - the card's markers, its acceptance and its labels.
 
 The script hands the rule no required checks, because the forge enforces those itself. One run of
@@ -368,7 +372,7 @@ the script rules on one pull request. It exits 0 to admit, and prints the head S
 reasons. On an `issues` event the script maps the card to its open pull requests itself, because the
 event names none.
 
-The gate workflow's posting job declares `environment: gate`, which admits it only from `main`.
+The gate workflow's posting job declares `environment: gate`, which admits it only from the default branch.
 Its steps run in this order:
 
 1. The gate script runs once for each pull request the event concerns. On an `issues` event, those
@@ -381,7 +385,15 @@ With no pull request open, the script rules on none and the workflow posts nothi
 open, the workflow posts on each one's head the state of that pull request's own run.
 
 The App's private key and its minted token reach only the mint and post steps of each posting job.
-Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's.
+Two jobs post: the gate workflow's, and this repository's own `self-hosting` check's. No step of
+either posting job runs an action, so no code but the workflow's own runs in a job the key reaches.
+
+This repository's `self-hosting` check is its own and does not ship. Its script lives under
+`.github/scripts/`. An inline step fetches the tree at the commit the run's workflow file was read
+from, a commit of the default branch. The check runs from that tree, never from a pinned install,
+because it rules on this repository's own lists. It takes the gate script's card resolution,
+mapping and config read from that tree. It reads the lists at the default-branch commit it read
+the config at, and reaches the forge through L0's read side alone.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
 required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
@@ -404,13 +416,16 @@ The forge-side pieces other than the workflow are forge settings the owner provi
 ruleset is (`D23`):
 
 - the gate App, holding Commit statuses (write) and Metadata (read), and its installation;
-- the `gate` environment, with a deployment-branch policy admitting only `main`, and
+- the `gate` environment, with a deployment-branch policy admitting only the default branch, and
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts, each pinned to the App's id.
 
-Of the gate's forge-side pieces, `init` forks only the workflow. `doctor` reads each of those
-settings through L0's read side. No verb writes one.
+Of the gate's forge-side pieces, `init` forks only the workflow.
+
+`doctor` reads each of those settings through L0's read side but the App and its installation,
+which a user's token cannot read (#659). For them it reads each required context's pin against
+the variable `GATE_APP_ID`. No verb writes one.
 
 ### The engine's merge decision
 
@@ -418,6 +433,12 @@ The engine's lane runs the rule again before it merges. There the rule takes the
 branch's effective rules require, read through L0's read side, less the gate's own context. No config
 key names them. A person's merge does not run the rule again, and the required check is what binds
 it.
+
+Where the forge reads the pull request's mergeability as unknown, L2's answer says so in a field of
+its own, beside its reason. L2 answers the same where the forge refuses the merge call for that
+reason. The lane then reads the card again and has L2 run the rule again, holding its turn, until L2
+answers otherwise or the bound `R-SCHED-26` sets has passed. A wait that ends unknown leaves the card
+where it is.
 
 ### What the gate cannot tell apart
 
@@ -429,12 +450,15 @@ it.
 
 The App design's named residual, and what reverses the design, are `D25` rule 3's.
 
-The forge check carries two residuals of its own:
+The forge check carries three residuals of its own:
 
 - After an acceptance edit, the earlier status stands until the next run of the card's concurrency
   group posts. Under `cancel-in-progress: false`, an earlier run that read the old acceptance can
   still post after the edit.
 - An issue event whose read of the card's pull requests fails leaves the earlier status in place.
+- A head can go without a status. A newer run in the card's concurrency group cancels one still
+  pending, whatever `cancel-in-progress` says. In #664's exit run, GitHub cancelled 28 of the
+  fixture's 60 gate runs (#758). The last run still starts after the last event and posts last.
 
 Neither place stops a token that can rewrite the repository's settings (`D23` rule 3).
 
@@ -481,8 +505,8 @@ the card once.
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more
 things outlive a restart outside it: a card's workspace, and the markers on its pull request, which
-the forge holds. Nothing reads a workspace back. An attempt that starts a card's work from the
-beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
+the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
+a card's work from the beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
 work, after a judge returns it to its maker, starts in a workspace at the head of the card's line of
 work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
@@ -507,12 +531,17 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 
 1. L3 has L1 make the workspace the attempt runs in.
 2. L3 dispatches each provisioning step L2 selected, one at a time, in that workspace.
-3. L3 dispatches the maker once L2 finds that no required step failed.
+3. L3 dispatches the maker once L2 finds that no required step failed. Once a maker continuing the
+   card's work exits 0, L3 has L1 read the tip of the card's line of work in the workspace.
 4. L3 dispatches every agent judge L2 names, at once, once L2 finds the maker's work delivered.
    For each judge, L3 first has L1 make the judge's directory, and dispatches the card's
    selected steps there.
 
 A card L3 pulls from Review starts at step 4.
+
+While L2 reads a continuing attempt's pull request at a head other than the tip L1 read, L3 has L2
+read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
+L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
 directories: its workspace, and each of its roles' judge and scratch directories. L2 moves the card

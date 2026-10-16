@@ -611,15 +611,20 @@ function signal(group, name, kill = SIGNAL) {
  * found with `git maintenance --detach`. So a process can exec between the reads. One `ps` run
  * reads a process's name from the process table and its arguments a moment later, so a process
  * that execs in between is named by one image and described by the other: the engineer judge on
- * #354 measured that in 16 of 3,000 direct reads. So each round reads the states, the command
- * lines, then each name in a `ps` run of its own, then the command lines and the states again. It
- * keeps a round only where both state reads find the same processes, none caught mid-exec (state
- * `?`), and each live one's two command lines agree, with its name read between them. Otherwise it
- * pauses and reads again. A zombie is left out, because it is already dead. Where `deadline` passes
- * first, it keeps what the last round held, each live process the last state read found, by the
- * name and the command line read in that round. Alongside those members it carries every pid a
- * completed round's state or command read showed, with its name and second command line where
- * both answered. The confirming read decides whether an earlier sighting is still alive.
+ * #354 measured that in 16 of 3,000 direct reads. A round first reads the states. Once a whole
+ * round has supplied members, a later first state read containing `?` stops that round there: it
+ * cannot agree, so the census keeps the last whole round. Otherwise the round reads the command
+ * lines, each name in a `ps` run of its own, then the command lines and the states again. It agrees
+ * only where both state reads find the same processes, none caught mid-exec (state `?`), and each
+ * live one's two command lines agree, with its name read between them. A zombie is left out,
+ * because it is already dead. After a round or skipped first read, where the time left can hold
+ * another attempt as long as that one took, the next requested pause is capped to leave that time;
+ * it never exceeds the uncapped pause. Then the census reads again. Where `deadline` passes first,
+ * it keeps the members of the last whole round, each live process that round's final state read
+ * found, by the name and command line read in that round. A skipped first read does not replace
+ * them. Alongside those members it carries every pid a completed round's state or command read
+ * showed, with its name and second command line where both answered. The confirming read decides
+ * whether an earlier sighting is still alive.
  *
  * So a name and a command line can come from two images (`D16` rule 3): a process that went on
  * exec'ing past `deadline`, or that exec'd between the two command-line reads into one with the same
@@ -627,6 +632,9 @@ function signal(group, name, kill = SIGNAL) {
  * Node 26.5.0 on macOS 27.0 on 2026-10-02, against the suite's survivor that re-executes inside the
  * first read of command lines: over 10 runs, the census recorded the image it became, by its name
  * and command line alike, since its name is read after that read.
+ * A member can exec after the last whole round; if later first state reads report `?`, the
+ * deadline result still carries that earlier round's name and command line. How old that kept
+ * identity can be relative to the last read has not been measured.
  *
  * Reads that agree on no process at all are kept only where signal 0 no longer reaches the group,
  * because a read that failed can list nothing, even one that exits 1 and prints nothing (`run`).
@@ -693,7 +701,7 @@ function signal(group, name, kill = SIGNAL) {
  * - `ps` exits 1, printing nothing, when no process matches, and writes to standard error when a
  *   read fails (`run`).
  */
-function* census(group, kill, deadline) {
+export function* census(group, kill, deadline, now = Date.now, trace) {
   // Why the census's last reads that agreed were not kept: they left out what signal 0 reached.
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
@@ -704,24 +712,44 @@ function* census(group, kill, deadline) {
     try {
       return yield args;
     } catch (error) {
-      throw unseen ? new Error(`the census's reads ${unseen}: ${error.message}`) : error;
+      throw unseen ? Object.assign(new Error(`the census's reads ${unseen}: ${error.message}`), { code: error.code }) : error;
     }
   };
   const column = function* (name) {
     return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
   };
+  let took = 0;
+  let serial = 0;
   for (let wait = 0; ; wait = longer(wait)) {
-    if (wait > 0) yield wait;
-    if (last !== undefined && Date.now() >= deadline) return { members: last, sightings };
+    const left = deadline - now();
+    const requested = left >= took ? Math.min(wait, left - took) : wait;
+    trace?.({ phase: 'wait.decision', round: serial + 1, clock: now(), deadline, left, took, baseWait: wait, requested });
+    if (requested > 0) yield requested;
+    if (last !== undefined && now() >= deadline) {
+      trace?.({ phase: 'census.deadline', clock: now(), deadline, members: last });
+      return { members: last, sightings };
+    }
+    const began = now();
+    serial += 1;
+    trace?.({ phase: 'round.start', round: serial, clock: began, deadline });
     let round;
     try {
       const before = yield* column('stat');
+      // A mid-exec state cannot make this round agree. Keep the last whole round while one exists.
+      if (last !== undefined && [...before.values()].some((state) => state.startsWith('?'))) {
+        took = now() - began;
+        trace?.({ phase: 'round.skip', round: serial, clock: now(), took, reason: 'mid-exec first state', before: [...before] });
+        continue;
+      }
       const lines = yield* column('command');
       const names = yield* namesOf([...before].filter(([, state]) => live(state)).map(([pid]) => pid), read);
       const commands = yield* column('command');
       const after = yield* column('stat');
       round = { before, lines, names, commands, after };
+      took = now() - began;
+      trace?.({ phase: 'round.read', round: serial, clock: now(), took, before: [...before], after: [...after], names: [...names], lines: [...lines], commands: [...commands] });
     } catch (error) {
+      trace?.({ phase: 'round.failure', round: serial, clock: now(), code: error.code, message: error.message });
       // A read given up on at `deadline` leaves the last round to keep, where there is one.
       if (last !== undefined && (error.code === 'ETIMEDOUT' || error.code === LATE)) return { members: last, sightings };
       throw error;
@@ -735,11 +763,16 @@ function* census(group, kill, deadline) {
     unseen = after.size === 0 && occupied(group, kill) ? 'named no process of the group while it still had one'
       : !after.has(group) && answers(group, kill) ? `left out the group's leader, ${group}, while signal 0 still reached its pid`
       : undefined;
-    if (unseen) continue;
+    if (unseen) {
+      trace?.({ phase: 'round.unseen', round: serial, clock: now(), reason: unseen });
+      continue;
+    }
     const living = [...after].filter(([, state]) => live(state)).map(([pid]) => pid);
     last = living.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
     const settled = [before, after].every((states) => [...states.values()].every((state) => !state.startsWith('?')));
-    if (settled && samePids(before, after) && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid))) return { members: last, sightings };
+    const agreed = settled && samePids(before, after) && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid));
+    trace?.({ phase: 'round.decision', round: serial, clock: now(), deadline, agreed, settled, members: last });
+    if (agreed) return { members: last, sightings };
   }
 }
 
@@ -765,7 +798,8 @@ function* namesOf(pids, read) {
   for (const pid of pids) {
     const printed = yield* read(['-p', String(pid), '-o', 'ucomm=']);
     // `ps` ends the name with its padding, spaces alone, and a newline, which are not the name's own.
-    if (printed !== '') names.set(pid, printed.replace(/ *\n$/, ''));
+    const name = printed.replace(/ *\n$/, '');
+    if (name !== '') names.set(pid, name);
   }
   return names;
 }
@@ -789,20 +823,27 @@ function rowsOf(printed) {
  * pause it yields, and hands back what `looks` returns. The reads are given up at `deadline`,
  * which is `timeout` milliseconds after the first starts where the caller gives none.
  */
-async function reading(looks, ps, timeout, deadline = Date.now() + timeout) {
+async function reading(looks, ps, timeout, deadline = Date.now() + timeout, trace) {
   let look = looks.next();
   while (!look.done) {
     if (typeof look.value === 'number') {
+      trace?.({ phase: 'pause.start', clock: Date.now(), requested: look.value, cpu: process.cpuUsage() });
       await pause(look.value);
+      trace?.({ phase: 'pause.end', clock: Date.now(), cpu: process.cpuUsage() });
       look = looks.next();
     } else {
       let printed;
+      const args = look.value;
+      const started = Date.now();
+      trace?.({ phase: 'read.start', clock: started, deadline, remaining: deadline - started, args, cpu: process.cpuUsage() });
       try {
         printed = await run(...toolOf(look.value, ps), deadline - Date.now(), timeout);
       } catch (error) {
+        trace?.({ phase: 'read.failure', clock: Date.now(), args, code: error.code, message: error.message, cpu: process.cpuUsage() });
         look = looks.throw(error);
         continue;
       }
+      trace?.({ phase: 'read.answer', clock: Date.now(), args, length: printed.length, prefix: printed.slice(0, 100), suffix: printed.slice(-100), cpu: process.cpuUsage() });
       look = looks.next(printed);
     }
   }
@@ -975,19 +1016,19 @@ function runOnce(ps, args, remaining, timeout) {
  *   kill ended; and where the last read after the kill fails, so is each the last read that
  *   succeeded found alive, though a later kill may have ended it (`reachedUnread`).
  */
-async function contain(group, { ps, readTimeout, kill = SIGNAL }, killed) {
+async function contain(group, { ps, readTimeout, kill = SIGNAL, trace }, killed) {
   if (!occupied(group, kill)) return [];
   // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
   const within = (step, spare = 0) => {
     const deadline = Date.now() + readTimeout;
-    return reading(step(deadline), ps, readTimeout, deadline + spare);
+    return reading(step(deadline), ps, readTimeout, deadline + spare, trace);
   };
   let named;
   let left;
   let listed;
   let unnamed;
   try {
-    const { members, sightings } = await within((deadline) => census(group, kill, deadline));
+    const { members, sightings } = await within((deadline) => census(group, kill, deadline, Date.now, trace));
     ({ named, left, listed } = await within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline), readTimeout));
   } catch (error) {
     unnamed = error.message;
@@ -1679,7 +1720,7 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, kill = SIGNAL }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, kill = SIGNAL, trace }) {
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -1710,7 +1751,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     child.stdin.end(input);
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, ps, lsof, readTimeout, kill, onExit, directory: real, scratch: scratchReal, child, events: [], contained: false };
+  const call = { emitter, ps, lsof, readTimeout, kill, onExit, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
   // more of it.
@@ -2050,16 +2091,15 @@ const notStarted = (command, why) => Object.assign(new Error(`the process adapte
  * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
  * `schedule` and `cancel` are Node's timers unless a test gives its own.
  *
- * No timer holds the process open, so one left armed never keeps the caller from exiting. What the
- * delay races holds the process open itself where it must: a running command's child handle, and
- * the pipes it writes to.
+ * By default no timer holds the process open: what a delay races must do that itself. A caller
+ * waiting for a forge read passes `hold`, since no child process need remain open during its wait.
  */
-export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
+export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout, hold = false } = {}) {
   let timer;
   const arm = (left) => {
     const step = Math.min(left, TIMER_MAX);
     timer = schedule(() => (left > step ? arm(left - step) : done()), step);
-    timer.unref?.();
+    if (!hold) timer.unref?.();
   };
   arm(delay);
   return () => cancel(timer);

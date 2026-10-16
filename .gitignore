@@ -5,3 +5,5 @@ node_modules/
 /spikes/
 # The demo tape's final screen as text, which CI reads; the GIF beside it is what is kept.
 /docs/demo.txt
+# The commit a pack was made from, which the prepack script writes and `init` reads (#702).
+/src/package-commit.json

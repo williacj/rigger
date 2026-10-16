@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chmodSync, lstatSync, readlinkSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
@@ -17,10 +18,12 @@ import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
 import { bareCloneInto, cloneInto, worktreeAt } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { OUTLIVED, TAIL, UNKILLED, alive, childrenIn, fixture, gitCalls, gitHanging, gitLeavingChild, gitRecording, gone, holding, leave, read, ready, withFirstOnPath } from './process-fixtures.mjs';
+import { until } from './process-fixtures.mjs';
 import { GIT } from './process-fixtures.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { runCommand } from '../src/substrate/process.mjs';
 import riggerConfig from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -1270,6 +1273,244 @@ test('given a git stand-in for init\'s origin read that never exits, the read se
   for (const pid of [group, leftChild(directory)]) assert.deepEqual(killsOf(target, pid), ['timeout.killed'], `process ${pid}`);
 });
 
+// proves R-STATE-8
+test('given the origin stand-in loses its tail after readiness, its shell still waits for init to time it out', async (t) => {
+  const directory = holding(t);
+  gitHanging(directory);
+  const script = join(directory, 'git');
+  const body = readFileSync(script, 'utf8');
+  assert.ok(body.includes('\nwait\n'));
+  writeFileSync(script, body.replace('\nwait\n', '\n: > "$here/wait-start"\nwait\nstatus=$?\necho "$status" > "$here/wait-status"\n'));
+  const target = repository('https://github.com/acme/widgets.git');
+  const packageRoot = elsewhere();
+  const trace = [];
+  const note = (event, fields = {}) => trace.push({ at: Date.now(), event, ...fields });
+  const schedule = globalThis.setTimeout;
+  const cancel = globalThis.clearTimeout;
+  const signal = process.kill.bind(process);
+  const emit = ChildProcess.prototype.emit;
+  const timers = new Map();
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    const armed = Date.now();
+    const timer = schedule(() => {
+      if (delay === OUTLIVED) note('timer.callback', { deadline: armed + delay });
+      callback(...args);
+    }, delay);
+    if (delay === OUTLIVED) { timers.set(timer, armed + delay); note('timer.arm', { deadline: armed + delay }); }
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => {
+    if (timers.has(timer)) note('timer.cancel', { deadline: timers.get(timer) });
+    return cancel(timer);
+  };
+  process.kill = (pid, name) => {
+    if (name !== 0) {
+      const group = -pid;
+      const tailFile = join(directory, `child-${group}.pid`);
+      const tail = pid < 0 && existsSync(tailFile) ? Number(read(directory, `child-${group}.pid`)) : null;
+      const members = tail === null ? 'unknown' : spawnSync('/bin/ps', ['-p', `${group},${tail}`, '-o', 'pid=,stat=,xstat='], { encoding: 'utf8' }).stdout.trim();
+      note('kill.attempt', { pid, name, tail, members });
+    }
+    const result = signal(pid, name);
+    if (name !== 0) note('kill.sent', { pid, name });
+    return result;
+  };
+  ChildProcess.prototype.emit = function (event, ...args) {
+    if (event === 'spawn' || event === 'exit') note('process.' + event, { pid: this.pid, args });
+    return emit.call(this, event, ...args);
+  };
+
+  const originAsk = async (command, args, options) => {
+    note('origin.ask');
+    const answer = asked(command, args, options);
+    await until(() => existsSync(join(directory, 'wait-start')), t);
+    const child = leftChild(directory);
+    assert.equal(alive(child), true, `tail ${child} ended before this test could signal it`);
+    process.kill(child, 'SIGKILL');
+    const result = await answer;
+    note('origin.result', { status: result.status, timedOut: result.timedOut });
+    t.diagnostic(JSON.stringify({ tail: child, endedBy: 'test SIGKILL', shellStatus: result.status, timedOut: result.timedOut }));
+    return result;
+  };
+  let ran;
+  try {
+    ran = await withFirstOnPath(directory, () => init({ target, packageRoot, timeout: OUTLIVED, ask: originOnly(originAsk) }));
+  } finally {
+    globalThis.setTimeout = schedule;
+    globalThis.clearTimeout = cancel;
+    process.kill = signal;
+    ChildProcess.prototype.emit = emit;
+    for (const file of ['git.pid', 'ready', 'wait-start', 'wait-status']) {
+      const path = join(directory, file);
+      note('marker.' + file, existsSync(path) ? { created: statSync(path).birthtimeMs, value: file.endsWith('pid') || file.endsWith('status') ? read(directory, file).trim() : undefined } : { observed: 'unknown' });
+    }
+    t.diagnostic('C623_FORCE ' + JSON.stringify(trace));
+  }
+
+  assert.match(ran.text, new RegExp(`timeout of ${OUTLIVED} ms ended \`git `), ran.text);
+  const group = Number(read(directory, 'git.pid'));
+  assert.equal(alive(-group), false, `a process of group ${group} is alive`);
+  assert.deepEqual(killsOf(target, group), ['timeout.killed']);
+});
+
+/** A test-only origin read with a controlled timer and process-table pause. */
+async function cellOrigin(t, cell) {
+  const [ending, childKind, readiness] = cell.split('-');
+  const directory = holding(t);
+  gitHanging(directory);
+  const shell = join(directory, 'git');
+  const original = readFileSync(shell, 'utf8');
+  const fifo = (name) => {
+    const path = join(directory, name);
+    assert.equal(spawnSync('/usr/bin/mkfifo', [path]).status, 0);
+    return path;
+  };
+  const flow = childKind === 'D0' || childKind === 'D1' ? fifo('flow') : undefined;
+  const readyGate = readiness !== 'R0a' ? fifo('ready-gate') : undefined;
+  const shellGate = ending === 'C3' && childKind === 'D3' && readiness !== 'R1' ? fifo('shell-gate') : undefined;
+  const psGate = ending === 'C3' || ((ending === 'C1' || ending === 'C4' || ending === 'C6') && readiness === 'R1') ? fifo('ps-gate') : undefined;
+  const controlGate = ending === 'C4' ? fifo('control-gate') : undefined;
+  const command = {
+    D0: '/usr/bin/tail -n +1 "$here/flow"',
+    D1: '/usr/bin/tail -n +1 "$here/flow" "$here/missing"',
+    D2: TAIL,
+    D3: '/no/such/rigger-tail',
+    D4: TAIL,
+    F: TAIL,
+  }[childKind];
+  let body = original.replace(TAIL, command);
+  if (readyGate) body = body.replace(': > "$here/ready"', 'read gate < "$here/ready-gate"\n: > "$here/ready"');
+  if (shellGate) body = body.replace(': > "$here/ready"', ': > "$here/ready"\nread gate < "$here/shell-gate"');
+  body = childKind === 'D4'
+    ? body.replace('\nwait\n', '\n: > "$here/wait-start"\nwait\n')
+    : body.replace('\nwait\n', () => '\n: > "$here/wait-start"\nwait "$(/bin/cat "$here/child-$$.pid")"\necho "$?" > "$here/child-status"\nwait\necho "$?" > "$here/wait-status"\n');
+  if (controlGate) body = body.replace('echo "$?" > "$here/wait-status"', 'echo "$?" > "$here/wait-status"\nread gate < "$here/control-gate"');
+  writeFileSync(shell, body);
+  const ps = psGate === undefined ? undefined : fixture(directory, 'ps-gate-command', [
+    'case " $* " in',
+    '  *" -g "*) if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; read gate < "$here/ps-gate"; fi ;;',
+    'esac',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  if (ending === 'C6') rmSync(join(directory, 'hold'));
+  if (ending === 'C7') {
+    const exitLine = 'echo "$?" > "$here/wait-status"';
+    const script = readFileSync(shell, 'utf8');
+    writeFileSync(shell, script.replace(exitLine, exitLine + '\nexit 7'));
+  }
+  const target = repository('https://github.com/acme/widgets.git');
+  const packageRoot = elsewhere();
+  const timeout = readiness === 'R0b' ? 1 : OUTLIVED;
+  const timeline = [];
+  const note = (event, detail = {}) => timeline.push({ at: Date.now(), event, ...detail });
+  const schedule = globalThis.setTimeout;
+  const cancel = globalThis.clearTimeout;
+  const signal = process.kill.bind(process);
+  const emit = ChildProcess.prototype.emit;
+  const timer = { callback: undefined, deadline: undefined, cancelled: false, fired: false };
+  let timerHandle;
+  let originPid;
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (delay !== timeout || timer.deadline !== undefined) return schedule(callback, delay, ...args);
+    timer.deadline = Date.now() + delay;
+    note('timer.arm', { deadline: timer.deadline });
+    const fire = () => { if (Date.now() < timer.deadline) return setImmediate(fire); timer.fired = true; note('timer.callback'); callback(...args); };
+    if (readiness === 'R0b') { timer.callback = fire; timerHandle = { unref() {} }; return timerHandle; }
+    timerHandle = schedule(fire, delay);
+    return timerHandle;
+  };
+  globalThis.clearTimeout = (handle) => {
+    if (handle === timerHandle) { timer.cancelled = true; note('timer.cancel'); }
+    return cancel(handle);
+  };
+  process.kill = (pid, name) => {
+    if (name !== 0 && pid === -originPid) {
+      const group = -pid;
+      const childFile = join(directory, `child-${group}.pid`);
+      const member = pid < 0 && existsSync(childFile) ? Number(read(directory, `child-${group}.pid`)) : undefined;
+      const members = member === undefined ? 'unknown' : spawnSync('/bin/ps', ['-p', `${group},${member}`, '-o', 'pid=,stat='], { encoding: 'utf8' }).stdout.trim();
+      note('signal.attempt', { pid, name, member, members });
+    }
+    const result = signal(pid, name);
+    if (name !== 0 && pid === -originPid) note('signal.sent', { pid, name });
+    return result;
+  };
+  ChildProcess.prototype.emit = function (event, ...args) {
+    if (event === 'spawn' && this.spawnfile === 'git' && originPid === undefined) originPid = this.pid;
+    if ((event === 'spawn' || event === 'exit') && this.pid === originPid) note('shell.' + event, { pid: this.pid, args });
+    return emit.call(this, event, ...args);
+  };
+  const status = async (commandName, args, options) => {
+    if (ps === undefined) return asked(commandName, args, options);
+    const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, ps });
+    return { status: result.exit, timedOut: result.timedOut, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
+  };
+  const originAsk = async (commandName, args, options) => {
+    note('origin.ask');
+    const answer = status(commandName, args, options);
+    if (readiness === 'R0b') {
+      await until(() => timer.deadline !== undefined && Date.now() > timer.deadline, t);
+      note('nominal.deadline');
+    }
+    if (readiness === 'R1') await until(() => timer.fired && existsSync(join(directory, 'ps-asked')), t);
+    if (readyGate) writeFileSync(readyGate, 'x');
+    await until(() => existsSync(join(directory, 'ready')), t);
+    note('marker.ready', { created: statSync(join(directory, 'ready')).birthtimeMs });
+    const child = leftChild(directory);
+    note('background', { child, image: spawnSync('/bin/ps', ['-p', String(child), '-o', 'ucomm=,stat='], { encoding: 'utf8' }).stdout.trim() });
+    if (readiness === 'R0b' && (ending === 'C1' || ending === 'C3')) timer.callback();
+    if (ending === 'C3' || ((ending === 'C1' || ending === 'C6') && readiness === 'R1')) { await until(() => existsSync(join(directory, 'ps-asked')), t); note('ps.asked', { created: statSync(join(directory, 'ps-asked')).birthtimeMs }); }
+    if (shellGate) writeFileSync(shellGate, 'x');
+    if (flow) writeFileSync(flow, 'x\n');
+    else if (childKind === 'D2') { note('test.signal', { child, name: 'SIGKILL' }); process.kill(child, 'SIGKILL'); }
+    if (childKind !== 'D4') {
+      await until(() => existsSync(join(directory, 'wait-status')), t);
+      note('shell.wait', { started: statSync(join(directory, 'wait-start')).birthtimeMs, childStatus: read(directory, 'child-status'), ended: statSync(join(directory, 'wait-status')).birthtimeMs, waitStatus: read(directory, 'wait-status') });
+    }
+    if (readiness === 'R0b' && (ending === 'C4' || ((ending === 'C2' || ending === 'C6') && original.includes('git-hold')))) timer.callback();
+    if (psGate) writeFileSync(psGate, 'x');
+    const result = await answer;
+    if (childKind === 'D4') note('shell.wait', { started: existsSync(join(directory, 'wait-start')) ? statSync(join(directory, 'wait-start')).birthtimeMs : 'unknown', ended: 'unobserved before group SIGKILL' });
+    note('origin.result', { status: result.status, timedOut: result.timedOut, stderr: result.stderr });
+    return result;
+  };
+  let ran;
+  try {
+    ran = await withFirstOnPath(directory, () => init({ target, packageRoot, timeout, ask: originOnly(originAsk) }));
+  } finally {
+    globalThis.setTimeout = schedule;
+    globalThis.clearTimeout = cancel;
+    process.kill = signal;
+    ChildProcess.prototype.emit = emit;
+    note('shell.exit-observation', { pid: existsSync(join(directory, 'git.pid')) ? read(directory, 'git.pid') : 'unknown', timer: { deadline: timer.deadline, cancelled: timer.cancelled, fired: timer.fired } });
+    t.diagnostic('C623_CELL ' + cell + ' ' + JSON.stringify(timeline));
+  }
+  ready(directory);
+  if (ending === 'C7') {
+    assert.match(ran.text, /remote get-url origin` exited 7/, ran.text);
+    return;
+  }
+  if (ending === 'C6' && !original.includes('git-hold')) {
+    assert.match(ran.text, /the remote it named ends in no owner and name/, ran.text);
+    return;
+  }
+  assert.match(ran.text, new RegExp(`timeout of ${timeout} ms ended \`git `), ran.text);
+  const group = Number(read(directory, 'git.pid'));
+  assert.equal(alive(-group), false, `a process of group ${group} is alive`);
+  assert.deepEqual(killsOf(target, group), ['timeout.killed']);
+  if (childKind === 'D4') assert.deepEqual(killsOf(target, leftChild(directory)), ['timeout.killed']);
+}
+
+for (const ending of ['C1', 'C2', 'C3', 'C4', 'C6', 'C7']) {
+  for (const child of ending === 'C1' ? ['D4'] : ending === 'C6' ? ['F'] : ending === 'C7' ? ['D2'] : ['D0', 'D1', 'D2', 'D3']) {
+    for (const readiness of ending === 'C2' ? ['R0a', 'R0b'] : ending === 'C7' ? ['R0a'] : ['R0a', 'R0b', 'R1']) {
+      const cell = `${ending}-${child}-${readiness}`;
+      const result = ending === 'C7' ? 'reports its exited status' : ending === 'C6' ? 'reports its observed ending' : 'still reports the timeout';
+      test(`the ${cell} origin shell ${result}`, async (t) => cellOrigin(t, cell));
+    }
+  }
+}
+
 // proves R-STATE-12
 test('an init run in which no process is killed by force creates no file under the target\'s .rigger', async (t) => {
   const directory = holding(t);
@@ -1579,4 +1820,47 @@ test('init forks each provider\'s templates into the directory that provider\'s 
   const paths = plan({ repo: 'acme/widgets' }).map(({ path }) => path).filter((path) => path !== CONFIG && !path.startsWith('.githooks/'));
   assert.ok(paths.length > 0);
   for (const path of paths) assert.ok(Object.entries(ADAPTERS).some(([provider, adapter]) => path.startsWith(`${adapter.assets}/`) && existsSync(join(TEMPLATES, provider, path.slice(adapter.assets.length + 1)))), path);
+});
+
+/** A stand-in package root whose prepack recorded `commit`, as `scripts/record-commit.mjs` writes it. */
+const recording = (commit) => repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': `${JSON.stringify({ commit })}\n` });
+
+/** The gate workflow, as the template ships it and as `init` forks it. */
+const WORKFLOW = { template: join(TEMPLATES, 'github', 'workflows', 'rigger-gate.yml'), forked: '.github/workflows/rigger-gate.yml' };
+
+test('init reads the commit the package it is handed recorded, and writes that commit into the gate workflow it forks', async () => {
+  const commit = '0123456789abcdef0123456789abcdef01234567';
+  const consumer = repository('https://github.com/acme/widgets.git');
+
+  const ran = await init({ target: consumer, packageRoot: recording(commit) });
+
+  assert.equal(ran.code, 0, ran.text);
+  const template = readFileSync(WORKFLOW.template, 'utf8');
+  const forked = readFileSync(join(consumer, WORKFLOW.forked), 'utf8');
+  // Written out by hand rather than taken from the plan: the one line the pin changes.
+  assert.ok(template.split('\n').includes('  RIGGER_COMMIT: PINNED_COMMIT'), template);
+  assert.ok(forked.split('\n').includes(`  RIGGER_COMMIT: ${commit}`), forked);
+  assert.equal(forked, template.replace('RIGGER_COMMIT: PINNED_COMMIT', `RIGGER_COMMIT: ${commit}`));
+  assert.ok(ran.text.split('\n').includes(`  ${WORKFLOW.forked}`), ran.text);
+  assert.ok(!ran.text.includes('did not fork'), ran.text);
+});
+
+test('where the package it is handed records no commit, init writes every other file, prints one line naming why it did not fork the gate workflow, and exits 0', async () => {
+  const roots = {
+    'no record': elsewhere(),
+    'a record naming no commit': repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': '{"commit":"main"}\n' }),
+    'a record that is no JSON': repositoryIn('rigger-package-root-', { 'package.json': '{}\n', 'src/package-commit.json': 'not json\n' }),
+  };
+  for (const [name, packageRoot] of Object.entries(roots)) {
+    const consumer = repository('https://github.com/acme/widgets.git');
+
+    const ran = await init({ target: consumer, packageRoot });
+
+    assert.equal(ran.code, 0, `${name}: ${ran.text}`);
+    assert.equal(existsSync(join(consumer, '.github')), false, name);
+    for (const file of plan({ repo: 'acme/widgets' })) assert.ok(existsSync(join(consumer, file.path)), `${name}: ${file.path}`);
+    const why = ran.text.split('\n').filter((line) => line.includes(WORKFLOW.forked));
+    assert.equal(why.length, 1, `${name}: ${ran.text}`);
+    assert.match(why[0], /^did not fork `\.github\/workflows\/rigger-gate\.yml`, because the Rigger package records no commit to pin it to: /, name);
+  }
 });

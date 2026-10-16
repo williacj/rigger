@@ -42,6 +42,34 @@ function world(t) {
 const headOf = (path) => gitIn(path, 'rev-parse', 'HEAD').trim();
 const branchOf = (path) => gitIn(path, 'symbolic-ref', '--short', 'HEAD').trim();
 
+// proves R-WORK-34
+test('the workspace adapter reads the checked-out line tip after the maker commits', async (t) => {
+  const { directory, repository } = world(t);
+  const path = join(directory, 'rigger-42');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  await adapter.make(path, 'rigger-42');
+  gitIn(path, 'config', 'user.email', 'fixture@example.invalid');
+  gitIn(path, 'config', 'user.name', 'fixture');
+  gitIn(path, 'commit', '-q', '--allow-empty', '-m', 'maker work');
+
+  assert.equal(await adapter.tip(path, 'rigger-42'), headOf(path));
+});
+
+// proves R-WORK-34
+test('a missing workspace yields no line tip and leaves worktree registrations and refs alone', async (t) => {
+  const { directory, repository } = world(t);
+  const path = join(directory, 'missing-rigger-42');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const registrations = worktreeList(repository);
+  const refs = gitIn(repository, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads');
+
+  await assert.rejects(adapter.tip(path, 'rigger-42'), /not a linked worktree/);
+
+  assert.equal(existsSync(path), false);
+  assert.equal(worktreeList(repository), registrations);
+  assert.equal(gitIn(repository, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'), refs);
+});
+
 test('a workspace made on a new branch is at the commit origin\'s default branch held as the call began, one pushed after the clone included, on the branch named', async (t) => {
   const { directory, repository, push } = world(t);
   const pushed = push('after the clone');
@@ -658,7 +686,7 @@ test('only src/execution/ imports the workspace adapter: an import from any othe
     const found = boundaryMessages({ [file]: `import { workspaces } from '${up}substrate/worktrees.mjs';\nexport const peek = workspaces;` });
     assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
   }
-  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function makeScratch() {}\nexport function judgeDirectoryHandle() {}\nexport function removeCardDirectories() {}" }), []);
+  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function cardOfBranch() {}\nexport function makeScratch() {}\nexport function judgeDirectoryHandle() {}\nexport function removeCardDirectories() {}" }), []);
 });
 
 test('rule 10 follows a namespace import, an import binding no name, a dynamic import, and a re-export relayed through src/execution/', () => {

@@ -18,6 +18,7 @@ import rigger from '../rigger.config.mjs';
 import { cloneInto, clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { gitCalls, gitRecording, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { chmodSync, linkSync, rmSync, statSync } from 'node:fs';
+import { cardOfBranch } from '../src/execution/workspace.mjs';
 import { previousCheckout } from './git-repository.mjs';
 import { removeWorktreeAt } from './git-repository.mjs';
 import { fixture, GIT } from './process-fixtures.mjs';
@@ -30,6 +31,7 @@ import * as workspaceRemoval from '../src/execution/workspace.mjs';
 import { lockWorktreeAt } from './git-repository.mjs';
 import { world as schedulingWorld, COLUMNS, cardIn, columnsOf } from './loop-world.mjs';
 import { renameSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -308,6 +310,32 @@ test('for every topic validate accepts here, the names L1 derives for cards 1, 2
     const names = [1, 2, 10, 11].map((card) => topicFor(topic, card));
     assert.equal(new Set(names).size, 4, `${topic} derives ${names.join(', ')}`);
   }
+});
+
+test('cardOfBranch inverts topicFor, for the default topic and for configured ones, and answers no card for a branch the topic does not name', () => {
+  // Literal digits beside a placeholder, and placeholders repeated with nothing between them, are
+  // topics the validator admits, so the inverse holds for them too.
+  for (const topic of ['rigger-{number}', 'card{number}x', '{number}-{number}', 'a.{number}+b', '{number}{number}1', '1{number}', '{number}0{number}', 'r{number}{number}{number}']) {
+    assert.deepEqual(validate({ ...rigger, worktrees: { topic } }), [], topic);
+    for (const card of [1, 7, 10, 11, 702]) assert.equal(cardOfBranch(topic, topicFor(topic, card)), card, `${topic} ${card}`);
+  }
+  assert.equal(cardOfBranch('{number}{number}1', '771'), 7);
+  assert.equal(cardOfBranch('{number}{number}1', '772'), null);
+  // Written out rather than derived, so the inverse is checked against names, not against topicFor.
+  assert.equal(cardOfBranch('rigger-{number}', 'rigger-702'), 702);
+  assert.equal(cardOfBranch('{number}-{number}', '12-12'), 12);
+  for (const [topic, branch] of [
+    ['rigger-{number}', 'main'],
+    ['rigger-{number}', 'rigger-'],
+    ['rigger-{number}', 'rigger-07'],
+    ['rigger-{number}', 'rigger-0'],
+    ['rigger-{number}', 'rigger-7x'],
+    ['rigger-{number}', 'xrigger-7'],
+    ['rigger-{number}', 'm5/702-gate-workflow'],
+    ['{number}-{number}', '12-13'],
+    ['a.{number}+b', 'aX7+b'],
+    ['a.{number}+b', 'a.7bb'],
+  ]) assert.equal(cardOfBranch(topic, branch), null, `${topic} ${branch}`);
 });
 
 /** What git prints first on standard error refusing `name` as a branch name. */
@@ -2077,8 +2105,16 @@ test('a workspace whose git entry outlives its registration is left named and re
   rmSync(admin, { recursive: true });
   assert.equal(existsSync(join(made.path, '.git')), true);
   const answer = spawnSync(GIT, ['-C', made.path, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'], { encoding: 'utf8', env: gitEnvironment() });
+  // Git words its diagnostic for this state differently by version (2.55 and 2.56 differ) and
+  // by locale, so nothing here reads it; the run records it beside the selected git and gitfile.
+  const gitFile = readFileSync(join(made.path, '.git'), 'utf8');
+  const named = resolve(made.path, /^gitdir: (.+)$/m.exec(gitFile)?.[1] ?? '');
+  const { LANG, LC_ALL, LC_MESSAGES, LANGUAGE } = gitEnvironment();
+  t.diagnostic(`git ${GIT}: ${spawnSync(GIT, ['--version'], { encoding: 'utf8', env: gitEnvironment() }).stdout.trim()}; locale ${JSON.stringify({ LANG, LC_ALL, LC_MESSAGES, LANGUAGE })}`);
+  t.diagnostic(`.git ${JSON.stringify(gitFile)}; its target ${named} exists: ${existsSync(named)}`);
+  t.diagnostic(`answer status ${answer.status}; stderr ${JSON.stringify(answer.stderr)}`);
   assert.equal(answer.status, 128);
-  assert.match(answer.stderr, /^fatal: not a git repository/m);
+  assert.equal(existsSync(named), false, `the .git entry names ${named}, which is still there`);
   const before = { files: held(made.path), trees: worktreeList(here.repository), branch: branchAt(here.repository, 'rigger-42') };
   assert.equal(before.trees.includes(made.path), false);
   const built = mergedRemoval(here);

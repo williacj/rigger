@@ -15,6 +15,22 @@
 
 set -u
 
+# Keep Mac control originals beside, not inside, the suite's disposable TMPDIR.
+suite_caller_tmpdir=$(cd "${TMPDIR:-/tmp}" && pwd -P) || exit 1
+suite_auto_evidence_root=
+cleanup_auto_evidence_root() {
+  if [ -n "$suite_auto_evidence_root" ]; then
+    rmdir "$suite_auto_evidence_root" 2>/dev/null || :
+  fi
+}
+trap cleanup_auto_evidence_root EXIT
+if [ "${C615_EVIDENCE_ROOT+x}" != x ]; then
+  C615_EVIDENCE_ROOT=$(mktemp -d "$suite_caller_tmpdir/c615-suite-evidence.XXXXXX") || exit 1
+  suite_auto_evidence_root=$C615_EVIDENCE_ROOT
+  chmod 700 "$suite_auto_evidence_root" || exit 1
+  export C615_EVIDENCE_ROOT
+fi
+
 run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
 run=$(cd "$run" && pwd -P) || exit 1
 TMPDIR=$run
@@ -22,6 +38,7 @@ export TMPDIR
 dir="$run/rigger-refusing-gh"
 mkdir "$dir" || exit 1
 trap 'rm -rf "$run"' EXIT
+trap 'rm -rf "$run"; cleanup_auto_evidence_root' EXIT
 
 # PATH holds this directory as one entry, so it is named absolutely: a relative entry finds
 # nothing from a child working elsewhere. PATH splits its entries at `:`, so a name holding one
@@ -85,6 +102,7 @@ finish() {
   trap - EXIT
   exec 3>&-
   wait "$reaper" || result=1
+  cleanup_auto_evidence_root
   exit "$result"
 }
 trap finish EXIT

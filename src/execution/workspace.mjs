@@ -1,5 +1,5 @@
 // ABOUTME: L1 makes card workspaces, judge and scratch directories under their replace rules,
-// and removes a merged card's directories before its move to Done.
+// reads the line tip a maker leaves, and removes a merged card's directories before Done.
 
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -22,6 +22,19 @@ const replacementRefused = (message) => Object.assign(new Error(message), { code
  * number. It names both the card's workspace, directly under the root, and its branch.
  */
 export const topicFor = (topic, card) => topic.replaceAll('{number}', String(card));
+
+/**
+ * The card whose name `topic` derives as `branch`, as `topicFor` derives it, or null where the
+ * topic derives no card's name as that branch. An issue number has no leading zero, and every
+ * `{number}` in the topic stands for the same one.
+ */
+export function cardOfBranch(topic, branch) {
+  // The first `{number}` captures the card and each later one must repeat it. The repeat is a named
+  // backreference, so a literal digit after it is never read as part of the reference's number.
+  const [first, ...rest] = topic.split('{number}').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const found = new RegExp(`^${first}(?<card>[1-9][0-9]*)${rest.join('\\k<card>')}$`).exec(branch);
+  return found === null ? null : Number(found.groups.card);
+}
 
 /**
  * The scratch base of card `card`, `<root>/scratch/<topic>`, under which `roleDispatch` makes each
@@ -89,6 +102,16 @@ export async function makeWorkspace({ root, topic, card, head, repository, sink,
   await step(() => head === undefined ? adapter.make(path, branch) : adapter.makeAt(path, branch, head));
   recorded(events, card, 'workspace.made', { path, branch });
   return { path, branch, scratch: scratchBase(root, topic, card), repository };
+}
+
+/** Reads the line tip the maker left in its linked workspace, through L0's queued git adapter. */
+async function readWorkspaceTip({ card, path, branch, repository, sink }) {
+  try {
+    return await workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }).tip(path, branch);
+  } catch (cause) {
+    if (cause.code === EVENT_REFUSED) throw cause;
+    throw new Error(`card #${card}'s line of work has no readable tip in workspace ${path}: ${cause.message}`, { cause });
+  }
 }
 
 /**
@@ -478,6 +501,7 @@ function recorded(events, card, event, fields) {
  * Builds L1's workspace handle over `root` and `topic` for the repository at `repository`: the
  * function L3 is handed. It makes from main with the card alone, or from the card's forge line
  * when also handed the head L2 read, as `makeWorkspace` does (the architect's ruling 5, P4, on #423).
+ * Its `tip` method reads the line's checked-out commit after a continuing maker exits.
  *
  * Building it asks L0 whether git accepts the name the topic derives for card 1 as a literal
  * branch name, and rejects naming the topic and why where it does not, before any directory is
@@ -490,7 +514,9 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
   const name = topicFor(topic, 1);
   const { accepted, why } = await workspaces({ repository, emitter: sink.emitter({ layer: 'L0' }) }).acceptsBranch(name);
   if (!accepted) throw new Error(`the worktree topic \`${topic}\` derives ${name} for card #1, which git refuses as a branch name: ${why}`);
-  return (card, head) => makeWorkspace({ root, topic, card, head, repository, sink });
+  const handle = (card, head) => makeWorkspace({ root, topic, card, head, repository, sink });
+  handle.tip = ({ card, path, branch }) => readWorkspaceTip({ card, path, branch, repository, sink });
+  return handle;
 }
 
 /**

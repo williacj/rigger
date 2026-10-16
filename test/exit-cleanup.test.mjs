@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +38,7 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
  *   `d-<label>` of card `<label + 6>`, with its record in the state directory.
  * - `spy`: whether the caller writes the record's entries to `record-at-end.<dispatch id>` as each
  *   dispatch-end event is appended.
+ * - `markWait`: whether the command fixture marks that its bare `wait` returned.
  * - `exits`: whether each command started straight through the adapter writes the exit code the
  *   cleanup hands its step to `exit.<label>`.
  * - `exitOnReap`: whether the caller calls process.exit(0) in the turn Node reaps its first command.
@@ -63,10 +65,12 @@ const CALLER = [
   `import { atExit, runCommand } from ${moduleAt('../src/substrate/process.mjs')};`,
   `import { readGroups } from ${moduleAt('../src/execution/groups.mjs')};`,
   "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
+  "import { appendFileSync } from 'node:fs';",
   "import { ChildProcess, spawnSync } from 'node:child_process';",
   "import { join } from 'node:path';",
   'const directory = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
+  'const trace = (event, fields = {}) => appendFileSync(join(directory, "trace.1"), JSON.stringify({ at: Date.now(), event, ...fields }) + "\\n");',
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
   'let began;',
@@ -160,7 +164,7 @@ function fixtures(directory) {
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
   ].join('\n');
-  fixture(directory, 'command', `echo $$ > "$here/group.$1"\n${child}\nwait`);
+  fixture(directory, 'command', `echo $$ > "$here/group.$1"\n/usr/bin/mkfifo "$here/hold.$1"\n${child}\nwait\nread answer < "$here/hold.$1"`);
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
     'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
@@ -390,6 +394,13 @@ function fixtures(directory) {
 async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
   const directory = scratch(t);
   fixtures(directory);
+  if (options.markWait) {
+    // The signal tests observe the shell after bare wait and before cleanup's kill.
+    const path = join(directory, 'command');
+    const command = readFileSync(path, 'utf8');
+    assert.equal(command.split('\nwait\n').length, 2);
+    writeFileSync(path, command.replace('\nwait\n', '\nwait\n: > "$here/wait-returned.$1"\n'));
+  }
   if (refusing) {
     // The state directory exists and takes no file, so the sink refuses every append.
     mkdirSync(join(directory, 'state'));
@@ -1083,16 +1094,73 @@ for (const ending of ['exit 0', 'exit 1', 'throw', 'reject', ...HANDLED]) {
   const signal = HANDLED.includes(ending) ? ending : undefined;
   const how = signal === undefined ? `ends on ${ending}` : `receives ${signal}`;
   test(`given a dispatch started through L1's function and still running, after the caller ${how} the stream holds one dispatch end for it, and the caller ends as it would have`, ENDS_WITHIN, async (t) => {
+    const splitKill = [
+      'const sent = process.kill.bind(process);',
+      'const group = Number(readFileSync(join(directory, "group.1"), "utf8"));',
+      'const tail = Number(readFileSync(join(directory, "child.1"), "utf8"));',
+      'const emitted = ChildProcess.prototype.emit;',
+      'ChildProcess.prototype.emit = function (event, ...args) {',
+      '  if (event === "exit" && this.pid === group) { writeFileSync(join(directory, "node-exit.1"), JSON.stringify(args)); trace("node.exit", { group, args }); }',
+      '  return emitted.call(this, event, ...args);',
+      '};',
+      'let split = false;',
+      'process.kill = (target, name) => {',
+      '  if (!split && target === -group && name === "SIGKILL") {',
+      '    split = true;',
+      '    trace("cleanup.group-kill-attempt", { group, tail });',
+      '    sent(tail, "SIGKILL");',
+      '    trace("tail.kill-sent", { tail });',
+      '    const held = existsSync(join(directory, "hold.1"));',
+      '    let state;',
+      '    do { state = spawnSync("/bin/ps", ["-p", String(group), "-o", "stat=,xstat="], { encoding: "utf8" }).stdout.trim(); }',
+      '    while (!existsSync(join(directory, "wait-returned.1")) || (!held && !state.startsWith("Z")));',
+      '    writeFileSync(join(directory, "split.1"), JSON.stringify({ tail, state }));',
+      '    trace("shell.pre-kill", { group, state });',
+      '  }',
+      '  const result = sent(target, name);',
+      '  if (target === -group && name === "SIGKILL") trace("group.kill-sent", { group });',
+      '  return result;',
+      '};',
+    ].join('\n');
     const options = { ending: signal === undefined ? ending : 'wait', sink: 'named' };
     const expected = await endCaller(t, { ...options, groups: false }, { signal });
 
-    const { directory, status, signal: killedBy, stderr } = await endCaller(t, { ...options, groups: true, dispatch: [1], spy: true }, { signal });
+    const { directory, status, signal: killedBy, stderr } = await endCaller(t, { ...options, groups: true, dispatch: [1], spy: true, markWait: signal === 'SIGINT', after: signal === 'SIGINT' ? splitKill : undefined, ps: signal === 'SIGINT' ? 'ps-log' : undefined }, { signal });
 
     assert.deepEqual({ status, signal: killedBy }, { status: expected.status, signal: expected.signal }, stderr);
     await assertNoneAlive(directory);
+    if (signal === 'SIGINT') t.diagnostic(JSON.stringify({ trace: read(directory, 'trace.1').trim().split('\n').map(JSON.parse), split: JSON.parse(read(directory, 'split.1')), nodeExit: existsSync(join(directory, 'node-exit.1')) ? JSON.parse(read(directory, 'node-exit.1')) : null, waits: read(directory, 'ps.log').split('\n').filter((line) => line.includes('xstat=')), records: streamOf(directory).filter((event) => event.dispatch === 'd-1' && [...KILLED, 'dispatch.end'].includes(event.event)) }));
     assertEndedOnce(directory, streamOf(directory), 'd-1');
   });
 }
+
+// proves R-STATE-9
+test('a SIGINT cleanup records the shell kill when its tail ends before Node reports the shell exit', ENDS_WITHIN, async (t) => {
+  const after = [
+    'const group = Number(readFileSync(join(directory, "group.1"), "utf8"));',
+    'const tail = Number(readFileSync(join(directory, "child.1"), "utf8"));',
+    'const emitted = ChildProcess.prototype.emit;',
+    'ChildProcess.prototype.emit = function (event, ...args) {',
+    '  if (event === "exit" && this.pid === group) { writeFileSync(join(directory, "node-exit.1"), JSON.stringify(args)); trace("node.exit", { group, args }); }',
+    '  return emitted.call(this, event, ...args);',
+    '};',
+    'process.kill(tail, "SIGKILL");',
+    'trace("tail.kill-sent", { tail });',
+    '(async () => {',
+    '  while (!existsSync(join(directory, "wait-returned.1"))) await turn();',
+    '  if (!existsSync(join(directory, "hold.1"))) while (!existsSync(join(directory, "node-exit.1"))) await turn();',
+    '  writeFileSync(join(directory, "route.1"), JSON.stringify({ waitReturned: existsSync(join(directory, "wait-returned.1")), nodeExit: existsSync(join(directory, "node-exit.1")) }));',
+    '  trace("SIGINT.sent", { group });',
+    '  process.kill(process.pid, "SIGINT");',
+    '})();',
+  ].join('\n');
+  const { directory, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, dispatch: [1], spy: true, markWait: true, after });
+
+  assert.equal(signal, 'SIGINT', stderr);
+  await assertNoneAlive(directory);
+  t.diagnostic(JSON.stringify({ trace: read(directory, 'trace.1').trim().split('\n').map(JSON.parse), route: JSON.parse(read(directory, 'route.1')), nodeExit: existsSync(join(directory, 'node-exit.1')) ? JSON.parse(read(directory, 'node-exit.1')) : null, records: streamOf(directory).filter((event) => event.dispatch === 'd-1' && [...KILLED, 'dispatch.end'].includes(event.event)) }));
+  assertEndedOnce(directory, streamOf(directory), 'd-1');
+});
 
 // proves R-STATE-9
 test('given a dispatch still running when the caller receives SIGTERM, and a listener that keeps the caller running until its dispatch settles, the stream holds one dispatch end for it', ENDS_WITHIN, async (t) => {

@@ -22,6 +22,10 @@ import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
 import { writeFileSync } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { mkdirSync } from 'node:fs';
+import { repositoryIn } from './git-repository.mjs';
+import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { accessSync, constants } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -338,10 +342,56 @@ function commandsIssuedBy(file) {
     encoding: 'utf8',
     env,
   });
+  if (process.env.C755_TRACE && file === 'forge-runners.test.mjs') process.stderr.write(run.stdout + run.stderr);
   const passed = Number(/^# pass (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
   assert.ok(run.status === 0 && passed > 0, `${file} did not run and pass while it was recorded:\n${run.stdout}${run.stderr}`);
   return JSON.parse(readFileSync(into, 'utf8'));
 }
+
+/** Makes the recorder's target child observe one controlled P2 transition. */
+function withTargetControl(control, use) {
+  const held = process.env.C755_HOOK_CONTROL;
+  process.env.C755_HOOK_CONTROL = control;
+  try {
+    return use();
+  } finally {
+    if (held === undefined) delete process.env.C755_HOOK_CONTROL;
+    else process.env.C755_HOOK_CONTROL = held;
+  }
+}
+
+/** The recorder's direct-suite PATH has no fixture gh beyond the suite's refusing entry. */
+function hasInstalledGh() {
+  return process.env.PATH.split(delimiter).some((entry) => {
+    if (entry === process.env.RIGGER_REFUSING_GH_DIR) return false;
+    try {
+      accessSync(join(entry || '.', 'gh'), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+test('E-C P2-A4m: the recorder sees the target-file failure caused by selected gh loss', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs')), (error) => {
+    assert.match(error.message, /forge-runners\.test\.mjs did not run and pass while it was recorded/);
+    assert.match(error.message, /P2-S control/);
+    assert.match(error.message, /ENOENT/);
+    return true;
+  });
+});
+
+test('E-C P2-A4r: the recorder keeps its target green after a resolver-only change', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs'));
+});
+
+test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
+  commandsIssuedBy('forge-runners.test.mjs');
+});
 
 test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {
   // Recorded rather than listed: each file runs as it does in the suite, and every request the
@@ -499,17 +549,24 @@ test("the fake repository's reads are exactly the repository read side's, compar
 });
 
 test('the fake repository answers in process what the fake gh answers for the same seed', async () => {
+  // The four reads of #725 read the default branch and a file from the test's origin, and name
+  // this repository as a pull request's head repository, so the seed carries both.
+  const { origin } = clonedFromOrigin(temporaryDirectory('rigger-fake-gh-origin-'));
+  const main = gitIn(origin, 'rev-parse', 'refs/heads/main').trim();
   const seed = {
     branches: ['rigger-214'],
     pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), diff: 'd', mergeBase: sha(1), comments: [{ body: 'x', createdAt: '2026-10-01T09:30:00Z' }] }, { number: 299, head: 'rigger-214', sha: sha(299), merged: true }],
+    issues: [{ number: 214, body: 'Why.', labels: ['type:change', 'area:forge'] }, { number: 216, body: '', labels: [], repository: 'someone/elsewhere' }],
+    origin,
+    repo: WHERE.repo,
   };
   const fake = installed({ columns: ['Review'], items: CARDS });
   seedRepository(fake, seed);
-  const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301]];
+  const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301], ['readDefaultBranch'], ['readIssue', 214], ['readIssue', 216], ['readIssue', 301], ['readPullRequestByNumber', 301], ['readPullRequestByNumber', 299], ['readFileAt', main, 'README'], ['readFileAt', main, 'absent.txt']];
 
   const { operations } = createFakeRepository(seed);
-  for (const [name, argument] of calls) {
-    assert.deepEqual(await onPath(fake, () => reads()[name](argument)), await operations[name](argument), name);
+  for (const [name, ...args] of calls) {
+    assert.deepEqual(await onPath(fake, () => reads()[name](...args)), await operations[name](...args), name);
   }
 });
 
@@ -612,4 +669,198 @@ test('an agent command the fake gh does not model fails, printing itself, and ch
     assert.ok(said.stderr.includes(`gh ${args.join(' ')}`), said.stderr);
   }
   await onPath(fake, async () => assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [], merged: [] }));
+});
+
+/** The text of the file the origin below holds at `config/rigger.config.mjs`: two lines, one past ASCII, with no newline at its end. */
+const CONFIG = "// ABOUTME: a config é\nexport default { board: { repo: 'williacj/rigger' } };";
+
+/**
+ * A fake `gh` over a local `origin` whose default branch is `trunk`, beside a branch `main`, and
+ * whose `trunk` holds a text file, an empty file, a binary file, a directory, a symbolic link and a
+ * submodule, each with the git mode git gives it. Answers the fake, the origin, and `trunk`'s head.
+ */
+function withFiles() {
+  const { origin, repository } = clonedFromOrigin(temporaryDirectory('rigger-fake-gh-files-'));
+  gitIn(repository, 'switch', '--quiet', '-c', 'trunk');
+  mkdirSync(join(repository, 'config'));
+  writeFileSync(join(repository, 'config', 'rigger.config.mjs'), CONFIG);
+  writeFileSync(join(repository, 'empty.txt'), '');
+  writeFileSync(join(repository, 'logo.gif'), Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x01, 0x00, 0xff]));
+  gitIn(repository, 'add', '-A');
+  // A link is a blob of mode 120000 holding its target's path, and a submodule an entry of mode
+  // 160000 naming a commit: each is written into the index with that mode, as git stores them.
+  const linkText = join(temporaryDirectory('rigger-fake-gh-link-'), 'target');
+  writeFileSync(linkText, 'config/rigger.config.mjs');
+  gitIn(repository, 'update-index', '--add', '--cacheinfo', `120000,${gitIn(repository, 'hash-object', '-w', linkText).trim()},link`);
+  gitIn(repository, 'update-index', '--add', '--cacheinfo', `160000,${gitIn(repository, 'rev-parse', 'main').trim()},vendor/sub`);
+  gitIn(repository, 'commit', '--quiet', '-m', 'Files');
+  gitIn(repository, 'push', '--quiet', 'origin', 'trunk');
+  gitIn(origin, 'symbolic-ref', 'HEAD', 'refs/heads/trunk');
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
+  return { fake, origin, head: gitIn(origin, 'rev-parse', 'refs/heads/trunk').trim() };
+}
+
+test("the repository read answers the default branch the fake gh's origin names, trunk beside main, with trunk's head", async () => {
+  const { fake, origin, head } = withFiles();
+
+  const read = await onPath(fake, () => reads().readDefaultBranch());
+
+  assert.deepEqual(read, { name: 'trunk', head });
+  assert.notEqual(head, gitIn(origin, 'rev-parse', 'refs/heads/main').trim());
+});
+
+test('the repository read rejects naming the repository as holding no default branch, where the fake gh holds an origin nothing was pushed to', async () => {
+  // A repository the fixture builds with no files holds no commit, so its `HEAD` names a branch
+  // that does not yet exist, as an empty repository's does on the forge.
+  const origin = repositoryIn('rigger-fake-gh-empty-');
+  const fake = installFakeGh(temporaryDirectory('rigger-fake-gh-'), { ...WHERE, board: { columns: ['Review'], items: CARDS }, origin });
+
+  const before = forgeHeld(fake);
+
+  await onPath(fake, () => assert.rejects(reads().readDefaultBranch(), /readDefaultBranch on board 6 failed: reading the default branch in williacj\/rigger, williacj\/rigger holds no default branch/));
+  await assertNothingChanged(fake, before);
+});
+
+test("the repository read answers a file's text at a commit of the fake gh's origin byte for byte, an empty file as the empty string, and a path holding nothing as null", async () => {
+  const { fake, head } = withFiles();
+
+  await onPath(fake, async () => {
+    const text = await reads().readFileAt(head, 'config/rigger.config.mjs');
+    assert.equal(Buffer.compare(Buffer.from(text), Buffer.from(CONFIG)), 0);
+    assert.equal(await reads().readFileAt(head, 'empty.txt'), '');
+    assert.equal(await reads().readFileAt(head, 'config/absent.mjs'), null);
+    assert.equal(await reads().readFileAt(head, 'README'), 'one\n');
+  });
+});
+
+test("the repository read rejects a file at a commit the fake gh's origin does not hold, naming the commit, and a directory, a binary file, a symbolic link and a submodule there, naming the path and what it is", async () => {
+  const { fake, head, origin } = withFiles();
+  const tree = gitIn(origin, 'rev-parse', `${head}^{tree}`).trim();
+  const missing = '0123456789abcdef0123456789abcdef01234567';
+  const before = forgeHeld(fake);
+
+  await onPath(fake, async () => {
+    await assert.rejects(reads().readFileAt(missing, 'README'), new RegExp(`reading README at ${missing} in williacj/rigger, gh answered no commit ${missing}$`));
+    await assert.rejects(reads().readFileAt(tree, 'README'), new RegExp(`gh answered no commit ${tree}$`));
+    for (const [path, what] of [['config', 'a directory, not a file'], ['logo.gif', 'a binary file'], ['link', 'a symbolic link, not a file'], ['vendor/sub', 'a submodule, not a file']]) {
+      await assert.rejects(reads().readFileAt(head, path), (error) => {
+        assert.ok(error.message.endsWith(`${path} is ${what}`), error.message);
+        assert.ok(!error.message.includes('config/rigger.config.mjs') && !error.message.includes('ABOUTME'), error.message);
+        return true;
+      }, path);
+    }
+  });
+  await assertNothingChanged(fake, before);
+});
+
+test('the repository read answers each issue the fake gh holds: every label past one page in order, a closed one as an open one, an empty body, and null for an issue in another repository, a pull request and nothing', async () => {
+  const labels = Array.from({ length: 101 }, (_, i) => `label-${String(100 - i).padStart(3, '0')}`);
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  seedRepository(fake, {
+    issues: [
+      { number: 214, body: 'Why.', labels },
+      // The read selects no state, so the fake holds none: a closed issue is held as an open one is.
+      { number: 215, labels: ['type:change'] },
+      { number: 216, body: 'Theirs.', labels: ['type:change'], repository: 'someone/elsewhere' },
+    ],
+    pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301) }],
+  });
+
+  await onPath(fake, async () => {
+    assert.deepEqual(await reads().readIssue(214), { number: 214, title: 'Card 214', body: 'Why.', labels });
+    assert.deepEqual(await reads().readIssue(215), { number: 215, title: 'Card 215', body: '', labels: ['type:change'] });
+    assert.equal(await reads().readIssue(216), null);
+    assert.equal(await reads().readIssue(301), null);
+    assert.equal(await reads().readIssue(999), null);
+  });
+});
+
+test('the repository read answers each pull request the fake gh holds by number, from this repository, a fork or a deleted repository, open, merged or closed, and rejects a number it lacks', async () => {
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  seedRepository(fake, {
+    pullRequests: [
+      { number: 301, head: 'rigger-214', sha: sha(301) },
+      { number: 302, head: 'rigger-214', sha: sha(302), from: 'someone/rigger' },
+      { number: 303, head: 'rigger-214', sha: sha(303), headRepositoryDeleted: true },
+      { number: 304, head: 'rigger-214', sha: sha(304), merged: true, base: 'release' },
+      { number: 305, head: 'rigger-214', sha: sha(305), closed: true },
+    ],
+  });
+  const own = 'williacj/rigger';
+
+  await onPath(fake, async () => {
+    assert.deepEqual(await reads().readPullRequestByNumber(301), { number: 301, head: sha(301), branch: 'rigger-214', base: 'main', state: 'open', headRepository: own, fromRepository: true });
+    assert.deepEqual(await reads().readPullRequestByNumber(302), { number: 302, head: sha(302), branch: 'rigger-214', base: 'main', state: 'open', headRepository: 'someone/rigger', fromRepository: false });
+    assert.deepEqual(await reads().readPullRequestByNumber(303), { number: 303, head: sha(303), branch: 'rigger-214', base: 'main', state: 'open', headRepository: null, fromRepository: false });
+    assert.deepEqual(await reads().readPullRequestByNumber(304), { number: 304, head: sha(304), branch: 'rigger-214', base: 'release', state: 'merged', headRepository: own, fromRepository: true });
+    assert.deepEqual(await reads().readPullRequestByNumber(305), { number: 305, head: sha(305), branch: 'rigger-214', base: 'main', state: 'closed', headRepository: own, fromRepository: true });
+    const before = forgeHeld(fake);
+    await assert.rejects(reads().readPullRequestByNumber(306), /pull request #306.*Could not resolve to a PullRequest with the number of 306/);
+    await assertNothingChanged(fake, before);
+    // The branch's read leaves out a closed pull request and one whose head repository was deleted, as GitHub does.
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }], merged: [{ number: 304, head: sha(304), base: 'release' }] });
+  });
+});
+
+test('each of the four reads answers through the fake gh as it does for the exact name, where board.repo is written in another letter case', async () => {
+  const { fake, head } = withFiles();
+  seedRepository(fake, { issues: [{ number: 214, body: 'Why.', labels: ['type:change'] }], pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301) }] });
+  const cased = () => repositoryReads({ ...BOARD, repo: 'WilliaCJ/RIGGER' }, { emitter: UNKILLED });
+  const calls = [['readDefaultBranch'], ['readIssue', 214], ['readPullRequestByNumber', 301], ['readFileAt', head, 'config/rigger.config.mjs']];
+
+  for (const [name, ...args] of calls) {
+    const exact = await onPath(fake, () => reads()[name](...args));
+    assert.deepEqual(await onPath(fake, () => cased()[name](...args)), exact, name);
+    assert.ok(exact !== null, name);
+  }
+});
+
+/** What the fake `gh` holds of the forge: its board, every write made to it, and its repository; all but the commands it was sent. */
+function forgeHeld(fake) {
+  const { sent, ...held } = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8'));
+  return held;
+}
+
+/**
+ * Asserts that the fake `gh` holds the forge as it held it `before`, and that every command it was
+ * sent is one the read runner admits, a query or an explicit GET, so none could change the forge.
+ */
+async function assertNothingChanged(fake, before) {
+  assert.deepEqual(forgeHeld(fake), before);
+  assert.ok(fake.sent().length > 0, 'the fake gh was sent nothing');
+  for (const args of fake.sent()) {
+    const admitted = [];
+    await readRunner(args, { send: (command, handed) => admitted.push(handed) });
+    assert.deepEqual(admitted, [args]);
+  }
+}
+
+test("the repository read answers null for a path a commit of the fake gh's origin holds nothing at, and leaves the forge as it held it", async () => {
+  const { fake, head } = withFiles();
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: sha(301), comments: [{ body: 'x', createdAt: '2026-10-01T09:30:00Z' }] }] });
+  const before = forgeHeld(fake);
+
+  assert.equal(await onPath(fake, () => reads().readFileAt(head, 'config/absent.mjs')), null);
+  await assertNothingChanged(fake, before);
+});
+
+test('the fake repository environment reads agree with the real adapter through fake gh for present and absent names', async () => {
+  const seed = { environments: { release: {
+    can_admins_bypass: false,
+    deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+    branch_policies: [{ name: 'trunk', type: 'branch' }],
+    variables: { APP_ID: '12345' },
+    secrets: ['APP_KEY'],
+  } } };
+  const fake = installed();
+  seedRepository(fake, seed);
+  const { operations } = createFakeRepository(seed);
+  for (const [name, ...args] of [
+    ['readEnvironment', 'release'], ['readEnvironment', 'absent'],
+    ['readEnvironmentVariable', 'release', 'APP_ID'], ['readEnvironmentVariable', 'release', 'absent'],
+    ['readEnvironmentSecret', 'release', 'APP_KEY'], ['readEnvironmentSecret', 'release', 'absent'],
+  ]) {
+    assert.deepEqual(await onPath(fake, () => reads()[name](...args)), await operations[name](...args), `${name} ${args.join(' ')}`);
+  }
+  assert.deepEqual((await fake.model()).writes(), []);
 });

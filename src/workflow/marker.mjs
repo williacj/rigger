@@ -106,7 +106,17 @@ const DISPATCH_SLOT = '<the dispatch id>';
  * and a ruling on each of `items`, the acceptance items, listed by ordinal. The owner is handed no
  * provider, so its block names none (`D24` rule 2).
  */
-export function markerInstruction({ card, pull, head, digest, role, provider, items, evidence }) {
+export const markerInstruction = ({ evidence, ...asked }) => instruction({ ...asked, dispatch: DISPATCH_SLOT, evidence });
+
+/**
+ * The same instruction for a judge Rigger did not dispatch, which the gate's run summary prints:
+ * its block writes no dispatch or evidence line, since such a judge holds neither, and the parse
+ * reads a marker without them.
+ */
+export const undispatchedInstruction = (asked) => instruction(asked);
+
+/** The instruction asking a judge for its marker, its block holding `dispatch` and `evidence` where given. */
+function instruction({ card, pull, head, digest, role, provider, items, dispatch, evidence }) {
   const template = blockLines({
     card,
     pull,
@@ -119,7 +129,7 @@ export function markerInstruction({ card, pull, head, digest, role, provider, it
     coverage: `<${COVERAGES.join(' or ')}: whether the acceptance covered what the card asked>`,
     coverageReason: '<one line: why the acceptance does not cover what the card asked, written only where coverage is insufficient>',
     toSound: '<one line: what would make the work sound, written only where the verdict is not sound>',
-    dispatch: DISPATCH_SLOT,
+    dispatch,
     evidence,
   });
   return [

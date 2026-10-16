@@ -47,7 +47,7 @@ reused.
 | D4 | v0 defers the roles it can do without | Superseded by D18 |
 | D5 | v0 detects a conflict when Git does | Ratified |
 | D6 | Judges review independently | Ratified |
-| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended in #498 and #666. |
+| D7 | The engine is promoted on a boundary, not per merge | Ratified. Amended in #498 and #666 and #756. |
 | D8 | A fact the code owns is generated, never typed | Ratified |
 | D9 | A judge is handed its evidence | Ratified |
 | D10 | v0 builds no resume | Ratified |
@@ -190,7 +190,7 @@ measured until it has already been allowed, so the evidence only ever argues one
 
 ## D7 — The engine is promoted on a boundary, not per merge
 
-**Status:** Ratified. Amended in #498 and #666.
+**Status:** Ratified. Amended in #498 and #666 and #756.
 
 ### Rule
 
@@ -214,7 +214,9 @@ measured until it has already been allowed, so the evidence only ever argues one
    still upgraded under rule 1, to the commit that closed the milestone. The commit under test is
    the commit rule 1 promotes, so the engine promoted at the boundary is the one the exit run
    tested. A commit that leaves the packed tarball's contents unchanged does not move the closing
-   commit, so a milestone's exit-run evidence can merge after the run.
+   commit, so a milestone's exit-run evidence can merge after the run. Those contents leave out the
+   commit named in the record that `scripts/record-commit.mjs` writes, but not the record itself. A
+   tarball that carries the record and one that carries none still differ.
 
 ### Notes
 
@@ -248,6 +250,21 @@ fixture rather than against this repository. The amendment answers the exit list
 One observation would reverse the fixture target: an exit run against a fixture clone changes a
 file or a ref in this repository. That shows a fixture clone does not keep the run apart from the
 repository the engine builds.
+
+The recorded commit is left out because the prepack script, `scripts/record-commit.mjs`, writes a
+record into the package naming the commit it packs from. The tarballs packed at any two commits
+therefore differ, in that record at least. Counted, the record would leave no commit after the run
+that keeps the closing commit, and the exit-run evidence could never merge after the run.
+
+Leaving it out moves nothing the exit run tested. The record exists so that `init` pins the gate
+workflow it forks to the commit the record names. Rule 1 promotes the engine packed at the closing
+commit, which stays the commit under test. That engine's record names the commit the exit run
+tested, so its `init` pins what the exit run's `init` pinned. The amendment answers N17 on #664,
+and the owner's ruling P53 on #642.
+
+One observation would reverse leaving the recorded commit out: the record gains a use beyond the
+pin `init` writes. Two tarballs differing only in the commit the record names would then differ in
+what the engine does beyond that pin, so that commit would count among the contents again.
 
 ## D8 — A fact the code owns is generated, never typed
 

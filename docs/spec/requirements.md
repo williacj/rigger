@@ -139,6 +139,7 @@ under the test above.
 | R-SCHED-13 | A kind of work selects a card that carries any one of the labels the consumer's configuration names for that kind, and never selects a card carrying none of them. | the engine | the test suite | |
 | R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 | R-SCHED-15 | Rigger never makes two merges at the same moment. Its bound is in `### R-SCHED-15 — Merges Rigger serializes`. | the engine | the event record, by overlapping merge intervals | |
+| R-SCHED-26 | Before Rigger's lane gives up on a merge because the forge reads the pull request's mergeability as unknown, Rigger reads that mergeability again. It reads again 5 seconds after each read that answers unknown. It gives up only at an unknown read made 60 seconds or more after the first. Its states are in `### R-SCHED-26 — Unknown mergeability at a merge`. | the engine | the test suite | |
 
 ### R-SCHED-15 — Merges Rigger serializes
 
@@ -147,6 +148,26 @@ under the test above.
 | two merges the engine's lane makes | in |
 | a person's merge while the lane merges | out: P5. The forge serializes ref updates, and Rigger cannot |
 | merges by two engines on one repository | out: `D11`, `R-WORK-4` |
+
+### R-SCHED-26 — Unknown mergeability at a merge
+
+In this table, "not merged" is the outcome Rigger records for the merge's end, `not merged`.
+
+| The lane's reads of the pull request's mergeability, from the first | Scope |
+|---|---|
+| the first answers mergeable | in: Rigger reads it no more, and the merge goes on |
+| the first answers conflicting | in: Rigger reads it no more, and the card's maker continues on it, under `R-CONFLICT-1` |
+| unknown, then mergeable at any later read, the last included | in: the merge goes on at the pull request and head Rigger pulled |
+| unknown, then conflicting at any later read, the last included | in: the card's maker continues on it, under `R-CONFLICT-1` |
+| unknown on every read until one made 60 seconds or more after the first | in: not merged, and the card stays where it is |
+| unknown, then a read on which Rigger answers other than a merge for another reason | in: not merged; `R-RECORD-10` names the answer |
+| unknown, then a read that fails | in: not merged, and the card stays where it is |
+| unknown, then the pull request at another head | in: not merged, and the card stays where it is |
+| unknown, then the pull request merged | in: not merged; a later pull reads the merge, under `R-WORK-30` |
+| the forge refuses the merge call because the mergeability is unknown | in: Rigger counts the refusal as a read that answers unknown. Where that read is the last, the merge ends `refused`, naming the refusal |
+| another merge queued behind this one | in: it waits until this merge ends, under `R-SCHED-15` |
+| unknown at a pull, before any merge starts | out: no merge starts, and a later pull reads it again |
+| a merge a person makes | out: Rigger makes no merge call |
 
 ## R-WORK — isolation and exclusivity
 
@@ -180,6 +201,7 @@ under the test above.
 | R-WORK-28 | — it lies in no git checkout, and no git checkout lies in it; | the engine | the test suite | |
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
 | R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | the engine | the test suite | |
+| R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | the engine | the test suite | |
 
 ### R-WORK-25 — Continuing workspace states
 
@@ -232,6 +254,20 @@ under the test above.
 | `judges/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
+
+### R-WORK-34 — The head a continuing attempt is judged at
+
+| The maker | What Rigger reads after the maker exits | Scope |
+|---|---|---|
+| exits successfully | the pull request at the head the maker left, at the first read | in: moved to review; judges decided at that head |
+| exits successfully, having added no commit to the line of work | the pull request at the head the attempt started from, which is the head the maker left | in: moved to review; judges decided at that head |
+| exits successfully | the pull request at another head, then at the head the maker left at any later read, the last included | in: moved to review; judges decided at the head the maker left |
+| exits successfully | the pull request at another head on every read until one made 60 seconds or more after the first | in: stays in coding; Rigger names the card and both heads |
+| exits successfully | no tip of the card's line of work Rigger can read in its workspace | in: stays in coding; Rigger names the card and why |
+| exits successfully | no open pull request from the card's line of work, or more than one | in: stays in coding, under `R-WORK-18` |
+| exits successfully | a read of the card's pull requests that fails | in: stays in coding; Rigger names the card and the read |
+| exits unsuccessfully, or never starts | nothing | out: the forge is not read, and the card stays in coding |
+| starts the card's work from the beginning | any | out: `R-WORK-18` alone governs it |
 
 ## R-LOOP — maker, judges, and rounds
 
@@ -365,6 +401,22 @@ under the test above.
 | R-RECORD-7 | Every event says when it happened, which run it belongs to, and which card and dispatch it concerns, so a reader can put two events beside each other. | the engine | the test suite | |
 | R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | the engine | the test suite | |
 | R-RECORD-9 | When Rigger cannot record an event, it says what went unrecorded and starts no further work until it can. | the engine | the test suite | |
+| R-RECORD-10 | Rigger's record of the end of every merge its lane starts names why the pull request was not merged, whatever the outcome other than merged. What each outcome names is in `### R-RECORD-10 — Why a merge ended unmerged`. | the engine | the test suite | |
+| R-RECORD-11 | After an attempt that continues a card's work, where the maker exits successfully, Rigger's record names the head of the card's pull request that Rigger last read under `R-WORK-34`. | the engine | the test suite | |
+| R-RECORD-12 | Where Rigger read the forge again under `R-SCHED-26` or `R-WORK-34`, its record of the merge's end, or of the card's move to review or stay in coding, names how many reads it made. It also names how long after the first read the last one came. | the engine | the test suite | |
+
+### R-RECORD-10 — Why a merge ended unmerged
+
+| How the merge ended | Outcome recorded | Why it names |
+|---|---|---|
+| the forge merged the pull request | merged | out: none is required |
+| the forge held the pull request as merged before the merge call | already merged | that the forge held it as merged already |
+| the forge refused the merge call | refused | the refusal, and the check the refusal names where it names one |
+| the merge call failed | failed | the failure |
+| Rigger could not read the card again before the merge call | not merged | why it could not |
+| on reading the card again, Rigger answered other than a merge, giving a reason | not merged | the answer, and the reason it gave |
+| on reading the card again, Rigger answered other than a merge, giving no reason | not merged | the answer, and what the answer names |
+| on reading the card again, Rigger answered a merge at another pull request or head | not merged | the pull request and head it answered, and the ones it pulled |
 
 ## R-IMPROVE — what the loops may do
 
