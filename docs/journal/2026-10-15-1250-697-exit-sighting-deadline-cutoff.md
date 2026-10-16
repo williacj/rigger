@@ -8,9 +8,14 @@ The exit cells U1, U2, C1, C2, B0, B1 and A0 (both endings) failed under host lo
 timeout. Its census needs 13 stand-in reads for a two-round cell, or 6 for C1 and C2, and every
 one of them must finish inside that much wall time.
 
-At a load of about 15, the census used 73–166 ms of the bound. When the host stretches the reads
-further, `spawnSync` kills the read in flight at the deadline with `ETIMEDOUT`, and `runOnce`
-marks that `ps` unanswered. Then one of two things happens:
+How much of the bound a census normally uses was measured, not judged. On 2026-10-14 the maker ran
+`npm test -- test/never-stop.test.mjs` at `d92f7cf`, with one-minute load 14.99 at start and 15.75
+at end, on 12 logical CPUs. The retained exit traces of that run's 16 exit attempts were read with
+the card's `census-margin.mjs`. Each census took 73–166 ms. The run's originals are private under
+O243; the PR's attempt ledger lists them as `n01`.
+
+When the host stretches the reads further, `spawnSync` kills the read in flight at the deadline
+with `ETIMEDOUT`, and `runOnce` marks that `ps` unanswered. Then one of two things happens:
 
 - **A census round had completed.** `census` returns its last completed round, and `beforeKill`'s
   confirming read is refused before it starts.

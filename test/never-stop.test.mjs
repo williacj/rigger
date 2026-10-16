@@ -669,6 +669,11 @@ async function censusExit(t, cell, afterKill = 'omit') {
       assert.equal(exit.branch, 'answered', `the controlled answered exit took the ${exit.branch} branch`);
       assert.equal(exit.partialCensus, false, 'the controlled answered exit returned a partial census, which carries no cache proof');
     }
+    assert.ok(exit.branch === 'answered' || exit.branch === 'cutoff', `the exit took the ${exit.branch} branch, which earns neither the answered scenario nor the cutoff: ${JSON.stringify(exitSummary(exit))}`);
+    if (exit.branch === 'answered') {
+      const two = pidIn(directory, 'two');
+      assert.ok(exit.probes.some(({ target, argv, end, start }) => target === two && argv === `-p ${two} -o stat=` && end >= start), `no real per-pid probe of the member was recorded for the answered confirmation: ${JSON.stringify(exit.probes)}`);
+    }
     if (exit.branch === 'cutoff') return exitCutoff(directory, exit, { prepared, status, stderr, events });
   }
   if (prepared) {
@@ -753,7 +758,7 @@ const EXIT_FORCING = [
   '      empty) exit 0 ;;',
   '      fail) printf "forced failure\\n" >&2; exit 2 ;;',
   '      omit-leader) force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@") || exit $?; printf "%s\\n" "$force_answer" | /usr/bin/awk -v pid="$(/bin/cat "$here/group.pid")" \'$1 != pid\'; exit 0 ;;',
-  '      end-target) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target"; while /bin/kill -0 "$force_target" 2>/dev/null && ! /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= || echo absent)" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      end-target) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target" 2> /dev/null; while /bin/kill -0 "$force_target" 2>/dev/null && ! /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= || echo absent)" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
   '      answer-then-fail) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; printf "forced failure\\n" >&2; exit 2 ;;',
   '      answer-then-hang) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; exec /usr/bin/tail -f /dev/null ;;',
   '    esac',
@@ -940,7 +945,8 @@ function exitSighting(directory, group) {
     request.outcome = outcome.kind;
     if (outcome.kind === 'timeout') timedOut = true;
     if (outcome.kind !== 'answered') {
-      result.cut = { step: 'census', request: request.seq, kind: outcome.kind, at: request.at, deadline: censusDeadline, remaining: censusDeadline - request.at, timeout: request.timeout ?? null };
+      result.censusCut = { step: 'census', request: request.seq, kind: outcome.kind, at: request.at, deadline: censusDeadline, remaining: censusDeadline - request.at, timeout: request.timeout ?? null };
+      result.cut = result.censusCut;
       if (last !== undefined && (outcome.kind === 'late' || outcome.kind === 'timeout')) returnedBy = outcome.kind === 'late' ? 'C3' : 'C4';
       else thrown = { kind: outcome.kind, message: unseen ? `the census's reads ${unseen}: ${outcome.message}` : outcome.message };
       break;
@@ -1013,7 +1019,8 @@ function exitSighting(directory, group) {
       if (check.at >= decision) {
         result.F = `F1${result.n ? 'e' : 'z'}`;
         result.spentAt = check.at;
-        result.cut = { step: 'confirm', kind: 'spent', at: check.at, deadline: decision, remaining: decision - check.at, timeout: null };
+        result.confirmCut = { step: 'confirm', kind: 'spent', at: check.at, deadline: decision, remaining: decision - check.at, timeout: null };
+        result.cut = result.confirmCut;
         why = EXIT_WORDS.spent;
         break;
       }
@@ -1025,7 +1032,8 @@ function exitSighting(directory, group) {
       if (outcome.kind === 'answered') { result.n += 1; result.statuses.push(outcome.status); continue; }
       if (outcome.kind === 'refused' && !timedOut) return fail('a confirming read was refused with no earlier timeout');
       if (outcome.kind === 'timeout') timedOut = true;
-      result.cut = { step: 'confirm', request: request.seq, kind: outcome.kind, at: request.at, deadline: readDeadline, remaining: readDeadline - request.at, timeout: request.timeout ?? null };
+      result.confirmCut = { step: 'confirm', request: request.seq, kind: outcome.kind, at: request.at, deadline: readDeadline, remaining: readDeadline - request.at, timeout: request.timeout ?? null };
+      result.cut = result.confirmCut;
       result.F = { late: `F5L${result.C === 'C4' ? '4' : result.n ? 'e' : 'z'}`, timeout: `F5T${result.n ? 'e' : 'z'}`, refused: 'F2z', failed: `F4${result.n ? 'e' : 'z'}` }[outcome.kind];
       why = EXIT_WORDS.confirmFailed + outcome.message;
       break;
@@ -1058,10 +1066,16 @@ function exitSighting(directory, group) {
   }
   const kill = killAt < 0 ? undefined : items[killAt];
   result.kill = kill === undefined ? { sent: false } : { sent: true, ok: kill.ok, code: kill.code ?? null };
+  // The stand-in's own record of each real per-pid probe it ran inside a confirming read, and of
+  // when each marker was written; neither is an answer L0 received.
+  const probeLog = existsSync(join(directory, 'probe-log')) ? readFileSync(join(directory, 'probe-log'), 'utf8').split('\n').filter(Boolean) : [];
+  result.probes = probeLog.map((line) => /^PROBE pid=(\d+) argv=(-p (\d+) -o stat=) start=(\S+) end=(\S+) status=(\d+) stat=(.*) stderr=(.*) member-before=(\S+) member-after=(\S+)$/.exec(line)).filter(Boolean)
+    .map(([, standIn, argv, target, start, end, status, stat, stderr, before, after]) => ({ standIn: Number(standIn), argv, target: Number(target), start: Number(start), end: Number(end), status: Number(status), stat: stat.trim(), stderr, before, after }));
+  result.markers = probeLog.map((line) => /^MARKER (\S+) (\S+)$/.exec(line)).filter(Boolean).map(([, name, at]) => ({ name, at: Number(at) }));
   result.kills = items.filter((item) => item.kind === 'signal' && item.target === -group && item.name === 'SIGKILL').map(({ ok, code }) => ({ ok, code: code ?? null }));
   // O270's ordinary-A0 window: round 1 completed, a later census read cut before it started, fewer
   // than three state reads returned, and a confirming answer with rows still reached L0.
-  result.partialCensus = result.C === 'C3' && result.cut?.kind === 'late' && result.stateReads < 3 && /^F3/.test(result.F ?? '');
+  result.partialCensus = result.C === 'C3' && result.censusCut?.kind === 'late' && result.stateReads < 3 && /^F3/.test(result.F ?? '');
   if (kill !== undefined) {
     const readings = items.slice(0, killAt).filter((item) => item.kind === 'reading');
     const deadline = readings.length ? readings.at(-1).at + CLEANUP_BOUND : undefined;
@@ -1088,12 +1102,43 @@ function exitCutoff(directory, exit, { prepared, status, stderr, events }) {
     assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
     assert.deepEqual(retained.errors, [], 'private retention reported an error');
   }
-  const { cut, group } = exit;
-  assert.ok(cut, 'the cutoff names no read that the real bound cut');
-  if (cut.kind === 'timeout') assert.ok(cut.timeout > 0 && cut.timeout === cut.remaining && cut.timeout <= 2 * CLEANUP_BOUND, `the timed-out read was not bounded by its real deadline: ${JSON.stringify(cut)}`);
-  if (cut.kind === 'late' || cut.kind === 'spent') assert.ok(cut.remaining <= 0, `the read cut before it started, or the spent deadline, had time left: ${JSON.stringify(cut)}`);
-  if (cut.kind === 'refused') assert.ok(cut.remaining > 0, `the refused read had no time left: ${JSON.stringify(cut)}`);
-  if (/^F1/.test(exit.F)) assert.ok(exit.spentAt >= exit.decisionDeadline, 'the confirmation deadline was not spent');
+  const observation = sightingAttempts.get(directory);
+  if (observation?.snapshotReport) {
+    // Every read the stand-in started has a settled original, and no other does: a read L0 cut
+    // before it started, or refused, has none, and a timed-out one keeps its partial original.
+    assert.equal(observation.snapshotReport.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
+    const retained = linesOf(join(observation.target, 'settled', 'fixture'), 'sighting-reads/trace.jsonl');
+    const starts = retained.filter(({ kind }) => kind === 'start');
+    const ends = retained.filter(({ kind }) => kind === 'end' || kind === 'threw');
+    const spawned = exitTimeline(directory).filter((item) => item.kind === 'request' && item.spawned);
+    assert.deepEqual(starts.map(({ argv }) => argv.join(' ')), spawned.map(({ argv }) => argv.join(' ')), 'the retained originals differ from the reads L0 started');
+    assert.deepEqual(ends.map(({ id }) => id), starts.map(({ id }) => id), 'a started read has no retained end');
+    assert.deepEqual(ends.map(({ error }) => error?.code === 'ETIMEDOUT'), spawned.map(({ error }) => error === 'ETIMEDOUT'), 'a timed-out read was retained as answered, or the reverse');
+  }
+  const { group } = exit;
+  // The decisive real deadline of each bounded step that cut: the census step for C2, C2u, C3 and
+  // C4, the confirmation step for F1, F2 and F5. A C4 census timeout stays asserted after its
+  // refused confirmation.
+  const deadlineCut = (cut, step, bound) => {
+    assert.ok(cut, `the ${step} step names no read or deadline that its real bound cut`);
+    assert.equal(cut.step, step);
+    assert.equal(cut.deadline - cut.remaining, cut.at, `the ${step} cut's remaining time is not measured from its deadline`);
+    if (cut.kind === 'timeout') assert.ok(cut.timeout > 0 && cut.timeout === cut.remaining && cut.timeout <= bound, `the timed-out ${step} read was not bounded by its real deadline: ${JSON.stringify(cut)}`);
+    else if (cut.kind === 'late' || cut.kind === 'spent') assert.ok(cut.remaining <= 0, `the ${step} read cut before it started, or the spent deadline, had time left: ${JSON.stringify(cut)}`);
+    else if (cut.kind === 'refused') assert.ok(cut.remaining > 0 && cut.timeout === null, `the refused ${step} read had no time left or started: ${JSON.stringify(cut)}`);
+    else assert.fail(`the ${step} cut is a ${cut.kind}, not a real-deadline cut: ${JSON.stringify(cut)}`);
+  };
+  if (['C2', 'C2u', 'C3', 'C4'].includes(exit.C)) {
+    deadlineCut(exit.censusCut, 'census', CLEANUP_BOUND);
+    assert.equal(exit.censusCut.deadline, exit.censusDeadline, 'the census cut is not at the census step\'s 1,000 ms deadline');
+    if (exit.C === 'C4') assert.equal(exit.censusCut.kind, 'timeout', 'a C4 return was not cut by a started census timeout');
+    if (exit.C === 'C3') assert.equal(exit.censusCut.kind, 'late', 'a C3 return was not cut before its read started');
+  }
+  if (exit.F !== undefined) {
+    deadlineCut(exit.confirmCut, 'confirm', 2 * CLEANUP_BOUND);
+    if (/^F1/.test(exit.F)) assert.ok(exit.spentAt >= exit.decisionDeadline, 'the confirmation deadline was not spent');
+    if (exit.F === 'F2z') assert.equal(exit.censusCut?.kind, 'timeout', 'a refused confirmation followed no census timeout');
+  }
   assert.deepEqual(exit.kill, { sent: true, ok: true, code: null }, 'the group kill was not sent, or did not reach the group');
   const kills = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
   assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
@@ -2520,7 +2565,10 @@ async function forcedExit(t, name, forcing, expect) {
   catch (error) { failure = error; }
   const { exit, events, directory } = exitResults.get(t);
   const reached = forcingReached(directory, forcing);
-  const timingEdge = ['late', 'spent'].includes(exit.cut?.kind) || (exit.C === 'C3' && expect.C !== 'C3') || (exit.B === 'B4' && expect.B !== 'B4');
+  const timingEdge = ['late', 'spent'].includes(exit.censusCut?.kind) || ['late', 'spent'].includes(exit.confirmCut?.kind) || (exit.C === 'C3' && expect.C !== 'C3') || (exit.B === 'B4' && expect.B !== 'B4');
+  // An ordinary-path failure is never skipped: only a forced class the run did not reach is.
+  if (failure && !(expect.fails ?? expect.branch === 'diagnostic')) throw failure;
+  if (failure && (!reached || timingEdge)) throw failure;
   if (!reached || timingEdge) {
     t.diagnostic(JSON.stringify({ forcedClassUnproved: !reached ? 'the real bound ended the exit before the forcing was reached' : 'an unforced timing edge ended the exit', exitSighting: exitSummary(exit), failure: failure?.message ?? null }));
     t.skip(!reached ? 'forcing not reached before the real bound' : `unforced timing edge ${exit.C}/${exit.F ?? '-'}`);
@@ -2542,120 +2590,134 @@ function forcingReached(directory, { reads = [], signals = [], probe }) {
   const forced = existsSync(join(directory, 'forced')) ? readFileSync(join(directory, 'forced'), 'utf8') : '';
   if (!reads.every(({ kind, nth, action }) => forced.includes(`${kind} ${nth} ${action}\n`))) return false;
   if (signals.length > 0 && !linesOf(directory, 'exit-trace.jsonl').some((row) => row.kind === 'signal' && row.forced)) return false;
-  if (probe === 'fail' && !existsSync(join(directory, 'sighted-state-probe'))) return false;
+  if (probe === 'fail' && !/^PROBE .* status=1 /m.test(existsSync(join(directory, 'probe-log')) ? readFileSync(join(directory, 'probe-log'), 'utf8') : '')) return false;
   if (probe === 'hang' && !existsSync(`${directory}.probe-held`)) return false;
   return true;
 }
 
 const censusTimeout = { branch: 'cutoff', C: 'C2', N: 'N0', reason: () => TIMED_OUT };
-for (const name of Object.keys(EXIT_RUNS)) {
-  test(`${name} exit cut at its first census state read records the census timeout`, SETTLES_WITHIN, async (t) => {
-    await forcedExit(t, name, { reads: [forced('state', 1, 'hang')] }, censusTimeout);
-  });
-}
+const n1 = `the census's reads named no process of the group while it still had one: `;
+const n2 = (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: `;
+const confirmTimedOut = { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS };
+const refusedKill = { step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' };
 
-const confirmRefused = { branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED };
-for (const name of ['U1', 'U2', 'A0', 'A0 zombie', 'B0', 'B1', 'X0']) {
-  test(`${name} exit with its second census round timed out refuses the confirming read`, SETTLES_WITHIN, async (t) => {
-    await forcedExit(t, name, { reads: [forced('state', 3, 'hang')] }, confirmRefused);
-  });
-}
-
-for (const name of ['C1', 'C2']) {
-  test(`${name} exit with its confirming read timed out records the confirmation timeout`, SETTLES_WITHIN, async (t) => {
-    await forcedExit(t, name, { reads: [forced('confirm', 1, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS });
-  });
-}
-
-const A0_CASES = [
-  ['E1: its first command read timed out', { reads: [forced('command', 1, 'hang')] }, censusTimeout],
-  ['E2: its second census state read timed out', { reads: [forced('state', 2, 'hang')] }, censusTimeout],
-  ['N1: an empty completed round then a timed-out read', { reads: [forced('state', 2, 'empty'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => `the census's reads named no process of the group while it still had one: ${TIMED_OUT}` }],
-  ['N2: a leaderless completed round then a timed-out read', { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N2', reason: (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: ${TIMED_OUT}` }],
-  ['C1: its first census read failed', { reads: [forced('state', 1, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
-  ['C5: a census read after a completed round failed', { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
-  ['F5Tz: a confirming read timed out', { reads: [forced('confirm', 1, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
-  ['F5Te: an empty confirming answer then a timed-out read', { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Te', n: 1, B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
-  ['A3 timeout: a confirming read timed out after its live probe', { reads: [forced('confirm', 1, 'answer-then-hang')] }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS }],
-  ['B2: a failed confirming read then an empty read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'empty')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B2', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
-  ['B3: a failed confirming read then a failed read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
-  ['B5: a failed confirming read then a timed-out read by pid', { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
-  ['N1 failure: an empty completed round then a failed read', { reads: [forced('state', 2, 'empty'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N1', reason: () => `the census's reads named no process of the group while it still had one: ${FAILED_READ}` }],
-  ['N2 failure: a leaderless completed round then a failed read', { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N2', reason: (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: ${FAILED_READ}` }],
-  ['F4z: a failed confirming read', { reads: [forced('confirm', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
-  ['F4e: an empty confirming answer then a failed read', { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
-  ['A3 failure: a confirming read failed after its live probe', { reads: [forced('confirm', 1, 'answer-then-fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
-  ['F6z: an occupancy check that fails with another error', { reads: [], signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
-];
-for (const [title, forcing, expect] of A0_CASES) {
-  test(`A0 exit ${title}`, SETTLES_WITHIN, async (t) => {
-    await forcedExit(t, 'A0', forcing, expect);
-  });
-}
-
-test('A0 exit K1: a refused first group kill after a refused confirming read fails the cutoff', SETTLES_WITHIN, async (t) => {
-  const exit = await forcedExit(t, 'A0', { reads: [forced('state', 3, 'hang')], signals: [{ step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' }] },
-    { fails: true, branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED });
-  if (!exit) return;
+/**
+ * Asserts a forced K1: the first group kill was the refused one. What L0 sends after it is recorded
+ * rather than presumed, since it depends on whether the same `ps` still answers.
+ */
+const refusedThenSent = (exit, directory, name, t) => {
   assert.deepEqual(exit.kills[0], { ok: false, code: 'EPERM' }, 'the first group kill was not the refused one');
-  assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group');
-});
+  t?.diagnostic(JSON.stringify({ laterGroupKills: exit.kills.slice(1), postKill: exit.postKill }));
+};
 
-test('A0 exit K1: a refused first group kill after an answered confirmation is recorded as it happened', SETTLES_WITHIN, async (t) => {
-  exitForcings.set(t, { signals: [{ step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' }] });
-  try { await censusExit(t, 'A'); } catch (error) { t.diagnostic(JSON.stringify({ answeredRefusedKill: error.message })); }
-  const { exit, events } = exitResults.get(t);
-  if (exit.branch !== 'answered') {
-    t.diagnostic(JSON.stringify({ forcedClassUnproved: 'the real bound ended the exit before an answered confirmation', exitSighting: exitSummary(exit) }));
-    t.skip(`no answered confirmation: ${exit.C}/${exit.F ?? '-'}`);
-    return;
-  }
-  assert.deepEqual(exit.kills[0], { ok: false, code: 'EPERM' }, 'the first group kill was not the refused one');
-  assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group');
-  assert.equal(events.filter(({ event, group }) => event === 'group.killed' && group === exit.group).length, 1, JSON.stringify(events));
-});
-
-test('A0 exit A2t: a confirming read timed out while its real probe ran matches the F5T cutoff', SETTLES_WITHIN, async (t) => {
-  if (!await forcedExit(t, 'A0', { probe: 'hang' }, { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS })) return;
-  const { directory } = exitResults.get(t);
-  const record = `${directory}.probe-held`;
-  await until(() => existsSync(record) && /^cut /m.test(readFileSync(record, 'utf8')), { signal: t.signal });
-  const held = readFileSync(record, 'utf8');
-  unlinkSync(record);
-  t.diagnostic(JSON.stringify({ probeHeld: held }));
-  const started = new RegExp('^started (\\d+) (\\S*/)?ps filled=\\d+$', 'm').exec(held);
-  assert.ok(started, `the real /bin/ps probe never started: ${held}`);
-  assert.match(held, new RegExp(`^cut ${started[1]} before=\\S+ signal=9 exit=0$`, 'm'), `the real probe was not still running when its read was cut: ${held}`);
-  assert.equal(existsSync(join(directory, 'sighted-state-probe')), false, 'a probe result reached the stand-in');
-  assert.equal(existsSync(join(directory, 'sighted-live')), false, 'the live marker was written without a probe result');
-});
-
-test('A0 exit A2p: a real probe that fails with no state while the target remains fails the answered scenario', SETTLES_WITHIN, async (t) => {
-  if (!await forcedExit(t, 'A0', { probe: 'fail' }, { fails: true, branch: 'answered', C: 'C0', F: 'F3z' })) return;
-  const { directory } = exitResults.get(t);
+/** Asserts the stand-in's real per-pid probe record for a confirming read that reached it. */
+const probed = (status, stat) => (exit, directory) => {
   const two = pidIn(directory, 'two');
-  assert.equal(read(directory, 'sighted-state-probe'), `PER-PID ${two} status=1 stat=`, 'the probe did not fail plainly with no state');
-  assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a failed probe wrote the live marker');
-  // The stand-in answered only after its real start-time read matched the prepared one, so the
-  // target was still present after the failed probe.
-  assert.match(read(directory, 'sighted-ps.log'), new RegExp(`READ -g \\d+ -o pid=,stat=\nPHASE before-kill`), 'the outer answer was not returned');
-});
+  const probe = exit.probes.find(({ target }) => target === two);
+  assert.ok(probe, `no real per-pid probe of the member was recorded: ${JSON.stringify(exit.probes)}`);
+  assert.equal(probe.argv, `-p ${two} -o stat=`);
+  assert.ok(probe.end >= probe.start, 'the probe ended before it started');
+  if (status !== undefined) assert.equal(probe.status, status, `the probe exited ${probe.status}`);
+  if (stat !== undefined) assert.equal(probe.stat, stat);
+  return probe;
+};
 
-test('C1 exit F3e: an empty confirming answer then a live one keeps the answered scenario', SETTLES_WITHIN, async (t) => {
-  await forcedExit(t, 'C1', { reads: [forced('confirm', 1, 'empty')] }, { branch: 'answered', C: 'C0', F: 'F3e', n: 1 });
-});
-
-for (const [name, prepared] of [['A0', true], ['C1', false]]) {
-  test(`${name} exit A1: a target ended before the confirming probe fails the answered scenario`, SETTLES_WITHIN, async (t) => {
-    const exit = await forcedExit(t, name, { reads: [forced('confirm', 1, 'end-target')] }, { fails: true, C: 'C0' });
-    if (!exit) return;
-    const { directory } = exitResults.get(t);
+/**
+ * Each named exit cell's forcing classes. Census classes apply to every cell. A cell whose census
+ * settles in one round (C1, C2) never makes a third state read unless an anomalous round forces
+ * one, so C4 and C5 are unreachable for it (`census:722–727` returns on the settled round). X0's
+ * target is reaped before its confirming read (`sightingPs:41–46` waits for `reaped-two` before
+ * answering the X-reap read), so a present-target A2p is unreachable for X0, and so is A2t: a real
+ * `ps -p` of a reaped pid prints nothing, so no full pipe can hold it running until its read is cut.
+ */
+const twoRound = ['U1', 'U2', 'A0', 'A0 zombie', 'B0', 'B1', 'X0'];
+// A forced empty answer has no READ block in a prepared cell's stand-in log, so its answered
+// scenario's prepared-read accounting fails; the F3e class itself is still classified and checked.
+const preparedCells = ['U2', 'A0', 'A0 zombie', 'B0', 'B1'];
+const CELL_CASES = [
+  ['E0: its first census state read timed out', () => true, { reads: [forced('state', 1, 'hang')] }, censusTimeout],
+  ['E1: its first command read timed out', () => true, { reads: [forced('command', 1, 'hang')] }, censusTimeout],
+  ['E2: its second census state read timed out', () => true, { reads: [forced('state', 2, 'hang')] }, censusTimeout, (exit, directory, name) => {
+    if (name === 'X0') assert.equal(existsSync(join(directory, 'release-two')), false, 'the X-reap read released the member before it was cut');
+  }],
+  ['E2 failure: its second census state read failed', () => true, { reads: [forced('state', 2, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
+  ['C1: its first census read failed', () => true, { reads: [forced('state', 1, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
+  ['N1: an empty completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'empty'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => n1 + TIMED_OUT }],
+  ['N1 failure: an empty completed round then a failed read', () => true, { reads: [forced('state', 2, 'empty'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N1', reason: () => n1 + FAILED_READ }],
+  ['N2: a leaderless completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N2', reason: (group) => n2(group) + TIMED_OUT }],
+  ['N2 failure: a leaderless completed round then a failed read', () => true, { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N2', reason: (group) => n2(group) + FAILED_READ }],
+  ['C4 F2z: its second census round timed out and the confirming read was refused', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED }, (exit, directory, name) => {
+    if (name === 'X0') assert.equal(existsSync(join(directory, 'reaped-two')), true, 'the X-reap read returned before the member was reaped');
+  }],
+  ['C5: a census read after a completed round failed', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
+  ['K1 cutoff: a refused first group kill after a census timeout fails the cutoff', () => true, { reads: [forced('state', 1, 'hang')], signals: [{ ...refusedKill, step: 1 }] }, { fails: true, branch: 'cutoff', C: 'C2', reason: () => TIMED_OUT }, refusedThenSent],
+  ['F5Tz: a confirming read timed out', () => true, { reads: [forced('confirm', 1, 'hang')] }, confirmTimedOut],
+  ['F5Te: an empty confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1 }],
+  ['A3 timeout: a confirming read timed out after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-hang')] }, confirmTimedOut, (exit) => assert.ok(exit.probes.length > 0, 'the confirming read was cut before its probe')],
+  ['A2t: a confirming read timed out while its real probe ran', (name) => name !== 'X0', { probe: 'hang' }, confirmTimedOut, async (exit, directory, name, t) => {
+    const record = `${directory}.probe-held`;
+    await until(() => existsSync(record) && /^cut /m.test(readFileSync(record, 'utf8')), { signal: t.signal });
+    const held = readFileSync(record, 'utf8');
+    unlinkSync(record);
+    t.diagnostic(JSON.stringify({ probeHeld: held }));
+    const started = new RegExp('^started (\\d+) (\\S*/)?ps filled=\\d+$', 'm').exec(held);
+    assert.ok(started, `the real /bin/ps probe never started: ${held}`);
+    assert.match(held, new RegExp(`^cut ${started[1]} before=\\S+ signal=9 exit=0$`, 'm'), `the real probe was not still running when its read was cut: ${held}`);
+    assert.deepEqual(exit.probes, [], 'a probe result reached the stand-in');
+    assert.equal(existsSync(join(directory, 'sighted-live')), false, 'the live marker was written without a probe result');
+  }],
+  ['F4z: a failed confirming read', () => true, { reads: [forced('confirm', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F4e: an empty confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['A3 failure: a confirming read failed after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }, (exit) => assert.ok(exit.probes.length > 0, 'the failed confirming read made no probe')],
+  ['B2: a failed confirming read then an empty read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'empty')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B2', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['B3: a failed confirming read then a failed read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
+  ['B5: a failed confirming read then a timed-out read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
+  ['F6z: an occupancy check that fails with another error', () => true, { signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
+  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), branch: 'answered', C: 'C0', F: 'F3e', n: 1 }, probed()],
+  ['A2p: a real probe that fails with no state while the member remains', (name) => name !== 'X0', { probe: 'fail' }, { fails: true, branch: 'answered', C: 'C0', F: 'F3z' }, (exit, directory) => {
+    const probe = probed(1, '')(exit, directory);
+    assert.equal(probe.stderr, '', 'the failed probe wrote standard error');
+    assert.deepEqual([probe.before, probe.after], ['present', 'present'], 'the member was not present around its failed probe');
+    assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a failed probe wrote the live marker');
+  }],
+  // X0's member is already reaped by its confirming read, so A1 there is X0's own answered scenario.
+  ['A1: a member ended before the confirming probe', () => true, { reads: [forced('confirm', 1, 'end-target')] }, { fails: (name) => name !== 'X0', C: 'C0' }, (exit, directory, name) => {
     const [, state] = /^target \d+ (.*)$/m.exec(read(directory, 'forced')) ?? [];
-    assert.ok(state === 'absent' || state?.startsWith('Z'), `the ended target was neither absent nor a zombie: ${state}`);
-    if (prepared && state === 'absent') {
-      assert.equal(exit.F, 'F4z', 'a prepared probe of an absent target returned an answer');
+    assert.ok(state === 'absent' || state?.startsWith('Z'), `the ended member was neither absent nor a zombie: ${state}`);
+    if (preparedCells.includes(name) && state === 'absent') {
+      assert.equal(exit.F, 'F4z', 'a prepared probe of an absent member returned an answer');
       assert.match(exit.reason, /ended with 79/);
-    } else assert.equal(exit.F, 'F3z', `the probe of a ${state} target returned no answer`);
+    } else {
+      assert.equal(exit.F, 'F3z', `the probe of a ${state} member returned no answer`);
+      probed()(exit, directory);
+    }
+  }],
+];
+for (const name of Object.keys(EXIT_RUNS)) {
+  for (const [title, applies, forcing, expect, check] of CELL_CASES) {
+    if (!applies(name)) continue;
+    const cellExpect = { ...expect, fails: typeof expect.fails === 'function' ? expect.fails(name) : expect.fails };
+    test(`${name} exit ${title}`, SETTLES_WITHIN, async (t) => {
+      const exit = await forcedExit(t, name, forcing, cellExpect);
+      if (exit && check) await check(exit, exitResults.get(t).directory, name, t);
+    });
+  }
+  test(`${name} exit K1 answered: a refused first group kill after an answered confirmation is recorded as it happened`, SETTLES_WITHIN, async (t) => {
+    exitForcings.set(t, { signals: [refusedKill] });
+    let failure;
+    try { await censusExit(t, ...EXIT_CELLS[name]); } catch (error) { failure = error; }
+    const { exit, events, directory } = exitResults.get(t);
+    if (exit.branch !== 'answered' || !forcingReached(directory, { signals: [refusedKill] })) {
+      if (failure) throw failure;
+      t.diagnostic(JSON.stringify({ forcedClassUnproved: 'the real bound ended the exit before an answered confirmation', exitSighting: exitSummary(exit) }));
+      t.skip(`no answered confirmation: ${exit.C}/${exit.F ?? '-'}`);
+      return;
+    }
+    if (failure) t.diagnostic(JSON.stringify({ answeredRefusedKill: failure.message }));
+    refusedThenSent(exit, directory, name, t);
+    assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group after the answered confirmation');
+    // X0's reaped member leaves no group record; every other answered cell records one.
+    assert.equal(events.filter(({ event, group }) => event === 'group.killed' && group === exit.group).length, name === 'X0' ? 0 : 1, JSON.stringify(events));
   });
 }
 
