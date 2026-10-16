@@ -58,7 +58,7 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
     '    if [ -f "$here/hang" ]; then [ "$afterKill" = omit ] && cut=yes;',
     '    else probe_started=$(/usr/bin/perl -MTime::HiRes=time -e "printf q(%.6f), time"); probe_member=$(kill -0 "$target" 2> /dev/null && echo present || echo absent); if [ -f "$here/probe-fail" ]; then state=$(/bin/ps -p "$target" -o stat= 2> "$here/probe-stderr.$$" > /dev/null; exit 1); elif [ -f "$here/probe-hang" ]; then state=$(/usr/bin/perl "$here/probe-hang" "$target" "$$" "$here" 2> "$here/probe-stderr.$$"); else state=$(/bin/ps -p "$target" -o stat= 2> "$here/probe-stderr.$$"); fi',
     '      probe_status=$?',
-    '      probe_ended=$(/usr/bin/perl -MTime::HiRes=time -e "printf q(%.6f), time"); probe_stderr=$(/bin/cat "$here/probe-stderr.$$" 2> /dev/null); /bin/rm -f "$here/probe-stderr.$$"; [ -z "$probe_stderr" ] || printf "%s\\n" "$probe_stderr" >&2',
+    '      probe_ended=$(/usr/bin/perl -MTime::HiRes=time -e "printf q(%.6f), time"); probe_stderr=$(/bin/cat "$here/probe-stderr.$$" 2> /dev/null); /bin/cat "$here/probe-stderr.$$" >&2; /bin/rm -f "$here/probe-stderr.$$"',
     '      printf "PROBE pid=%s argv=-p %s -o stat= start=%s end=%s status=%s stat=%s stderr=%s member-before=%s member-after=%s\\n" "$$" "$target" "$probe_started" "$probe_ended" "$probe_status" "$state" "$probe_stderr" "$probe_member" "$(kill -0 "$target" 2> /dev/null && echo present || echo absent)" >> "$here/probe-log"',
     '      if [ -f "$here/sighting-prepare" ]; then printf "PER-PID %s status=%s stat=%s\\n" "$target" "$probe_status" "$state" >> "$here/sighted-state-probe"; fi',
     "      if [ -f \"$here/sighting-prepare\" ]; then",

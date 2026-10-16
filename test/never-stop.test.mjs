@@ -735,8 +735,10 @@ async function censusExit(t, cell, afterKill = 'omit') {
  * The lines `forceExit` puts at the head of an exit cell's `ps` stand-in, below its warming exit.
  * Each pre-kill read is counted by kind, and a `force.<kind>.<n>` file in the cell's directory
  * makes the nth read of that kind hang until L0 kills it, answer with no rows, fail with standard
- * error, answer as the stand-in does without the group leader, end the target before answering,
- * or answer as the stand-in does and then fail or hang. Every forced read is logged to `forced`.
+ * error, answer as the stand-in does without the group leader, end the target and wait until it is
+ * reaped or (its parent stopped) a zombie before answering, stop X0's reaping parent before the
+ * X-reap read waits on it, or answer as the stand-in does and then fail or hang. Every forced read
+ * is logged to `forced`.
  */
 const EXIT_FORCING = [
   'case "$*" in',
@@ -758,7 +760,9 @@ const EXIT_FORCING = [
   '      empty) exit 0 ;;',
   '      fail) printf "forced failure\\n" >&2; exit 2 ;;',
   '      omit-leader) force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@") || exit $?; printf "%s\\n" "$force_answer" | /usr/bin/awk -v pid="$(/bin/cat "$here/group.pid")" \'$1 != pid\'; exit 0 ;;',
-  '      end-target) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target" 2> /dev/null; while /bin/kill -0 "$force_target" 2>/dev/null && ! /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= || echo absent)" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      end-target-absent) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target" 2> /dev/null; while /bin/ps -p "$force_target" > /dev/null 2>&1; do :; done; printf "target %s absent\\n" "$force_target" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      end-target-zombie) force_target=$(/bin/cat "$here/two.pid"); force_parent=$(/bin/ps -o ppid= -p "$force_target" | /usr/bin/tr -d " "); /bin/kill -STOP "$force_parent"; /bin/kill -9 "$force_target" 2> /dev/null; until /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s parent %s stopped\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= | /usr/bin/tr -d " ")" "$force_parent" >> "$here/forced"; force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@"); force_status=$?; /bin/kill -CONT "$force_parent"; printf "%s\\n" "$force_answer"; exit $force_status ;;',
+  '      hold-reaper) force_parent=$(/bin/ps -o ppid= -p "$(/bin/cat "$here/two.pid")" | /usr/bin/tr -d " "); printf "%s" "$force_parent" > "$here/held-reaper"; /bin/kill -STOP "$force_parent"; printf "reaper %s stopped\\n" "$force_parent" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
   '      answer-then-fail) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; printf "forced failure\\n" >&2; exit 2 ;;',
   '      answer-then-hang) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; exec /usr/bin/tail -f /dev/null ;;',
   '    esac',
@@ -940,6 +944,8 @@ function exitSighting(directory, group) {
   let timedOut = false;
   const censusRequests = censusItems.filter((item) => item.kind === 'request');
   result.stateReads = 0;
+  // Each completed census round in order: `changed`, `settled`, or the anomalous N1/N2 it kept.
+  result.rounds = [];
   for (const request of censusRequests) {
     const outcome = exitOutcome(request, censusDeadline, tool);
     request.outcome = outcome.kind;
@@ -977,8 +983,14 @@ function exitSighting(directory, group) {
       if (unseen === undefined) {
         const living = [...after].filter(([, state]) => live(state)).map(([pid]) => pid);
         last = living.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
+        // As `census` settles a round: no unknown state, the same pids, and every live one named alike.
+        const settled = [before, after].every((states) => [...states.values()].every((state) => !state.startsWith('?')))
+          && before.size === after.size && [...before.keys()].every((pid) => after.has(pid))
+          && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid));
+        result.rounds.push(settled ? 'settled' : 'changed');
       }
       result.N = unseen === undefined ? 'N0' : unseen.startsWith('named') ? 'N1' : 'N2';
+      if (unseen !== undefined) result.rounds.push(result.N);
       round = { position: 'before' };
     }
   }
@@ -2538,10 +2550,22 @@ const EXIT_RUNS = {
   C2: (t) => unnamedCensusCell(t, 'exit', 'C2'),
   A0: (t) => unnamedCensusCell(t, 'exit', 'A'),
   'A0 zombie': (t) => unnamedCensusCell(t, 'exit', 'A', 'zombie'),
-  B0: async (t) => assert.ok(exitCutoffs.has((await censusExit(t, 'B')).events), 'B0 exit took no cutoff branch'),
-  B1: async (t) => assert.ok(exitCutoffs.has((await censusExit(t, 'B', 'zombie')).events), 'B1 exit took no cutoff branch'),
+  B0: async (t) => bExit(t, 'omit'),
+  B1: async (t) => bExit(t, 'zombie'),
   X0: (t) => reapedCensusCell(t, 'exit'),
 };
+
+/** B0 or B1's exit as its own test runs it: a traced cutoff, or its answered named-record scenario. */
+async function bExit(t, afterKill) {
+  const { directory, events, two, trace } = await censusExit(t, 'B', afterKill);
+  if (exitCutoffs.has(events)) return;
+  assertSighting(trace, two, 'B');
+  if (afterKill === 'zombie') {
+    assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
+    assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
+  }
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+}
 
 /** Each named cell's exit census, on the shared helper. */
 const EXIT_CELLS = { U1: ['U1'], U2: ['U2'], C1: ['C1'], C2: ['C2'], A0: ['A'], 'A0 zombie': ['A', 'zombie'], B0: ['B'], B1: ['B', 'zombie'], X0: ['X'] };
@@ -2569,7 +2593,10 @@ async function forcedExit(t, name, forcing, expect) {
   // An ordinary-path failure is never skipped: only a forced class the run did not reach is. A
   // failure the class expects is the forcing's own result once the forcing was reached.
   const expectsFailure = expect.fails ?? expect.branch === 'diagnostic';
-  if (failure && (!expectsFailure || !reached)) throw failure;
+  // The one failure the forcing specifies: the ordinary test's refusal of a diagnostic branch, or
+  // the named answered-scenario assertion. Any other failure propagates before any skip.
+  const specified = expect.failure ?? /the exit took the diagnostic branch/;
+  if (failure && (!expectsFailure || !reached || !specified.test(failure.message))) throw failure;
   if (!reached || timingEdge) {
     t.diagnostic(JSON.stringify({ forcedClassUnproved: !reached ? 'the real bound ended the exit before the forcing was reached' : 'an unforced timing edge ended the exit', exitSighting: exitSummary(exit), failure: failure?.message ?? null }));
     t.skip(!reached ? 'forcing not reached before the real bound' : `unforced timing edge ${exit.C}/${exit.F ?? '-'}`);
@@ -2578,6 +2605,8 @@ async function forcedExit(t, name, forcing, expect) {
   if (expect.fails ?? expect.branch === 'diagnostic') assert.ok(failure, 'the forced run passed the answered scenario');
   else if (failure) throw failure;
   for (const key of ['branch', 'C', 'N', 'F', 'B', 'n']) if (expect[key] !== undefined) assert.equal(exit[key], expect[key], `${key}: ${JSON.stringify(exitSummary(exit))}`);
+  if (expect.rounds !== undefined) assert.deepEqual(exit.rounds, expect.rounds, `rounds: ${JSON.stringify(exitSummary(exit))}`);
+  if (failure) t.diagnostic(JSON.stringify({ specifiedFailure: failure.message.split('\n')[0] }));
   if (expect.reason !== undefined) {
     const kills = events.filter(({ event, group }) => event === 'group.killed' && group === exit.group);
     assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
@@ -2651,7 +2680,7 @@ const CELL_CASES = [
     if (name === 'X0') assert.equal(existsSync(join(directory, 'reaped-two')), true, 'the X-reap read returned before the member was reaped');
   }],
   ['C5: a census read after a completed round failed', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
-  ['K1 cutoff: a refused first group kill after a census timeout fails the cutoff', () => true, { reads: [forced('state', 1, 'hang')], signals: [{ ...refusedKill, step: 1 }] }, { fails: true, branch: 'cutoff', C: 'C2', reason: () => TIMED_OUT }, refusedThenSent],
+  ['K1 cutoff: a refused first group kill after a census timeout fails the cutoff', () => true, { reads: [forced('state', 1, 'hang')], signals: [{ ...refusedKill, step: 1 }] }, { fails: true, failure: /did not reach the group/, branch: 'cutoff', C: 'C2', reason: () => TIMED_OUT }, refusedThenSent],
   ['F5Tz: a confirming read timed out', () => true, { reads: [forced('confirm', 1, 'hang')] }, confirmTimedOut],
   ['F5Te: an empty confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1 }],
   ['A3 timeout: a confirming read timed out after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-hang')] }, confirmTimedOut, (exit) => assert.ok(exit.probes.length > 0, 'the confirming read was cut before its probe')],
@@ -2674,24 +2703,67 @@ const CELL_CASES = [
   ['B3: a failed confirming read then a failed read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
   ['B5: a failed confirming read then a timed-out read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
   ['F6z: an occupancy check that fails with another error', () => true, { signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
-  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), branch: 'answered', C: 'C0', F: 'F3e', n: 1 }, probed()],
-  ['A2p: a real probe that fails with no state while the member remains', (name) => name !== 'X0', { probe: 'fail' }, { fails: true, branch: 'answered', C: 'C0', F: 'F3z' }, (exit, directory) => {
+  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1 }, probed()],
+  ['A2p: a real probe that fails with no state while the member remains', (name) => name !== 'X0', { probe: 'fail' }, { fails: true, failure: /the last read before the kill did not find the member alive/, branch: 'answered', C: 'C0', F: 'F3z' }, (exit, directory) => {
     const probe = probed(1, '')(exit, directory);
     assert.equal(probe.stderr, '', 'the failed probe wrote standard error');
     assert.deepEqual([probe.before, probe.after], ['present', 'present'], 'the member was not present around its failed probe');
     assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a failed probe wrote the live marker');
   }],
   // X0's member is already reaped by its confirming read, so A1 there is X0's own answered scenario.
-  ['A1: a member ended before the confirming probe', () => true, { reads: [forced('confirm', 1, 'end-target')] }, { fails: (name) => name !== 'X0', C: 'C0' }, (exit, directory, name) => {
-    const [, state] = /^target \d+ (.*)$/m.exec(read(directory, 'forced')) ?? [];
-    assert.ok(state === 'absent' || state?.startsWith('Z'), `the ended member was neither absent nor a zombie: ${state}`);
-    if (preparedCells.includes(name) && state === 'absent') {
-      assert.equal(exit.F, 'F4z', 'a prepared probe of an absent member returned an answer');
-      assert.match(exit.reason, /ended with 79/);
-    } else {
-      assert.equal(exit.F, 'F3z', `the probe of a ${state} member returned no answer`);
-      probed()(exit, directory);
+  // A1 absent: the member is ended and reaped before its probe. A0 zombie and B1's member has a
+  // parent outside the group that never reaps it (`zombieJoiner`), so absence is unreachable there.
+  ['A1 absent: a member ended and reaped before the confirming probe', (name) => !['A0 zombie', 'B1'].includes(name), { reads: [forced('confirm', 1, 'end-target-absent')] },
+    { fails: (name) => name !== 'X0', failure: /the exit took the diagnostic branch|the last read before the kill did not find the member alive/, C: 'C0' }, (exit, directory, name) => {
+      assert.match(read(directory, 'forced'), /^target \d+ absent$/m, 'the ended member was not reaped before its probe');
+      if (preparedCells.includes(name)) {
+        // The prepared stand-in's real start-time read of an absent member fails, so it exits 79 with
+        // no outer answer (`sightingPs:58–66`).
+        assert.equal(exit.F, 'F4z', 'a prepared probe of an absent member returned an outer answer');
+        assert.match(exit.reason, /ended with 79/);
+        const probe = probed(1, '')(exit, directory);
+        assert.equal(probe.before, 'absent');
+      } else {
+        assert.equal(exit.F, 'F3z', 'the probe of an absent member returned no outer answer');
+        const probe = probed(1, '')(exit, directory);
+        assert.equal(probe.before, 'absent');
+      }
+    }],
+  // A1 zombie: the member is ended while its parent is stopped, so it stays a zombie through its
+  // probe. X0's member is already reaped by its confirming read, so a zombie is unreachable there.
+  ['A1 zombie: a member ended and left a zombie before the confirming probe', (name) => name !== 'X0', { reads: [forced('confirm', 1, 'end-target-zombie')] },
+    { fails: true, failure: /the exit took the diagnostic branch|the last read before the kill did not find the member alive/, C: 'C0' }, (exit, directory, name, t) => {
+      assert.match(read(directory, 'forced'), /^target \d+ Z\S* parent \d+ stopped$/m, 'the ended member was not a zombie before its probe');
+      const probe = probed()(exit, directory);
+      assert.match(probe.stat, /^Z/, `the probe did not read a zombie: ${probe.stat}`);
+      assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a zombie probe wrote the live marker');
+      // A zombie still has its start time, so even a prepared stand-in answers L0 (`sightingPs:58–66`).
+      assert.equal(exit.F, 'F3z', 'the probe of a zombie member returned no outer answer');
+      t?.diagnostic?.(JSON.stringify({ zombieProbe: probe, F: exit.F }));
+    }],
+  // E3: a changed completed round, then a settled return and an answered confirmation. The two-round
+  // cells reach it unforced; a one-round cell reaches it after a forced anomalous first round.
+  ['E3: a changed completed round then a settled return and an answered confirmation', (name) => twoRound.includes(name), {}, { branch: 'answered', C: 'C0', F: 'F3z', rounds: ['changed', 'settled'] }, probed()],
+  ['E3 anomalous: an empty completed round then a settled return and a confirmation', () => true, { reads: [forced('state', 2, 'empty')] },
+    { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, C: 'C0', F: 'F3z' }, (exit) => assert.equal(exit.rounds[0], 'N1', `rounds: ${exit.rounds}`)],
+  // E4: a changed or anomalous completed round, a settled return, then a confirmation that fails.
+  ['E4: an empty completed round, a settled return, then a failed confirming read', () => true, { reads: [forced('state', 2, 'empty'), forced('confirm', 1, 'fail')] },
+    { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }, (exit) => assert.equal(exit.rounds[0], 'N1', `rounds: ${exit.rounds}`)],
+  // X0's X-reap read entering its own wait for `reaped-two` and cut there: the reaping parent is
+  // stopped, so the read waits inside the fixture until L0's real census bound kills it.
+  ['X-reap held: the X-reap read waits for a stopped reaper until its real bound cuts it', (name) => name === 'X0', { reads: [forced('state', 2, 'hold-reaper')] }, censusTimeout, async (exit, directory, name, t) => {
+    const reaper = Number(read(directory, 'held-reaper'));
+    try {
+      assert.ok(existsSync(join(directory, 'release-two')), 'the X-reap read never released the member, so it never entered its wait');
+      assert.equal(existsSync(join(directory, 'reaped-two')), false, 'the stopped reaper reaped the member before the cut');
+      assert.equal(exit.censusCut.kind, 'timeout', 'the X-reap read was not cut by its real census bound');
+    } finally {
+      // Once L0's kill ends the reaper's parent, the kernel may already have ended the stopped reaper
+      // as a member of an orphaned group; a reaper still there is continued.
+      try { process.kill(reaper, 'SIGCONT'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
     }
+    const two = pidIn(directory, 'two');
+    await until(() => processState(two) === '', { signal: t.signal });
   }],
 ];
 for (const name of Object.keys(EXIT_RUNS)) {
@@ -2699,6 +2771,11 @@ for (const name of Object.keys(EXIT_RUNS)) {
     if (!applies(name)) continue;
     const cellExpect = { ...expect, fails: typeof expect.fails === 'function' ? expect.fails(name) : expect.fails };
     test(`${name} exit ${title}`, SETTLES_WITHIN, async (t) => {
+      // A reaper the forcing stopped is continued in pass and fail teardown alike.
+      t.after(() => {
+        const held = exitResults.get(t)?.directory && join(exitResults.get(t).directory, 'held-reaper');
+        if (held && existsSync(held)) try { process.kill(Number(readFileSync(held, 'utf8')), 'SIGCONT'); } catch {}
+      });
       const exit = await forcedExit(t, name, forcing, cellExpect);
       if (exit && check) await check(exit, exitResults.get(t).directory, name, t);
     });
@@ -2725,6 +2802,14 @@ for (const name of Object.keys(EXIT_RUNS)) {
     assert.equal(events.filter(({ event, group }) => event === 'group.killed' && group === exit.group).length, name === 'X0' ? 0 : 1, JSON.stringify(events));
   });
 }
+
+test('A0 exit forced F4z propagates a failure other than the one its forcing specifies', SETTLES_WITHIN, async (t) => {
+  const forcing = { reads: [forced('confirm', 1, 'fail')] };
+  let thrown;
+  try { await forcedExit(t, 'A0', forcing, { branch: 'diagnostic', failure: /a failure this forcing never specifies/ }); } catch (error) { thrown = error; }
+  if (!forcingReached(exitResults.get(t).directory, forcing)) return;
+  assert.match(thrown?.message ?? '', /the exit took the diagnostic branch/, 'forcedExit swallowed a failure its forcing did not specify');
+});
 
 test('A0 exit answered control: the after-state sighting is confirmed live before the kill', SETTLES_WITHIN, async (t) => {
   exitAnswerRequired.add(t);
