@@ -2566,9 +2566,10 @@ async function forcedExit(t, name, forcing, expect) {
   const { exit, events, directory } = exitResults.get(t);
   const reached = forcingReached(directory, forcing);
   const timingEdge = ['late', 'spent'].includes(exit.censusCut?.kind) || ['late', 'spent'].includes(exit.confirmCut?.kind) || (exit.C === 'C3' && expect.C !== 'C3') || (exit.B === 'B4' && expect.B !== 'B4');
-  // An ordinary-path failure is never skipped: only a forced class the run did not reach is.
-  if (failure && !(expect.fails ?? expect.branch === 'diagnostic')) throw failure;
-  if (failure && (!reached || timingEdge)) throw failure;
+  // An ordinary-path failure is never skipped: only a forced class the run did not reach is. A
+  // failure the class expects is the forcing's own result once the forcing was reached.
+  const expectsFailure = expect.fails ?? expect.branch === 'diagnostic';
+  if (failure && (!expectsFailure || !reached)) throw failure;
   if (!reached || timingEdge) {
     t.diagnostic(JSON.stringify({ forcedClassUnproved: !reached ? 'the real bound ended the exit before the forcing was reached' : 'an unforced timing edge ended the exit', exitSighting: exitSummary(exit), failure: failure?.message ?? null }));
     t.skip(!reached ? 'forcing not reached before the real bound' : `unforced timing edge ${exit.C}/${exit.F ?? '-'}`);
@@ -2707,8 +2708,12 @@ for (const name of Object.keys(EXIT_RUNS)) {
     let failure;
     try { await censusExit(t, ...EXIT_CELLS[name]); } catch (error) { failure = error; }
     const { exit, events, directory } = exitResults.get(t);
-    if (exit.branch !== 'answered' || !forcingReached(directory, { signals: [refusedKill] })) {
-      if (failure) throw failure;
+    const reached = forcingReached(directory, { signals: [refusedKill] });
+    if (exit.branch !== 'answered' || !reached) {
+      // A real-bound cutoff that still met the refused kill is the K1-cutoff class: its ordinary
+      // cutoff must fail on the refused kill, and nothing else.
+      if (failure && !(reached && exit.branch === 'cutoff' && /did not reach the group/.test(failure.message))) throw failure;
+      if (reached && exit.branch === 'cutoff') refusedThenSent(exit, directory, name, t);
       t.diagnostic(JSON.stringify({ forcedClassUnproved: 'the real bound ended the exit before an answered confirmation', exitSighting: exitSummary(exit) }));
       t.skip(`no answered confirmation: ${exit.C}/${exit.F ?? '-'}`);
       return;
