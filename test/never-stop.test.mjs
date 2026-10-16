@@ -33,6 +33,8 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { running } from './process-fixtures.mjs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -3415,11 +3417,13 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   const fixturePath = join(directory, 'fixture.mjs');
   writeFileSync(fixturePath, [
     "import { existsSync, writeFileSync } from 'node:fs';",
+    "import { renameSync } from 'node:fs';",
     "import { join } from 'node:path';",
     'const here = process.argv[2];',
     'const nonce = process.argv[3];',
     "writeFileSync(join(here, 'fixture-identity.json'), JSON.stringify({ pid: process.pid, nonce }));",
-    "writeFileSync(join(here, 'up'), nonce);",
+    "writeFileSync(join(here, 'up.partial'), nonce);",
+    "renameSync(join(here, 'up.partial'), join(here, 'up'));",
     "while (!existsSync(join(here, `release-${nonce}`))) await new Promise((resolve) => setImmediate(resolve));",
   ].join('\n'));
   const callerPath = join(directory, 'caller.mjs');
@@ -3515,6 +3519,350 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   const exitStarts = trigger ? trace.filter(({ kind, sequence }) => kind === 'read-start' && sequence > trigger.sequence) : [];
   assert.ok(trigger && exitStarts.length > 0 && exitStarts[0].readId === round[0].readId && exitStarts.every(({ sequence }) => sequence < namedTrace.sequence) && traceEnds.filter(({ sequence }) => sequence > trigger.sequence).every(({ sequence }) => sequence < namedTrace.sequence), 'the exit census did not start at C1 after the caller-end trigger and close before the named event');
   bodyStage = 'passed';
+});
+
+/**
+ * The lines of the C615 group publication observer, a module every Node process of a nested C615
+ * run loads first, through `NODE_OPTIONS`. Each fixture, caller and parent step on the group
+ * fixture's files is appended to one trace opened for append, so the trace's order is the order
+ * those steps happened across the processes: an entry appended after one step returned, ahead of
+ * one appended before another began, puts the first step before the second. In a forcing mode it
+ * holds the fixture's nonce write open, empty, part-written or fully written, until the parent has
+ * looked at `up` and found nothing or read it; or it completes that write with other bytes (#753).
+ */
+const C615_PUBLICATION_OBSERVER = [
+  "import fs from 'node:fs';",
+  "import childProcess from 'node:child_process';",
+  "import { syncBuiltinESMExports } from 'node:module';",
+  "const tracePath = process.env.C753_TRACE;",
+  "const mode = process.env.C753_MODE ?? 'observe';",
+  "if (tracePath && !globalThis.c753Observer) {",
+  "  globalThis.c753Observer = true;",
+  "  const real = { ...fs };",
+  "  const fixtureDirectory = /\\/c615-mac-group-[^/]+$/;",
+  "  const name = (path) => path.slice(path.lastIndexOf('/') + 1);",
+  "  const within = (path) => typeof path === 'string' && fixtureDirectory.test(path.slice(0, path.lastIndexOf('/'))) && name(path) !== 'control.trace.jsonl';",
+  "  const script = process.argv[1] ?? '';",
+  "  const role = within(script) && name(script) === 'fixture.mjs' ? 'fixture' : within(script) && name(script) === 'caller.mjs' ? 'caller' : 'parent';",
+  "  const shown = new Set(['up', 'group-birth.json', 'fixture-identity.json']);",
+  "  let sequence = 0;",
+  "  const mark = (event, fields = {}) => real.appendFileSync(tracePath, `${JSON.stringify({ role, pid: process.pid, sequence: ++sequence, ns: String(process.hrtime.bigint()), event, ...fields })}\\n`);",
+  "  const held = `${tracePath}.held`;",
+  "  const observed = `${tracePath}.observed`;",
+  "  const holding = () => mode.startsWith('hold-') && real.existsSync(held) && !real.existsSync(observed);",
+  "  const observe = (op, result) => {",
+  "    mark('parent-observed-while-held', { op, result });",
+  "    real.writeFileSync(observed, '');",
+  "  };",
+  "  const checks = new Map();",
+  "  fs.existsSync = (path) => {",
+  "    const result = real.existsSync(path);",
+  "    if (within(path) && ['up', 'group-birth.json', 'begin-exit'].includes(name(path))) {",
+  "      const key = name(path);",
+  "      const prior = checks.get(key);",
+  "      if (!prior || prior.result !== result) {",
+  "        mark('exists', { path: key, result, priorChecks: prior?.count ?? 0 });",
+  "        checks.set(key, { result, count: 1 });",
+  "      } else prior.count += 1;",
+  "      if (role === 'parent' && key === 'up' && !result && holding()) observe('exists', result);",
+  "    }",
+  "    return result;",
+  "  };",
+  "  fs.readFileSync = (path, ...rest) => {",
+  "    if (!within(path)) return real.readFileSync(path, ...rest);",
+  "    const key = name(path);",
+  "    mark('read-start', { path: key });",
+  "    let value;",
+  "    try {",
+  "      value = real.readFileSync(path, ...rest);",
+  "    } catch (error) {",
+  "      mark('read-error', { path: key, code: error.code ?? null });",
+  "      throw error;",
+  "    }",
+  "    const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value);",
+  "    mark('read-returned', { path: key, bytes: Buffer.byteLength(text), ...(shown.has(key) ? { text } : {}) });",
+  "    if (role === 'parent' && key === 'up' && holding()) observe('read', text);",
+  "    return value;",
+  "  };",
+  "  const hold = () => {",
+  "    const release = `${process.argv[2]}/release-${process.argv[3]}`;",
+  "    mark('hold-start');",
+  "    real.writeFileSync(held, '');",
+  "    let by;",
+  "    while (by === undefined) {",
+  "      if (real.existsSync(observed)) by = 'parent-observation';",
+  "      else if (real.existsSync(release)) by = 'release';",
+  "    }",
+  "    mark('hold-released', { by });",
+  "  };",
+  "  const publish = (path, nonce) => {",
+  "    const bytes = Buffer.from(mode === 'complete-empty' ? '' : mode === 'complete-wrong' ? `wrong-${nonce}` : nonce);",
+  "    const key = name(path);",
+  "    mark('publish-start', { path: key });",
+  "    const descriptor = real.openSync(path, 'w');",
+  "    mark('publish-opened', { path: key });",
+  "    if (mode === 'hold-empty') hold();",
+  "    let at = 0;",
+  "    const writeTo = (end) => {",
+  "      while (at < end) at += real.writeSync(descriptor, bytes, at, end - at);",
+  "      mark('publish-wrote', { path: key, bytes: at });",
+  "    };",
+  "    if (mode === 'hold-prefix') {",
+  "      writeTo(8);",
+  "      hold();",
+  "    }",
+  "    writeTo(bytes.length);",
+  "    if (mode === 'hold-exact') hold();",
+  "    real.closeSync(descriptor);",
+  "    mark('publish-returned', { path: key, bytes: at });",
+  "  };",
+  "  fs.writeFileSync = (path, data, ...rest) => {",
+  "    if (role === 'fixture' && typeof data === 'string' && data === process.argv[3]) return publish(path, data);",
+  "    if (typeof path !== 'string' || (!within(path) && !['finalizer.json', 'inventory.json'].includes(name(path)))) return real.writeFileSync(path, data, ...rest);",
+  "    const key = name(path);",
+  "    mark('write-start', { path: key });",
+  "    try {",
+  "      real.writeFileSync(path, data, ...rest);",
+  "    } catch (error) {",
+  "      mark('write-error', { path: key, code: error.code ?? null });",
+  "      throw error;",
+  "    }",
+  "    mark('write-returned', { path: key });",
+  "  };",
+  "  fs.renameSync = (from, to) => {",
+  "    if (!within(to)) return real.renameSync(from, to);",
+  "    mark('rename-start', { from: name(from), to: name(to) });",
+  "    real.renameSync(from, to);",
+  "    mark('rename-returned', { from: name(from), to: name(to) });",
+  "  };",
+  "  fs.cpSync = (from, to, ...rest) => {",
+  "    if (typeof from !== 'string' || !fixtureDirectory.test(from)) return real.cpSync(from, to, ...rest);",
+  "    mark('copy-start');",
+  "    try {",
+  "      real.cpSync(from, to, ...rest);",
+  "    } catch (error) {",
+  "      mark('copy-error', { code: error.code ?? null });",
+  "      throw error;",
+  "    }",
+  "    mark('copy-returned');",
+  "  };",
+  "  if (role === 'parent') {",
+  "    const spawn = childProcess.spawn;",
+  "    childProcess.spawn = function (command, args, ...rest) {",
+  "      const child = spawn.call(this, command, args, ...rest);",
+  "      if (Array.isArray(args) && within(args[0]) && name(args[0]) === 'caller.mjs') {",
+  "        mark('caller-spawned', { child: child.pid ?? null });",
+  "        child.on('error', (error) => mark('caller-error', { code: error.code ?? null }));",
+  "        child.on('exit', (code, signal) => mark('caller-exit', { code, signal }));",
+  "      }",
+  "      return child;",
+  "    };",
+  "  }",
+  "  if (role === 'caller') {",
+  "    const spawnSync = childProcess.spawnSync;",
+  "    childProcess.spawnSync = function (command, args, ...rest) {",
+  "      if (command !== '/bin/ps') return spawnSync.call(this, command, args, ...rest);",
+  "      mark('tool-start', { tool: command, args });",
+  "      const answer = spawnSync.call(this, command, args, ...rest);",
+  "      mark('tool-returned', { tool: command, status: answer.status, error: answer.error?.code ?? null });",
+  "      return answer;",
+  "    };",
+  "  }",
+  "  syncBuiltinESMExports();",
+  "}",
+];
+
+/**
+ * Runs the C615 group test alone in a nested runner, every Node process of which loads the
+ * publication observer in `mode`, and answers its exit status, its output, its ordered trace, its
+ * private evidence and the nonce its fixture was given. Every process the run starts names the
+ * test's scratch directory, so the scratch teardown ends whichever the run's own did not.
+ */
+async function publicationRun(t, mode) {
+  const directory = holding(t);
+  const observer = join(directory, 'observer.mjs');
+  assert.ok(!/\s/.test(observer), 'NODE_OPTIONS cannot name an observer path holding whitespace');
+  writeFileSync(observer, C615_PUBLICATION_OBSERVER.join('\n'));
+  const scratchTmp = join(directory, 'tmp');
+  mkdirSync(scratchTmp);
+  const evidence = join(directory, 'evidence');
+  mkdirSync(evidence, { mode: 0o700 });
+  const tracePath = join(directory, 'trace.jsonl');
+  const { NODE_TEST_CONTEXT, C615_WORK_DEADLINE_NS, C615_STOP_MARKER, C615_SIGHTING_EVIDENCE_ROOT, ...inherited } = process.env;
+  const env = { ...inherited, TMPDIR: scratchTmp, C615_EVIDENCE_ROOT: evidence, C753_TRACE: tracePath, C753_MODE: mode, NODE_OPTIONS: [inherited.NODE_OPTIONS, `--import=${observer}`].filter(Boolean).join(' ') };
+  const run = spawn(process.execPath, [`--import=${observer}`, '--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac group full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [status] = await once(run, 'close', { signal: t.signal });
+  assert.deepEqual(running(directory), [], 'a process the nested C615 run started outlived its own teardown');
+  const trace = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const finalizer = JSON.parse(readFileSync(join(evidence, 'group', 'finalizer.json'), 'utf8'));
+  const { nonce } = JSON.parse(readFileSync(join(evidence, 'group', 'fixture', 'fixture-identity.json'), 'utf8'));
+  return { status, output, trace, finalizer, nonce };
+}
+
+/** The place in `trace` of the first entry `matches`, which fails the test where there is none. */
+const placeOf = (trace, what, matches) => {
+  const place = trace.findIndex(matches);
+  assert.ok(place >= 0, `the publication trace never recorded ${what}`);
+  return place;
+};
+
+/**
+ * Asserts that the nested run's parent read `up` exactly once, only after the fixture's nonce write
+ * had returned, and answers what that read returned and where it stands in the trace.
+ */
+function assertReadAfterReturn({ trace }) {
+  const returned = placeOf(trace, 'the returned nonce write', ({ role, event }) => role === 'fixture' && event === 'publish-returned');
+  const reads = trace.flatMap((entry, place) => (entry.role === 'parent' && entry.event === 'read-start' && entry.path === 'up' ? [place] : []));
+  assert.equal(reads.length, 1, 'the parent did not read up exactly once');
+  assert.ok(reads[0] > returned, 'the parent read up before the fixture write of its nonce returned');
+  const answered = placeOf(trace, 'the parent read of up returning', ({ role, event, path }, place) => place > reads[0] && role === 'parent' && event === 'read-returned' && path === 'up');
+  return { text: trace[answered].text, answered };
+}
+
+/**
+ * Asserts that a held nonce write was looked at, and not read, while it was in progress: the hold
+ * began after `before` was written, and the parent then found no `up` and went on waiting.
+ */
+function assertHeldUnread(run, before) {
+  const { trace } = run;
+  const opened = placeOf(trace, 'the nonce write opening its file', ({ role, event }) => role === 'fixture' && event === 'publish-opened');
+  const held = placeOf(trace, 'the hold of the nonce write', ({ role, event }) => role === 'fixture' && event === 'hold-start');
+  const written = trace.slice(opened, held).filter(({ role, event }) => role === 'fixture' && event === 'publish-wrote').map(({ bytes }) => bytes);
+  assert.deepEqual(written, before === 0 ? [] : [before], 'the hold did not begin with the bytes this cell holds');
+  const looked = placeOf(trace, 'the parent looking at up during the hold', ({ role, event }) => role === 'parent' && event === 'parent-observed-while-held');
+  assert.ok(looked > held && trace[looked].op === 'exists' && trace[looked].result === false, 'the parent saw up while its nonce write was still in progress');
+  const released = placeOf(trace, 'the hold released', ({ role, event }) => role === 'fixture' && event === 'hold-released');
+  assert.ok(released > looked && trace[released].by === 'parent-observation', 'the hold ended before the parent had looked at up');
+}
+
+/** Asserts that the nested C615 run passed, reading its own nonce only after the write returned. */
+function assertPublishedPass(run) {
+  assert.equal(run.status, 0, `the nested C615 run failed:\n${run.output}`);
+  assert.match(run.output, /✔ C615 Mac group full tool exit census/, 'the nested run did not pass the C615 group test');
+  assert.equal(assertReadAfterReturn(run).text, run.nonce, 'the parent read other bytes than the nonce its fixture published');
+  assert.equal(run.finalizer.bodyStage, 'passed', 'the nested C615 run did not reach its last stage');
+}
+
+/** Asserts that the nested C615 run failed on its nonce guard, on `bytes` its fixture's returned write published, before any group census. */
+function assertNonceRefused(run, bytes) {
+  assert.equal(run.status, 1, `the nested C615 run did not fail:\n${run.output}`);
+  assert.match(run.output, /✖ C615 Mac group full tool exit census/, 'the nested run did not fail the C615 group test');
+  assert.match(run.output, /the direct Node fixture did not record the expected nonce/, 'the nested C615 run did not fail on its nonce guard');
+  const { text, answered } = assertReadAfterReturn(run);
+  assert.equal(text, bytes(run.nonce), 'the parent did not read the bytes the returned write published');
+  const census = run.trace.findIndex(({ role, event, args }) => role === 'caller' && event === 'tool-start' && args.includes('-g'));
+  assert.ok(census === -1 || census > answered, 'a group census began before the nonce guard read up');
+  assert.equal(run.finalizer.bodyStage, 'caller-started', 'the nested C615 run went past its nonce guard');
+  assert.ok(run.finalizer.caller === 'reaped' && run.finalizer.group === 'absent', 'the nested C615 teardown did not end its caller and group after the failed guard');
+}
+
+test('C615 group publication N1a: up opened empty and still being written is not read as the published nonce', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  const run = await publicationRun(t, 'hold-empty');
+  assertHeldUnread(run, 0);
+  assertPublishedPass(run);
+});
+
+test('C615 group publication N1b: a returned write of no bytes to up fails the nonce guard before any census', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  assertNonceRefused(await publicationRun(t, 'complete-empty'), () => '');
+});
+
+test('C615 group publication N2a: up holding part of the nonce while still being written is not read as published', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  const run = await publicationRun(t, 'hold-prefix');
+  assertHeldUnread(run, 8);
+  assertPublishedPass(run);
+});
+
+test('C615 group publication N2b: a returned write of other bytes to up fails the nonce guard before any census', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  assertNonceRefused(await publicationRun(t, 'complete-wrong'), (nonce) => `wrong-${nonce}`);
+});
+
+test('C615 group publication N3a: up holding the whole nonce before its write returns is not read as published', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  const run = await publicationRun(t, 'hold-exact');
+  assertHeldUnread(run, 36);
+  assertPublishedPass(run);
+});
+
+test('C615 group publication N3b: the nonce write returned before the parent reads up, and the full census passes', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group test it runs requires macOS');
+  assertPublishedPass(await publicationRun(t, 'observe'));
+});
+
+/**
+ * The lines of a test file holding one test for each teardown cell #753 names: a pass and an
+ * assertion failure, each with no process started, with every started process already ended, and
+ * with a started process and its descendant still live. Each test makes its scratch through
+ * `holding`, as `publicationRun` does, and records what was live when its teardown began.
+ */
+const TEARDOWN_CELLS = [
+  "import { test } from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  "import { spawn } from 'node:child_process';",
+  "import { appendFileSync, existsSync } from 'node:fs';",
+  "import { join } from 'node:path';",
+  `import { TAIL, alive, fixture, holding, leave, read, until } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)};`,
+  "const record = (entry) => appendFileSync(process.env.C753_CELL_LOG, JSON.stringify(entry) + '\\n');",
+  "for (const result of ['pass', 'fail']) for (const state of ['none', 'ended', 'live']) test(`${result} ${state}`, async (t) => {",
+  '  const cell = `${result} ${state}`;',
+  '  const pids = [];',
+  "  t.after(() => record({ cell, stage: 'teardown', live: pids.filter((pid) => alive(pid)) }));",
+  '  const directory = holding(t);',
+  "  record({ cell, stage: 'scratch', directory });",
+  "  if (state !== 'none') {",
+  "    const holder = spawn(fixture(directory, 'holder', [leave(TAIL, 'descendant'), ': > \"$here/left\"', 'wait'].join('\\n')), [], { stdio: 'ignore' });",
+  "    await until(() => existsSync(join(directory, 'left')), t);",
+  "    pids.push(holder.pid, Number(read(directory, 'descendant.pid')));",
+  "    record({ cell, stage: 'started', pids });",
+  "    if (state === 'ended') {",
+  "      process.kill(pids[1], 'SIGKILL');",
+  '      await until(() => holder.exitCode !== null && !alive(pids[1]), t);',
+  '    }',
+  '  }',
+  "  if (result === 'fail') assert.equal(cell, 'a cell that passes', `the ${cell} cell fails here by design`);",
+  '});',
+];
+
+test('C615 group publication teardown ends every process a test started, and each descendant, before its scratch is removed, after a pass and after a failure', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group tests this proves run on macOS alone');
+  const directory = holding(t);
+  const cells = join(directory, 'cells.test.mjs');
+  writeFileSync(cells, TEARDOWN_CELLS.join('\n'));
+  const log = join(directory, 'cells.jsonl');
+  const scratchTmp = join(directory, 'tmp');
+  mkdirSync(scratchTmp);
+  const { NODE_TEST_CONTEXT, ...inherited } = process.env;
+  const run = spawn(process.execPath, ['--test', '--test-reporter=spec', cells], { cwd: directory, env: { ...inherited, TMPDIR: scratchTmp, C753_CELL_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [status] = await once(run, 'close', { signal: t.signal });
+  assert.equal(status, 1, `the teardown cells did not fail only by design:\n${output}`);
+  assert.match(output, /ℹ pass 3\n/, `three cells did not pass:\n${output}`);
+  assert.match(output, /ℹ fail 3\n/, `three cells did not fail:\n${output}`);
+  for (const cell of ['fail none', 'fail ended', 'fail live']) assert.ok(output.includes(`the ${cell} cell fails here by design`), `the ${cell} cell did not fail by design:\n${output}`);
+  assert.ok(!output.includes('rounds of pkill'), `a cell's teardown left a process alive:\n${output}`);
+  const entries = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  for (const result of ['pass', 'fail']) {
+    for (const state of ['none', 'ended', 'live']) {
+      const cell = `${result} ${state}`;
+      const scratchOf = entries.find((entry) => entry.cell === cell && entry.stage === 'scratch');
+      const started = entries.find((entry) => entry.cell === cell && entry.stage === 'started');
+      const teardown = entries.find((entry) => entry.cell === cell && entry.stage === 'teardown');
+      assert.ok(scratchOf && teardown, `the ${cell} cell did not record its scratch and teardown`);
+      assert.equal(started === undefined, state === 'none', `the ${cell} cell started the wrong processes`);
+      assert.deepEqual(teardown.live, state === 'live' ? started.pids : [], `the ${cell} cell's teardown did not begin with the processes this cell leaves`);
+      for (const pid of started?.pids ?? []) assert.equal(alive(pid), false, `the ${cell} cell's process ${pid} outlived its teardown`);
+      assert.equal(existsSync(scratchOf.directory), false, `the ${cell} cell's scratch was not removed after its teardown`);
+    }
+  }
+  assert.deepEqual(running(scratchTmp), [], 'a process a teardown cell started outlived the cells');
 });
 
 /** Advances the group-census read driver's clock once, after its first read marked the cut. */
@@ -4407,6 +4755,153 @@ test('a second live answer followed by plain failed reads records an unread proc
     assert.deepEqual(stateReads.map(({ status, stdout, stderr, error }) => [status, stdout, stderr, error ?? null]), [[0, `${outside} T\n`, '', null], [0, `${outside} T\n`, '', null], [2, '', 'ps: forced failure\n', null]]);
     assert.ok(trace.some(({ kind, branch }) => kind === 'bound-evaluated' && branch === 'plain-failure'));
     assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended 1000 ms after L0\'s kill: the process table could not be read');
+  } });
+});
+
+/** Drives the named PID through returned first-live, omitted-listing, and selected later reads. */
+async function firstLiveReadCell(t, { steps, cutAfter, boundBranch, observe }) {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  holdingNone(directory);
+  fixture(directory, 'lsof', [
+    'if [ -f "$here/hang" ]; then : > "$here/post-kill-listing"; : > "$here/post-kill-omitted"; exit 1; fi',
+    listingOf('outside', realpathSync.native(join(work, 'sub'))),
+  ].join('\n'));
+  const answer = (mode, number) => {
+    const marker = `: > "$here/state-${number}-${mode}"; `;
+    const cut = cutAfter === number ? ': > "$here/clock-cut"; ' : '';
+    if (mode === 'live') return `${marker}printf '%s T\\n' '${outside}'; ${cut}exit 0`;
+    if (mode === 'failed') return `${marker}echo 'ps: forced failure' >&2; ${cut}exit 2`;
+    assert.equal(mode, 'timeout');
+    return `${marker}exec /usr/bin/tail -f "$here/hold"`;
+  };
+  fixture(directory, 'ps', [
+    `if [ -f "$here/hang" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    '  count=$(/bin/cat "$here/state-count" 2>/dev/null || echo 0)',
+    '  count=$((count + 1)); echo "$count" > "$here/state-count"',
+    '  case "$count" in',
+    ...steps.map((mode, index) => `    ${index + 1}) ${answer(mode, index + 1)} ;;`),
+    '    *) echo "unexpected named state read $count" >&2; exit 2 ;;',
+    '  esac',
+    'fi',
+    'exec /bin/ps "$@"',
+  ].join('\n'));
+  const options = { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside',
+    ...(cutAfter ? { clockCut: 20_000, clockAtReaped: Boolean(boundBranch), clockBranch: boundBranch } : {}) };
+  try {
+    const result = await cleanedUpBy(TRACED_CALLER, directory, options);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(killedIn(linesOf(directory, 'pairs'), outside) !== undefined, 'the named kill did not occur');
+    const trace = linesOf(directory, 'control.trace.jsonl');
+    return observe({ directory, outside, result, trace });
+  } finally {
+    t.diagnostic(JSON.stringify({ cell: { steps, cutAfter, boundBranch },
+      trace: existsSync(join(directory, 'control.trace.jsonl')) ? linesOf(directory, 'control.trace.jsonl') : null,
+      markers: { reads: existsSync(join(directory, 'state-count')) ? read(directory, 'state-count') : null,
+        listing: existsSync(join(directory, 'post-kill-omitted')) } }));
+  }
+}
+
+/** Verifies returned first live, answered omission, later failure and returned live in source order. */
+function firstLiveFailedThenLive({ directory, outside, trace }) {
+  const killed = trace.find(({ kind, target, name, answer }) => kind === 'signal-answer' && target === outside && name === 'SIGKILL' && answer === true)?.sequence;
+  assert.ok(killed, 'the named kill was not observed');
+  const stateRead = ({ sequence, kind, tool, args }) => sequence > killed && kind === 'read-end' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`;
+  const reads = trace.filter(stateRead);
+  assert.ok(reads.length >= 3, 'the required three returned-result operations were not reached');
+  assert.deepEqual(reads.slice(0, 3).map(({ status, stdout, stderr, error, markers }) => [status, stdout, stderr, error ?? null, markers?.stateCount]), [
+    [0, `${outside} T\n`, '', null, 1],
+    [2, '', 'ps: forced failure\n', null, 2],
+    [0, `${outside} T\n`, '', null, 3],
+  ]);
+  assert.ok(existsSync(join(directory, 'state-1-live')) && existsSync(join(directory, 'state-2-failed')) && existsSync(join(directory, 'state-3-live')), 'the selected state markers were not written');
+  const listing = trace.find(({ sequence, kind, tool, status, stdout, stderr, markers }) => sequence > reads[0].sequence && sequence < reads[1].sequence && kind === 'read-end' && tool === join(directory, 'lsof') && status === 1 && stdout === '' && stderr === '' && markers?.listingOmitted);
+  assert.ok(listing, 'the omitted listing did not return between first live and later failure');
+  const starts = trace.filter(({ sequence, kind, tool, args }) => sequence > killed && kind === 'read-start' && tool === join(directory, 'ps') && args.join(' ') === `-p ${outside} -o pid=,stat=`);
+  assert.ok(starts.length >= 3 && starts.every(({ remaining }) => Number.isFinite(remaining) && remaining > 0), 'a named post-kill read did not start within its bound');
+  assert.ok(trace.some(({ sequence, kind, target, name, answer }) => sequence > reads[1].sequence && sequence < reads[2].sequence && kind === 'signal-answer' && target === outside && name === 0 && answer === true), 'the named PID did not continue answering signal 0 between the failed and returned live reads');
+  const terminal = trace.find(({ sequence, kind, event, pid }) => sequence > reads[2].sequence && kind === 'event' && event === 'survivor.unended' && pid === outside)?.sequence;
+  assert.ok(terminal && trace.some(({ sequence, kind }) => sequence > terminal && kind === 'caller-end'), 'the terminal event and caller end were not ordered');
+  return { reads, starts };
+}
+
+/** Returns each later named operation's result, keeping timeout separate from a returned answer. */
+const namedOutcomes = (reads) => reads.map(({ status, stdout, stderr, error }) => [status, stdout, stderr, error ?? null]);
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain a later failed then live answer through a no-start cut', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live'], cutAfter: 3, observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '3');
+    assert.equal(reads.length, 3);
+    assert.equal(starts.length, 3, 'the cut read started');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > reads[2].sequence && kind === 'read-cut' && code === 'LATE'), 'the later read was not cut before start');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain a later failed then live answer through a started timeout', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'timeout'], observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-timeout')), 'the later timeout did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[null, '', '', 'ETIMEDOUT']]);
+    assert.equal(starts.length, 4);
+    assert.ok(starts[3].sequence > reads[2].sequence && starts[3].sequence < reads[3].sequence, 'the timed-out read did not start after the returned live answer');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing evaluate the later failed then live sequence at the wait bound', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live'], cutAfter: 3, boundBranch: 'answered-live', observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '3');
+    assert.equal(reads.length, 3);
+    assert.equal(starts.length, 3);
+    assert.ok(trace.some(({ sequence, kind, branch, elapsed }) => sequence > reads[2].sequence && kind === 'bound-evaluated' && branch === 'answered-live' && elapsed >= UNREAPED_BOUND), 'the returned live answer was not evaluated at the existing wait bound');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive 1000 ms after L0\'s kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing record a later failure live failure sequence at the wait bound', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed'], cutAfter: 4, boundBranch: 'plain-failure', observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-failed')), 'the terminal plain failure did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null]]);
+    assert.equal(starts.length, 4);
+    assert.ok(trace.some(({ sequence, kind, branch, elapsed }) => sequence > reads[3].sequence && kind === 'bound-evaluated' && branch === 'plain-failure' && elapsed >= UNREAPED_BOUND), 'the terminal failure was not evaluated at the existing wait bound');
+    assertUnended(directory, result.events, 'survivor.unended', 'not shown to have ended 1000 ms after L0\'s kill: the process table could not be read');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain the later live answer across another failure and a no-start cut', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed'], cutAfter: 4, observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '4');
+    assert.ok(existsSync(join(directory, 'state-4-failed')), 'the further plain failure did not mark');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null]]);
+    assert.equal(starts.length, 4, 'the cut read started');
+    assert.ok(trace.some(({ sequence, kind, code }) => sequence > reads[3].sequence && kind === 'read-cut' && code === 'LATE'), 'the next read was not cut before start');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
+  } });
+});
+
+// proves R-STATE-19, R-STATE-9
+test('a first live answer and omitted listing retain the later live answer across another failure and a started timeout', SETTLES_WITHIN, async (t) => {
+  await firstLiveReadCell(t, { steps: ['live', 'failed', 'live', 'failed', 'timeout'], observe: ({ directory, outside, result, trace }) => {
+    const { reads, starts } = firstLiveFailedThenLive({ directory, outside, trace });
+    assert.equal(read(directory, 'state-count'), '5');
+    assert.ok(existsSync(join(directory, 'state-4-failed')) && existsSync(join(directory, 'state-5-timeout')), 'the further failure and timeout did not mark separately');
+    assert.deepEqual(namedOutcomes(reads.slice(3)), [[2, '', 'ps: forced failure\n', null], [null, '', '', 'ETIMEDOUT']]);
+    assert.equal(starts.length, 5);
+    assert.ok(starts[4].sequence > reads[3].sequence && starts[4].sequence < reads[4].sequence, 'the timed-out read did not start after the further failure');
+    assertUnended(directory, result.events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
   } });
 });
 

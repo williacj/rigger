@@ -450,7 +450,9 @@ function advanced(card, answer) {
  * L2's merge decision for `card` once every one of `panel`, the panel function's entries, is sound
  * at `pull`'s head. Where the
  * forge reads the pull request as conflicting, the card's maker continues on it (`R-CONFLICT-1`);
- * where its mergeability is unknown, L2 answers `ignore`, naming it (the architect's r2 ruling 5).
+ * where its mergeability is unknown, L2 answers `ignore`, naming it and setting
+ * `unknownMergeability` beside the reason. L3 uses that field to read the whole card and run L2's
+ * rule again (`R-SCHED-26`); L2 never decides when to wait (the architect's r2 ruling 5).
  * Otherwise the gate rule is handed the checks the base branch's effective rules require, less the
  * gate's own context, each in the state the facts hold, `absent` where they hold none (`ARCHITECTURE.md`,
  * "The engine's merge decision"): it answers `merge` where the gate admits, and `ignore` naming each
@@ -461,7 +463,7 @@ function advanced(card, answer) {
 function mergeAnswer(card, panel, pull, comments, round) {
   const { mergeable, rules, states } = forgeFacts(card);
   if (mergeable === 'conflicting') return continued(pull, [], []);
-  if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}` };
+  if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}`, ...(mergeable === 'unknown' ? { unknownMergeability: true } : {}) };
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
   const gate = gateAnswer({ comments, ...round, judges: panel, checks });

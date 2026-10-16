@@ -318,7 +318,7 @@ export async function withFirstOnPath(directory, body) {
  * to `git.pid`, marks `ready`, and waits on the child, which runs until killed. It is `warmed`,
  * because it must be ready within `OUTLIVED` of its spawn.
  */
-export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', ': > "$here/ready"', 'wait'].join('\n'));
+export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 'child-$$'), 'echo $$ > "$here/git.pid"', '/usr/bin/mkfifo "$here/git-hold"', ': > "$here/ready"', 'wait', 'read answer < "$here/git-hold"'].join('\n'));
 
 /**
  * A `git` stand-in in `directory` that records each call it is sent in `git-calls` and hands it on

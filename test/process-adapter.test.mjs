@@ -11,9 +11,12 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
+import * as processAdapter from '../src/substrate/process.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { sightingPs } from './census-sightings.mjs';
+
+const processTraces = new Map();
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
@@ -223,6 +226,7 @@ const eventsIn = (state) => (existsSync(streamPath(state)) ? readEvents(state) :
 /** Runs a command through the adapter in `directory`, and hands back its result and its events. */
 async function recorded(directory, options) {
   const { state, emitter } = l0(directory);
+  options.trace ??= processTraces.get(directory);
   const result = await adapt(directory, { emitter, ...options });
   return { result, events: eventsIn(state) };
 }
@@ -964,6 +968,9 @@ test('while the call waits for a killed group to empty, it uses less than a tent
 
 test('while the call re-reads a census, it uses less than a tenth of those re-reads\' time of the processor', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
+  const trace = [];
+  processTraces.set(directory, (entry) => trace.push(entry));
+  t.after(() => { t.diagnostic(JSON.stringify({ phase: 'trace.complete', trace })); processTraces.delete(directory); });
   // The stand-in shows every process caught mid-exec, state `?`, in each of the census's reads of
   // states, which begin `-ww`, so the census's reads never agree and it reads again until its
   // bound, then keeps its last round. Its second call marks the re-reads' start, and each call
@@ -989,6 +996,29 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
     '  if (mkdir(path, 0700) != 0) { snprintf(path, sizeof path, "%s/second", here); close(open(path, O_CREAT | O_EXCL | O_WRONLY, 0600)); }',
     '  snprintf(path, sizeof path, "%s/reads/%d", here, getpid());',
     '  close(open(path, O_CREAT | O_WRONLY, 0600));',
+    '  snprintf(path, sizeof path, "%s/force", here);',
+    '  int name = 0;',
+    '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "ucomm=")) name = 1;',
+    '  if (name && access(path, F_OK) == 0) {',
+    '    int answer[2];',
+    '    if (pipe(answer) != 0) return 127;',
+    '    pid_t reader = fork();',
+    '    if (reader < 0) return 127;',
+    '    if (reader == 0) { dup2(answer[1], 1); close(answer[0]); close(answer[1]); execv("/bin/ps", argv); _exit(127); }',
+    '    close(answer[1]);',
+    '    FILE *in = fdopen(answer[0], "r");',
+    '    char line[4096];',
+    '    while (fgets(line, sizeof line, in)) {',
+    '      size_t end = strcspn(line, "\\n");',
+    '      fwrite(line, 1, end, stdout);',
+    '      char padding[65536]; memset(padding, \' \', sizeof padding);',
+    '      for (size_t i = 0; i < 512; i++) fwrite(padding, 1, sizeof padding, stdout);',
+    '      putchar(\'\\n\');',
+    '    }',
+    '    int status;',
+    '    if (waitpid(reader, &status, 0) != reader) return 127;',
+    '    return WIFEXITED(status) ? WEXITSTATUS(status) : 127;',
+    '  }',
     '  int states = 0;',
     '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "stat=")) states = 1;',
     '  if (!states || strcmp(argv[1], "-ww") != 0) { execv("/bin/ps", argv); return 127; }',
@@ -1011,13 +1041,17 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   assert.equal(built.status, 0, `cc failed: ${built.stderr}`);
   warmed(ps);
   mkdirSync(join(directory, 'reads'));
+  if (process.env.C574_FORCE) writeFileSync(join(directory, 'force'), '');
   const command = fixture(directory, 'command', `${leave(TAIL, 'survivor')}\n: > "$here/exited"`);
   const readTimeout = 1_500;
+  const enteredAt = performance.now();
   const used = process.cpuUsage();
 
   const { events } = await recorded(directory, { command, ps, readTimeout });
 
+  const returnedAt = performance.now();
   const { user, system } = process.cpuUsage(used);
+  const returnedCpu = process.cpuUsage();
   assert.deepEqual(events.map(({ event }) => event), ['survivor.killed'], 'the census did not keep its last round once its reads never agreed');
   assert.ok(writtenAt(directory, 'called') >= writtenAt(directory, 'exited'), 'the stand-in\'s first call came before the census, so its second call marks no re-read');
   // The census began once the command had exited, and re-read until `readTimeout` had passed
@@ -1025,8 +1059,115 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   const rereading = writtenAt(directory, 'exited') + readTimeout - writtenAt(directory, 'second');
   // The processor time over the whole call is no less than over the re-reads alone.
   const cpu = (user + system) / 1000;
+  t.diagnostic(JSON.stringify({ phase: 'teardown', calledAt: writtenAt(directory, 'called'), secondAt: writtenAt(directory, 'second'), survivor: Number(read(directory, 'survivor.pid')), survivorAlive: alive(Number(read(directory, 'survivor.pid'))), reads: readdirSync(join(directory, 'reads')).length }));
+  t.diagnostic(JSON.stringify({ forced: Boolean(process.env.C574_FORCE), enteredAt, returnedAt, used, returnedCpu, secondAt: writtenAt(directory, 'second'), cpu, rereading, ratio: cpu / (rereading / 10) }));
   t.diagnostic(`${cpu} ms of the processor over re-reads of at least ${rereading} ms, in ${readdirSync(join(directory, 'reads')).length} reads`);
   assert.ok(cpu < rereading / 10, `the call used ${cpu} ms of the processor over re-reads of at least ${rereading} ms`);
+});
+
+// proves R-STATE-12
+test('after a whole census round, a first state read reporting mid-exec skips reads that cannot make that round agree', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const trace = [];
+  processTraces.set(directory, (entry) => trace.push(entry));
+  t.after(() => { t.diagnostic(JSON.stringify({ phase: 'trace.complete', trace })); processTraces.delete(directory); });
+  const ps = fixture(directory, 'ps', [
+    'printf "%s\\n" "$*" >> "$here/calls"',
+    'case "$*" in',
+    '  "-ww -g "*" -o pid=,stat=") /bin/ps "$@" | /usr/bin/sed -E "s/^( *[0-9]+) .*$/\\1 ?/" ;;',
+    '  *) exec /bin/ps "$@" ;;',
+    'esac',
+  ].join('\n'));
+  const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
+
+  const { events } = await recorded(directory, { command, ps, readTimeout: 600 });
+
+  const calls = read(directory, 'calls').split('\n');
+  const states = calls.filter((call) => call.startsWith('-ww ') && call.endsWith('pid=,stat='));
+  const commands = calls.filter((call) => call.startsWith('-ww ') && call.endsWith('pid=,command='));
+  t.diagnostic(JSON.stringify({ states: states.length, commands: commands.length, calls }));
+  assert.deepEqual(events.map(({ event }) => event), ['survivor.killed']);
+  assert.ok(states.length >= 3, 'the census did not start another round after its first whole round');
+  assert.equal(commands.length, 2, 'a later round read command lines despite a first state answer that could not agree');
+});
+
+// proves R-STATE-12
+test('a disagreeing census round leaves time for an agreeing round as long as the first', (t) => {
+  let now = 0;
+  const trace = [];
+  t.after(() => t.diagnostic(JSON.stringify({ phase: 'trace.complete', trace })));
+  const looks = processAdapter.census(42, () => {}, 200, () => now, (entry) => trace.push(entry));
+  const first = [' 42 S\n', ' 42 old\n', 'tail\n', ' 42 new\n', ' 42 S\n'];
+  let look = looks.next();
+  for (const answer of first) {
+    assert.ok(Array.isArray(look.value), 'the first round requested a pause before it completed');
+    now += 20;
+    look = looks.next(answer);
+  }
+  assert.ok(Array.isArray(look.value), `the census requested a ${look.value} ms wait with exactly one round of time left`);
+  const second = [' 42 S\n', ' 42 new\n', 'tail\n', ' 42 new\n', ' 42 S\n'];
+  for (const answer of second) {
+    assert.ok(Array.isArray(look.value), 'the agreeing round stopped before reading every answer');
+    now += 20;
+    look = looks.next(answer);
+  }
+  assert.equal(look.done, true);
+  assert.deepEqual(look.value.members, [{ pid: 42, name: 'tail', cmd: 'new' }]);
+});
+
+/** Supplies two census rounds from a controlled process table and clock. */
+function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3 * (size + 4) + 20 } = {}) {
+  const group = 42;
+  const pids = Array.from({ length: size }, (_, index) => group + index);
+  const states = (leader) => pids.map((pid) => `${pid} ${pid === group ? leader : 'S'}\n`).join('');
+  const commands = (value) => pids.map((pid) => `${pid} ${value}\n`).join('');
+  const groupRead = (column, answer) => ({ args: ['-ww', '-g', String(group), '-o', `pid=,${column}=`], answer });
+  const names = pids.map((pid) => ({ args: ['-p', String(pid), '-o', 'ucomm='], answer: 'tail\n' }));
+  const first = [groupRead('stat', states('?')), groupRead('command', commands('old')), ...names, groupRead('command', commands('new')), groupRead('stat', states('S'))];
+  const second = [groupRead('stat', states('S')), groupRead('command', commands('new')), ...names, groupRead('command', commands('new')), groupRead('stat', states('S'))];
+  const trace = [];
+  t.after(() => t.diagnostic(JSON.stringify({ phase: 'trace.complete', size, firstStep, secondStep, deadline, trace })));
+  let now = 0;
+  const looks = processAdapter.census(group, () => {}, deadline, () => now, (entry) => trace.push(entry));
+  let look = looks.next();
+  let call = 0;
+  for (const [round, answers] of [first, second].entries()) {
+    for (const { args, answer } of answers) {
+      while (!look.done && typeof look.value === 'number') {
+        const requested = look.value;
+        trace.push({ phase: 'driver.pause', clock: now, requested, nextReadClock: now + requested });
+        now += requested;
+        look = looks.next();
+      }
+      assert.equal(look.done, false, `the census stopped before call ${call + 1}`);
+      assert.deepEqual(look.value, args, `call ${call + 1} asked a different ps question`);
+      assert.ok(now < deadline, `call ${call + 1} began at ${now}, after deadline ${deadline}`);
+      call += 1;
+      trace.push({ phase: 'driver.answer', call, round: round + 1, clock: now, args, answer });
+      now += round === 0 ? firstStep : secondStep;
+      look = looks.next(answer);
+    }
+  }
+  assert.equal(look.done, true, 'the second round did not agree');
+  assert.deepEqual(look.value.members, pids.map((pid) => ({ pid, name: 'tail', cmd: 'new' })));
+  assert.deepEqual(trace.filter(({ phase }) => phase === 'round.decision').map(({ agreed }) => agreed), [false, true]);
+  return { trace, calls: call, firstCalls: first.length };
+}
+
+// proves R-STATE-12
+test('one survivor is named after a disagreeing census round and an agreeing second round', (t) => {
+  controlledCensus(t, 1);
+});
+
+// proves R-STATE-12
+test('twenty-five survivors are named after a disagreeing census round and an agreeing second round', (t) => {
+  controlledCensus(t, 25);
+});
+
+// proves R-STATE-12
+test('one hundred survivors are named after a disagreeing first state read and an agreeing second round', (t) => {
+  const { firstCalls } = controlledCensus(t, 100);
+  assert.equal(firstCalls, 104);
 });
 
 test('a survivor the census named that exits on its own before the kill is not recorded as killed', SETTLES_WITHIN, async (t) => {
@@ -1647,6 +1788,14 @@ function heldTimers() {
     },
   };
 }
+
+test('a forge wait asks whenElapsed to keep its timer alive until the next read', () => {
+  let unrefs = 0;
+  const timer = { unref: () => { unrefs += 1; } };
+  const cancel = whenElapsed(5000, () => {}, { schedule: () => timer, cancel: () => {}, hold: true });
+  cancel();
+  assert.equal(unrefs, 0);
+});
 
 test('a delay past the largest one Node timer keeps elapses over timers each within it, adding up to the delay exactly', () => {
   const timers = heldTimers();
