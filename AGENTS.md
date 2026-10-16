@@ -199,17 +199,19 @@ never dispatches a card that changes a path listed below.** Such a card merges o
 owner marker at its head, which the "self-hosting" check enforces. Once "rigger/gate" and
 "self-hosting" are green, the engine's lane may merge it (`D25` rules 5 and 7). The paths:
 
-- The live gate: `.githooks/`; `templates/githooks/`; `.github/workflows/rigger-gate.yml` and
+- The live gate: `.github/workflows/rigger-gate.yml` and
   `templates/github/workflows/rigger-gate.yml`; `.github/workflows/self-hosting.yml` and
   `.github/scripts/self-hosting-check.mjs`; `.github/workflows/ci.yml`.
+- The git hooks: `.githooks/`, and `templates/githooks/` with it.
 - The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
+- The gate's code: `src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`,
+  and `src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on.
 
-The gate's code is owner-judged too, because moving the pin makes it the live gate (`D25` rule 6):
-`src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`, and
-`src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on. None
-of it is live until the pin moves.
+The gate's code is listed because it runs live twice. Moving the pin makes it the live gate (`D25`
+rule 6), and the "self-hosting" check runs it from the default branch's tree (`ARCHITECTURE.md`,
+"The gate").
 
 ## Version control
 
