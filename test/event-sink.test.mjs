@@ -521,6 +521,33 @@ for (const touched of [true, false]) {
   });
 }
 
+/** How late each of a `lateWakes` child's pauses ends: a quarter of the bound. */
+const LATE = UNDRAINED_BOUND / 4;
+
+/**
+ * Lines that move the child's clock `LATE` ms ahead as each `Atomics.wait` returns, so every pause
+ * a write takes ends that late, as a loaded host ends a sleep late, and no time passes elsewhere.
+ */
+const lateWakes = [
+  'const real = performance.now.bind(performance);',
+  'let ahead = 0;',
+  'performance.now = () => real() + ahead;',
+  'const wait = Atomics.wait;',
+  `Atomics.wait = (...pause) => { const woke = wait(...pause); ahead += ${LATE}; return woke; };`,
+].join('\n');
+
+// On a host loaded for the whole of an end, every pause ends late, not only the last, and the
+// write has seen how late before it decides whether to begin another. One such end returned
+// 1,002.97 ms after its call, at a load of about 118 (#440).
+test(`given a standard error the process never touched that is never drained, and every pause a sink's end takes ending ${LATE} ms late, the end returns within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+  const { status, stdout } = await stuckChild(t, [holdingMany, lateWakes, timed('sink.end();')].join('\n'), { touched: false });
+
+  assert.equal(status, 0);
+  const took = tookIn(stdout);
+  assert.ok(took >= UNDRAINED_BOUND / 2, `the end took ${took} ms, so the pipe never held it and this proves nothing`);
+  assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
+});
+
 test('a reader that drains again after a write gave up on it gets every byte of a later write', { timeout: 30_000 }, async (t) => {
   // The first sink's end gives up on the undrained FIFO. The test then drains it, and a second
   // sink, holding as much, is ended once the test is reading.

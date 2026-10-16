@@ -83,10 +83,16 @@ let abandoned = false;
  * running from the call, and what the call spent before it, opening `process.stderr` included,
  * counts against the bound. A pause is begun only where it would end `SPARE` before the bound, so
  * the write gives up within the bound even where the host ends its last pause late by up to that.
+ * Where an earlier pause of the same write ended later than that, the write keeps that much in hand
+ * instead: a host loaded for the whole of the wait ends every pause late, so the last is taken to
+ * end as late as the latest before it. A host that holds only the last pause, longer than any
+ * before it, still holds the write past the bound, and nothing here can see that coming (#440).
  */
 export function writeWhole(text) {
   let deadline = performance.now() + UNDRAINED_BOUND;
   let full = false;
+  // The latest any pause of this write has ended, past its `PAUSE`.
+  let late = 0;
   // Opened for what it leaves the descriptor, not to write through.
   void process.stderr;
   let rest = Buffer.from(text);
@@ -98,12 +104,14 @@ export function writeWhole(text) {
       full = false;
     } catch (error) {
       if (error.code !== 'EAGAIN') throw error;
-      if (abandoned || performance.now() + PAUSE + SPARE > deadline) {
+      if (abandoned || performance.now() + PAUSE + Math.max(SPARE, late) > deadline) {
         abandoned = true;
         return;
       }
       full = true;
+      const paused = performance.now();
       Atomics.wait(idle, 0, 0, PAUSE);
+      late = Math.max(late, performance.now() - paused - PAUSE);
     }
   }
 }
