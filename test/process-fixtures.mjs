@@ -14,6 +14,26 @@ import { join } from 'node:path';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
 
+const fixtureWarmBatches = new Map();
+
+/** Warm every fixture written in a batch, with several first executions in flight together. */
+export function beginFixtureWarmBatch(directory) {
+  assert.equal(fixtureWarmBatches.has(directory), false, `fixture warming already begun for ${directory}`);
+  fixtureWarmBatches.set(directory, []);
+}
+
+export function finishFixtureWarmBatch(directory) {
+  const paths = fixtureWarmBatches.get(directory);
+  assert.ok(paths, `fixture warming was not begun for ${directory}`);
+  fixtureWarmBatches.delete(directory);
+  const run = spawnSync(process.execPath, [new URL(import.meta.url).pathname, '--warm-fixtures', ...paths], {
+    encoding: 'utf8',
+    env: process.env,
+  });
+  if (process.env.RIGGER_779_TRACE === '1' && run.stderr) process.stderr.write(run.stderr);
+  assert.equal(run.status, 0, `warming fixtures in ${directory} failed: ${run.error?.message ?? run.stderr}`);
+}
+
 /**
  * A scratch directory for one test, torn down with every process that names it, and then removed.
  *
@@ -41,11 +61,14 @@ export { SWEEPS };
  * `SWEEPS` rounds it stops, and throws naming every process still left.
  */
 export function sweep(text, find = running) {
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'sweep.start', text })}\n`);
   for (let round = 0; round < SWEEPS; round += 1) {
+    if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'sweep.round', text, round })}\n`);
     if (find(text).length === 0) return;
     spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(text)]);
   }
   const left = find(text);
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'sweep.final-read', text, left })}\n`);
   if (left.length > 0) throw new Error(`${SWEEPS} rounds of pkill -KILL left these processes naming ${text} alive: ${left.join(', ')}`);
 }
 
@@ -69,6 +92,7 @@ export function undrained(t, directory) {
 
 /** `text` as a pattern `pgrep` and `pkill` match only as written. */
 const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export { literally };
 
 /** The pid of every process whose command line holds `text`. */
 export const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
@@ -88,7 +112,14 @@ export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
  */
 export function fixture(directory, name, body) {
   const path = join(directory, name);
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.start', path })}\n`);
   writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${EXIT_IF_WARMING}\n${body}\n`, { mode: 0o755 });
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.returned', path })}\n`);
+  const batch = fixtureWarmBatches.get(directory);
+  if (batch) {
+    batch.push(path);
+    return path;
+  }
   warmed(path);
   return path;
 }
@@ -104,9 +135,31 @@ export function fixture(directory, name, body) {
  * The run is given `args`, for a stand-in that tells the warming run apart by its arguments.
  */
 export function warmed(path, args = []) {
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.warm.start', path })}\n`);
   const run = spawnSync(path, args, { env: { RIGGER_FIXTURE_WARMING: '1' }, encoding: 'utf8' });
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.warm.returned', path, status: run.status })}\n`);
   assert.equal(run.status, 0, `warming ${path} failed: ${run.error?.message ?? run.stderr}`);
   return path;
+}
+
+if (process.argv[1] === new URL(import.meta.url).pathname && process.argv[2] === '--warm-fixtures') {
+  const pending = process.argv.slice(3);
+  const warm = async (path) => {
+    if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.warm.start', path })}\n`);
+    const run = spawn(path, [], { env: { RIGGER_FIXTURE_WARMING: '1' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    run.stderr.setEncoding('utf8');
+    run.stderr.on('data', (chunk) => { stderr += chunk; });
+    const status = await new Promise((resolve, reject) => {
+      run.once('error', reject);
+      run.once('close', resolve);
+    });
+    if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.warm.returned', path, status })}\n`);
+    if (status !== 0) throw new Error(`warming ${path} failed: ${stderr}`);
+  };
+  await Promise.all(Array.from({ length: Math.min(8, pending.length) }, async () => {
+    while (pending.length > 0) await warm(pending.shift());
+  }));
 }
 
 /** What a fixture wrote to `name` in `directory`, trimmed. */
