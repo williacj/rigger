@@ -194,6 +194,14 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
   return {
     fetchMainLine,
 
+    /** Reads the checked-out `branch`'s commit at the tip of its own linked workspace `path`. */
+    async tip(path, branch) {
+      if (!(await this.isWorktree(path))) throw new Error(`${path} is not a linked worktree of this repository`);
+      const checkedOut = (await answer(['-C', path, 'symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
+      if (checkedOut !== branch) throw new Error(`${path} holds branch ${checkedOut}, not ${branch}`);
+      return (await answer(['-C', path, 'rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+    },
+
     /** Makes a workspace at `path` with `branch` checked out at the main line's commit. */
     async make(path, branch) {
       const { commit } = await fetchMainLine();

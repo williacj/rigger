@@ -586,6 +586,21 @@ test('once exits non-zero when a continuing maker exits non-zero', SETTLES_WITHI
   assert.match(err, /exited 4/);
 });
 
+// proves R-WORK-34
+test('once names a continuing card whose maker left no checked-out line tip and keeps it in Coding', SETTLES_WITHIN, async (t) => {
+  const script = join(temporaryDirectory('rigger-no-tip-'), 'detach.sh');
+  writeFileSync(script, '#!/bin/sh\ngit checkout --detach -q HEAD\n');
+  chmodSync(script, 0o755);
+  const agent = standInAgent({ '*': { engineer: { exec: [script] } } });
+  const { fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Review')] }, { prepare: prepareContinuation() });
+
+  const { code, err } = await ran;
+
+  assert.notEqual(code, 0);
+  assert.match(err, /card #10.*no readable tip/);
+  assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ column }) => column), ['Coding']);
+});
+
 test('given once where the maker exits non-zero, once exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent({ 10: { engineer: { exit: 4 } } });
   const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
