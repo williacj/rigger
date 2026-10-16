@@ -491,3 +491,41 @@ test('the script imports each L2 function it hands the rule, and copies none', (
   assert.doesNotMatch(source, /'gh'|"gh"/, 'the script names gh itself');
   assert.doesNotMatch(source, /rigger-marker/, 'the script holds a copy of the marker\'s syntax');
 });
+
+// proves R-GATE-1
+test('the gate rule gives the same answer for every workflow event and actor with admitting and refusing markers', () => {
+  const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'rigger-gate.yml'), 'utf8');
+  const triggers = [...workflow.matchAll(/^  ([a-z_]+):\n    types: \[([^\]]+)\]$/gm)]
+    .flatMap(([, event, types]) => types.split(', ').map((type) => [event, type]));
+  assert.deepEqual(triggers, [
+    ['pull_request_target', 'opened'],
+    ['pull_request_target', 'synchronize'],
+    ['pull_request_target', 'reopened'],
+    ['pull_request_target', 'edited'],
+    ['issue_comment', 'created'],
+    ['issue_comment', 'edited'],
+    ['issue_comment', 'deleted'],
+    ['issues', 'edited'],
+    ['issues', 'labeled'],
+    ['issues', 'unlabeled'],
+  ]);
+
+  for (const { name, comments, status } of [
+    { name: 'admitting', comments: [marker()], status: 0 },
+    { name: 'refusing', comments: [], status: 1 },
+  ]) {
+    const where = forge({ pullRequests: [pullFrom({ comments })] });
+    const first = ruled(where, PULL, {
+      GITHUB_EVENT_NAME: 'pull_request_target', GITHUB_EVENT_ACTION: 'opened', GITHUB_ACTOR: 'williacj',
+    });
+    assert.equal(first.status, status, `${name}: ${first.stdout}${first.stderr}`);
+    for (const [event, type] of triggers) {
+      for (const actor of ['williacj', 'rigger-gate[bot]']) {
+        const ran = ruled(where, PULL, { GITHUB_EVENT_NAME: event, GITHUB_EVENT_ACTION: type, GITHUB_ACTOR: actor });
+        const cell = `${name}, ${event}.${type}, ${actor}`;
+        assert.equal(ran.status, first.status, `${cell}: ${ran.stdout}${ran.stderr}`);
+        assert.equal(ran.stdout, first.stdout, cell);
+      }
+    }
+  }
+});
