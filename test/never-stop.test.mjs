@@ -2664,8 +2664,8 @@ const probed = (status, stat) => (exit, directory) => {
 /**
  * Each named exit cell's forcing classes. Census classes apply to every cell. A cell whose census
  * settles in one round (C1, C2) never makes a third state read unless an anomalous round forces
- * one, so C4 and C5 are unreachable for it (`census:722–727` returns on the settled round). X0's
- * target is reaped before its confirming read (`sightingPs:41–46` waits for `reaped-two` before
+ * one, so C4 and C5 are unreachable for it (`census:775` returns on the settled round). X0's
+ * target is reaped before its confirming read (`sightingPs:44–47` waits for `reaped-two` before
  * answering the X-reap read), so a present-target A2p is unreachable for X0, and so is A2t: a real
  * `ps -p` of a reaped pid prints nothing, so no full pipe can hold it running until its read is cut.
  */
@@ -2727,7 +2727,7 @@ const CELL_CASES = [
       assert.match(read(directory, 'forced'), /^target \d+ absent$/m, 'the ended member was not reaped before its probe');
       if (preparedCells.includes(name)) {
         // The prepared stand-in's real start-time read of an absent member fails, so it exits 79 with
-        // no outer answer (`sightingPs:58–66`).
+        // no outer answer (`sightingPs:59–69`).
         assert.equal(exit.F, 'F4z', 'a prepared probe of an absent member returned an outer answer');
         assert.match(exit.reason, /ended with 79/);
         const probe = probed(1, '')(exit, directory);
@@ -2746,7 +2746,7 @@ const CELL_CASES = [
       const probe = probed()(exit, directory);
       assert.match(probe.stat, /^Z/, `the probe did not read a zombie: ${probe.stat}`);
       assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a zombie probe wrote the live marker');
-      // A zombie still has its start time, so even a prepared stand-in answers L0 (`sightingPs:58–66`).
+      // A zombie still has its start time, so even a prepared stand-in answers L0 (`sightingPs:59–69`).
       assert.equal(exit.F, 'F3z', 'the probe of a zombie member returned no outer answer');
       t?.diagnostic?.(JSON.stringify({ zombieProbe: probe, F: exit.F }));
     }],
