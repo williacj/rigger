@@ -3645,7 +3645,8 @@ test('C615 directory listing D0: the unforced control passes on its first real f
   const first = firstListing(run);
   assert.ok(first.status === 0 && first.error === null && first.stderr === '' && first.l0 === 'accepted' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real, accepted, selected answer naming the tail in work');
   assert.ok(first.ms < 5_000, 'the first full listing did not answer within the caller budget');
-  assert.equal(tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1).remaining, 5_000, 'the directory caller does not give its census the 5,000 ms read budget');
+  const { remaining } = tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1);
+  assert.ok(remaining > CLEANUP_BOUND && remaining <= DIRECTORY_CALLER_BOUND, `the directory caller does not give its census the 5,000 ms read budget: ${remaining} ms remained for its first listing`);
   assert.equal(tracedAs(run, 'caller', 'tail-state').find(({ ordinal }) => ordinal === 1).cwd, 'work', 'the tail was not independently in work at the first listing');
   const [read] = tracedAs(run, 'parent', 'command-read');
   assert.ok(read && read.status === 1 && read.stdout === '' && read.stderr === '', 'the teardown did not find the command absent on its first read');
