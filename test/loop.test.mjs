@@ -24,6 +24,7 @@ import { loop } from '../src/scheduling/loop.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { stoppedCard } from './stop-failure.mjs';
@@ -379,6 +380,132 @@ test('a continuing attempt retries L1 at the same head L2 named', async () => {
   assert.deepEqual(asks, [continuing, continuing]);
   assert.deepEqual(await columnsOf(built.fake), { 81: COLUMNS.coding });
   assert.deepEqual(built.dispatches.started, []);
+});
+
+/** A returned Review card whose maker continues from `old`, leaving `tip` in its workspace. */
+function continuingForge(old, tip, pause, tipRead = async () => tip) {
+  const card = 96;
+  const pull = 961;
+  let elapsed = 0;
+  const built = world({
+    cards: [cardIn(card, COLUMNS.review)],
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { pullRequests: [{ number: pull, head: `rigger-${card}`, sha: old, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', comments: [
+      markerComment({ card, pull, head: old, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' }),
+    ] }] },
+    workspaceTip: tipRead,
+    clock: { now: () => elapsed, pause: async (milliseconds) => {
+      assert.equal(milliseconds, 5000);
+      elapsed += milliseconds;
+      pause?.(built);
+    } },
+  });
+  return { built, card, pull, elapsed: () => elapsed };
+}
+
+/** Releases this pull's maker and any judge stand-ins, without another pull of its card. */
+async function continuingPull(built) {
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  for (let round = 0; round < 5 && !done(); round += 1) {
+    await positive(() => done() || built.dispatches.holding().length > 0);
+    built.dispatches.releaseAll();
+  }
+  assert.ok(done(), 'the continuing pull did not settle after its dispatches');
+  return pulled;
+}
+
+// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+test('a continuing maker is judged only after the forge shows the workspace tip on its second read', async () => {
+  const old = 'a'.repeat(40);
+  const tip = 'b'.repeat(40);
+  const { built, card, pull, elapsed } = continuingForge(old, tip, (world) => world.repository.update(pull, { sha: tip }));
+
+  await continuingPull(built);
+
+  assert.equal(elapsed(), 5000);
+  const returned = built.events().find(({ layer, event, card: number, cause }) => layer === 'L2' && event === 'transition' && number === card && cause === 'returned');
+  assert.deepEqual({ forgeHead: returned.forgeHead, reads: returned.reads, elapsedMs: returned.elapsedMs }, { forgeHead: tip, reads: 2, elapsedMs: 5000 });
+  const heads = built.decisions.filter(({ card: number, action }) => number === card && action.action === 'judge')
+    .flatMap(({ action }) => action.judges.map(({ facts }) => facts.head));
+  assert.ok(heads.includes(tip), JSON.stringify(heads));
+  assert.ok(!heads.includes(old), JSON.stringify(heads));
+  assert.ok(built.events().some(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer'));
+});
+
+// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+test('a continuing maker stays in coding after the forge shows the old head through the read at 60 seconds', async () => {
+  const old = 'a'.repeat(40);
+  const tip = 'b'.repeat(40);
+  const { built, card, elapsed } = continuingForge(old, tip);
+
+  await continuingPull(built);
+
+  assert.equal(elapsed(), 60000);
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
+  const withheld = built.events().find(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === card);
+  assert.match(withheld.reason, /card #96/);
+  assert.match(withheld.reason, new RegExp(tip));
+  assert.match(withheld.reason, new RegExp(old));
+  assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 13, elapsedMs: 60000 });
+});
+
+// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+test('a continuing maker records the last forge head and wait when its pull closes after a stale read', async () => {
+  const old = 'a'.repeat(40);
+  const tip = 'b'.repeat(40);
+  const { built, card, pull } = continuingForge(old, tip, (world) => world.repository.update(pull, { merged: true }));
+
+  await continuingPull(built);
+
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  const withheld = built.events().find(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === card);
+  assert.match(withheld.reason, /no open pull request/);
+  assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
+});
+
+// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+test('a failed second forge read keeps a continuing card in coding and records the last head and wait', async () => {
+  const old = 'a'.repeat(40);
+  const tip = 'b'.repeat(40);
+  const { built, card, elapsed } = continuingForge(old, tip, (world) => {
+    world.repository.operations.readPullRequests = async () => { throw new Error('the forge read failed: HTTP 502'); };
+  });
+
+  await continuingPull(built);
+
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  assert.equal(elapsed(), 5000);
+  assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
+  const withheld = built.events().find(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === card);
+  assert.match(withheld.reason, /HTTP 502/);
+  assert.match(withheld.reason, /card #96/);
+  assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
+});
+
+// proves R-WORK-34
+test('a continuing maker stays in coding when L1 cannot read a tip from its workspace', async () => {
+  const old = 'a'.repeat(40);
+  const { built, card } = continuingForge(old, old, undefined, async () => { throw new Error('the branch has no commit'); });
+
+  await continuingPull(built);
+
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
+  const withheld = built.events().find(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === card);
+  assert.match(withheld.reason, /card #96.*branch has no commit/);
+});
+
+test('a refused event while reading a continuing workspace tip halts rather than withholding review', async () => {
+  const old = 'a'.repeat(40);
+  const refusal = Object.assign(new Error('the sink refused a tip-read event'), { code: EVENT_REFUSED });
+  const { built, card } = continuingForge(old, old, undefined, async () => { throw refusal; });
+
+  await assert.rejects(continuingPull(built), (failure) => leavesOf(failure).some(({ message }) => /sink refused a tip-read event/.test(message)));
+
+  assert.equal(built.events().some(({ event }) => event === 'review.withheld'), false);
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
 });
 
 // proves R-SCHED-6

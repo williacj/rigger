@@ -46,6 +46,9 @@ function makerOutcome({ outcome, settled: settle }) {
     const { line, open: [pull] } = settle.value;
     return { said: `its maker exited 0 and pull request #${pull.number} is open from ${line}, so the card is in review`, review: true };
   }
+  if (settle.reason.facts === undefined || settle.reason.facts.open.length === 1) {
+    return { said: settle.reason.message, review: false };
+  }
   const { line, open } = settle.reason.facts;
   if (open.length === 0) return { said: `its maker exited 0 and opened no pull request from ${line}`, review: false };
   return { said: `its maker exited 0, and the forge holds more than one open pull request from ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, review: false };
@@ -191,6 +194,7 @@ async function claiming(verb, limit, opened, {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
   const judgeDirectory = judgeDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
+  const workspaceTip = workspace.tip;
   const removeDirectories = (card) => removeCardDirectories({ root, topic: worktreeTopic(config), card, repository: named, sink });
 
   const forge = { ...config.board, repo: config.repo };
@@ -314,7 +318,7 @@ async function claiming(verb, limit, opened, {
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, removeDirectories, state, environment: process.env }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment: process.env }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start

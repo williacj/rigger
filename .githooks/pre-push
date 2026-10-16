@@ -1,6 +1,7 @@
 #!/bin/sh
 # ABOUTME: Reads the remote's default branch and refuses pushes to it, or any push when its name
-# is unavailable, before refusing a push made with a failing suite.
+# is unavailable, before refusing a push made with a failing suite. It skips the suite when the
+# tree of every pushed tip, peeled to its commit, is one a green commit or merge hook recorded.
 
 set -u
 
@@ -17,11 +18,29 @@ case $default_ref in
   *) refuse_unknown ;;
 esac
 
+pushed=
 while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$remote_ref" = "refs/heads/$default_branch" ]; then
     printf 'refused: a push to the default branch %s is not allowed.\n' "$default_branch" >&2
     exit 1
   fi
+  pushed="$pushed $local_sha"
 done
 
-exec "$(dirname "$0")/refuse-if-suite-red"
+# True when every pushed tip peels to a commit whose tree the record holds. A deletion, whose
+# object name is all zeros, pushes no commit; a tip that peels to no commit is never recorded.
+record="$(git rev-parse --git-dir)/rigger-suite-green-trees"
+already_passed() {
+  for sha in $pushed; do
+    case $sha in *[!0]*) ;; *) continue ;; esac
+    tree=$(git rev-parse --verify -q "$sha^{commit}^{tree}") && [ -n "$tree" ] || return 1
+    grep -qxF "$tree" "$record" 2>/dev/null || return 1
+  done
+}
+
+if already_passed; then
+  echo "pre-push: the suite is skipped, because every pushed tree passed it already." >&2
+  exit 0
+fi
+
+exec "$(dirname "$0")/refuse-if-suite-red" --no-record

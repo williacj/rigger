@@ -70,7 +70,9 @@ jobs:
         run: node "${RUNNER_TEMP}/${GATE_CHECK}" card >> "${GITHUB_OUTPUT}"
 
   # Rules on each pull request the event concerns and posts on each head it read. One card's runs
-  # go one at a time, and none is cancelled, so the last starts after the last event and posts last.
+  # go one at a time. A newer run cancels one still pending in the group, whatever
+  # `cancel-in-progress` says, so a head can go without a status. The last run starts after the
+  # last event and posts last.
   gate:
     name: Rule and post
     needs: card

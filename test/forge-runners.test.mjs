@@ -8,6 +8,7 @@ import { accessSync, constants, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { delimiter, join, resolve } from 'node:path';
 import { closeSync, mkdirSync, openSync, readSync, symlinkSync } from 'node:fs';
+import { realpathSync, unlinkSync } from 'node:fs';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -113,6 +114,46 @@ function installedGh() {
   return realGhOnPath();
 }
 
+/** Ordered, opt-in observations of the real gh fixture without recording credentials. */
+function traceGh(stage, details = {}) {
+  if (!process.env.C755_TRACE) return;
+  process.stderr.write(`C755_TRACE ${JSON.stringify({ stage, pid: process.pid, ...details })}\n`);
+}
+
+/** The exact resolver inputs and the decision each PATH entry permits. */
+function traceGhCandidates(stage) {
+  if (!process.env.C755_TRACE) return;
+  const refusing = resolve(process.env.RIGGER_REFUSING_GH_DIR || '.');
+  traceGh(stage, { path: process.env.PATH, refusing });
+  for (const entry of process.env.PATH.split(delimiter)) {
+    const dir = resolve(entry || '.');
+    const file = join(dir, 'gh');
+    let executable = false;
+    let target = null;
+    let fingerprint = null;
+    let error = null;
+    try {
+      accessSync(file, constants.X_OK);
+      executable = true;
+      target = realpathSync.native(file);
+      if (dir !== refusing) fingerprint = installedFake(file);
+    } catch (cause) {
+      error = `${cause.code || cause.name}: ${cause.message}`;
+    }
+    traceGh('candidate', { stage, file, dir, target, executable, excluded: dir === refusing, fingerprint, error });
+  }
+}
+
+/** State of the already selected absolute executable at the spawn boundary. */
+function selectedGhState(gh) {
+  try {
+    accessSync(gh, constants.X_OK);
+    return { target: realpathSync.native(gh), executable: true, fingerprint: installedFake(gh) };
+  } catch (error) {
+    return { target: null, executable: false, error: `${error.code || error.name}: ${error.message}` };
+  }
+}
+
 /**
  * The `gh` a spawn finds on `path`, by its absolute path, passing over the directory `skipping`,
  * or null where there is none. An empty entry is the working directory to a spawn.
@@ -139,19 +180,22 @@ test('npm test puts its refusing gh first on the path every test inherits', asyn
  * read the request line; the token is a dummy the proxy never checks. Asked with `execFile`
  * rather than a synchronous spawn, because this process is also the proxy answering it.
  */
-async function methodGhSends(args, cwd = process.cwd()) {
+async function methodGhSends(gh, args, cwd = process.cwd()) {
   const seen = [];
   const proxy = createServer((request, response) => {
     let body = '';
     request.on('data', (chunk) => (body += chunk));
     request.on('end', () => {
       seen.push({ method: request.method, body });
+      traceGh('proxy-request', { method: request.method, body });
       if (process.env.RIGGER_GH_PROBE_FAILURE === 'proxy') {
+        traceGh('proxy-response', { status: 503 });
         response.writeHead(503, { 'content-type': 'application/json' });
         response.end('{"message":"local proxy request failed"}');
         return;
       }
       response.setHeader('content-type', 'application/json');
+      traceGh('proxy-response', { status: 200 });
       response.end('{}');
     });
   });
@@ -166,12 +210,39 @@ async function methodGhSends(args, cwd = process.cwd()) {
     GH_NO_UPDATE_NOTIFIER: '1',
     HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`,
   };
+  const heldPath = process.env.PATH;
   try {
     await new Promise((done, failed) => {
+      if (process.env.C755_TRANSITION === 'resolver') {
+        process.env.PATH = process.env.RIGGER_REFUSING_GH_DIR;
+        traceGh('transition', { kind: 'resolver', selected: process.env.C755_REAL_LINK });
+        traceGhCandidates('before-call');
+      }
+      if (process.env.C755_TRANSITION === 'missing') {
+        unlinkSync(gh);
+        traceGh('transition', { kind: 'missing', selected: gh });
+      }
+      if (process.env.C755_TRANSITION === 'fake') {
+        unlinkSync(gh);
+        symlinkSync(process.env.C755_FAKE_GH, gh);
+        traceGh('transition', { kind: 'fake', selected: gh, target: process.env.C755_FAKE_GH });
+      }
+      if (process.env.C755_TRANSITION === 'refusing') {
+        unlinkSync(gh);
+        const target = join(process.env.RIGGER_REFUSING_GH_DIR, 'gh');
+        symlinkSync(target, gh);
+        traceGh('transition', { kind: 'refusing', selected: gh, target });
+      }
       const spawnCwd = process.env.RIGGER_GH_PROBE_FAILURE === 'spawn' ? join(config, 'missing') : cwd;
-      execFile(installedGh(), args, { env, cwd: spawnCwd }, (error) => (error ? failed(new Error(`gh ${args.join(' ')}: ${error.message}`, { cause: error })) : done()));
+      traceGh('attempt', { gh, args, spawnCwd, state: selectedGhState(gh) });
+      execFile(gh, args, { env, cwd: spawnCwd }, (error) => {
+        traceGh('spawn-result', { gh, args, code: error?.code ?? 0, message: error?.message ?? null });
+        if (error) failed(new Error(`gh ${args.join(' ')}: ${error.message}`, { cause: error }));
+        else done();
+      });
     });
   } finally {
+    process.env.PATH = heldPath;
     proxy.close();
   }
   assert.equal(seen.length, 1, `\`gh ${args.join(' ')}\` sent ${seen.length} requests`);
@@ -179,7 +250,9 @@ async function methodGhSends(args, cwd = process.cwd()) {
 }
 
 test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {
-  if (!installedGh()) return t.skip('no real gh on PATH; real-gh method/body probe not run');
+  const gh = installedGh();
+  traceGh('live-first', { selected: gh });
+  if (!gh) return t.skip('no real gh on PATH; real-gh method/body probe not run');
   // `D16` rule 2: `gh` owns which method `gh api` sends, and the runner's rule is a copy of that
   // answer. So `gh` is asked, each run, and the relation asserted: a form the runner admits is one
   // `gh` sends as a GET carrying nothing, and a form `gh` sends any other way is one it refuses.
@@ -198,7 +271,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
     FLAG_IN_PATH_SLOT[0],
   ];
   for (const args of forms) {
-    const sent = await methodGhSends(args, inputs);
+    const sent = await methodGhSends(gh, args, inputs);
     let admitted = true;
     try {
       await readRunner(args, { send: recording() });
@@ -245,6 +318,7 @@ function installedFake(gh) {
 
 function realGhOnPath() {
   const refusing = process.env.RIGGER_REFUSING_GH_DIR;
+  traceGhCandidates('lookup');
   return executableOnPath('gh', process.env.PATH, (gh, dir) => dir !== resolve(refusing || '.') && !installedFake(gh));
 }
 
@@ -265,14 +339,27 @@ async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
   if (realGh) symlinkSync(realGh, join(realDir, 'gh'));
   const path = [...entries.map((entry) => (entry === 'F' ? fakeDir : realDir)), tools].join(delimiter);
   const env = { ...process.env, PATH: path };
+  const transition = process.env.C755_CELL_TRANSITION || (t.name.startsWith('P2-S control') ? process.env.C755_HOOK_CONTROL : null);
   delete env.NODE_TEST_CONTEXT;
+  delete env.C755_TRANSITION;
   env.RIGGER_GH_CELL_CHILD = '1';
+  traceGh('cell-start', { entries, realGh, transition, path });
   if (failure) env.RIGGER_GH_PROBE_FAILURE = failure;
+  if (transition) {
+    env.C755_TRANSITION = transition;
+    env.C755_REAL_LINK = join(realDir, 'gh');
+    env.C755_FAKE_GH = fake.gh;
+  }
+  if (transition === 'no-inner-real') {
+    unlinkSync(join(realDir, 'gh'));
+    traceGh('transition', { kind: transition, selected: realGh, removed: join(realDir, 'gh') });
+  }
   const selection = allTests ? [] : [`--test-name-pattern=${LIVE_GH_PROBE}`];
   const result = await new Promise((done) => {
     execFile(process.execPath, [process.env.npm_execpath, 'test', '--', '--test-reporter=tap', ...selection, 'test/forge-runners.test.mjs'],
       { env, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => done({ error, output: stdout + stderr }));
   });
+  if (process.env.C755_TRACE) process.stderr.write(result.output);
   return { ...result, fake };
 }
 
@@ -320,6 +407,128 @@ test('P3-X: real gh alone reports a spawn failure', (t) => failedGhCell(t, ['R']
 test('P3-Y: real gh alone reports a failed local proxy request', (t) => failedGhCell(t, ['R'], 'proxy'));
 test('P4-N: fake gh alone leaves the live probe skipped and the file passing', (t) => noRealGhCell(t, ['F']));
 test('P5-N: no gh after the refusing gh leaves the live probe skipped and the file passing', (t) => noRealGhCell(t, []));
+
+/** Runs one externally changed fixture without leaking its transition into another cell. */
+async function controlledGhCell(t, entries, transition) {
+  if (process.env.RIGGER_GH_CELL_CHILD === '1') return null;
+  const realGh = realGhOnPath();
+  if (!realGh) {
+    t.skip('no installed real gh available for the cell fixture');
+    return null;
+  }
+  const held = process.env.C755_CELL_TRANSITION;
+  process.env.C755_CELL_TRANSITION = transition;
+  try {
+    return await runGhCell(t, entries, realGh);
+  } finally {
+    if (held === undefined) delete process.env.C755_CELL_TRANSITION;
+    else process.env.C755_CELL_TRANSITION = held;
+  }
+}
+
+test('P2-A4r: a resolver change after selection keeps the selected real gh callable', async (t) => {
+  const cell = await controlledGhCell(t, ['R', 'F'], 'resolver');
+  if (!cell) return;
+  const { error, output, fake } = cell;
+  assert.equal(error, null, output);
+  assert.match(output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body$/m);
+  assert.deepEqual(fake.sent(), []);
+});
+
+test('P2-A4m: a selected real gh that disappears fails with its path and spawn error', async (t) => {
+  const cell = await controlledGhCell(t, ['R', 'F'], 'missing');
+  if (!cell) return;
+  const { error, output, fake } = cell;
+  assert.ok(error, output);
+  assert.match(output, /not ok \d+ - the read runner admits a `gh api <path>` form/);
+  assert.match(output, /api rate_limit -X GET/);
+  assert.match(output, /ENOENT/);
+  assert.match(output, /rigger-gh-cell-[^\s]+\/real\/gh/);
+  assert.doesNotMatch(output, /# SKIP no real gh on PATH/);
+  assert.deepEqual(fake.sent(), []);
+});
+
+test('P2-A5-F: replacing the selected real gh with identifiable fake gh is detected', async (t) => {
+  const cell = await controlledGhCell(t, ['R', 'F'], 'fake');
+  if (!cell) return;
+  const { error, output, fake } = cell;
+  assert.ok(error, output);
+  assert.match(output, /not ok \d+ - the read runner admits a `gh api <path>` form/);
+  assert.doesNotMatch(output, /# SKIP no real gh on PATH/);
+  assert.deepEqual(fake.sent(), [['api', 'rate_limit', '-X', 'GET']]);
+});
+
+test('P2-A5-refusing: replacing the selected real gh with refusing gh is detected', async (t) => {
+  const cell = await controlledGhCell(t, ['R', 'F'], 'refusing');
+  if (!cell) return;
+  const { error, output, fake } = cell;
+  assert.ok(error, output);
+  assert.match(output, /gh: refused under npm test/);
+  assert.match(output, /api rate_limit -X GET/);
+  assert.doesNotMatch(output, /# SKIP no real gh on PATH/);
+  assert.deepEqual(fake.sent(), []);
+});
+
+test('P2-A3: outer real gh selection gives no live credit when inner selection finds none', async (t) => {
+  const cell = await controlledGhCell(t, ['R', 'F'], 'no-inner-real');
+  if (!cell) return;
+  const { error, output, fake } = cell;
+  assert.equal(error, null, output);
+  assert.match(output, /ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body # SKIP no real gh on PATH; real-gh method\/body probe not run/);
+  assert.doesNotMatch(output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body$/m);
+  assert.deepEqual(fake.sent(), []);
+});
+
+for (const [label, entries] of [['P1', ['F', 'R']], ['P3', ['R']]]) {
+  test(`${label}-A3: an inner first lookup with no real gh has only the O102 skip`, async (t) => {
+    const cell = await controlledGhCell(t, entries, 'no-inner-real');
+    if (!cell) return;
+    assert.equal(cell.error, null, cell.output);
+    assert.match(cell.output, /# SKIP no real gh on PATH; real-gh method\/body probe not run/);
+    assert.doesNotMatch(cell.output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body$/m);
+    assert.deepEqual(cell.fake.sent(), []);
+  });
+
+  test(`${label}-A4r: resolver state changes but the selected real gh completes every form`, async (t) => {
+    const cell = await controlledGhCell(t, entries, 'resolver');
+    if (!cell) return;
+    assert.equal(cell.error, null, cell.output);
+    assert.match(cell.output, /^ok \d+ - the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body$/m);
+    assert.doesNotMatch(cell.output, /# SKIP no real gh on PATH/);
+    assert.deepEqual(cell.fake.sent(), []);
+  });
+
+  test(`${label}-A4m: selected real gh loss reports path, form and ENOENT`, async (t) => {
+    const cell = await controlledGhCell(t, entries, 'missing');
+    if (!cell) return;
+    assert.ok(cell.error, cell.output);
+    assert.match(cell.output, /not ok \d+ - the read runner admits a `gh api <path>` form/);
+    assert.match(cell.output, /api rate_limit -X GET/);
+    assert.match(cell.output, /ENOENT/);
+    assert.match(cell.output, /rigger-gh-cell-[^\s]+\/real\/gh/);
+    assert.doesNotMatch(cell.output, /# SKIP no real gh on PATH/);
+    assert.deepEqual(cell.fake.sent(), []);
+  });
+
+  test(`${label}-A5-F: identifiable fake replacement fails the live probe`, async (t) => {
+    const cell = await controlledGhCell(t, entries, 'fake');
+    if (!cell) return;
+    assert.ok(cell.error, cell.output);
+    assert.match(cell.output, /not ok \d+ - the read runner admits a `gh api <path>` form/);
+    assert.doesNotMatch(cell.output, /# SKIP no real gh on PATH/);
+    assert.deepEqual(cell.fake.sent(), [['api', 'rate_limit', '-X', 'GET']]);
+  });
+
+  test(`${label}-A5-refusing: refusing replacement fails the live probe`, async (t) => {
+    const cell = await controlledGhCell(t, entries, 'refusing');
+    if (!cell) return;
+    assert.ok(cell.error, cell.output);
+    assert.match(cell.output, /gh: refused under npm test/);
+    assert.match(cell.output, /api rate_limit -X GET/);
+    assert.doesNotMatch(cell.output, /# SKIP no real gh on PATH/);
+    assert.deepEqual(cell.fake.sent(), []);
+  });
+}
 
 test('the read runner refuses `gh api <path>` in any other form, naming it, and sends nothing', async () => {
   // The defect this catches is a runner that reads `gh api <path>` as a read because no method
