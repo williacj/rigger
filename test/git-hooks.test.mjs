@@ -61,8 +61,10 @@ test('every hook reaches the shared suite check rather than restating it', () =>
 });
 
 test('pre-push reaches the shared suite check after its own refusal', () => {
+  // pre-push passes --no-record, because a push commits no tree for the check to record.
   const lines = body('pre-push').split('\n');
-  assert.equal(lines.at(-1), DELEGATION);
-  assert.equal(lines.filter((line) => line === DELEGATION).length, 1);
+  const delegation = `${DELEGATION} --no-record`;
+  assert.equal(lines.at(-1), delegation);
+  assert.equal(lines.filter((line) => line.includes(SHARED)).length, 1);
   assert.doesNotMatch(body('pre-push'), /npm test/);
 });
