@@ -842,8 +842,9 @@ without new state.
 3. A dedicated GitHub App posts the gate's statuses, "rigger/gate" and "self-hosting". Its private
    key is reachable only from the mint and post steps of each posting job: the gate workflow's,
    and this repository's "self-hosting" check's. Both jobs run from `main` through the `gate`
-   environment's `main`-only deployment-branch policy. Agents keep the owner's token for
-   everything else. The design carries one named residual: it is not tested against forging.
+   environment, whose deployment-branch policy admits only the default branch. Agents keep the
+   owner's token for everything else. The design carries one named residual: it is not tested
+   against forging.
 4. In this repository the owner ratifies a proposal by writing a sound owner marker on its pull
    request. The entry binds from the merge.
 5. Once the gate's checks, "rigger/gate" and "self-hosting", are green, anyone may merge: the
@@ -864,9 +865,9 @@ A Self-hosting path is one `AGENTS.md`'s "Self-hosting" lists.
   owner's verdict costs less than writing a marker.
 - **Rule 2:** a session's marker, written with the owner's token, that admitted a merge; or a
   credential that lets the gate tell the owner's marker from a session's.
-- **Rule 3:** any run off `main` obtaining the App's secret, or a job on a ref other than `main`
-  admitted to the `gate` environment. The residual returns if a later incident or review shows a
-  forging route.
+- **Rule 3:** any run off `main` obtaining the App's secret, or a job on a ref other than the
+  default branch admitted to the `gate` environment. The residual returns if a later incident or
+  review shows a forging route.
 - **Rule 4:** an owner marker that proves to be a session's, or Rigger ceasing to ship the owner's
   marker as a consumer's record of ratification.
 - **Rule 5:** a merge the checks admitted that a judge later shows the gate should have refused.
