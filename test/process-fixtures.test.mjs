@@ -7,8 +7,34 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { scratch, sweep } from './process-fixtures.mjs';
+import { running } from './process-fixtures.mjs';
+
+const childProcess = createRequire(import.meta.url)('node:child_process');
+
+function withProcessTableResults(results, check) {
+  const original = childProcess.spawnSync;
+  const calls = [];
+  childProcess.spawnSync = (command, args, options) => {
+    if (command !== '/usr/bin/pgrep' && command !== '/usr/bin/pkill') return original(command, args, options);
+    calls.push({ command, args, options });
+    const answer = results.shift();
+    assert.ok(answer, `unexpected ${command} after ${calls.length} commands`);
+    return answer;
+  };
+  syncBuiltinESMExports();
+  try {
+    check(calls);
+    assert.equal(results.length, 0, 'a process-table answer was not read');
+  } finally {
+    childProcess.spawnSync = original;
+    syncBuiltinESMExports();
+  }
+}
+
+const processTableResult = (status, stdout, extra = {}) => ({ status, stdout, stderr: '', signal: null, error: undefined, ...extra });
 
 /**
  * How long a test file of two tests, each ending while its wait is unmet, is given to exit. A
@@ -67,5 +93,74 @@ test('given a process the teardown\'s pkill cannot kill, which pgrep lists howev
     assert.match(error.message, /\b4242\b/);
     assert.ok(error.message.includes(directory), error.message);
     return true;
+  });
+});
+
+test('a process-table read keeps raw status separate from its parsed list', () => {
+  for (const status of [0, 1, 2, 3, 255, null]) {
+    for (const stdout of ['', '4242\n', 'not-a-pid\n']) {
+      const result = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
+      withProcessTableResults([result], (calls) => {
+        assert.deepEqual(running('rigger-779-absent'), stdout.split('\n').filter(Boolean));
+        assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
+        assert.equal(result.status, status);
+        assert.equal(result.stdout, stdout);
+      });
+    }
+  }
+  withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
+    assert.throws(() => running('rigger-779-absent'), TypeError);
+    assert.equal(calls.length, 1);
+  });
+});
+
+test('sweep returns on a parsed empty read, including raw statuses that cannot prove no match', () => {
+  for (const status of [0, 1, 2, 3, 255, null]) {
+    withProcessTableResults([processTableResult(status, '', status === null ? { signal: 'SIGTERM' } : {})], (calls) => {
+      sweep('rigger-779-absent');
+      assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
+    });
+  }
+  withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
+    assert.throws(() => sweep('rigger-779-absent'), TypeError);
+    assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
+  });
+});
+
+test('sweep checks first, later and final reads after occupied lists despite failed pkill returns', () => {
+  for (const status of [0, 1, 2, 3, 255, null]) {
+    for (const stdout of ['4242\n', 'not-a-pid\n']) {
+      withProcessTableResults([
+        processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {}),
+        processTableResult(0, ''),
+        processTableResult(1, ''),
+      ], (calls) => {
+        sweep('rigger-779-absent');
+        assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
+      });
+    }
+  }
+  for (const occupied of [1, 2, 10]) {
+    const answers = Array.from({ length: occupied }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
+    answers.push(processTableResult(1, ''));
+    withProcessTableResults(answers, (calls) => {
+      sweep('rigger-779-absent');
+      assert.equal(calls.filter(({ command }) => command === '/usr/bin/pgrep').length, occupied + 1);
+      assert.equal(calls.filter(({ command }) => command === '/usr/bin/pkill').length, occupied);
+    });
+  }
+  const answers = Array.from({ length: 10 }, () => [processTableResult(1, 'not-a-pid\n'), processTableResult(2, '')]).flat();
+  answers.push(processTableResult(3, 'not-a-pid\n'));
+  withProcessTableResults(answers, (calls) => {
+    assert.throws(() => sweep('rigger-779-absent'), /not-a-pid/);
+    assert.equal(calls.filter(({ command }) => command === '/usr/bin/pgrep').length, 11);
+  });
+  withProcessTableResults([
+    processTableResult(0, '4242\n'),
+    processTableResult(null, undefined, { error: new Error('pkill failed to launch') }),
+    processTableResult(1, ''),
+  ], (calls) => {
+    sweep('rigger-779-absent');
+    assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
   });
 });
