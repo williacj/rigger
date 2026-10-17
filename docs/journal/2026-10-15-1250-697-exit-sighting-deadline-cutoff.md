@@ -56,3 +56,10 @@ then held the file's own process from exiting, so `node --test` waited on the fi
 This was proved red at `07aeabf` and green with the fix: an abandoned run's group is killed. An
 exit caller abandoned at its bound did not hold the file, because the scratch teardown's sweep
 ends it. Whether this leak is what held PR CI run 38947643018 is not shown.
+
+The cutoff check compared only named kills, so the round-4 judge could inject an unended record
+for a pid no read had returned and the check still passed. The check now compares every event's
+kind and fields against the multiset the exit's reads support. That set holds the group's one
+kill, the named kills, and an unended record for each member the reads after the kill left alive.
+Each of three injected records is a named failure. The `X0 exit A3 failure` run, abandoned at its
+bound or after its forced read, does not hold the file's process.

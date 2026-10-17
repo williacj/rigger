@@ -1104,6 +1104,21 @@ function exitSighting(directory, group) {
     const deadline = readings.length ? readings.at(-1).at + CLEANUP_BOUND : undefined;
     const first = items.slice(killAt + 1).find((item) => item.kind === 'request');
     result.postKill = first === undefined ? { kind: 'none' } : { ...exitOutcome(first, deadline ?? Infinity, tool), argv: first.argv ?? null, rows: undefined, timedOutBefore: timedOut };
+    // The members L0 could not end, as `emptied` decides them from its reads of the group after the
+    // kill: each member the last answered read found alive, where a later read was cut by the bound
+    // (late, or timed out). An answer with none alive ends the reads; a failed one is read again.
+    let living;
+    result.unended = [];
+    for (const request of items.slice(killAt + 1).filter((item) => item.kind === 'request' && item.argv?.join(' ') === `-g ${group} -o pid=,stat=,xstat=`)) {
+      const outcome = exitOutcome(request, deadline ?? Infinity, tool);
+      if (outcome.kind === 'answered') {
+        living = [...outcome.rows].filter(([, state]) => live(state)).map(([pid]) => pid);
+        if (living.length === 0) break;
+      } else if (outcome.kind === 'late' || outcome.kind === 'timeout') {
+        result.unended = living ?? [];
+        break;
+      }
+    }
   }
   return result;
 }
@@ -1166,6 +1181,17 @@ function exitCutoff(directory, exit, { prepared, status, stderr, events }) {
   const kills = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
   assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
   assert.equal(kills[0].census, exit.reason, 'the group kill does not carry the reason its cutoff branch gives');
+  // Every event, by kind and the fields L0 gives it, against the multiset the exit's reads support:
+  // the group's one kill with its reason, a named kill of each member the read by pid found alive
+  // that L0 ended, and an unended record of each member the reads after the kill left alive.
+  const unendedPids = new Set(exit.unended ?? []);
+  const supported = [
+    { event: 'group.killed', group, census: exit.reason },
+    ...(exit.unnamed ? [] : exit.named.filter((pid) => !unendedPids.has(pid)).map((pid) => ({ event: 'survivor.killed', pid }))),
+    ...[...unendedPids].map((pid) => ({ event: 'survivor.unended', pid, reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` })),
+  ];
+  const shape = ({ event, group: id, census, pid, reason, name, cmd, ...rest }) => JSON.stringify({ event, group: id, census, pid, reason, other: Object.keys(rest) });
+  assert.deepEqual(events.map(shape).sort(), supported.map(shape).sort(), `the exit's events differ from those its reads support: ${JSON.stringify(events)}`);
   for (const record of events.filter(({ pid }) => pid !== undefined)) {
     if (record.name === undefined && record.cmd === undefined) continue;
     const returned = exit.identities.get(record.pid);
@@ -2878,6 +2904,21 @@ for (const title of [
   });
 }
 
+// Each record a real U1 E0 cutoff's events could be given beside L0's own, none of which any read
+// of that exit supports: the cutoff check refuses every one.
+for (const [label, extra] of [
+  ['an unended survivor no post-kill read returned', { event: 'survivor.unended', pid: 999999 }],
+  ['a named kill of a pid no read returned', { event: 'survivor.killed', pid: 999999 }],
+  ['an event the exit cleanup does not record', { event: 'directory.unread', directory: '/nowhere', census: 'invented' }],
+]) {
+  test(`U1 exit E0: the cutoff check refuses ${label}`, SETTLES_WITHIN, async (t) => {
+    const exit = await forcedExit(t, 'U1', { reads: [forced('state', 1, 'hang')] }, censusTimeout);
+    if (exit === undefined) return;
+    const { events, directory } = exitResults.get(t);
+    assert.throws(() => exitCutoff(directory, exit, { prepared: false, status: 0, stderr: '', events: [...events, extra] }), /the exit's events differ from those its reads support/);
+  });
+}
+
 // The tests a nested run of this file defines where `EXIT_LEAK_HARNESS` names them, so that a test
 // below can abandon an answered run, or an exit caller, at its own bound and see whether the file
 // it ran in still exits. `leak hold` holds until its process is killed.
@@ -2896,6 +2937,29 @@ if (process.env.EXIT_LEAK_HARNESS === 'exit') {
       process.stderr.write(`leak callers at abort: ${callers.length}\n`);
     });
     return censusExit(t, 'U1');
+  });
+}
+if (process.env.EXIT_LEAK_HARNESS === 'forced') {
+  // The forced class whose run overran its bound in CI run 38947643018, run as its own test does.
+  const [, , forcing, expect] = CELL_CASES.find(([title]) => title.startsWith('A3 failure:'));
+  test('leak abandoned X0 exit A3 failure', { timeout: 1 }, (t) => {
+    // The processes under this run's own temporary directory as the bound ends the test.
+    t.signal.addEventListener('abort', () => {
+      const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+      process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
+    });
+    return forcedExit(t, 'X0', forcing, { ...expect, fails: typeof expect.fails === 'function' ? expect.fails('X0') : expect.fails });
+  });
+  // The same run, abandoned only once its forced confirming read has been reached: the test ends
+  // there with the run still pending, as a test past its bound does.
+  test('leak abandoned X0 exit A3 failure after its forced read', async (t) => {
+    const pending = forcedExit(t, 'X0', forcing, { ...expect, fails: typeof expect.fails === 'function' ? expect.fails('X0') : expect.fails });
+    pending.catch(() => {});
+    const reached = () => readdirSync(process.env.TMPDIR).some((name) => name.startsWith('rigger-process-') && existsSync(join(process.env.TMPDIR, name, 'forced')) && readFileSync(join(process.env.TMPDIR, name, 'forced'), 'utf8').includes('confirm 1 answer-then-fail'));
+    await until(reached, { signal: t.signal });
+    const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+    process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
+    throw new Error('abandoned after its forced read');
   });
 }
 
@@ -2918,13 +2982,13 @@ async function leakRun(t, harness, title) {
   return { code, output };
 }
 
-for (const [harness, title] of [['answered', 'leak abandoned answered run'], ['exit', 'leak abandoned exit caller']]) {
+for (const [harness, title] of [['answered', 'leak abandoned answered run'], ['exit', 'leak abandoned exit caller'], ['forced', 'leak abandoned X0 exit A3 failure'], ['forced', 'leak abandoned X0 exit A3 failure after its forced read']]) {
   test(`a file whose test ${title.replace('leak abandoned ', 'abandons its ')} at the test's bound still exits`, SETTLES_WITHIN, async (t) => {
     const { code, output } = await leakRun(t, harness, title);
     assert.equal(code, 1, output);
     assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
-    assert.match(output, /test timed out after 1ms/, output);
-    if (harness === 'exit') assert.match(output, /leak callers at abort: 1$/m, output);
+    assert.match(output, title.endsWith('forced read') ? /abandoned after its forced read/ : /test timed out after 1ms/, output);
+    if (harness !== 'answered') assert.match(output, /leak callers at abort: 1$/m, output);
   });
 }
 
