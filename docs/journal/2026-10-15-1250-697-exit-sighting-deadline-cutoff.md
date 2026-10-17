@@ -63,3 +63,10 @@ kind and fields against the multiset the exit's reads support. That set holds th
 kill, the named kills, and an unended record for each member the reads after the kill left alive.
 Each of three injected records is a named failure. The `X0 exit A3 failure` run, abandoned at its
 bound or after its forced read, does not hold the file's process.
+
+The round-5 judge found that the comparison still dropped `name` and `cmd`, and held them to
+returned identities only on events carrying a pid. So a `group.killed` given an invented name
+passed. The check now matches each event exactly, by kind and whole field set, with each value
+one a read supports. It is attacked mechanically: every field added, changed or removed, every
+kind change, and an extra event of every kind L0 records. That attack runs against U1, X0 and a
+prepared C615 U2 cutoff.

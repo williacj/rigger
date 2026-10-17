@@ -1181,17 +1181,34 @@ function exitCutoff(directory, exit, { prepared, status, stderr, events }) {
   const kills = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
   assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
   assert.equal(kills[0].census, exit.reason, 'the group kill does not carry the reason its cutoff branch gives');
-  // Every event, by kind and the fields L0 gives it, against the multiset the exit's reads support:
-  // the group's one kill with its reason, a named kill of each member the read by pid found alive
-  // that L0 ended, and an unended record of each member the reads after the kill left alive.
+  // Every event, exactly, against the multiset the exit's reads support: each supported event is
+  // its kind and its whole field set, each field with the values a read gave L0 for it, so an event
+  // with a field added, changed or missing, or one more event of any kind, matches none.
   const unendedPids = new Set(exit.unended ?? []);
+  const named = (pid) => exit.identities.get(pid) ?? { names: new Set(), commands: new Set() };
+  // A member's name and command line, where a read returned one, as `described` and the census give them.
+  const identified = (pid, required) => {
+    const { names, commands } = named(pid);
+    return { ...(required || names.size ? { name: [...names] } : {}), ...(required || commands.size ? { cmd: [...commands] } : {}) };
+  };
   const supported = [
-    { event: 'group.killed', group, census: exit.reason },
-    ...(exit.unnamed ? [] : exit.named.filter((pid) => !unendedPids.has(pid)).map((pid) => ({ event: 'survivor.killed', pid }))),
-    ...[...unendedPids].map((pid) => ({ event: 'survivor.unended', pid, reason: `still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out` })),
+    { event: 'group.killed', group: [group], census: [exit.reason] },
+    ...(exit.unnamed ? [] : exit.named.filter((pid) => !unendedPids.has(pid)).map((pid) => ({ event: 'survivor.killed', pid: [pid], ...identified(pid, true) }))),
+    ...[...unendedPids].map((pid) => ({ event: 'survivor.unended', pid: [pid], ...identified(pid, false), reason: [`still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out`] })),
   ];
-  const shape = ({ event, group: id, census, pid, reason, name, cmd, ...rest }) => JSON.stringify({ event, group: id, census, pid, reason, other: Object.keys(rest) });
-  assert.deepEqual(events.map(shape).sort(), supported.map(shape).sort(), `the exit's events differ from those its reads support: ${JSON.stringify(events)}`);
+  const fits = (record, spec) => {
+    const keys = Object.keys(record).sort();
+    const wanted = Object.keys(spec).sort();
+    return JSON.stringify(keys) === JSON.stringify(wanted) && record.event === spec.event && wanted.filter((key) => key !== 'event').every((key) => spec[key].includes(record[key]));
+  };
+  const unmatched = [...supported];
+  const unsupported = events.filter((record) => {
+    const at = unmatched.findIndex((spec) => fits(record, spec));
+    if (at < 0) return true;
+    unmatched.splice(at, 1);
+    return false;
+  });
+  assert.deepEqual({ unsupported, unmatched }, { unsupported: [], unmatched: [] }, `the exit's events differ from those its reads support: ${JSON.stringify(events)}`);
   for (const record of events.filter(({ pid }) => pid !== undefined)) {
     if (record.name === undefined && record.cmd === undefined) continue;
     const returned = exit.identities.get(record.pid);
@@ -2916,6 +2933,64 @@ for (const [label, extra] of [
     if (exit === undefined) return;
     const { events, directory } = exitResults.get(t);
     assert.throws(() => exitCutoff(directory, exit, { prepared: false, status: 0, stderr: '', events: [...events, extra] }), /the exit's events differ from those its reads support/);
+  });
+}
+
+/** Every event kind L0's source records, with the `.unended` each `.killed` kind ends as. */
+const L0_EVENT_KINDS = ['group.killed', 'survivor.killed', 'survivor.unended', 'timeout.killed', 'timeout.unended', 'recorded.killed', 'recorded.unended', 'directory.unread', 'directory.skipped', 'output.held'];
+
+/** Every field an L0 event of the exit cleanup or a directory census carries, beside one no event carries. */
+const L0_EVENT_FIELDS = ['group', 'census', 'pid', 'name', 'cmd', 'reason', 'directory', 'killed', 'bound', 'invented'];
+
+/**
+ * Each mechanical variant of `events`, by label: every event with each field it lacks added, each
+ * field it has changed and each removed, and its kind changed; and one extra event of every kind,
+ * a copy of the exit's own where it has one.
+ */
+function eventVariants(events) {
+  const variants = [];
+  const swapped = (index, record) => events.map((each, at) => (at === index ? record : each));
+  events.forEach((record, index) => {
+    const at = `${record.event} #${index}`;
+    for (const field of L0_EVENT_FIELDS) if (!(field in record)) variants.push([`${at} gains ${field}`, swapped(index, { ...record, [field]: ['pid', 'group', 'bound'].includes(field) ? 999999 : 'ghost' })]);
+    for (const field of Object.keys(record).filter((key) => key !== 'event')) {
+      variants.push([`${at} with ${field} changed`, swapped(index, { ...record, [field]: typeof record[field] === 'number' ? record[field] + 1 : `${JSON.stringify(record[field])}-changed` })]);
+      const { [field]: _removed, ...rest } = record;
+      variants.push([`${at} without ${field}`, swapped(index, rest)]);
+    }
+    variants.push([`${at} as another kind`, swapped(index, { ...record, event: L0_EVENT_KINDS.find((kind) => kind !== record.event) })]);
+  });
+  for (const kind of L0_EVENT_KINDS) {
+    const own = events.find(({ event }) => event === kind);
+    variants.push([`an extra ${kind}`, [...events, own ? { ...own } : { event: kind, pid: 999999, group: 999999 }]]);
+  }
+  return variants;
+}
+
+// A forced E0 census timeout: a real-deadline cutoff in every cell.
+const E0_FORCING = { reads: [forced('state', 1, 'hang')] };
+
+for (const [cell, run] of [
+  ['U1', (t) => forcedExit(t, 'U1', E0_FORCING, censusTimeout)],
+  ['X0', (t) => forcedExit(t, 'X0', E0_FORCING, censusTimeout)],
+  // As the C615 tests run it: a prepared U2 exit through `censusExit`, its returned originals retained.
+  ['C615 U2', async (t) => { exitForcings.set(t, E0_FORCING); await censusExit(t, 'U2'); return exitResults.get(t).exit; }],
+]) {
+  test(`${cell} exit E0: the cutoff check refuses every changed, added or extra event`, SETTLES_WITHIN, async (t) => {
+    const exit = await run(t);
+    if (exit === undefined) return;
+    if (exit.branch !== 'cutoff') return t.skip(`the exit took the ${exit.branch} branch, not a cutoff`);
+    const { events, directory } = exitResults.get(t);
+    const check = (list) => exitCutoff(directory, exit, { prepared: false, status: 0, stderr: '', events: list });
+    check(events);
+    const variants = eventVariants(events);
+    const missed = [];
+    for (const [label, list] of variants) {
+      try { check(list); missed.push(label); }
+      catch (error) { if (!(error instanceof assert.AssertionError)) throw error; }
+    }
+    t.diagnostic(JSON.stringify({ events, variants: variants.length, missed }));
+    assert.deepEqual(missed, [], 'the cutoff check accepted these variants of the exit\'s own events');
   });
 }
 
