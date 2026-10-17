@@ -201,6 +201,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-WORK-28 | — it lies in no git checkout, and no git checkout lies in it; | the engine | the test suite | |
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
 | R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | the engine | the test suite | |
+| R-WORK-31 | A session Rigger dispatches leaves no file of its own outside its dispatch's directory and its scratch directory, read on real paths once the session's process has ended. Its bound is in `### R-WORK-31 — Where a dispatched session's files land`. | the engine | the test suite | |
 | R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | the engine | the test suite | |
 
 ### R-WORK-25 — Continuing workspace states
@@ -254,6 +255,30 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | `judges/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
+
+### R-WORK-31 — Where a dispatched session's files land
+
+Claude Code's configuration home is `~/.claude` unless the consumer moves it. Each row below writes that home as `<home>`, and names each path under it from there. Each in-scope row holds for a maker in its workspace, for a judge in its `main` reaching `head`, and for a role dispatched to answer an escalation.
+
+| What the session writes | Agent CLI | Scope |
+|---|---|---|
+| a tool result too large to return inline, from `Bash`, `Read` or a tool of the directory's own MCP server | Claude Code | in |
+| its transcript under `<home>/projects/`, in the entry for the directory the session runs in | Claude Code | in |
+| files under `/tmp/claude-<uid>/` named for the directory the session runs in | Claude Code | in |
+| a background task's output | Claude Code | in |
+| any other path under `<home>` that a session creates or changes | Claude Code | in |
+| the automatic memory under the session's entry in `<home>/projects/` | Claude Code | out: Rigger dispatches no session with automatic memory |
+| `<home>/session-env/<session id>/` | Claude Code | out: until a card measures a route that confines it |
+| a file under `<home>`, or `~/.claude.json` beside it, that every session shares and no session id or directory names, of which `~/.claude.json`, `<home>/backups/`, `<home>/history.jsonl`, `<home>/.last-cleanup` and `<home>/.last-update-result.json` are instances | Claude Code | out: no test can attribute a write to it while other sessions run |
+| a file a command the agent runs writes, rather than the agent CLI itself, such as `npm`'s cache | any | out: the command's own behaviour, outside the adapter |
+| a write through a symbolic link inside the dispatch's directory to a target outside it | any | out: the link is the work's, and Rigger cannot confine where it points |
+| anything a session that persists writes | Claude Code | out: Rigger dispatches no session that persists |
+| output from `WebFetch` or `WebSearch` | Claude Code | out: no live run here reaches the public web |
+| output from `Grep`, `Glob`, the agent tool or `Workflow` | Claude Code | out: Rigger does not offer them |
+| `Edit`, `Write` or `NotebookEdit` | Claude Code | out: they return no command or file output |
+| what a session killed at its timeout writes | Claude Code | out: the file's place is fixed before the session ends, a judgment |
+| anything | Codex | out: no claiming card yet; the home Codex keeps for the dispatch, written `<Codex home>`, lies under its scratch directory, and its linked `<Codex home>/auth.json` (#646) is the known path outside |
+| anything | a Claude Code version other than the one the claiming test names | out |
 
 ### R-WORK-34 — The head a continuing attempt is judged at
 
