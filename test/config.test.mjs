@@ -483,14 +483,13 @@ test('a kind naming one role as both its maker and a judge is refused, and the r
   }
 });
 
-// proves R-SCHED-10, R-ESCALATE-2
+// proves R-SCHED-10, R-ESCALATE-13
 test('an escalation category Rigger does not offer is refused, and the refusal names it', () => {
   assert.match(refusal({ ...rigger, escalate: ['critical', 'infrastructure'] }), /infrastructure/);
 });
 
-// proves R-ESCALATE-2
 test('a consumer choosing among the fixed categories is accepted, adding none of its own', async () => {
-  // R-ESCALATE-2: the set is Rigger's, a consumer chooses which of them are the owner's, and all
+  // the set is Rigger's, a consumer chooses which of them are the owner's, and all
   // are unless the consumer says otherwise. The default the architecture publishes is therefore
   // the whole set, which is what the offered categories are checked against.
   const every = (await publishedShape()).escalate;

@@ -576,7 +576,7 @@ for (const { action, method, ruling, merged } of [
   });
 }
 
-// proves R-WORK-30
+// proves R-WORK-33
 test('a pull that reads a person-merged pull request records removal before the transition to Done', async () => {
   let built;
   built = world({
