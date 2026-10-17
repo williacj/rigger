@@ -7,17 +7,21 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { killRecordedGroups } from '../src/execution/run.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
 import { alive, fixture, scratch, startGroup, startOf, until, withoutLeader } from './process-fixtures.mjs';
+import { finiteDirectoryReads } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
+const mutableFs = createRequire(import.meta.url)('node:fs');
 
 /** The state directory a test's record and stream live in: `.rigger/` in the scratch directory. */
 const stateOf = (directory) => join(directory, '.rigger');
@@ -336,6 +340,408 @@ for (const [unremovable, leave] of Object.entries(UNREMOVABLE)) {
   });
 }
 
+/** Reads only the scratch-path and recorded-PID process-table answers after the target's teardown. */
+function targetProcessTable(directories, identities) {
+  const options = { encoding: 'utf8', timeout: 20_000, env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' } };
+  const pattern = directories.map((path) => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const pathsStarted = performance.now();
+  const paths = spawnSync('/usr/bin/pgrep', ['-fl', pattern], options);
+  const pathsElapsed = performance.now() - pathsStarted;
+  const pids = [...new Set(identities.map(({ pid }) => pid))];
+  const processesStarted = performance.now();
+  const processes = spawnSync('/bin/ps', ['-p', pids.join(','), '-o', 'pid=,lstart=,command='], options);
+  const processesElapsed = performance.now() - processesStarted;
+  const pathAnswer = { command: '/usr/bin/pgrep -fl <scratch paths>', boundMs: 20_000, elapsedMs: pathsElapsed, status: paths.status, error: paths.error?.message ?? null, errorCode: paths.error?.code ?? null, signal: paths.signal, output: paths.stdout ?? '', stderr: paths.stderr ?? '' };
+  const pidAnswer = { command: '/bin/ps -p <recorded pids> -o pid=,lstart=,command=', boundMs: 20_000, elapsedMs: processesElapsed, status: processes.status, error: processes.error?.message ?? null, errorCode: processes.error?.code ?? null, signal: processes.signal, output: processes.stdout ?? '', stderr: processes.stderr ?? '' };
+  return classifyProcessAnswers(pathAnswer, pidAnswer, directories, identities);
+}
+
+/** Classifies only complete, interpretable answers as empty or as a named survivor. */
+function classifyProcessAnswers(pathAnswer, pidAnswer, directories, identities) {
+  const answers = [pathAnswer, pidAnswer];
+  if (answers.some(({ errorCode, elapsedMs, boundMs }) => errorCode === 'ETIMEDOUT' || elapsedMs > boundMs)) return { outcome: 'N', pathAnswer, pidAnswer };
+  const valid = (answer) => answer.error === null && answer.signal === null && answer.stderr === '' && (answer.status === 0 || (answer.status === 1 && answer.output === ''));
+  if (directories.length === 0 || identities.length === 0 || answers.some((answer) => !valid(answer))) return { outcome: 'R', pathAnswer, pidAnswer };
+  const pathLines = pathAnswer.output.split('\n').filter((line) => line !== '');
+  const pidLines = pidAnswer.output.split('\n').filter((line) => line !== '');
+  if ((pathAnswer.status === 0 && pathLines.length === 0) || (pidAnswer.status === 0 && pidLines.length === 0)) return { outcome: 'R', pathAnswer, pidAnswer };
+  const matchedPaths = pathLines.map((line) => /^\s*\d+\s+(.+)$/.exec(line)?.[1]).map((command) => directories.find((directory) => command?.includes(directory)));
+  if (matchedPaths.some((path) => path === undefined)) return { outcome: 'R', pathAnswer, pidAnswer };
+  const sameStart = [];
+  for (const line of pidLines) {
+    const row = /^\s*(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/.exec(line);
+    const identity = identities.find(({ pid }) => pid === Number(row?.[1]));
+    const started = row && Date.parse(`${row[2]} UTC`) / 1000;
+    if (!row || !identity || !Number.isInteger(started) || row[3].trim() === '') return { outcome: 'R', pathAnswer, pidAnswer };
+    if (started === identity.started) sameStart.push({ pid: identity.pid, started, command: row[3] });
+  }
+  return { outcome: matchedPaths.length > 0 || sameStart.length > 0 ? 'S' : 'E', pathAnswer, pidAnswer, matchedPath: matchedPaths[0] ?? null, sameStart };
+}
+
+/** Applies the target's teardown/read disposition after the process-table answers arrive. */
+function targetTeardownCell(target, teardown, read) {
+  const cell = `${target}-${teardown}-${read.outcome}`;
+  if ((target === 'P' || target === 'A') && teardown === 'T' && read.outcome === 'E') return { cell, disposition: 'proves absence' };
+  if (read.outcome === 'S') return { cell, disposition: 'fails' };
+  if (read.outcome === 'R' || read.outcome === 'N') return { cell, disposition: 'return to author' };
+  if (teardown === 'F' && read.outcome === 'E') return { cell, disposition: 'fails' };
+  throw new Error(`unclassified teardown cell ${cell}`);
+}
+
+test('a process-table no-match status with stderr cannot prove absence', () => {
+  const empty = { status: 1, output: '', stderr: '', error: null, errorCode: null, signal: null };
+  const observed = classifyProcessAnswers({ ...empty, stderr: 'pgrep warning' }, empty, [join(tmpdir(), 'c595-read')], [{ pid: 417, started: 1_792_151_200 }]);
+  assert.equal(observed.outcome, 'R');
+});
+
+test('process-table rows name a survivor only after complete status and start-identity checks', () => {
+  const directory = join(tmpdir(), 'c595-read');
+  const empty = { boundMs: 20_000, elapsedMs: 1, status: 1, output: '', stderr: '', error: null, errorCode: null, signal: null };
+  const started = Date.parse('Fri Oct 16 09:00:00 2026 UTC') / 1000;
+  const identities = [{ pid: 417, started }];
+  const row = `417 Fri Oct 16 09:00:00 2026 /bin/tail ${directory}/hold\n`;
+  assert.equal(classifyProcessAnswers(empty, { ...empty, status: 0, output: '417 unreadable\n' }, [directory], identities).outcome, 'R', 'an uninterpretable PID row proved absence');
+  const byPath = classifyProcessAnswers({ ...empty, status: 0, output: `417 /bin/tail ${directory}/hold\n` }, empty, [directory], identities);
+  assert.deepEqual([byPath.outcome, byPath.matchedPath], ['S', directory], 'a named scratch-path survivor was lost');
+  const byIdentity = classifyProcessAnswers(empty, { ...empty, status: 0, output: row }, [directory], identities);
+  assert.deepEqual([byIdentity.outcome, byIdentity.sameStart[0]?.pid], ['S', 417], 'a same-start PID survivor was lost');
+  assert.equal(classifyProcessAnswers(empty, { ...empty, status: 0, output: row }, [directory], [{ pid: 417, started: started - 1 }]).outcome, 'E', 'a reused PID with another start was treated as the recorded process');
+  assert.equal(classifyProcessAnswers({ ...empty, errorCode: 'ETIMEDOUT', elapsedMs: 20_000, status: null }, empty, [directory], identities).outcome, 'N', 'an unanswered read proved absence');
+});
+
+/** Controlled, status-checked answers for each post-teardown observation class. */
+function controlledTableRead(kind, scratchPath) {
+  const empty = { command: '/bin/ps -p <recorded pids> -o pid=,lstart=,command=', boundMs: 20_000, elapsedMs: 1, status: 1, error: null, signal: null, output: '', stderr: '' };
+  const path = { ...empty, command: '/usr/bin/pgrep -fl <scratch paths>' };
+  if (kind === 'E') return { outcome: 'E', pathAnswer: path, pidAnswer: empty, sameStart: [] };
+  if (kind === 'S') return { outcome: 'S', pathAnswer: { ...path, status: 0, output: `417 ${scratchPath}/hold\n` }, pidAnswer: empty, sameStart: [], matchedPath: scratchPath };
+  if (kind === 'R') return { outcome: 'R', pathAnswer: { ...path, status: 2, stderr: 'pgrep failed' }, pidAnswer: empty };
+  return { outcome: 'N', pathAnswer: { ...path, status: null, error: 'ETIMEDOUT', elapsedMs: 20_000 }, pidAnswer: empty };
+}
+
+for (const [target, teardown, expected] of [
+  ['P', 'T', ['proves absence', 'fails', 'return to author', 'return to author']],
+  ['A', 'T', ['proves absence', 'fails', 'return to author', 'return to author']],
+  ['P', 'F', ['fails', 'fails', 'return to author', 'return to author']],
+  ['A', 'F', ['fails', 'fails', 'return to author', 'return to author']],
+]) {
+  for (const [index, kind] of ['E', 'S', 'R', 'N'].entries()) {
+    const cell = `${target}-${teardown}-${kind}`;
+    test(`${cell} classifies controlled teardown and process-table answers`, () => {
+      const scratchPath = join(tmpdir(), 'c595-controlled-process-cell');
+      const beforeAfter = [{ directory: scratchPath, before: true, remains: teardown === 'F' }];
+      const identities = [{ role: 'leader', pid: 417, started: 1_792_151_200 }, { role: 'member', pid: 418, started: 1_792_151_200 }];
+      const teardownResult = { outcome: teardown, error: teardown === 'F' ? 'scratch sweep failed' : null };
+      const observed = controlledTableRead(kind, scratchPath);
+      assert.equal(beforeAfter[0].before, true, `${cell}: scratch path was not present before teardown`);
+      assert.equal(beforeAfter[0].remains, teardown === 'F', `${cell}: teardown outcome and after path disagree`);
+      assert.deepEqual(identities.map(({ role }) => role), ['leader', 'member'], `${cell}: process identities are missing`);
+      assert.equal(observed.pathAnswer.boundMs, 20_000, `${cell}: path read is unbounded`);
+      assert.equal(observed.pidAnswer.boundMs, 20_000, `${cell}: PID read is unbounded`);
+      if (kind === 'E') assert.deepEqual([observed.pathAnswer.status, observed.pidAnswer.status, observed.pathAnswer.output, observed.pidAnswer.output], [1, 1, '', ''], `${cell}: an unavailable read was counted as empty`);
+      if (kind === 'S') assert.equal(observed.matchedPath, scratchPath, `${cell}: survivor path was not identified`);
+      if (kind === 'R') assert.deepEqual([observed.pathAnswer.status, observed.pathAnswer.stderr], [2, 'pgrep failed'], `${cell}: read failure was lost`);
+      if (kind === 'N') assert.deepEqual([observed.pathAnswer.status, observed.pathAnswer.error, observed.pathAnswer.elapsedMs], [null, 'ETIMEDOUT', 20_000], `${cell}: unanswered read lacks its deadline`);
+      assert.deepEqual(targetTeardownCell(target, teardownResult.outcome, observed), { cell, disposition: expected[index] }, `${cell}: wrong disposition`);
+      console.log(`C595_CELL ${JSON.stringify({ cell, target, teardown: teardownResult, beforeAfter, identities, read: observed, disposition: expected[index] })}`);
+    });
+  }
+}
+
+/** Adds finite directory reads to the realpath work inside one scratch(t) call. */
+function scratchWithFiniteWork(t, reads, deadline, report) {
+  const original = mutableFs.realpathSync;
+  let exercised = false;
+  mutableFs.realpathSync = (path, ...options) => {
+    if (!exercised && typeof path === 'string' && path.startsWith(`${tmpdir()}/`)) {
+      exercised = true;
+      finiteDirectoryReads(path, reads, deadline, report, 'scratch.work');
+    }
+    return original(path, ...options);
+  };
+  syncBuiltinESMExports();
+  try {
+    const directory = scratch(t);
+    assert.equal(exercised, true, 'finite work did not run inside scratch(t)');
+    return directory;
+  } finally {
+    mutableFs.realpathSync = original;
+    syncBuiltinESMExports();
+  }
+}
+
+/** The C1 pre-write position with one shared test deadline and no record yet. */
+function c0(t) {
+  const began = performance.now();
+  const content = '[{"group": 4242, "sta';
+  const beforeScratchElapsed = performance.now() - began;
+  const beforeScratch = 20_000 - beforeScratchElapsed;
+  const scratchEntered = performance.now();
+  const directory = scratch(t);
+  const scratchDuration = performance.now() - scratchEntered;
+  const beforeStartElapsed = performance.now() - began;
+  const beforeStart = 20_000 - beforeStartElapsed;
+  assert.ok(beforeScratch > 0 && beforeStart > 0 && beforeStart <= beforeScratch, 'P1-C0(1): scratch exhausted the shared deadline');
+  assert.ok(directory.startsWith(`${tmpdir()}/`) && existsSync(directory), 'P1-C0(1): scratch did not return a usable TMPDIR directory');
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'P1-C0(1)', position: 1, content, readinessOnly: true, completedPrefix: [], directory, beforeScratchElapsed, beforeScratch, scratchDuration, beforeStartElapsed, beforeStart })}`);
+  return { began, content, beforeScratchElapsed, beforeScratch, scratchDuration, directory, beforeStartElapsed, beforeStart };
+}
+
+test('P2-C0(8) finite filesystem work stays inside the scratch call and returns a usable directory', SETTLES_WITHIN, (t) => {
+  const events = [];
+  const originalRealpath = mutableFs.realpathSync;
+  const directory = scratchWithFiniteWork(t, 3, Infinity, (phase, fields) => events.push({ phase, ...fields }));
+  assert.ok(directory.startsWith(`${tmpdir()}/`) && existsSync(directory), 'P2 scratch did not return under TMPDIR');
+  assert.equal(mutableFs.realpathSync, originalRealpath, 'P2 scratch did not restore the builtin reader');
+  assert.deepEqual(events.map(({ phase }) => phase), ['scratch.work.entry', 'scratch.work.return']);
+  assert.equal(events[1].reads, 3);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'P2-C0(8)-finite-work', position: 8, directory, events })}`);
+});
+
+test('FM-C0(1) finite fixture phases report warm, launcher, marker, and start-time work', SETTLES_WITHIN, async (t) => {
+  const began = performance.now();
+  const content = '[{"group": 4242, "sta';
+  const beforeScratchElapsed = performance.now() - began;
+  const beforeScratchRemaining = 20_000 - beforeScratchElapsed;
+  const directory = scratch(t);
+  const beforeStartElapsed = performance.now() - began;
+  const beforeStartRemaining = 20_000 - beforeStartElapsed;
+  const phases = [];
+  const started = await startGroup(t, directory, 'group', {
+    deadline: Infinity,
+    work: { warm: 3, launcher: 3, marker: 3, startOf: 3 },
+    noMatchPolls: 300,
+    pollFailures: 1,
+    observe: (phase) => phases.push(phase),
+  });
+  assert.equal(started.group, started.leader, 'FM fixture did not return its leader group');
+  for (const phase of ['warm.work', 'launcher.work', 'marker.work', 'startOf.work']) {
+    assert.deepEqual(phases.filter((event) => event.startsWith(phase)), [`${phase}.entry`, `${phase}.return`], `${phase} did not finish finite work`);
+  }
+  const state = stateOf(directory);
+  writeGroups(state, [entryFor(started)]);
+  writeFileSync(recordPath(state), content);
+  await assert.rejects(killIn(directory), (failure) => failure.message.includes(recordPath(state)));
+  assert.equal(alive(started.leader) && alive(started.member), true, 'FM-ready-C0(1): invalid record killed the fixture group');
+  assert.ok(performance.now() - began < 20_000, 'FM-ready-C0(1): finite readiness did not fit the shared deadline');
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'FM-ready-C0(1)-finite-phases', position: 1, content, readinessOnly: true, completedPrefix: [], beforeScratchElapsed, beforeScratchRemaining, beforeStartElapsed, beforeStartRemaining, phases, started, directory, recordPath: recordPath(state), result: 'valid group, R-C1 reject naming path, leader/member alive' })}`);
+});
+
+test('F1-C0(1) the first ps answer names the tail and returns the detached group', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const ps = fixture(directory, 'ready-ps', 'while ! /bin/ps "$@" | /usr/bin/grep -q "^tail"; do :; done; exec /bin/ps "$@"');
+  const events = [];
+  const started = await startGroup(t, directory, 'group', { psCommand: ps, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  const polls = events.filter(({ phase }) => phase === 'ps.poll');
+  assert.ok(beforeScratch > 0 && beforeStart > 0 && beforeStart <= beforeScratch);
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.equal(polls[0]?.outcome, 'tail', 'F1 first ps answer did not name tail');
+  assert.ok(events.some(({ phase }) => phase === 'marker.read'));
+  assert.ok(events.some(({ phase }) => phase === 'startOf.return'));
+  assert.equal(started.group, started.leader);
+  assert.notEqual(started.member, started.leader);
+  assert.equal(started.started, startOf(started.leader));
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F1-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, events })}`);
+});
+
+test('F3-C0(1) finite ps no-match answers give way to tail readiness', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const events = [];
+  const started = await startGroup(t, directory, 'group', { noMatchPolls: 300, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  const polls = events.filter(({ phase }) => phase === 'ps.poll');
+  assert.ok(beforeScratch > 0 && beforeStart > 0 && beforeStart <= beforeScratch);
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(polls.some(({ outcome }) => outcome === 'no-match'), 'F3 saw no no-match answer');
+  assert.equal(polls.at(-1)?.outcome, 'tail', 'F3 never reached tail');
+  assert.equal(started.group, started.leader);
+  assert.notEqual(started.member, started.leader);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F3-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, events })}`);
+});
+
+test('each observed ps poll records its own entry, return, and elapsed time', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const events = [];
+  await startGroup(t, directory, 'group', { pollFailures: 1, observe: (phase, fields) => events.push({ phase, ...fields }) });
+  const entries = events.filter(({ phase }) => phase === 'ps.entry');
+  const answers = events.filter(({ phase }) => phase === 'ps.poll');
+  assert.ok(answers.length >= 2, `no completed poll sequence was observed: ${JSON.stringify(events)}`);
+  assert.equal(entries.length, answers.length, 'a returned ps poll had no recorded entry');
+  for (const [index, answer] of answers.entries()) {
+    assert.equal(entries[index].index, answer.index, 'ps poll entry and answer indexes differ');
+    assert.ok(Number.isFinite(entries[index].startedEpochMs), 'ps poll entry lacks its call timestamp');
+    assert.ok(Number.isFinite(answer.returnedEpochMs), 'ps poll answer lacks its return timestamp');
+    assert.ok(answer.returnedEpochMs >= entries[index].startedEpochMs, 'ps poll returned before it started');
+    assert.ok(Number.isFinite(answer.durationMs) && answer.durationMs >= 0, 'ps poll lacks its call duration');
+  }
+});
+
+test('F4-C0(1) a failed ps answer gives way to tail readiness before the C1 write', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const events = [];
+  const started = await startGroup(t, directory, 'group', { pollFailures: 1, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  assert.ok(beforeScratch > 0 && beforeStart > 0 && beforeStart <= beforeScratch, 'C1 pre-start budgets were not retained');
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'failure'), 'F4 never observed a failed ps read');
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'tail'), 'F4 never reached tail');
+  assert.equal(started.group, started.leader);
+  assert.notEqual(started.member, started.leader);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F4-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, events })}`);
+});
+
+test('a controlled process-table reader is used for fixture readiness', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const ps = fixture(directory, 'controlled-ps', 'echo called > "$here/ps-called"; exec /bin/ps "$@"');
+  const events = [];
+  const started = await startGroup(t, directory, 'group', { psCommand: ps, observe: (phase, fields) => events.push({ phase, ...fields }) });
+  assert.equal(readFileSync(join(directory, 'ps-called'), 'utf8').trim(), 'called', 'startGroup did not use the controlled ps reader');
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'tail'));
+  assert.equal(started.group, started.leader);
+});
+
+test('startGroup returns the detached shell leader, tail member, process group and leader start time', SETTLES_WITHIN, async (t) => {
+  const directory = scratch(t);
+  const started = await startGroup(t, directory, 'group');
+  const read = spawnSync('/bin/ps', ['-p', `${started.leader},${started.member}`, '-o', 'pid=,ucomm=,pgid=,ppid='], { encoding: 'utf8', env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' } });
+  assert.equal(read.status, 0, `fixture group process read failed: ${read.error?.message ?? read.stderr}`);
+  const processes = read.stdout.trim().split('\n').map((line) => {
+    const [pid, command, group, parent] = line.trim().split(/\s+/);
+    return { pid: Number(pid), command, group: Number(group), parent: Number(parent) };
+  });
+  const leader = processes.find(({ pid }) => pid === started.leader);
+  const member = processes.find(({ pid }) => pid === started.member);
+  assert.equal(started.group, started.leader, 'fixture group differs from the detached leader PID');
+  assert.equal(leader?.command, 'bash', 'fixture leader is not the detached shell');
+  assert.equal(leader?.group, started.group, 'fixture shell is outside its process group');
+  assert.notEqual(leader?.parent, process.pid, 'fixture shell remains a direct child of the test process');
+  assert.equal(member?.command, 'tail', 'fixture member is not tail');
+  assert.equal(member?.group, started.group, 'fixture tail is outside the shell process group');
+  assert.equal(member?.parent, started.leader, 'fixture tail is not the shell child');
+  assert.equal(started.started, startOf(started.leader), 'fixture start time differs from the leader start');
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F1-C0(1)-group-identity', directory, started, processes, ps: { status: read.status, output: read.stdout } })}`);
+});
+
+test('F5-C0(1) a process-table call held at a FIFO answers after release', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const release = join(directory, 'ps-release');
+  assert.equal(spawnSync('/usr/bin/mkfifo', [release]).status, 0);
+  const ps = fixture(directory, 'held-ps', 'echo called > "$here/ps-called"; IFS= read -r answer < "$here/ps-release"; exec /bin/ps "$@"');
+  const events = [];
+  const pending = startGroup(t, directory, 'group', { psCommand: ps, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  await until(() => existsSync(join(directory, 'ps-called')), t);
+  assert.equal(existsSync(join(directory, 'group.pids')), false, 'marker appeared before the held ps answer');
+  const releasedAt = performance.now() - began;
+  writeFileSync(release, 'go\n');
+  const started = await pending;
+  assert.ok(beforeScratch > 0 && beforeStart > 0, 'C1 had no pre-start budget');
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(events.some(({ phase, outcome, at }) => phase === 'ps.poll' && outcome === 'tail' && at >= releasedAt), 'the held ps did not answer after release');
+  assert.equal(started.group, started.leader);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F5-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, releasedAt, events })}`);
+});
+
+test('F6-C0(1) a valid marker delayed after tail readiness appears on release', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const gate = join(directory, 'marker-release');
+  assert.equal(spawnSync('/usr/bin/mkfifo', [gate]).status, 0);
+  const events = [];
+  const pending = startGroup(t, directory, 'group', { markerGate: gate, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  const entered = await Promise.race([
+    pending.then(() => 'returned'),
+    until(() => existsSync(join(directory, 'group.marker-gate')), t).then(() => 'held'),
+  ]);
+  assert.equal(entered, 'held', 'F6 marker gate was not entered');
+  const polls = join(directory, 'group.ps-polls');
+  await until(() => existsSync(polls) && readFileSync(polls, 'utf8').includes('0|tail'), t);
+  assert.equal(existsSync(join(directory, 'group.pids')), false, 'F6 marker appeared before release');
+  const releasedAt = performance.now() - began;
+  writeFileSync(gate, 'ready\n');
+  const started = await pending;
+  assert.ok(beforeScratch > 0 && beforeStart > 0, 'C1 had no pre-start budget');
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(events.some(({ phase, at }) => phase === 'marker.return' && at >= releasedAt), 'F6 marker did not answer after release');
+  assert.equal(started.group, started.leader);
+  assert.notEqual(started.member, started.leader);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F6-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, releasedAt, events })}`);
+});
+
+test('F7-C0(1) the leader start-time read delayed after the marker answers on release', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const gate = join(directory, 'start-release');
+  const events = [];
+  const pending = startGroup(t, directory, 'group', { startGate: gate, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  const entered = await Promise.race([
+    pending.then(() => 'returned'),
+    until(() => existsSync(join(directory, 'group.start-gate')), t).then(() => 'held'),
+  ]);
+  assert.equal(entered, 'held', 'F7 start-time gate was not entered');
+  assert.equal(existsSync(join(directory, 'group.pids')), true, 'F7 marker was not ready before the start-time read');
+  const releasedAt = performance.now() - began;
+  writeFileSync(gate, 'ready');
+  const started = await pending;
+  assert.ok(beforeScratch > 0 && beforeStart > 0, 'C1 had no pre-start budget');
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(events.some(({ phase, at }) => phase === 'startOf.return' && at >= releasedAt), 'F7 start time did not answer after release');
+  assert.equal(started.started, startOf(started.leader));
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F7-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, releasedAt, events })}`);
+});
+
+test('F2-C0(1) finite launcher readiness waits for release before the first ps answer', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const gate = join(directory, 'launch-release');
+  const events = [];
+  const pending = startGroup(t, directory, 'group', { launchGate: gate, observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }) });
+  const entered = await Promise.race([
+    pending.then(() => 'returned'),
+    until(() => existsSync(join(directory, 'group.launch-gate')), t).then(() => 'held'),
+  ]);
+  assert.equal(entered, 'held', 'F2 launcher gate was not entered');
+  assert.equal(existsSync(join(directory, 'group.pids')), false, 'F2 marker existed before launch release');
+  const releasedAt = performance.now() - began;
+  writeFileSync(gate, 'ready');
+  const started = await pending;
+  assert.ok(beforeScratch > 0 && beforeStart > 0, 'C1 had no pre-start budget');
+  assert.equal(existsSync(recordPath(stateOf(directory))), false, `C0(1) wrote ${content} before readiness`);
+  assert.ok(events.some(({ phase, at }) => phase === 'launcher.exit' && at >= releasedAt), 'F2 launcher did not finish after release');
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'tail'));
+  assert.equal(started.group, started.leader);
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'F2-C0(1)', content, completedPrefix: [], beforeScratch, beforeStart, releasedAt, events })}`);
+});
+
+test('FM-ready-C0(1) launch, failed ps, and delayed marker finish before C1 rejects', SETTLES_WITHIN, async (t) => {
+  const { began, content, beforeScratch, directory, beforeStart } = c0(t);
+  const launchGate = join(directory, 'launch-release');
+  const markerGate = join(directory, 'marker-release');
+  const startGate = join(directory, 'start-release');
+  assert.equal(spawnSync('/usr/bin/mkfifo', [markerGate]).status, 0);
+  const events = [];
+  const pending = startGroup(t, directory, 'group', {
+    launchGate, markerGate, startGate, pollFailures: 1, noMatchPolls: 300,
+    observe: (phase, fields) => events.push({ phase, at: performance.now() - began, ...fields }),
+  });
+  await until(() => existsSync(join(directory, 'group.launch-gate')), t);
+  writeFileSync(launchGate, 'ready');
+  await until(() => existsSync(join(directory, 'group.marker-gate')), t);
+  assert.equal(existsSync(join(directory, 'group.pids')), false, 'FM marker appeared before release');
+  writeFileSync(markerGate, 'ready\n');
+  await until(() => existsSync(join(directory, 'group.start-gate')), t);
+  writeFileSync(startGate, 'ready');
+  const started = await pending;
+  assert.ok(beforeScratch > 0 && beforeStart > 0, 'C1 had no pre-start budget');
+  assert.ok(events.some(({ phase }) => phase === 'launcher.gate.return'));
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'failure'));
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'no-match'));
+  assert.ok(events.some(({ phase, outcome }) => phase === 'ps.poll' && outcome === 'tail'));
+  assert.ok(events.some(({ phase }) => phase === 'marker.gate.entry'));
+  assert.ok(events.some(({ phase }) => phase === 'startOf.gate.entry'));
+  assert.equal(started.group, started.leader);
+  const state = stateOf(directory);
+  writeGroups(state, [entryFor(started)]);
+  writeFileSync(recordPath(state), content);
+  await assert.rejects(killIn(directory), (failure) => failure.message.includes(recordPath(state)), 'R-C1 did not reject the malformed record');
+  assert.equal(alive(started.leader) && alive(started.member), true, 'FM-ready C1 killed the protected group');
+  console.log(`C595_CELL ${JSON.stringify({ cell: 'FM-ready-C0(1)', recordCell: 'R-C1', content, completedPrefix: [], beforeScratch, beforeStart, events, started })}`);
+});
+
 test('given a leftover partial record the call cannot remove beside a record holding no entry, the call settles without failing, and records why the partial record stayed', SETTLES_WITHIN, async (t) => {
   const directory = scratch(t);
   const state = stateOf(directory);
@@ -361,6 +767,84 @@ test('given a leftover partial record the call cannot remove and a sink that ref
 
 // proves R-STATE-11
 test('given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', SETTLES_WITHIN, async (t) => {
+  const targetStarted = performance.now();
+  const targetDeadline = targetStarted + 20_000;
+  const reached = new Map();
+  const caseEvents = new Map();
+  const directories = [];
+  const identities = [];
+  const nativeKill = process.kill;
+  t.after(() => { process.kill = nativeKill; });
+  let activeCase = 'target';
+  let activePhase = 'setup';
+  let targetOutcome = 'running';
+  let abortedAt;
+  let firstBoundPhase;
+  let traceFinished = false;
+  const forcedPolls = Number(process.env.C595_FORCE_PS_POLLS || 0);
+  const scratchReads = Number(process.env.C595_P2_SCRATCH_READS || 0);
+  const entryReads = Number(process.env.C595_ENTRY_READS || 0);
+  const recordReads = Number(process.env.C595_RECORD_READS || 0);
+  const priorPolls = Number(process.env.C595_P2_C7_POLLS || 0);
+  const fmPhase = process.env.C595_FM_PHASE;
+  const fmWork = Object.fromEntries(['warm', 'launcher', 'marker', 'startOf'].map((phase) => [phase, Number(process.env[`C595_FM_${phase.toUpperCase()}_READS`] || 0)]).filter(([, reads]) => reads > 0));
+  const phases = ['handoff.return', 'scratch.entry', 'scratch.return', 'start.entry', 'warm.entry', 'warm.return', 'launcher.entry', 'launcher.exit', 'marker.entry', 'ps.entry', 'ps.poll', 'marker.return', 'marker.read', 'startOf.entry', 'startOf.return', 'start.return', 'record.first.entry', 'record.first.return', 'record.invalid.entry', 'record.invalid.return', 'killIn.entry', 'killIn.reject', 'guard', 'alive.leader', 'alive.member', 'complete', 'handoff.entry'];
+  const trace = (caseId, phase, fields = {}) => {
+    if (process.env.C595_TRACE !== '1') return;
+    const elapsed = performance.now() - targetStarted;
+    if (caseId.startsWith('C')) {
+      if (!reached.has(caseId)) reached.set(caseId, new Set());
+      reached.get(caseId).add(phase);
+      if (!caseEvents.has(caseId)) caseEvents.set(caseId, []);
+      caseEvents.get(caseId).push({ phase, fields });
+    }
+    activeCase = caseId;
+    activePhase = phase;
+    console.log(`C595_TRACE ${JSON.stringify({ caseId, phase, at: new Date().toISOString(), elapsed, remaining: targetDeadline - performance.now(), ...fields })}`);
+  };
+  const finishTrace = (reason, failedAt) => {
+    if (process.env.C595_TRACE !== '1' || traceFinished) return;
+    traceFinished = true;
+    const [exhaustedCase, exhaustedPhase] = (failedAt ?? `${activeCase}:${activePhase}`).split(':');
+    const exhausting = targetOutcome === 'aborted' || targetDeadline <= performance.now() ? `${exhaustedCase}:${exhaustedPhase}` : null;
+    for (let index = 1; index <= 8; index += 1) {
+      const caseId = `C${index}`;
+      const seen = reached.get(caseId) ?? new Set();
+      for (const phase of phases) {
+        if (!seen.has(phase)) trace(caseId, 'not.reached', { unentered: phase, reason: seen.has('start.reuse') && ['warm.entry', 'warm.return', 'launcher.entry', 'launcher.exit', 'marker.entry', 'ps.entry', 'ps.poll', 'marker.return', 'marker.read', 'startOf.entry', 'startOf.return'].includes(phase) ? 'reused C1 group before fixture entry' : reason });
+      }
+    }
+    for (const phase of Object.keys(fmWork)) {
+      if (!reached.get('C8')?.has(`${phase}.work.entry`)) trace('C8', 'not.reached', { unentered: `${phase}.work`, reason });
+    }
+    const outcomeCell = exhausting === null ? targetOutcome === 'passed' ? 'all reached positions complete' : `${exhaustedCase}:${exhaustedPhase}:assertion-failed` : `S${exhaustedCase.slice(1)}-${['warm', 'launcher', 'ps.entry', 'ps.poll', 'marker', 'startOf'].some((phase) => exhaustedPhase.startsWith(phase)) ? 'F' : exhaustedPhase.startsWith('scratch') ? 'P' : exhaustedPhase.startsWith('record') || exhaustedPhase.startsWith('killIn') || exhaustedPhase.startsWith('guard') || exhaustedPhase.startsWith('alive') ? 'R' : 'entry'}-bound`;
+    trace('target', 'finish', { outcome: targetOutcome, outcomeCell, reason, firstExhaustingPhase: exhausting });
+  };
+  t.after(() => {
+    if (process.env.C595_TRACE !== '1') return;
+    trace('target', 'teardown.entry', { directories, identities });
+    t.after(() => {
+      t.after(() => {
+        const beforeAfter = directories.map((directory) => ({ directory, remains: existsSync(directory) }));
+        const observed = targetProcessTable(directories, identities);
+        const teardown = beforeAfter.some(({ remains }) => remains) ? 'F' : 'T';
+        const targetResult = targetOutcome === 'passed' ? 'P' : targetOutcome === 'assertion-failed' && process.env.C595_DELIBERATE_FAIL === '1' ? 'A' : 'X';
+        const ruling = targetResult === 'X' ? null : targetTeardownCell(targetResult, teardown, observed);
+        trace('target', 'teardown.observed', { cell: `${targetResult}-${teardown}-${observed.outcome}`, disposition: ruling?.disposition ?? null, beforeAfter, ...observed });
+        assert.equal(`${teardown}-${observed.outcome}`, 'T-E', 'target teardown left a scratch path or same-start group process');
+      });
+    });
+  });
+  t.signal.addEventListener('abort', () => {
+    if (targetOutcome === 'running') {
+      targetOutcome = 'aborted';
+      abortedAt = `${activeCase}:${activePhase}`;
+      finishTrace(`test signal aborted during ${abortedAt}`);
+    }
+  }, { once: true });
+  trace('target', 'start', { runId: process.env.C595_RUN_ID ?? null, selectedFile: 'test/kill-recorded.test.mjs', selectedTest: 'given a record whose content cannot be read as entries, the call kills nothing, and fails naming the record\'s file', deadlineMs: 20_000, deadlineAt: new Date(Date.now() + 20_000).toISOString(), selectedCommit: process.env.C595_SELECTED_COMMIT ?? null, force: { marker: process.env.C595_FORCE_MARKER ?? null, noMatchPolls: forcedPolls, scratchReads, entryReads, recordReads, fmPhase: fmPhase ?? null, fmWork, precedingNoMatchPolls: priorPolls, affectedPhase: fmPhase ? `${fmPhase}.work` : recordReads > 0 ? 'record.invalid.work' : entryReads > 0 ? 'handoff.work' : scratchReads > 0 ? 'scratch.realpathSync' : forcedPolls > 0 ? 'ps.poll' : null, preStart: priorPolls > 0 ? 'C7 finite ps no-match then valid readiness' : 'normal scratch and warm', position: 8, positions: 'C8 only' } });
+  trace('target', 'setup.entry');
+  try {
   // A record torn part-way, JSON that is no list, entries missing a field or holding one of the
   // wrong type, a card that is no issue number, and a group id no dispatch's group can have: 1 is
   // launchd's.
@@ -374,21 +858,138 @@ test('given a record whose content cannot be read as entries, the call kills not
     '[{"group": 4242, "started": 0, "dispatch": "d-1", "card": {"unexpected": true}}]',
     '[{"group": 4242, "started": 0, "dispatch": "d-1", "card": "1412"}]',
   ];
-  for (const content of contents) {
-    const directory = scratch(t);
-    const started = await startGroup(t, directory, 'group');
+  trace('target', 'setup.return', { caseIds: contents.map((_, index) => `C${index + 1}`) });
+  if (process.env.C595_FORCE_PS_POLLS && !fmPhase) trace('target', 'force.input', { marker: process.env.C595_FORCE_MARKER ?? null, position: 8, content: contents[7], completedPrefix: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'], affectedPhase: 'ps.poll', noMatchPolls: Number(process.env.C595_FORCE_PS_POLLS), expectedBase: 'S8-F-bound', expectedHead: 'S8-complete' });
+  if (scratchReads > 0) trace('target', 'force.input', { marker: process.env.C595_FORCE_MARKER ?? null, position: 8, content: contents[7], completedPrefix: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'], precedingNoMatchPolls: priorPolls, scratchReads, affectedPhase: 'scratch.realpathSync', expectedBase: 'S8-P-bound', expectedHead: 'S8-complete' });
+  if (entryReads > 0) trace('target', 'force.input', { marker: process.env.C595_FORCE_MARKER ?? null, position: 8, content: contents[7], completedPrefix: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'], precedingNoMatchPolls: priorPolls, entryReads, affectedPhase: 'handoff.work', expectedBase: 'S8-entry-bound', expectedHead: 'S8-complete' });
+  if (recordReads > 0) trace('target', 'force.input', { marker: process.env.C595_FORCE_MARKER ?? null, position: 8, content: contents[7], completedPrefix: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'], precedingNoMatchPolls: priorPolls, recordReads, affectedPhase: 'record.invalid.work', expectedBase: 'S8-R-bound', expectedHead: 'S8-complete' });
+  if (fmPhase) trace('target', 'force.input', { marker: process.env.C595_FORCE_MARKER ?? null, position: 8, content: contents[7], completedPrefix: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'], precedingNoMatchPolls: priorPolls, fmPhase, fmWork, noMatchPolls: forcedPolls, affectedPhase: fmPhase === 'ps' ? 'ps.poll' : `${fmPhase}.work`, expectedBase: 'S8-F-bound', expectedHead: 'S8-complete' });
+  let shared;
+  let completedPrefix = [];
+  for (const [index, content] of contents.entries()) {
+    const caseId = `C${index + 1}`;
+    if (entryReads > 0 && index === 7) {
+      finiteDirectoryReads(directories.at(-1), entryReads, targetDeadline, (phase, fields) => {
+        trace(caseId, phase, fields);
+        if (phase === 'handoff.work.exhausted') firstBoundPhase = `${caseId}:${phase}`;
+      }, 'handoff.work');
+      if (firstBoundPhase) {
+        trace(caseId, 'handoff.bound', { position: 8, content, completedPrefix, beforeScratchElapsed: performance.now() - targetStarted, beforeScratchRemaining: targetDeadline - performance.now(), firstBoundPhase });
+        assert.fail(`${caseId} S8-entry-bound: finite handoff work consumed the shared 20,000 ms deadline before scratch(t)`);
+      }
+    }
+    trace(caseId, 'handoff.return', { completedPrefix });
+    const beforeScratchElapsed = performance.now() - targetStarted;
+    const beforeScratchRemaining = targetDeadline - performance.now();
+    trace(caseId, 'scratch.entry', { content, completedPrefix, beforeScratchElapsed, beforeScratchRemaining });
+    const scratchEntered = performance.now();
+    const directory = scratchReads > 0 && index === 7
+      ? scratchWithFiniteWork(t, scratchReads, targetDeadline, (phase, fields) => {
+        trace(caseId, phase, fields);
+        if (phase === 'scratch.work.exhausted') firstBoundPhase = `${caseId}:${phase}`;
+      })
+      : scratch(t);
+    directories.push(directory);
+    const scratchDuration = performance.now() - scratchEntered;
+    trace(caseId, 'scratch.return', { directory, scratchDuration });
+    assert.ok(directory.startsWith(`${tmpdir()}/`) && existsSync(directory), `${caseId} P1-C0(${index + 1}): scratch did not return a usable directory under TMPDIR`);
+    if (scratchReads > 0 && index === 7 && firstBoundPhase) {
+      trace(caseId, 'P2-C0', { position: 8, directory, scratchDuration, beforeScratchElapsed, beforeScratchRemaining, beforeStartElapsed: performance.now() - targetStarted, beforeStartRemaining: targetDeadline - performance.now(), completedPrefix, firstBoundPhase });
+      assert.fail(`${caseId} P2-C0(8): finite scratch(t) filesystem work consumed the shared 20,000 ms deadline before startGroup`);
+    }
+    trace(caseId, 'P1-C0', { position: index + 1, directory });
+    const beforeStartElapsed = performance.now() - targetStarted;
+    const beforeStartRemaining = targetDeadline - performance.now();
+    trace(caseId, 'start.entry', { beforeStartElapsed, beforeStartRemaining, completedPrefix });
+    const reused = shared !== undefined;
+    if (reused) trace(caseId, 'start.reuse', { from: 'C1' });
+    const started = shared ??= await startGroup(t, directory, 'group', {
+      noMatchPolls: index === 6 ? priorPolls : index === 7 ? forcedPolls : 0,
+      work: index === 7 ? fmWork : {},
+      deadline: targetDeadline,
+      observe: process.env.C595_TRACE === '1' ? (phase, fields) => {
+        trace(caseId, phase, fields);
+        if (phase.endsWith('.work.exhausted')) firstBoundPhase = `${caseId}:${phase}`;
+      } : undefined,
+    });
+    trace(caseId, 'start.return', started);
+    assert.equal(started.group, started.leader, `${caseId} F-C0(${index + 1}): group id is not the leader PID`);
+    assert.notEqual(started.member, started.leader, `${caseId} F-C0(${index + 1}): tail and leader have the same PID`);
+    const psPolls = (caseEvents.get(caseId) ?? []).filter(({ phase }) => phase === 'ps.poll').map(({ fields }) => fields);
+    trace(caseId, 'F-C0', { position: index + 1, constituent: reused ? 'C1 group reuse' : 'fixture readiness', psPolls: psPolls.length, firstPoll: psPolls[0] ?? null, lastPoll: psPolls.at(-1) ?? null, started });
+    if (process.env.C595_TRACE === '1' && !identities.some(({ pid }) => pid === started.leader)) {
+      trace(caseId, 'memberStart.entry', { pid: started.member });
+      const memberStarted = startOf(started.member);
+      trace(caseId, 'memberStart.return', { pid: started.member, started: memberStarted });
+      identities.push({ pid: started.leader, started: started.started }, { pid: started.member, started: memberStarted });
+    }
+    trace(caseId, 'identities', { identities: identities.filter(({ pid }) => pid === started.leader || pid === started.member), reusedFrom: reused ? 'C1' : null });
     // A readable entry naming the live group follows the unreadable content wherever it can, so a
     // call that read past the fault would kill it.
     const state = stateOf(directory);
+    trace(caseId, 'record.first.entry');
     writeGroups(state, [entryFor(started)]);
+    trace(caseId, 'record.first.return');
+    trace(caseId, 'record.invalid.entry');
+    if (recordReads > 0 && index === 7) {
+      finiteDirectoryReads(directory, recordReads, targetDeadline, (phase, fields) => {
+        trace(caseId, phase, fields);
+        if (phase === 'record.invalid.work.exhausted') firstBoundPhase = `${caseId}:${phase}`;
+      }, 'record.invalid.work');
+      if (firstBoundPhase) {
+        trace(caseId, 'record.invalid.bound', { position: 8, content, completedPrefix, beforeScratchElapsed, beforeScratchRemaining, beforeStartElapsed, beforeStartRemaining, firstBoundPhase });
+        assert.fail(`${caseId} S8-R-bound: finite record work consumed the shared 20,000 ms deadline before the invalid write`);
+      }
+    }
     writeFileSync(recordPath(state), content.startsWith('[{') && content.endsWith(']') ? `${content.slice(0, -1)}, ${JSON.stringify(entryFor(started))}]` : content);
 
+    trace(caseId, 'record.invalid.return');
+
+    trace(caseId, 'killIn.entry');
+    const groupSignals = [];
+    if (process.env.C595_TRACE === '1') process.kill = (pid, signal) => {
+      if (pid < 0) {
+        groupSignals.push({ pid, signal });
+        trace(caseId, 'group.signal', { pid, signal });
+      }
+      return nativeKill(pid, signal);
+    };
     await assert.rejects(killIn(directory), (failure) => {
       assert.ok(failure.message.includes(recordPath(state)), `given ${content}, the failure does not name the record's file: ${failure.message}`);
       return true;
     }, content);
 
+    process.kill = nativeKill;
+    trace(caseId, 'killIn.reject', { pathNamed: true, groupSignals });
+    trace(caseId, 'guard', { result: 'rejected before killEntries', path: recordPath(state), groupSignals });
+
+    const leaderAlive = alive(started.leader);
+    trace(caseId, 'alive.leader', { pid: started.leader, alive: leaderAlive });
+    const memberAlive = alive(started.member);
+    trace(caseId, 'alive.member', { pid: started.member, alive: memberAlive });
     assert.equal(alive(started.leader) && alive(started.member), true, `given ${content}, a process of the group was killed`);
+    assert.deepEqual({ pathNamed: true, groupSignals, leaderAlive, memberAlive }, { pathNamed: true, groupSignals: [], leaderAlive: true, memberAlive: true }, `R-${caseId}: malformed content reached a group kill or lost a live process`);
+    console.log(`C595_CELL ${JSON.stringify({ cell: `R-${caseId}`, position: index + 1, content, directory, recordPath: recordPath(state), completedPrefix, groupSignals, started, leaderAlive, memberAlive, outcome: 'rejects before killEntries naming groups.json' })}`);
+    assert.ok(beforeScratchRemaining > 0 && beforeStartRemaining > 0 && performance.now() < targetDeadline, `S${index + 1}-complete: a phase crossed the shared deadline`);
+    console.log(`C595_CELL ${JSON.stringify({ cell: `S${index + 1}-complete`, position: index + 1, content, completedPrefix, beforeScratchElapsed, beforeScratchRemaining, scratchDuration, beforeStartElapsed, beforeStartRemaining, directory, readiness: reused ? 'reused C1 group' : 'fixture returned leader/member/start time', writes: ['first', 'invalid'], rejection: 'read-before-kill guard', groupSignals, leaderAlive, memberAlive, elapsed: performance.now() - targetStarted })}`);
+    trace(caseId, 'complete', { completedPrefix, outcomeCell: `S${index + 1}-complete`, recordCell: `R-${caseId}` });
+    completedPrefix = [...completedPrefix, caseId];
+    trace(caseId, 'handoff.entry', { completedPrefix });
+  }
+  if (process.env.C595_DELIBERATE_FAIL === '1') {
+    targetOutcome = 'assertion-failed';
+    trace('target', 'assertion.deliberate', { completedPrefix });
+    assert.fail('C595 deliberate target assertion failure after C8');
+  }
+  targetOutcome = 'passed';
+  trace('target', 'complete', { completedPrefix });
+  finishTrace('target completed');
+  } catch (failure) {
+    if (targetOutcome === 'running') targetOutcome = 'assertion-failed';
+    const failedAt = targetOutcome === 'aborted' ? abortedAt : firstBoundPhase ?? `${activeCase}:${activePhase}`;
+    trace('target', 'failure', { message: failure.message, outcome: targetOutcome, failedAt });
+    finishTrace(`target failed during ${failedAt}`, failedAt);
+    throw failure;
   }
 });
 
