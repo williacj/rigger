@@ -491,3 +491,62 @@ test('the script imports each L2 function it hands the rule, and copies none', (
   assert.doesNotMatch(source, /'gh'|"gh"/, 'the script names gh itself');
   assert.doesNotMatch(source, /rigger-marker/, 'the script holds a copy of the marker\'s syntax');
 });
+
+// proves R-GATE-1
+test('the gate rule gives the same answer for every mapped workflow event and actor with admitting and refusing markers', () => {
+  const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'rigger-gate.yml'), 'utf8');
+  assert.match(workflow, /^  NUMBER: \$\{\{ github\.event\.pull_request\.number \|\| github\.event\.issue\.number \}\}$/m);
+  assert.match(workflow, /^  IS_PULL: \$\{\{ github\.event\.pull_request != null \|\| github\.event\.issue\.pull_request != null \}\}$/m);
+  const triggers = [...workflow.matchAll(/^  ([a-z_]+):\n    types: \[([^\]]+)\]$/gm)]
+    .flatMap(([, event, types]) => types.split(', ').map((type) => [event, type]));
+  assert.deepEqual(triggers, [
+    ['pull_request_target', 'opened'],
+    ['pull_request_target', 'synchronize'],
+    ['pull_request_target', 'reopened'],
+    ['pull_request_target', 'edited'],
+    ['issue_comment', 'created'],
+    ['issue_comment', 'edited'],
+    ['issue_comment', 'deleted'],
+    ['issues', 'edited'],
+    ['issues', 'labeled'],
+    ['issues', 'unlabeled'],
+  ]);
+
+  for (const { name, comments, status } of [
+    { name: 'admitting', comments: [marker()], status: 0 },
+    { name: 'refusing', comments: [], status: 1 },
+  ]) {
+    const where = forge({ pullRequests: [pullFrom({ comments })] });
+    let first;
+    for (const [event, type] of triggers) {
+      const payload = event === 'pull_request_target'
+        ? { action: type, pull_request: { number: PULL } }
+        : { action: type, issue: event === 'issues'
+          ? { number: CARD }
+          : { number: PULL, pull_request: { url: `https://api.github.com/repos/${REPO}/pulls/${PULL}` } } };
+      const path = join(temporaryDirectory('rigger-gate-event-'), 'event.json');
+      writeFileSync(path, JSON.stringify(payload));
+      for (const actor of ['williacj', 'rigger-gate[bot]']) {
+        const cell = `${name}, ${event}.${type}, ${actor}`;
+        const env = {
+          GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: path, GITHUB_ACTOR: actor,
+          NUMBER: String(payload.pull_request?.number ?? payload.issue.number),
+          IS_PULL: String(payload.pull_request !== undefined || payload.issue?.pull_request !== undefined),
+        };
+        const card = run(where, ['card'], env);
+        assert.equal(card.status, 0, `${cell}, card: ${card.stdout}${card.stderr}`);
+        assert.equal(card.stdout, `card=${CARD}\n`, cell);
+        const mapped = run(where, ['map'], { ...env, CARD: String(CARD) });
+        assert.equal(mapped.status, 0, `${cell}, map: ${mapped.stdout}${mapped.stderr}`);
+        assert.equal(mapped.stdout, `${PULL}\n`, cell);
+        const ran = ruled(where, Number(mapped.stdout.trim()), { ...env, CARD: String(CARD) });
+        if (first === undefined) {
+          assert.equal(ran.status, status, `${cell}: ${ran.stdout}${ran.stderr}`);
+          first = ran;
+        }
+        assert.equal(ran.status, first.status, `${cell}: ${ran.stdout}${ran.stderr}`);
+        assert.equal(ran.stdout, first.stdout, cell);
+      }
+    }
+  }
+});
