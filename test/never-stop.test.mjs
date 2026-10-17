@@ -2994,6 +2994,22 @@ for (const [cell, run] of [
   });
 }
 
+/**
+ * This process's live descendants by pid, state and command line: every process it started, or
+ * one of those started, that has not ended, a zombie excepted, and the listing's own `ps` aside.
+ */
+function liveDescendants() {
+  const rows = spawnSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,command='], { encoding: 'utf8' }).stdout.split('\n')
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)).filter(Boolean)
+    .map(([, pid, ppid, stat, command]) => ({ pid: Number(pid), ppid: Number(ppid), stat, command }));
+  const ours = new Set([process.pid]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const row of rows) if (!ours.has(row.pid) && ours.has(row.ppid)) { ours.add(row.pid); grew = true; }
+  }
+  return rows.filter(({ pid, stat, command }) => pid !== process.pid && ours.has(pid) && !stat.startsWith('Z') && !command.startsWith('/bin/ps -axo'));
+}
+
 // The tests a nested run of this file defines where `EXIT_LEAK_HARNESS` names them, so that a test
 // below can abandon an answered run, or an exit caller, at its own bound and see whether the file
 // it ran in still exits. `leak hold` holds until its process is killed.
@@ -3038,6 +3054,19 @@ if (process.env.EXIT_LEAK_HARNESS === 'forced') {
   });
 }
 
+if (process.env.EXIT_LEAK_HARNESS) {
+  // Run after the abandoned test's teardown: nothing it started may still be running. An abandoned
+  // answered run is ended by a signal, so it is looked for again a bounded number of times; the
+  // scratch sweep has already ended an exit caller before this test begins. Whatever is left is
+  // killed here, so the file can still exit and report this failure.
+  test('leak left nothing running', (t) => {
+    let left = liveDescendants();
+    for (let look = 1; left.length > 0 && look < 20; look += 1) left = liveDescendants();
+    t.after(() => { for (const { pid } of left) try { process.kill(pid, 'SIGKILL'); } catch {} });
+    assert.deepEqual(left, [], 'a process the abandoned test started was still running after its teardown');
+  });
+}
+
 /**
  * Runs this file's test `title` in a nested `node --test` whose process group is its own, with
  * `EXIT_LEAK_HARNESS` set to `harness`, and settles on its exit status and output once it has
@@ -3046,7 +3075,7 @@ if (process.env.EXIT_LEAK_HARNESS === 'forced') {
 async function leakRun(t, harness, title) {
   const env = { ...process.env, EXIT_LEAK_HARNESS: harness, TMPDIR: realpathSync(temporaryDirectory('rigger-leak-', { context: t })) };
   delete env.NODE_TEST_CONTEXT;
-  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${title}$`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^(${title}|leak left nothing running)$`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let closed = false;
   t.after(() => { if (!closed) try { process.kill(-run.pid, 'SIGKILL'); } catch {} });
   let output = '';
@@ -3064,6 +3093,7 @@ for (const [harness, title] of [['answered', 'leak abandoned answered run'], ['e
     assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
     assert.match(output, title.endsWith('forced read') ? /abandoned after its forced read/ : /test timed out after 1ms/, output);
     if (harness !== 'answered') assert.match(output, /leak callers at abort: 1$/m, output);
+    assert.match(output, /^ok \d+ - leak left nothing running$/m, output);
   });
 }
 
