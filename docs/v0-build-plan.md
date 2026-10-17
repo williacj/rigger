@@ -66,11 +66,12 @@ is a standing condition, not a transition, and it needs a promote step. That ste
 installed engine is upgraded, to which version, and what becomes of a card that changes a config
 schema or CLI contract the running engine reads. D7 settles it.
 
-**The engine never merges a change to its own live gate.** From M5 the gate is the git hook
-`ARCHITECTURE.md` describes, and it binds every route to this repository's main line, Rigger's own
-dispatches included. This repository holds the live hook, and `templates/` holds the shipped copy
-of the same thing. `AGENTS.md` states which cards are
-excluded from self-dispatch as a result, and D7 records the promote step that follows from it.
+**The engine never dispatches a change to its own live gate, and such a change merges under
+`D25` rule 7.** The gate is the forge check `ARCHITECTURE.md`'s "The gate" describes, and it binds
+every route to this repository's main line, Rigger's own dispatches included. The template `init`
+ships holds the default-branch push refusal alone, and this repository's suite hooks are its own.
+`AGENTS.md` states which cards are excluded from self-dispatch as a result, and D7 records the
+promote step that follows from it.
 
 **The manual path stays open.** A Rigger fault must never block Rigger's development. The M0
 assets are equally a Claude Code session's assets, so any card can be done by hand in this
@@ -313,7 +314,7 @@ Exit:
 
 **M5. Gate and merge.**
 
-- Verdict marker schema and git gate hook, and `init` grows to install the hook.
+- Verdict marker schema and the gate's forge check, and `init` grows to fork the gate workflow.
 - The marker records every acceptance item of its card as met or unmet (`R-LOOP-5`), and whether
   the acceptance covered what the card asked (`R-LOOP-6`).
 - The gate admits a merge only when every configured judge's verdict is sound and fresh for both
@@ -321,7 +322,8 @@ Exit:
   green.
 - The owner's verdict uses the same vocabulary as any judge's, requested only after every agent
   judge is sound.
-- Any judge asking for changes returns the work to the maker. A new commit invalidates every marker
+- A judge's needs revision returns the work to the maker, and a ruling that the acceptance is
+  insufficient returns the card to its author (`R-LOOP-6`). A new commit invalidates every marker
   and the whole panel re-reviews.
 - Merges serialize through L3's repo lane.
 
@@ -336,7 +338,8 @@ Exit, against a fixture configured with three agent judges:
 - A judge ruling the acceptance insufficient returns the card to its author instead of merging it
   (`R-LOOP-6`).
 - A red CI blocks a merge that every judge has passed (`R-GATE-8`).
-- A verdict written before the card's latest acceptance is stale, and the gate refuses it.
+- A verdict written before the card's latest acceptance is stale, and the gate refuses it
+  (`R-GATE-7`).
 - Two merges at once serialize (`R-SCHED-15`).
 
 **M6. Escalation and infrastructure hold.**

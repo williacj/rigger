@@ -56,8 +56,7 @@ function startSynchronousTrace() {
     }
   };
   const originals = new Map();
-  // The shared temporary-directory helper owns creation; this wrapper only timestamps its call.
-  for (const name of ['mkdtemp' + 'Sync', 'mkdirSync', 'writeFileSync', 'renameSync', 'chmodSync', 'readFileSync', 'readdirSync']) {
+  for (const name of ['mkdtempSync', 'mkdirSync', 'writeFileSync', 'renameSync', 'chmodSync', 'readFileSync', 'readdirSync']) {
     const original = fs[name];
     originals.set(name, original);
     fs[name] = (...args) => {
@@ -1235,6 +1234,9 @@ async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}, t) {
     record.built = built;
     record.constructionEnd = performance.now();
   }
+  if (record && limit === undefined && process.env.RIGGER_596_TARGET_HOLD === 'second') {
+    t.rigger596ReleaseHold = built.fake.holdNextRead();
+  }
   if (process.env.RIGGER_596_PHASE_ACTIVE) {
     const readItems = built.fake.operations.readItems;
     built.fake.operations.readItems = async (...args) => {
@@ -1438,9 +1440,14 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
       return targetBoundary(record, bodyStart);
     },
     within: 8_000,
-  }).then((report) => { if (report) console.error(`RIGGER596_GUARD ${JSON.stringify(report)}`); });
+  }).then((report) => {
+    if (!report) return;
+    console.error(`RIGGER596_GUARD ${JSON.stringify(report)}`);
+    t.rigger596ReleaseHold?.();
+  });
   t.after(async () => {
     const traceEnd = bodyEnd ?? performance.now();
+    t.rigger596ReleaseHold?.();
     finished = true;
     await guard;
     for (const limit of LIMITS) {
@@ -1513,6 +1520,34 @@ test('a held pre-claim read reports the missing Q boundary before the single-pul
     built.closeTrace();
     delete process.env.RIGGER_596_PHASE_ACTIVE;
   }
+});
+
+test('the target guard reports a held second-world board read before its shared bound', { timeout: 20_000 }, () => {
+  const env = { ...process.env, RIGGER_596_TARGET_HOLD: 'second' };
+  delete env.NODE_TEST_CONTEXT;
+  const targetName = "after `loop`'s single pull returns, the state directory holds nothing but the event stream";
+  const target = spawnSync(process.execPath, [
+    '--test',
+    `--test-name-pattern=^${targetName}$`,
+    decodeURIComponent(new URL(import.meta.url).pathname),
+  ], {
+    env,
+    encoding: 'utf8',
+    timeout: 18_000,
+  });
+  const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  const guardLine = output.split('\n').find((line) => line.includes('RIGGER596_GUARD '));
+  assert.ok(guardLine, `the target guard did not report its hold: ${output.slice(-2000)}`);
+  const report = JSON.parse(guardLine.slice(guardLine.indexOf('RIGGER596_GUARD ') + 'RIGGER596_GUARD '.length));
+  assert.equal(report.phase, 'Q');
+  assert.equal(report.world, 'N');
+  assert.equal(report.maker, 'not reached');
+  assert.equal(report.lastBoundary, 'readColumns.start');
+  assert.match(report.firstMissingCondition, /readColumns completion and first claim/);
+  assert.ok(report.elapsedMs >= 8_000 && report.elapsedMs < SETTLES_WITHIN.timeout, `guard elapsed ${report.elapsedMs} ms`);
+  assert.equal(report.beforeBound, true);
+  assert.equal(target.status, 0, output.slice(-4000));
+  console.error(`RIGGER596_TARGET_CONTROL ${JSON.stringify(report)}`);
 });
 
 test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', SETTLES_WITHIN, async (t) => {
