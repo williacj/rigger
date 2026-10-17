@@ -41,7 +41,8 @@ jobs:
   # nothing the posting job rules on, so a run waiting in the group reads its facts once it starts.
   card:
     name: Resolve the card
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     permissions:
       contents: read
       issues: read
@@ -49,6 +50,20 @@ jobs:
     outputs:
       card: ${{ steps.card.outputs.card }}
     steps:
+      - name: Select Node 24 from the runner tool cache
+        run: |
+          version="$(
+            for bin in "${RUNNER_TOOL_CACHE}"/node/24.*/x64/bin; do
+              [ -d "${bin}" ] || continue
+              version="${bin%/x64/bin}"
+              printf '%s\n' "${version##*/}"
+            done | sort -t. -k2,2n -k3,3n | tail -n 1
+          )"
+          if [ -z "${version}" ]; then
+            echo "::error::Node 24 is absent from the runner tool cache"
+            exit 1
+          fi
+          printf '%s\n' "${RUNNER_TOOL_CACHE}/node/${version}/x64/bin" >> "${GITHUB_PATH}"
       - name: Check the Node version
         run: |
           running="$(node --version)"
@@ -76,7 +91,7 @@ jobs:
   gate:
     name: Rule and post
     needs: card
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     environment: gate
     permissions:
       contents: read
@@ -91,6 +106,20 @@ jobs:
     steps:
       - name: Log the group and the start
         run: echo "concurrency group ${GROUP}; started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Select Node 24 from the runner tool cache
+        run: |
+          version="$(
+            for bin in "${RUNNER_TOOL_CACHE}"/node/24.*/x64/bin; do
+              [ -d "${bin}" ] || continue
+              version="${bin%/x64/bin}"
+              printf '%s\n' "${version##*/}"
+            done | sort -t. -k2,2n -k3,3n | tail -n 1
+          )"
+          if [ -z "${version}" ]; then
+            echo "::error::Node 24 is absent from the runner tool cache"
+            exit 1
+          fi
+          printf '%s\n' "${RUNNER_TOOL_CACHE}/node/${version}/x64/bin" >> "${GITHUB_PATH}"
       - name: Check the Node version
         run: |
           running="$(node --version)"
