@@ -94,6 +94,19 @@ const CALLER = [
   'const options = JSON.parse(process.argv[3]);',
   'const trace = (event, fields = {}) => appendFileSync(join(directory, "trace.1"), JSON.stringify({ at: Date.now(), event, ...fields }) + "\\n");',
   'const trace779 = (event, fields = {}) => { if (process.env.RIGGER_779_TRACE === "1") trace(event, fields); };',
+  'const goChecks = new Map();',
+  'function tracedGo(site) {',
+  '  const check = (goChecks.get(site) ?? 0) + 1;',
+  '  goChecks.set(site, check);',
+  '  try {',
+  '    const waiting = !existsSync(join(directory, "go"));',
+  '    trace779("go.check", { site, check, present: !waiting });',
+  '    return waiting;',
+  '  } catch (error) {',
+  '    trace779("go.check.error", { site, check, code: error.code ?? null, message: error.message });',
+  '    throw error;',
+  '  }',
+  '}',
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
   'let began;',
@@ -131,9 +144,11 @@ const CALLER = [
   'async function up(label) {',
   '  trace779("up.start", { label });',
   "  while (!existsSync(join(directory, `child.${label}`))) {",
+  '    trace779("up.check", { label, marker: false, settled: over.has(label) });',
   "    if (over.has(label)) throw new Error(`the call starting command ${label} settled before its command was up: ${over.get(label)}`);",
   '    await turn();',
   '  }',
+  '  trace779("up.check", { label, marker: true });',
   '  trace779("up.ready", { label });',
   '}',
   'async function start(label) {',
@@ -167,7 +182,7 @@ const CALLER = [
   // It waits at least one turn whether or not `go` is already there, so an ending always comes
   // after an await. A rejection at the top level of the module before any await prints Node's
   // module-loader frames too, and the report would then depend on which the test won.
-  "if (options.ending !== 'wait') do await turn(); while (!existsSync(join(directory, 'go')));",
+  "if (options.ending !== 'wait') do await turn(); while (tracedGo('ending'));",
   "if (options.ending === 'exit 0') process.exit(0);",
   "if (options.ending === 'exit 1') process.exit(1);",
   "if (options.ending === 'throw') setImmediate(() => { throw new Error('the caller threw this'); });",
@@ -445,6 +460,8 @@ test('the fixture observer records returned shell readiness commands before a ca
   const originalDiagnostic = t.diagnostic.bind(t);
   t.diagnostic = (message) => { diagnostics.push(message); originalDiagnostic(message); };
   t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"fixture.shell"')), 'the shell trace was not retained in the test original'));
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"caller.trace"') && message.includes('groups.ready')), 'the passing caller trace was not retained in the test original'));
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"caller.trace"') && message.includes('go.check')), 'the passing caller go checks were not retained in the test original'));
   const previous = process.env.RIGGER_779_TRACE;
   process.env.RIGGER_779_TRACE = '1';
   try {
@@ -551,9 +568,11 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   let stdout = '';
   let stderr = '';
   run.stderr?.on('data', (chunk) => { stderr += chunk; });
+  run.stderr?.on('data', (chunk) => report779('caller.stderr.chunk', { bytes: chunk.length, cumulative: stderr.length, stderr }));
   const ready = new Promise((resolve) => {
     run.stdout.on('data', (chunk) => {
       stdout += chunk;
+      report779('caller.stdout.chunk', { bytes: chunk.length, stdout, ready: stdout.includes('ready\n'), heard: stdout.includes('heard\n') });
       if (stdout.includes('ready\n')) resolve();
     });
   });
@@ -576,7 +595,20 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   // A caller that ends without saying `heard` ends the wait, and the test then reads how it ended.
   if (whileHeard !== undefined) {
     report779('heard-wait.start');
-    while (!stdout.includes('heard\n') && !closed) await turn(t);
+    let heardChecks = 0;
+    const stillWaitingForHeard = () => {
+      const check = ++heardChecks;
+      try {
+        const heardNow = stdout.includes('heard\n');
+        const waiting = !heardNow && !closed;
+        report779('heard.check', { check, heard: heardNow, closed: heardNow ? null : !waiting, waiting });
+        return waiting;
+      } catch (error) {
+        report779('heard.check.error', { check, code: error.code ?? null, message: error.message });
+        throw error;
+      }
+    };
+    while (stillWaitingForHeard()) await turn(t);
     report779('heard-wait.returned', { closed, stdout });
     heard = whileHeard(directory);
     report779('heard-callback.returned');
@@ -589,6 +621,8 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   const [status, killedBy] = await ended;
   report779('caller.close.returned', { status, killedBy });
   if (tracing779) {
+    const callerTrace = join(directory, 'trace.1');
+    report779('caller.trace', { directory, trace: existsSync(callerTrace) ? readFileSync(callerTrace, 'utf8') : null });
     const shell = join(directory, 'fixture.trace');
     const ps = join(directory, 'ps.stdout');
     const commands = join(directory, 'fixture.commands');
@@ -607,16 +641,44 @@ function processesOf(directory, labels = [1, 2]) {
 }
 
 /** Whether any process is left in `group`, a zombie included. */
+const groupProbePositions = new Map();
+let groupProbeOrdinal = 0;
 function occupied(group) {
+  const probe = ++groupProbeOrdinal;
+  const position = groupProbePositions.get(group) ?? null;
+  trace779('group.probe.entry', { probe, group, position });
   try {
     process.kill(-group, 0);
+    trace779('group.probe.returned', { probe, group, position, result: 'occupied', shortCircuit: position !== null });
     return true;
   } catch (error) {
+    trace779('group.probe.error', { probe, group, position, code: error.code ?? null, shortCircuit: position !== null && error.code === 'EPERM' });
     if (error.code === 'ESRCH') return false;
     if (error.code === 'EPERM') return true;
     throw error;
   }
 }
+
+test('a group probe keeps empty, occupied and unexpected kill results distinct', () => {
+  const originalKill = process.kill;
+  let outcome;
+  process.kill = (pid, signal) => {
+    assert.deepEqual([pid, signal], [-7779, 0]);
+    if (outcome) throw Object.assign(new Error('group probe failed'), { code: outcome });
+  };
+  try {
+    outcome = undefined;
+    assert.equal(occupied(7779), true);
+    outcome = 'ESRCH';
+    assert.equal(occupied(7779), false);
+    outcome = 'EPERM';
+    assert.equal(occupied(7779), true);
+    outcome = 'EINVAL';
+    assert.throws(() => occupied(7779), { code: 'EINVAL', message: 'group probe failed' });
+  } finally {
+    process.kill = originalKill;
+  }
+});
 
 /**
  * Whether both of a caller's groups are empty, waiting, a turn of the event loop at a time, until
@@ -626,6 +688,7 @@ function occupied(group) {
 async function emptied(directory, labels = [1, 2], within = 10_000) {
   trace779('groups.empty.start', { directory, labels, within });
   const groups = labels.map((label) => Number(read(directory, `group.${label}`)));
+  groups.forEach((group, index) => groupProbePositions.set(group, { index, total: groups.length }));
   const deadline = Date.now() + within;
   while (groups.some(occupied) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
   trace779('groups.empty.final-read', { directory, labels });
@@ -710,7 +773,7 @@ for (const ending of ['exit 0', 'exit 1']) {
 const LISTENERS = [
   {
     title: 'a `once` listener added before its first group, which says `heard` and exits 3 once the test says `go`',
-    before: "process.once('SIGTERM', async () => { process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });",
+    before: "process.once('SIGTERM', async () => { process.stdout.write('heard\\n'); while (tracedGo('listener')) await turn(); process.exit(3); });",
     heard: true,
   },
   {
