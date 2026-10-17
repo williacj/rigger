@@ -548,6 +548,42 @@ test(`given a standard error the process never touched that is never drained, an
   assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
 });
 
+/** How far into its first pause's wait a `lateAtEnd` child's late pause begins: 850 ms. */
+const AT_END = UNDRAINED_BOUND * 0.85;
+
+/**
+ * Lines that move the child's clock `LATE` ms ahead as the first `Atomics.wait` to begin `AT_END`
+ * ms or more after the first one returns, so that pause alone ends late, as a host that holds the
+ * process once, near the end of a wait, ends it, and every pause before it ends on time.
+ */
+const lateAtEnd = [
+  'const real = performance.now.bind(performance);',
+  'let ahead = 0;',
+  'let first;',
+  'let held = false;',
+  'performance.now = () => real() + ahead;',
+  'const wait = Atomics.wait;',
+  'Atomics.wait = (...pause) => {',
+  '  const began = performance.now();',
+  '  first ??= began;',
+  '  const woke = wait(...pause);',
+  `  if (!held && began - first >= ${AT_END}) { held = true; ahead += ${LATE}; }`,
+  '  return woke;',
+  '};',
+].join('\n');
+
+// A host can hold the process once, in the last pause, when no pause before it ran late, so the
+// write has nothing to see it coming by. It returns within the bound only where it stopped waiting
+// with that much of the bound still in hand.
+test(`given a standard error the process never touched that is never drained, and the one pause a sink's end begins ${AT_END} ms into its wait ending ${LATE} ms late, the end returns within ${UNDRAINED_BOUND} ms`, { timeout: 30_000 }, async (t) => {
+  const { status, stdout } = await stuckChild(t, [holdingMany, lateAtEnd, timed('sink.end();')].join('\n'), { touched: false });
+
+  assert.equal(status, 0);
+  const took = tookIn(stdout);
+  assert.ok(took >= UNDRAINED_BOUND / 2, `the end took ${took} ms, so the pipe never held it and this proves nothing`);
+  assert.ok(took <= UNDRAINED_BOUND, `the end took ${took} ms`);
+});
+
 test('a reader that drains again after a write gave up on it gets every byte of a later write', { timeout: 30_000 }, async (t) => {
   // The first sink's end gives up on the undrained FIFO. The test then drains it, and a second
   // sink, holding as much, is ended once the test is reading.
