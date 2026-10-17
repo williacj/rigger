@@ -5,7 +5,7 @@
 // drains, and a wait on a condition that ends with its test.
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { statSync } from 'node:fs';
@@ -13,6 +13,22 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
+
+/** Observe the raw synchronous command result before a fixture caller interprets it. */
+const spawnSync = (...input) => {
+  if (process.env.RIGGER_779_TRACE !== '1') return rawSpawnSync(...input);
+  const [command, args] = input;
+  const started = Date.now();
+  process.stderr.write(`${JSON.stringify({ at: started, event: 'sync-command.entry', command, args })}\n`);
+  try {
+    const result = rawSpawnSync(...input);
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.returned', command, args, status: result.status, signal: result.signal, stdout: result.stdout ?? null, stderr: result.stderr ?? null, error: result.error ? { message: result.error.message, code: result.error.code ?? null } : null })}\n`);
+    return result;
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.threw', command, args, error: { message: error.message, code: error.code ?? null } })}\n`);
+    throw error;
+  }
+};
 
 const fixtureWarmBatches = new Map();
 
@@ -103,6 +119,53 @@ export const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(te
  */
 export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
 
+/** Record shell readiness results without changing the generated command's normal path. */
+function tracedReadiness(body, name) {
+  if (process.env.RIGGER_779_MOVE_FAIL === '1') body = body.replaceAll('/bin/mv "$here/child.$1.tmp" "$here/child.$1"', '/bin/rm -f "$here/child.$1.tmp"\n/bin/mv "$here/child.$1.tmp" "$here/child.$1"');
+  const observed = body.replaceAll('/bin/ps -o ucomm= -p $!', 'rigger779_capture_ps -o ucomm= -p $!');
+  return [
+    'if [ -f "$here/.rigger779-trace" ]; then',
+    `  rigger779_script=${name}`,
+    '  rigger779_label=$1; rigger779_round=0',
+    '  rigger779_capture_ps() { /bin/ps "$@" | /usr/bin/tee -a "$here/ps.stdout"; rigger779_actual=${PIPESTATUS[0]}; [ -f "$here/.rigger779-ps-status-1" ] && return 1; return "$rigger779_actual"; }',
+    '  rigger779_previous=',
+    '  rigger779_debug() {',
+    '    rigger779_status=$1; rigger779_pipeline=$2; rigger779_next=$3',
+    '    if [ -n "$rigger779_previous" ]; then printf "return\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$SECONDS" "$rigger779_script" "$rigger779_previous" "$rigger779_status" "$rigger779_pipeline" "$rigger779_next" >> "$here/fixture.commands"; fi',
+    '    printf "entry\\t%s\\t%s\\t%s\\n" "$SECONDS" "$rigger779_script" "$rigger779_next" >> "$here/fixture.commands"',
+    '    case "$rigger779_previous" in */bin/mv*) printf "{\\"command\\":\\"/bin/mv\\",\\"status\\":%s,\\"label\\":\\"%s\\"}\\n" "$rigger779_status" "$rigger779_label" >> "$here/fixture.trace" ;; esac',
+    '    case "$rigger779_pipeline" in *" "*)',
+    '      set -- $rigger779_pipeline',
+    '      printf "{\\"command\\":\\"/bin/ps\\",\\"status\\":%s,\\"label\\":\\"%s\\",\\"round\\":%s}\\n" "$1" "$rigger779_label" "$rigger779_round" >> "$here/fixture.trace"',
+    '      printf "{\\"command\\":\\"/usr/bin/grep\\",\\"status\\":%s,\\"label\\":\\"%s\\",\\"round\\":%s}\\n" "$2" "$rigger779_label" "$rigger779_round" >> "$here/fixture.trace"',
+    '      rigger779_round=$((rigger779_round + 1))',
+    '    ;; esac',
+    '    rigger779_previous=$rigger779_next',
+    '  }',
+    "  trap 'rigger779_debug \"$?\" \"${PIPESTATUS[*]}\" \"$BASH_COMMAND\"' DEBUG",
+    'fi',
+    observed,
+  ].join('\n');
+}
+
+/** Retain each returned command in the selected confirmation scripts. */
+function tracedCommands(body, name) {
+  const observed = body.replaceAll('/bin/cat ', 'rigger779_cat ');
+  return [
+    `rigger779_script=${name}`,
+    'rigger779_previous=',
+    'rigger779_cat() { /bin/cat "$@" | /usr/bin/tee -a "$here/cat.stdout"; rigger779_status=${PIPESTATUS[0]}; printf "return\\t%s\\t%s\\t/bin/cat\\t%s\\n" "$SECONDS" "$rigger779_script" "$rigger779_status" >> "$here/fixture.commands"; return "$rigger779_status"; }',
+    'rigger779_debug() {',
+    '  rigger779_status=$1; rigger779_pipeline=$2; rigger779_next=$3',
+    '  if [ -n "$rigger779_previous" ]; then printf "return\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$SECONDS" "$rigger779_script" "$rigger779_previous" "$rigger779_status" "$rigger779_pipeline" "$rigger779_next" >> "$here/fixture.commands"; fi',
+    '  printf "entry\\t%s\\t%s\\t%s\\n" "$SECONDS" "$rigger779_script" "$rigger779_next" >> "$here/fixture.commands"',
+    '  rigger779_previous=$rigger779_next',
+    '}',
+    "trap 'rigger779_debug \"$?\" \"${PIPESTATUS[*]}\" \"$BASH_COMMAND\"' DEBUG",
+    observed,
+  ].join('\n');
+}
+
 /**
  * A shell script named `name` in `directory`, executable, whose body reads that directory as
  * `$here`. Its path, and so the directory, is in the command line of the shell running it. Run
@@ -112,6 +175,8 @@ export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
  */
 export function fixture(directory, name, body) {
   const path = join(directory, name);
+  if (process.env.RIGGER_779_TRACE === '1' && existsSync(join(directory, '.rigger779-trace')) && (name === 'command' || name === 'joining')) body = tracedReadiness(body, name);
+  if (process.env.RIGGER_779_TRACE === '1' && existsSync(join(directory, '.rigger779-trace')) && ['ps-join', 'ps-logged-join', 'ps-never'].includes(name)) body = tracedCommands(body, name);
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.start', path })}\n`);
   writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${EXIT_IF_WARMING}\n${body}\n`, { mode: 0o755 });
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.returned', path })}\n`);

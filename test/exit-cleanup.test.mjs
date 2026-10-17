@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
@@ -25,6 +25,22 @@ const ENDS_WITHIN = { timeout: 30_000 };
 
 const trace779 = (event, fields = {}) => {
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event, ...fields })}\n`);
+};
+
+/** Observe the raw synchronous command result before this test interprets it. */
+const spawnSync = (...input) => {
+  if (process.env.RIGGER_779_TRACE !== '1') return rawSpawnSync(...input);
+  const [command, args] = input;
+  const started = Date.now();
+  process.stderr.write(`${JSON.stringify({ at: started, event: 'sync-command.entry', command, args })}\n`);
+  try {
+    const result = rawSpawnSync(...input);
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.returned', command, args, status: result.status, signal: result.signal, stdout: result.stdout ?? null, stderr: result.stderr ?? null, error: result.error ? { message: result.error.message, code: result.error.code ?? null } : null })}\n`);
+    return result;
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.threw', command, args, error: { message: error.message, code: error.code ?? null } })}\n`);
+    throw error;
+  }
 };
 
 /** The URL of the module at `path`, relative to this file, as a string literal. */
@@ -167,6 +183,8 @@ const CALLER = [
  * `ps` whose first read never answers and whose later reads are `ps`'s.
  */
 function fixtures(directory, options = {}) {
+  if (process.env.RIGGER_779_TRACE === '1') writeFileSync(join(directory, '.rigger779-trace'), '');
+  if (process.env.RIGGER_779_PS_STATUS === '1') writeFileSync(join(directory, '.rigger779-ps-status-1'), '');
   if (options.ps || options.commands) beginFixtureWarmBatch(directory);
   writeFileSync(join(directory, 'hold'), '');
   writeFileSync(join(directory, 'ps-hold'), '');
@@ -404,7 +422,88 @@ function fixtures(directory, options = {}) {
 test('the ordinary two-group caller warms only the command fixture it runs', async (t) => {
   const directory = scratch(t);
   fixtures(directory, { ending: 'exit 1', sink: 'named', groups: true });
-  assert.deepEqual(readdirSync(directory).sort(), ['command', 'hold', 'ps-hold']);
+  const expected = process.env.RIGGER_779_TRACE === '1' ? ['.rigger779-trace', 'command', 'hold', 'ps-hold'] : ['command', 'hold', 'ps-hold'];
+  assert.deepEqual(readdirSync(directory).sort(), expected);
+});
+
+for (const [name, script, error] of [
+  ['returned failure', '#!/bin/sh\nexit 7\n', /warming fixtures/],
+  ['failed launch', '#!/no-such-rigger779-interpreter\n', /ENOENT/],
+]) {
+  test(`a selected fixture warm ${name} stops before a caller starts`, (t) => {
+    const directory = scratch(t);
+    beginFixtureWarmBatch(directory);
+    const path = fixture(directory, 'warm-control', '');
+    writeFileSync(path, script);
+    assert.throws(() => finishFixtureWarmBatch(directory), error);
+    assert.equal(existsSync(join(directory, 'caller.mjs')), false);
+  });
+}
+
+test('the fixture observer records returned shell readiness commands before a caller can be ready', ENDS_WITHIN, async (t) => {
+  const diagnostics = [];
+  const originalDiagnostic = t.diagnostic.bind(t);
+  t.diagnostic = (message) => { diagnostics.push(message); originalDiagnostic(message); };
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"fixture.shell"')), 'the shell trace was not retained in the test original'));
+  const previous = process.env.RIGGER_779_TRACE;
+  process.env.RIGGER_779_TRACE = '1';
+  try {
+    const { directory } = await endCaller(t, { ending: 'exit 0', sink: 'named', groups: true });
+    const observed = readFileSync(join(directory, 'fixture.trace'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    for (const command of ['/bin/ps', '/usr/bin/grep', '/bin/mv']) {
+      assert.ok(observed.some(({ command: ran, status }) => ran === command && status === 0), `${command} did not return success before readiness`);
+    }
+    assert.deepEqual([...new Set(observed.filter(({ command }) => command === '/bin/ps').map(({ label }) => label))].sort(), ['1', '2']);
+    assert.match(readFileSync(join(directory, 'ps.stdout'), 'utf8'), /tail/, 'the process-table answer was not retained beside its raw status');
+    const shell = readFileSync(join(directory, 'fixture.commands'), 'utf8');
+    assert.match(shell, /^entry\t\d+\tcommand\t.*\/bin\/mv/m, 'the marker move has no timed entry');
+    assert.match(shell, /^return\t\d+\tcommand\t.*\/bin\/mv[^\t]*\t0\t/m, 'the marker move has no timed return');
+  } finally {
+    if (previous === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previous;
+  }
+});
+
+test('a matching grep reaches the child marker even when the preceding ps exits nonzero', ENDS_WITHIN, async (t) => {
+  const previousTrace = process.env.RIGGER_779_TRACE;
+  const previousStatus = process.env.RIGGER_779_PS_STATUS;
+  process.env.RIGGER_779_TRACE = '1';
+  process.env.RIGGER_779_PS_STATUS = '1';
+  try {
+    const { directory, status, signal, processes } = await endCaller(t, { ending: 'exit 0', sink: 'named', groups: true });
+    assert.deepEqual({ status, signal }, { status: 0, signal: null });
+    await assertNoneAlive(directory);
+    assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+    const observed = readFileSync(join(directory, 'fixture.trace'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    for (const label of ['1', '2']) {
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/bin/ps' && code === 1 && seen === label), `ps did not return status 1 for group ${label}`);
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/usr/bin/grep' && code === 0 && seen === label), `grep did not match for group ${label}`);
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/bin/mv' && code === 0 && seen === label), `the marker move failed for group ${label}`);
+    }
+  } finally {
+    if (previousTrace === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previousTrace;
+    if (previousStatus === undefined) delete process.env.RIGGER_779_PS_STATUS;
+    else process.env.RIGGER_779_PS_STATUS = previousStatus;
+  }
+});
+
+test('a real no-match process-table read retains its raw status and empty output', (t) => {
+  const directory = scratch(t);
+  const previousTrace = process.env.RIGGER_779_TRACE;
+  const originalWrite = process.stderr.write;
+  const captured = [];
+  process.env.RIGGER_779_TRACE = '1';
+  process.stderr.write = function (chunk, ...rest) { captured.push(String(chunk)); return originalWrite.call(this, chunk, ...rest); };
+  try {
+    assert.deepEqual(running(`${directory}/not-running`), []);
+    const records = captured.flatMap((chunk) => chunk.split('\n').filter(Boolean).map(JSON.parse));
+    assert.ok(records.some(({ event, command, status, stdout, error }) => event === 'sync-command.returned' && command === '/usr/bin/pgrep' && status === 1 && stdout === '' && error === null), 'the real no-match read lost its status, output, or spawn result');
+  } finally {
+    process.stderr.write = originalWrite;
+    if (previousTrace === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previousTrace;
+  }
 });
 
 /**
@@ -418,13 +517,14 @@ test('the ordinary two-group caller warms only the command fixture it runs', asy
  */
 async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
   const directory = scratch(t);
+  const tracing779 = process.env.RIGGER_779_TRACE === '1';
   const report779 = (event, fields = {}) => {
-    if (process.env.RIGGER_779_TRACE === '1') t.diagnostic(JSON.stringify({ at: Date.now(), event, ...fields }));
+    if (tracing779) t.diagnostic(JSON.stringify({ at: Date.now(), event, ...fields }));
   };
-  if (process.env.RIGGER_779_TRACE === '1') t.signal.addEventListener('abort', () => {
+  if (tracing779) t.signal.addEventListener('abort', () => {
     if (!existsSync(directory)) return;
     const contents = (name) => existsSync(join(directory, name)) ? readFileSync(join(directory, name), 'utf8') : null;
-    report779('test.aborted', { entries: readdirSync(directory), caller: contents('trace.1'), fixture: contents('fixture.trace') });
+    report779('test.aborted', { entries: readdirSync(directory), caller: contents('trace.1'), fixture: contents('fixture.trace'), commands: contents('fixture.commands') });
   }, { once: true });
   report779('scratch.created', { directory });
   report779('fixtures.start');
@@ -488,6 +588,13 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   report779('caller.close.start');
   const [status, killedBy] = await ended;
   report779('caller.close.returned', { status, killedBy });
+  if (tracing779) {
+    const shell = join(directory, 'fixture.trace');
+    const ps = join(directory, 'ps.stdout');
+    const commands = join(directory, 'fixture.commands');
+    const cat = join(directory, 'cat.stdout');
+    report779('fixture.shell', { directory, trace: existsSync(shell) ? readFileSync(shell, 'utf8') : null, psStdout: existsSync(ps) ? readFileSync(ps, 'utf8') : null, commands: existsSync(commands) ? readFileSync(commands, 'utf8') : null, catStdout: existsSync(cat) ? readFileSync(cat, 'utf8') : null });
+  }
   return { directory, processes, seen, heard, status, signal: killedBy, stderr, took: performance.now() - signalled };
 }
 
@@ -1054,6 +1161,9 @@ test('E2: every failed confirmation read records the group kill', ENDS_WITHIN, a
 // proves R-STATE-12, R-STATE-19
 test('E3: an answering confirmation that lists a joiner records the group kill', ENDS_WITHIN, async (t) => {
   trace779('target.start', { mode: 'E3', deadline: Date.now() + ENDS_WITHIN.timeout });
+  const diagnostics = [];
+  const originalDiagnostic = t.diagnostic.bind(t);
+  t.diagnostic = (message) => { diagnostics.push(message); originalDiagnostic(message); };
   const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-logged-join', before: KILL_LOGGER }, { signal: 'SIGTERM' });
   trace779('assert.E3.start', { directory });
   assert.equal(signal, 'SIGTERM', stderr);
@@ -1065,6 +1175,12 @@ test('E3: an answering confirmation that lists a joiner records the group kill',
   const events = streamOf(directory);
   t.diagnostic(JSON.stringify({ cell: 'E3', group, members: membersOf(directory, 1), joined, trace, kills: read(directory, 'kills.log'), events }));
   assert.equal(groupKills(events, group).length, 1, 'the joiner was not recorded by the group kill: ' + JSON.stringify(events));
+  if (process.env.RIGGER_779_TRACE === '1') {
+    const shell = readFileSync(join(directory, 'fixture.commands'), 'utf8');
+    assert.match(shell, /ps-join.*\/bin\/cat/s, 'the confirmation script did not retain its group read');
+    assert.match(shell, /ps-join.*\/bin\/mkdir/s, 'the confirmation script did not retain its branch marker');
+    assert.ok(diagnostics.some((message) => message.includes('"catStdout":')), 'the command substitution output was not retained in the test original');
+  }
   trace779('assert.E3.returned', { directory, group, joined });
 });
 
