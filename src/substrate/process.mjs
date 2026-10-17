@@ -2091,16 +2091,15 @@ const notStarted = (command, why) => Object.assign(new Error(`the process adapte
  * past `TIMER_MAX` is kept over a chain of timers, each of at most `TIMER_MAX`, adding up to it.
  * `schedule` and `cancel` are Node's timers unless a test gives its own.
  *
- * No timer holds the process open, so one left armed never keeps the caller from exiting. What the
- * delay races holds the process open itself where it must: a running command's child handle, and
- * the pipes it writes to.
+ * By default no timer holds the process open: what a delay races must do that itself. A caller
+ * waiting for a forge read passes `hold`, since no child process need remain open during its wait.
  */
-export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout } = {}) {
+export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout, hold = false } = {}) {
   let timer;
   const arm = (left) => {
     const step = Math.min(left, TIMER_MAX);
     timer = schedule(() => (left > step ? arm(left - step) : done()), step);
-    timer.unref?.();
+    if (!hold) timer.unref?.();
   };
   arm(delay);
   return () => cancel(timer);

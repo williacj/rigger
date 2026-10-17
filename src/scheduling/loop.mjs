@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { roleDispatch } from '../execution/role.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
+import { EVENT_REFUSED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
@@ -195,7 +196,8 @@ function released(release, claim, failure) {
  * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
  * the judges it names are made and run, with `directories` and `judged`, as `attempt` and `judged`
  * say. `l2` is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the
- * maker's outcome alone, and answers what it read of the forge, which L3 reads nothing of. The
+ * maker's outcome and, for a continuing maker that exited 0, L1's workspace tip and the read
+ * measure. It answers what it read of the forge, which L3 reads nothing of. The
  * maker is always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says
  * (the architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
  * every dispatch it makes, each step's, the maker's and each judge's (ruling 2, AQ1). `ps` and
@@ -203,9 +205,11 @@ function released(release, claim, failure) {
  * unread for every dispatch it makes, where neither is given L0 using its own
  * (ruling 3, AQ7). `workspace(card)` is L1's
  * workspace handle, injected, and
- * answers the attempt's workspace as `{ path }`, with the card's scratch base as `scratch` and the
- * repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and 21 on
- * #467). `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
+ * answers the attempt's workspace as `{ path, branch }`, with the card's scratch base as `scratch`
+ * and the repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and
+ * 21 on #467). `workspaceTip` is L1's read of the branch's tip in that workspace after a continuing
+ * maker exits 0. `clock` supplies the time and pause for a repeated forge read.
+ * `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
  * `judged` says (the architect's ruling 4's addendum on #467). `removeDirectories(card)` is L1's
  * merged-card removal, injected. `state` is the state directory L1 records each dispatch's process
  * group in, which L3 hands L1's `dispatch` unread (ruling 10).
@@ -246,9 +250,11 @@ function released(release, claim, failure) {
  * One run also remembers stopped cards and cards whose
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, judgeDirectory, removeDirectories, state, environment, ps, readTimeout }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment, ps, readTimeout, clock }) {
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
-  const { merge } = lane({ board, facts, l2, record, refused, removeDirectories });
+  const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
+  const now = clock?.now ?? Date.now;
+  const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
   if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
   if (typeof judgeDirectory !== 'function') throw new Error(`L3 was handed no judgeDirectory of L1's, so it cannot make a judge's directory: judgeDirectory is ${typeof judgeDirectory}`);
   if (typeof removeDirectories !== 'function') throw new Error(`L3 was handed no removeDirectories handle of L1's, so it cannot remove a merged card's directories: removeDirectories is ${typeof removeDirectories}`);
@@ -317,7 +323,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    */
   const made = async (card, number, continuing) => {
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number, continuing?.head)))]);
-    if (outcome.status === 'fulfilled') return { path: outcome.value.path, scratch: outcome.value.scratch, repository: outcome.value.repository };
+    if (outcome.status === 'fulfilled') return { path: outcome.value.path, branch: outcome.value.branch, scratch: outcome.value.scratch, repository: outcome.value.repository };
     return { answer: decide(card, [], { attempt: number, workspace: outcome, continuing }) };
   };
 
@@ -328,8 +334,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * names no step. A later attempt asks L2 for its first step once its workspace is made.
    *
    * An answer that dispatches no step is the maker: the role the answer's `maker` names,
-   * dispatched through L1 as `dispatchRole` says. L3 hands L2 each maker outcome unread, first
-   * to `settled` and, where the settle succeeded, to `decide` with the attempt number. L3 follows
+   * dispatched through L1 as `dispatchRole` says. After a continuing maker exits 0, L3 reads its
+   * workspace tip through L1. L3 hands L2 each maker outcome unread, with that tip where read.
+   * A stale forge head has L3 pause and ask L2 to settle again under the same claim and slot.
+   * Where the settle succeeded, L3 hands its facts to `decide` with the attempt number. L3 follows
    * L2's `again` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
    * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
@@ -365,7 +373,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     };
     let answer = next;
     for (let number = 1; ; number += 1) {
-      const { path, scratch, repository, answer: unmade } = await made(card, number, continuing);
+      const { path, branch, scratch, repository, answer: unmade } = await made(card, number, continuing);
       if (unmade !== undefined) {
         answer = unmade;
       } else {
@@ -381,7 +389,35 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
       const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
-      const [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
+      let settled;
+      if (continuing !== undefined && outcome.status === 'fulfilled' && outcome.value.exit === 0) {
+        let expectedHead;
+        let tipFailure;
+        try {
+          if (typeof workspaceTip !== 'function') throw new Error('L3 was handed no L1 workspace-tip reader');
+          expectedHead = await workspaceTip({ card: card.number, path, branch, repository });
+          if (typeof expectedHead !== 'string' || expectedHead === '') throw new Error(`L1 found no tip for card #${card.number}'s line of work`);
+        } catch (failure) {
+          if (failure.code === EVENT_REFUSED) throw failure;
+          tipFailure = failure;
+        }
+        const first = now();
+        let reads = 0;
+        let lastForgeHead;
+        for (;;) {
+          const elapsedMs = now() - first;
+          reads += 1;
+          [settled] = await Promise.allSettled([l2.settled(card, outcome, { expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs })]);
+          if (settled.status !== 'fulfilled' || !settled.value?.waiting) break;
+          lastForgeHead = settled.value.forgeHead;
+          // D16 rule 3: the forge can still show the old head after a push. #664's journal/P58
+          // saw old facts at about 2, 2.4, 6 and 7 seconds. #664's stream saw new facts on later
+          // invocations by 103.5 and 91.7 seconds (#758); no forge lag was measured.
+          await pause(5_000);
+        }
+      } else {
+        [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
+      }
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (advance(answer, number)) continue;

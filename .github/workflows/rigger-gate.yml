@@ -27,7 +27,7 @@ defaults:
 
 env:
   # The commit of Rigger the gate runs. Changing it changes the live gate.
-  RIGGER_COMMIT: 8719c7c80fa8289c9ab6c39fd64a62fd910d6538
+  RIGGER_COMMIT: b1222c909562c4519666ac043e31b6d03c502149
   # The Node major the gate runs on: one `engines` admits, and past no end of life.
   NODE_MAJOR: '24'
   # The gate check, inside the package installed under the runner's temporary directory.
@@ -70,7 +70,9 @@ jobs:
         run: node "${RUNNER_TEMP}/${GATE_CHECK}" card >> "${GITHUB_OUTPUT}"
 
   # Rules on each pull request the event concerns and posts on each head it read. One card's runs
-  # go one at a time, and none is cancelled, so the last starts after the last event and posts last.
+  # go one at a time. A newer run cancels one still pending in the group, whatever
+  # `cancel-in-progress` says, so a head can go without a status. The last run starts after the
+  # last event and posts last.
   gate:
     name: Rule and post
     needs: card

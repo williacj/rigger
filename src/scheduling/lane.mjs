@@ -1,8 +1,10 @@
 // ABOUTME: L3's repo lane merges one card at a time in pull order, records each merge, and asks
 // L1 to remove merged cards' directories before L2 moves them to Done.
 
-/** What `merge.end` names of L2's merge answer `answer`: its outcome, and its reason and context where it gives them. */
-const named = ({ outcome, reason, context }) => ({ outcome, ...(reason === undefined ? {} : { reason }), ...(context === undefined ? {} : { context }) });
+import { whenElapsed } from '../substrate/process.mjs';
+
+/** What `merge.end` names of L2's merge answer `answer`: its outcome, reason and context. */
+const named = ({ outcome, reason, context }) => ({ outcome, ...(outcome === 'merged' ? {} : { reason: reason ?? (outcome === 'already merged' ? 'the forge held the pull request as merged already' : `the forge ${outcome} the merge call`) }), ...(context === undefined ? {} : { context }) });
 
 /** `second` where `first` is null, or the two in one AggregateError saying `sentence`, since neither may hide the other. */
 const beside = (first, second, sentence) => (first === null ? second : new AggregateError([first, second], sentence));
@@ -14,8 +16,10 @@ const beside = (first, second, sentence) => (first === null ? second : new Aggre
  * merge queued before it and settles once its own merge has ended, so no two merges overlap
  * (`R-SCHED-15`), as `merged` says.
  */
-export function lane({ board, facts, l2, record, refused, removeDirectories }) {
+export function lane({ board, facts, l2, record, refused, removeDirectories, clock = {} }) {
   let tail = Promise.resolve();
+  const now = clock.now ?? Date.now;
+  const pause = clock.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
 
   /**
    * The merge of `claim`'s card, L2's `merge` answer `next` at the pull. L3 records `merge.start`
@@ -45,19 +49,46 @@ export function lane({ board, facts, l2, record, refused, removeDirectories }) {
     } catch (refusal) {
       throw refused(`card #${card.number}'s merge of pull request #${next.pull} was not started, because the event sink refused to record its start`, refusal);
     }
-    const { item, again, ended: unread, failure: unreadFailure } = await rerun(card, next);
+    const began = now();
     let answer;
-    let ended = unread;
-    let failure = unreadFailure;
-    if (ended === undefined) {
+    let ended;
+    let failure;
+    let item;
+    let again;
+    let reads = 0;
+    let lastRead = began;
+    for (;;) {
+      const reading = await rerun(card, next);
+      reads += 1;
+      lastRead = now();
+      ({ item, again, ended, failure } = reading);
+      if (again?.unknownMergeability && now() - began < 60_000) {
+        // D16 rule 3: the forge can still show the old mergeability after the write. #664's
+        // journal/P58 saw old facts at about 2, 2.4, 6 and 7 seconds; #664's stream saw new
+        // facts on later invocations by 103.5 and 91.7 seconds (#758). Neither measured lag.
+        await pause(5_000);
+        continue;
+      }
+      if (ended !== undefined) break;
       try {
-        answer = await l2.merge(item, again);
+        const called = await l2.merge(item, again);
+        if (called.unknownMergeability) {
+          reads += 1;
+          lastRead = now();
+        }
+        if (called.unknownMergeability && now() - began < 60_000) {
+          await pause(5_000);
+          continue;
+        }
+        answer = called;
         ended = named(answer);
       } catch (thrown) {
         failure = new Error(`card #${card.number}'s merge of pull request #${next.pull} failed: ${thrown.message}`, { cause: thrown });
         ended = { outcome: 'failed', reason: thrown.message };
       }
+      break;
     }
+    if (reads > 1) ended = { ...ended, reads, elapsedMs: lastRead - began };
     const reached = { card: card.number, action: 'merge', ...fields, merge: ended };
     try {
       record('merge.end', { ...fields, ...ended }, card.number);
@@ -88,7 +119,16 @@ export function lane({ board, facts, l2, record, refused, removeDirectories }) {
       if (item === undefined) throw new Error(`card #${card.number} is no longer on the board`);
       const again = (await facts([item]))(item);
       const unchanged = again.action === 'merge' && again.pull === next.pull && again.head === next.head;
-      return { item, again, ...(unchanged ? {} : { ended: { outcome: 'not merged', action: again.action } }), failure: null };
+      const details = [];
+      if (again.pull !== undefined) details.push(`pull request #${again.pull}`);
+      if (again.head !== undefined) details.push(`head ${again.head}`);
+      if (again.to !== undefined) details.push(`to ${again.to}`);
+      if (again.category !== undefined) details.push(`category ${again.category}`);
+      if (again.judges !== undefined) details.push(`judges ${again.judges.map(({ role, facts }) => `${role} at ${facts.head}`).join(', ')}`);
+      const reason = again.reason ?? (again.action === 'merge'
+        ? `L2 answered ${details.join(' at ')}, after the lane pulled pull request #${next.pull} at head ${next.head}`
+        : `L2 answered ${again.action}${details.length === 0 ? '' : `: ${details.join(', ')}`}`);
+      return { item, again, ...(unchanged ? {} : { ended: { outcome: 'not merged', action: again.action, reason } }), failure: null };
     } catch (thrown) {
       const failure = new Error(`card #${card.number} was not merged, because L2 could not run its rule again: ${thrown.message}`, { cause: thrown });
       return { ended: { outcome: 'not merged', reason: thrown.message }, failure };

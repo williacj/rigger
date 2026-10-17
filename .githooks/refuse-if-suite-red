@@ -1,11 +1,42 @@
 #!/bin/sh
 # ABOUTME: Runs the suite and refuses the git operation that called it when the suite is not
 # green. `AGENTS.md` holds the rule; this is the one place the commit, merge and push hooks
-# enforce it.
+# enforce it. After a green run on a working tree equal to the tree being committed, it records
+# that tree under the git dir, so `pre-push` can skip a suite already passed on it. `pre-push`
+# passes --no-record, because a push commits no tree.
 
 set -u
 
+record=
+if [ "${1-}" != --no-record ]; then
+  record="$(git rev-parse --git-dir)/rigger-suite-green-trees"
+fi
+
+# The tree the index the hook was handed holds, when the working tree holds exactly that: no
+# unstaged change to a tracked file and no untracked file `.gitignore` does not exclude. It
+# re-adds the whole working tree to a fresh index read from that tree, so no flag the hook's
+# index carries, such as assume-unchanged or skip-worktree, can hide a difference.
+equal_tree() {
+  tree=$(git write-tree) || return 1
+  probe="$(git rev-parse --absolute-git-dir)/rigger-equal-index.$$"
+  GIT_INDEX_FILE=$probe git read-tree "$tree" &&
+    GIT_INDEX_FILE=$probe git add -A &&
+    [ "$(GIT_INDEX_FILE=$probe git write-tree)" = "$tree" ]
+  equal=$?
+  rm -f "$probe"
+  [ "$equal" -eq 0 ] || return 1
+  printf '%s\n' "$tree"
+}
+
+before=
+if [ -n "$record" ]; then
+  before=$(equal_tree)
+fi
+
 if npm test; then
+  if [ -n "$before" ] && [ "$(equal_tree)" = "$before" ]; then
+    grep -qxF "$before" "$record" 2>/dev/null || printf '%s\n' "$before" >> "$record"
+  fi
   exit 0
 fi
 

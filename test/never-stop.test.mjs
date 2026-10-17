@@ -47,6 +47,14 @@ const UNREACHED = 15_000;
 /** The exit cleanup's own bound in these tests: the read timeout its caller gives the call. */
 const CLEANUP_BOUND = 1_000;
 
+/**
+ * The read timeout the C615 Mac directory control's caller alone gives its call, in place of
+ * `CLEANUP_BOUND`: a whole-user `lsof` listing can outlast 1,000 ms on a loaded host, which leaves
+ * that control no answer to read (#757). A judgment, not a measured threshold: it is L0's own
+ * `READ_TIMEOUT`, which the owner approved for this caller alone (O274 on #739).
+ */
+const DIRECTORY_CALLER_BOUND = 5_000;
+
 /** The pid a fixture in `directory` wrote to `<name>.pid`, or nothing before it has. */
 const pidIn = (directory, name) => (existsSync(join(directory, `${name}.pid`)) ? Number(read(directory, `${name}.pid`)) : undefined);
 
@@ -3228,7 +3236,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   const callerStderr = openSync(join(evidenceRoot, 'caller.stderr'), 'wx', 0o600);
   try {
     assertFocusedAdmission();
-    caller = spawn(process.execPath, [callerPath, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, directory: work })], { stdio: ['ignore', 'ignore', callerStderr] });
+    caller = spawn(process.execPath, [callerPath, directory, JSON.stringify({ readTimeout: DIRECTORY_CALLER_BOUND, directory: work })], { stdio: ['ignore', 'ignore', callerStderr] });
     bodyStage = 'caller-started';
   } finally {
     closeSync(callerStderr);
@@ -3259,7 +3267,9 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   };
   const listingArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
   const [first] = answers('/usr/sbin/lsof', listingArgs);
-  assert.ok(first && listsTail(first.stdout), 'the actual full lsof listing did not answer with the recorded tail cwd');
+  const listed = trace.find(({ kind, tool, args: given }) => (kind === 'read-end' || kind === 'read-threw') && tool === '/usr/sbin/lsof' && JSON.stringify(given) === JSON.stringify(listingArgs));
+  const listedSummary = JSON.stringify(listed ? { kind: listed.kind, status: listed.status, signal: listed.signal, error: listed.error ?? listed.code ?? null, stderr: listed.stderr, stdout: typeof listed.stdout === 'string' ? `${Buffer.byteLength(listed.stdout)} bytes` : listed.stdoutType ?? null } : 'no full listing read was traced');
+  assert.ok(first && listsTail(first.stdout), `the actual full lsof listing did not answer with the recorded tail cwd; the first full listing read: ${listedSummary}`);
   const [state] = answers('/bin/ps', ['-p', String(tailBirth.pid), '-o', 'pid=,stat=']);
   assert.ok(state && state.sequence > first.sequence && new RegExp(`^\\s*${tailBirth.pid}\\s+T`, 'm').test(state.stdout), 'the actual intervening ps read did not answer with the stopped tail');
   const [perPid] = answers('/usr/sbin/lsof', [...listingArgs.slice(0, -2), '-p', String(tailBirth.pid), '-F', 'pun']);
@@ -3297,6 +3307,550 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   const callerEnds = trace.filter(({ kind }) => kind === 'caller-end');
   assert.ok(callerEnds.length === 1 && traceEnds.every(({ sequence }) => sequence < callerEnds[0].sequence), 'a real tool read did not close before the caller ended');
   bodyStage = 'passed';
+});
+
+/**
+ * The C615 directory listing observer (#757), a module every Node process of a nested C615
+ * directory run loads first, through `NODE_OPTIONS`. Each step it sees is one append to one trace
+ * file, so the trace's order is the order the steps happened across the parent, the caller and the
+ * hold controller. In the parent it records the tail and caller handles, each `.kill` call and its
+ * answer, the release writes, the command reads and the private copy. In the caller it records each
+ * real `lsof` and `ps` read, with the budget it was given, how long it took and how the control's
+ * `listsTail` reads a full listing, and then reads the tail's actual working directory itself.
+ *
+ * `C757_MODE` forces one state the control can meet. `hold-2000` holds the first full listing's
+ * real `lsof` stopped before it runs until a controller has seen it held 2,000 ms, then lets it run
+ * with its own arguments; `hold-until-gone` holds it until the caller's read timeout ends it.
+ * `stderr` and `codeless-error` hand the first full listing back with a line on standard error, or
+ * with an error carrying no code. The rest stop the control at one setup or teardown step. Run as
+ * a script with `c757-hold-controller`, it is that controller.
+ */
+const C757_LISTING_OBSERVER = String.raw`
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const tracePath = process.env.C757_TRACE;
+const mode = process.env.C757_MODE ?? 'observe';
+if (tracePath && !globalThis.c757Observer) {
+  globalThis.c757Observer = true;
+  const real = { ...fs };
+  const realSpawn = childProcess.spawn;
+  const realSpawnSync = childProcess.spawnSync;
+  const targetDirectory = /\/c615-mac-directory-[^/]+$/;
+  const nameOf = (path) => path.slice(path.lastIndexOf('/') + 1);
+  const parentOf = (path) => path.slice(0, path.lastIndexOf('/'));
+  const inTarget = (path) => typeof path === 'string' && targetDirectory.test(parentOf(path));
+  const script = process.argv[1] ?? '';
+  const role = process.argv[2] === 'c757-hold-controller' ? 'controller'
+    : inTarget(script) && nameOf(script) === 'caller.mjs' ? 'caller'
+    : process.env.NODE_TEST_CONTEXT && process.argv.some((arg) => typeof arg === 'string' && arg.endsWith('never-stop.test.mjs')) ? 'parent' : 'other';
+  let sequence = 0;
+  const mark = (event, fields = {}) => real.appendFileSync(tracePath, JSON.stringify({ role, pid: process.pid, sequence: ++sequence, ns: String(process.hrtime.bigint()), mode, event, ...fields }) + '\n');
+  const errorOf = (error) => (error ? { name: error.name, code: error.code ?? null, message: error.message } : null);
+  const pidClass = (pid) => (pid === undefined ? 'undefined' : Number.isSafeInteger(pid) && pid > 0 ? 'positive-safe' : 'defined-invalid');
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+  const forced = (what) => Object.assign(new Error('c757 forced ' + what), { code: 'C757_FORCED' });
+  if (role === 'controller') {
+    const held = process.argv[3];
+    const caller = Number(process.argv[4]);
+    const turn = () => new Promise((resolve) => setImmediate(resolve));
+    let heldPid;
+    while (heldPid === undefined) {
+      const text = real.existsSync(held + '.pid') ? real.readFileSync(held + '.pid', 'utf8').trim() : '';
+      if (text !== '') heldPid = Number(text);
+      else if (!alive(caller)) { mark('hold-abandoned', { why: 'the caller ended before the hold began' }); process.exit(0); }
+      else await turn();
+    }
+    while (!realSpawnSync('/bin/ps', ['-o', 'stat=', '-p', String(heldPid)], { encoding: 'utf8' }).stdout.trim().startsWith('T')) {
+      if (!alive(heldPid)) { mark('hold-abandoned', { why: 'the held read ended before it stopped', heldPid }); process.exit(0); }
+      await turn();
+    }
+    const heldAt = process.hrtime.bigint();
+    const heldFor = () => Number(process.hrtime.bigint() - heldAt) / 1e6;
+    mark('held', { heldPid });
+    for (;;) {
+      if (!alive(heldPid)) { mark('held-ended-unreleased', { heldPid, heldMs: heldFor() }); process.exit(0); }
+      if (!alive(caller)) { process.kill(heldPid, 'SIGKILL'); mark('held-killed-after-caller', { heldPid, heldMs: heldFor() }); process.exit(0); }
+      if (mode === 'hold-2000' && heldFor() >= 2000) { process.kill(heldPid, 'SIGCONT'); mark('released', { heldPid, heldMs: heldFor() }); process.exit(0); }
+      await turn();
+    }
+  }
+  if (role === 'parent') {
+    const handles = {};
+    let targetDir;
+    let stoppedCommand;
+    const groupOf = (directory) => { try { return Number(real.readFileSync(directory + '/group.pid', 'utf8')); } catch { return undefined; } };
+    const stopNewWork = () => { real.writeFileSync(process.env.C615_STOP_MARKER, ''); mark('stop-marker-written'); };
+    const watch = (who, child) => {
+      handles[who] = child;
+      mark('handle-returned', { who, handlePid: child.pid ?? null, pidClass: pidClass(child.pid) });
+      child.once('error', (error) => mark('handle-error', { who, error: errorOf(error) }));
+      child.once('exit', (code, signal) => mark('handle-exit', { who, code, signal }));
+      const kill = child.kill;
+      child.kill = function (signal) {
+        mark('handle-kill-call', { who, signal, handlePid: child.pid ?? null, pidClass: pidClass(child.pid), ended: child.exitCode !== null || child.signalCode !== null });
+        try {
+          const answer = kill.apply(this, arguments);
+          mark('handle-kill-answer', { who, signal, answer });
+          return answer;
+        } catch (error) {
+          mark('handle-kill-threw', { who, signal, error: errorOf(error) });
+          throw error;
+        }
+      };
+    };
+    childProcess.spawn = function (command, args, options) {
+      const tail = command === '/usr/bin/tail' && typeof options?.cwd === 'string' && targetDirectory.test(parentOf(options.cwd));
+      const caller = Array.isArray(args) && inTarget(args[0]) && nameOf(args[0]) === 'caller.mjs';
+      if (!tail && !caller) return realSpawn.apply(this, arguments);
+      const who = tail ? 'tail' : 'caller';
+      targetDir = parentOf(tail ? options.cwd : args[0]);
+      let program = command;
+      let given = options;
+      if (tail && mode === 'tail-elsewhere') {
+        given = { ...options, cwd: targetDir + '/elsewhere' };
+        real.mkdirSync(given.cwd);
+      }
+      if ((tail && mode === 'tail-unstartable') || (caller && mode === 'caller-unstartable')) program = targetDir + '/c757-absent-program';
+      mark('handle-spawn-call', { who, program, cwd: given?.cwd ?? null });
+      const child = realSpawn.call(this, program, args, given);
+      watch(who, child);
+      if (caller && (mode === 'tail-ends' || mode === 'begin-exit-fails')) {
+        process.kill(handles.tail.pid, 'SIGKILL');
+        mark('tail-killed-by-forcing', { tailPid: handles.tail.pid });
+      }
+      return child;
+    };
+    childProcess.spawnSync = function (tool, args) {
+      const result = realSpawnSync.apply(this, arguments);
+      const command = targetDir && groupOf(targetDir);
+      if (tool === '/bin/ps' && Array.isArray(args) && args.length === 4 && args[0] === '-p' && args[2] === '-o' && args[3] === 'pid=,stat=' && command !== undefined && args[1] === String(command)) {
+        mark('command-read', { command, status: result.status, error: errorOf(result.error), stdout: result.stdout, stderr: result.stderr });
+        if (stoppedCommand === command) {
+          process.kill(command, 'SIGCONT');
+          stoppedCommand = undefined;
+          mark('command-continued', { command });
+        }
+      }
+      return result;
+    };
+    fs.writeFileSync = function (path, data, ...rest) {
+      const name = typeof path === 'string' ? nameOf(path) : '';
+      if (inTarget(path) && name === 'release' && mode === 'begin-exit-fails') {
+        stoppedCommand = groupOf(parentOf(path));
+        process.kill(stoppedCommand, 'SIGSTOP');
+        mark('command-stopped', { command: stoppedCommand });
+      }
+      if (inTarget(path) && name === 'begin-exit' && mode === 'begin-exit-fails') {
+        mark('write-failed-by-forcing', { name });
+        throw forced('begin-exit write failure');
+      }
+      const result = real.writeFileSync(path, data, ...rest);
+      if (inTarget(path) && ['release', 'begin-exit', 'tail-birth.json', 'caller-birth.json'].includes(name)) mark('write', { name });
+      if (['finalizer.json', 'inventory.json'].includes(name) && typeof path === 'string' && nameOf(parentOf(path)) === 'directory') mark('write', { name, bytes: Buffer.byteLength(String(data)) });
+      if (inTarget(path) && name === 'tail-birth.json' && mode === 'stop-at-caller') stopNewWork();
+      return result;
+    };
+    // A tail the forcing killed is reported ended only once its handle's exit has been seen, so
+    // the parent's wait on the command boundary holds until then, and its still-running guard
+    // then finds the tail ended.
+    fs.existsSync = function (path) {
+      const result = real.existsSync(path);
+      const tail = handles.tail;
+      if (result && (mode === 'tail-ends' || mode === 'begin-exit-fails') && inTarget(path) && nameOf(path) === 'up' && tail && tail.exitCode === null && tail.signalCode === null) return false;
+      return result;
+    };
+    fs.readdirSync = function (path, ...rest) {
+      const result = real.readdirSync(path, ...rest);
+      if (mode === 'stop-after-root' && typeof path === 'string' && nameOf(path) === 'directory' && result.length === 0 && !real.existsSync(process.env.C615_STOP_MARKER)) stopNewWork();
+      return result;
+    };
+    fs.mkdirSync = function (path, ...rest) {
+      if (mode === 'work-unmade' && inTarget(path) && nameOf(path) === 'work') {
+        mark('mkdir-failed-by-forcing', { name: 'work' });
+        throw forced('work directory failure');
+      }
+      return real.mkdirSync(path, ...rest);
+    };
+    fs.cpSync = function (from, to, ...rest) {
+      if (typeof from !== 'string' || !targetDirectory.test(from)) return real.cpSync(from, to, ...rest);
+      mark('copy-start');
+      try {
+        real.cpSync(from, to, ...rest);
+      } catch (error) {
+        mark('copy-error', { error: errorOf(error) });
+        throw error;
+      }
+      mark('copy-returned');
+    };
+  }
+  if (role === 'caller') {
+    const directory = process.argv[2];
+    const work = directory + '/work';
+    let tailPid;
+    try { tailPid = JSON.parse(real.readFileSync(directory + '/tail-birth.json', 'utf8')).pid; } catch { /* No tail was recorded. */ }
+    let fullListings = 0;
+    const listsTail = (stdout) => {
+      if (typeof stdout !== 'string') return { type: stdout === null ? 'null' : typeof stdout };
+      const rows = stdout.split('\n');
+      const first = rows.indexOf('p' + tailPid);
+      const next = rows.findIndex((row, index) => index > first && row.startsWith('p'));
+      const fields = rows.slice(first, next < 0 ? undefined : next);
+      const p = first >= 0;
+      const u = p && fields.includes('u' + process.getuid());
+      const n = p && fields.includes('n' + work);
+      return { type: 'string', bytes: Buffer.byteLength(stdout), pRows: rows.filter((row) => row.startsWith('p')).length, tailFields: p ? fields : null, p, u, n, cell: !p ? 'D3' : !u ? 'D4' : !n ? 'D5' : 'D0' };
+    };
+    const independently = (ordinal) => {
+      if (tailPid === undefined) return mark('tail-state', { ordinal, cwd: 'unproved', why: 'no tail was recorded' });
+      const cwd = realSpawnSync('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-p', String(tailPid), '-d', 'cwd', '-F', 'n'], { encoding: 'utf8', cwd: '/' });
+      const state = realSpawnSync('/bin/ps', ['-o', 'stat=', '-p', String(tailPid)], { encoding: 'utf8' });
+      const named = cwd.status === 0 && !cwd.error ? cwd.stdout.split('\n').find((row) => row.startsWith('n'))?.slice(1) : undefined;
+      mark('tail-state', { ordinal, tailPid, cwd: named === undefined ? 'unproved' : named === work ? 'work' : 'different', named: named ?? null, cwdStatus: cwd.status, state: state.status === 0 ? state.stdout.trim() : state.status === 1 ? 'absent' : 'unproved' });
+    };
+    const shell = (body, label, args, options) => realSpawnSync('/bin/sh', ['-c', body + '; exec /usr/sbin/lsof "$@"', directory + '/' + label, ...args], options);
+    const held = (args, options) => {
+      const controller = realSpawn(process.execPath, [fileURLToPath(import.meta.url), 'c757-hold-controller', directory + '/c757-held', String(process.pid)], { cwd: '/', env: { PATH: process.env.PATH, C757_TRACE: tracePath, C757_MODE: mode }, stdio: 'ignore' });
+      mark('hold-controller', { controller: controller.pid ?? null });
+      return shell('echo $$ > "$0.pid"; kill -STOP $$', 'c757-held', args, options);
+    };
+    childProcess.spawnSync = function (tool, args, options) {
+      if (tool !== '/usr/sbin/lsof' && tool !== '/bin/ps') return realSpawnSync.apply(this, arguments);
+      const full = tool === '/usr/sbin/lsof' && args.includes('-u') && !args.includes('-p');
+      const ordinal = full ? ++fullListings : undefined;
+      const first = ordinal === 1;
+      mark('read-start', { tool, args, full, ordinal, remaining: options?.timeout ?? null });
+      const begun = process.hrtime.bigint();
+      let result;
+      try {
+        if (first && (mode === 'hold-2000' || mode === 'hold-until-gone')) result = held(args, options);
+        else if (first && mode === 'stderr') result = shell("echo 'c757 forced stderr' >&2", 'c757-stderr', args, options);
+        else result = realSpawnSync.apply(this, arguments);
+      } catch (error) {
+        mark('read-threw', { tool, args, full, ordinal, error: errorOf(error) });
+        throw error;
+      }
+      if (first && mode === 'codeless-error') result = { ...result, error: new Error('c757 forced error with no code') };
+      const ms = Number(process.hrtime.bigint() - begun) / 1e6;
+      const l0 = result.error?.code === 'ETIMEDOUT' ? 'timed-out' : result.error ? 'error-rejected' : result.stderr !== '' ? 'stderr-rejected' : result.status === 0 ? 'accepted' : result.status === 1 && result.stdout === '' ? 'accepted-empty' : 'exit-rejected';
+      mark('read-end', { tool, args, full, ordinal, ms, status: result.status, signal: result.signal, error: errorOf(result.error), stderr: result.stderr, stdoutBytes: typeof result.stdout === 'string' ? Buffer.byteLength(result.stdout) : null, l0, selected: result.status === 0 && !result.error?.code, parse: full ? listsTail(result.stdout) : undefined });
+      if (full) independently(ordinal);
+      return result;
+    };
+    process.on('exit', (code) => mark('caller-exit', { code }));
+  }
+  if (role === 'parent' || role === 'caller') {
+    syncBuiltinESMExports();
+    mark('observer-installed', { argv: process.argv.slice(1, 3) });
+  }
+}
+`;
+
+/**
+ * Runs `C615 Mac directory full tool exit census` alone in a nested runner, every Node process of
+ * which loads the listing observer in `mode`, and answers its exit status, its output, its ordered
+ * trace, its private evidence and the fixture scratch it left. Every process the run starts names
+ * the test's scratch directory, so the scratch teardown ends whichever the run's own did not.
+ * `admission` gives the run a focused admission contract whose stop marker the observer writes;
+ * `shared` leaves the private evidence root readable by others.
+ */
+async function listingRun(t, mode, { admission = false, shared = false } = {}) {
+  const directory = holding(t);
+  const observer = join(directory, 'observer.mjs');
+  assert.ok(!/\s/.test(observer), 'NODE_OPTIONS cannot name an observer path holding whitespace');
+  writeFileSync(observer, C757_LISTING_OBSERVER);
+  const scratchTmp = join(directory, 'tmp');
+  mkdirSync(scratchTmp);
+  const evidence = join(directory, 'evidence');
+  mkdirSync(evidence, { mode: 0o700 });
+  if (shared) chmodSync(evidence, 0o755);
+  const tracePath = join(directory, 'trace.jsonl');
+  const { NODE_TEST_CONTEXT, C615_WORK_DEADLINE_NS, C615_STOP_MARKER, C615_SIGHTING_EVIDENCE_ROOT, ...inherited } = process.env;
+  const focused = admission ? { C615_WORK_DEADLINE_NS: String(process.hrtime.bigint() + 600_000_000_000n), C615_STOP_MARKER: join(realpathSync.native(evidence), 'stop-new-work') } : {};
+  const env = { ...inherited, ...focused, TMPDIR: scratchTmp, C615_EVIDENCE_ROOT: evidence, C757_TRACE: tracePath, C757_MODE: mode, NODE_OPTIONS: [inherited.NODE_OPTIONS, `--import=${observer}`].filter(Boolean).join(' ') };
+  const run = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac directory full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [status] = await once(run, 'close', { signal: t.signal });
+  const retained = retainNestedRun(t, { mode, admission, shared, status, output, tracePath, evidence });
+  assert.deepEqual(running(directory), [], `a process the nested C615 directory run started outlived its own teardown:\n${output}`);
+  const trace = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const root = join(evidence, 'directory');
+  const json = (name) => (existsSync(join(root, name)) ? JSON.parse(readFileSync(join(root, name), 'utf8')) : undefined);
+  const scratchLeft = readdirSync(scratchTmp).filter((name) => name.startsWith('c615-mac-directory-'));
+  return { status, output, trace, evidence, root, retained, finalizer: json('finalizer.json'), inventory: json('inventory.json'), scratchLeft, events: linesOf(join(root, 'fixture'), 'events') };
+}
+
+/**
+ * Keeps a nested run's complete output, its ordered observer trace and its private C615 evidence,
+ * with a record of where the nested control first stopped, among the C615 directory control's
+ * private originals: `C615_EVIDENCE_ROOT/directory/nested/<test>`, outside the checkout and the
+ * test's scratch, so each nested invocation can be reopened after its scratch is removed (#757).
+ */
+function retainNestedRun(t, { mode, admission, shared, status, output, tracePath, evidence }) {
+  assert.ok(process.env.C615_EVIDENCE_ROOT, 'a nested C615 directory run needs a private C615_EVIDENCE_ROOT to keep its originals in');
+  const outer = realpathSync.native(process.env.C615_EVIDENCE_ROOT);
+  assert.equal(lstatSync(outer).mode & 0o077, 0, 'the private evidence root for nested runs is accessible to other users');
+  const kept = join(outer, 'directory', 'nested', t.name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 80));
+  mkdirSync(kept, { recursive: true, mode: 0o700 });
+  assert.equal(readdirSync(kept).length, 0, 'a nested run would overwrite another run of the same control');
+  writeFileSync(join(kept, 'output.txt'), output);
+  if (existsSync(tracePath)) cpSync(tracePath, join(kept, 'trace.jsonl'));
+  cpSync(evidence, join(kept, 'evidence'), { recursive: true });
+  const stopped = /at (?:async )?TestContext\.<anonymous> \(file:\/\/[^)]*never-stop\.test\.mjs:(\d+):\d+\)/.exec(output);
+  const passed = /^✔ C615 Mac directory full tool exit census /m.test(output);
+  const digest = (path) => (existsSync(path) ? { bytes: lstatSync(path).size, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') } : null);
+  const record = { test: t.name, mode, admission, shared, status, firstStop: passed ? 'passed' : stopped ? `never-stop.test.mjs:${stopped[1]}` : 'not-reached', output: digest(join(kept, 'output.txt')), trace: digest(join(kept, 'trace.jsonl')) };
+  writeFileSync(join(kept, 'record.json'), JSON.stringify(record));
+  return { directory: kept, record };
+}
+
+/** The entries of a nested run's trace whose role and event are these. */
+const tracedAs = ({ trace }, role, event) => trace.filter((entry) => entry.role === role && entry.event === event);
+
+/** The caller's traced reads of the full `lsof` listing, in order. */
+const fullListings = (run) => tracedAs(run, 'caller', 'read-end').filter(({ full }) => full);
+
+/** Asserts that the nested control passed, and that its teardown found every process it started already ended and removed its scratch after the private copy. */
+function assertControlPassed(run) {
+  assert.equal(run.status, 0, `the nested C615 directory run failed:\n${run.output}`);
+  assert.match(run.output, /✔ C615 Mac directory full tool exit census/, 'the nested run did not pass the C615 directory control');
+  assert.equal(run.finalizer.bodyStage, 'passed', 'the nested control did not reach its last stage');
+  assert.deepEqual({ release: run.finalizer.release, tail: run.finalizer.tail, caller: run.finalizer.caller, command: run.finalizer.command, snapshot: run.finalizer.snapshot }, { release: 'written', tail: 'reaped', caller: 'reaped', command: 'absent', snapshot: 'closed-copy' }, 'the passing control did not finalize cleanly');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-kill-call'), [], 'the passing control signalled a process its teardown should have found ended');
+  assert.deepEqual(run.scratchLeft, [], 'the passing control kept its fixture scratch');
+  assert.ok(tracedAs(run, 'parent', 'copy-returned').length === 1, 'the passing control did not copy its fixture privately before removing it');
+}
+
+/** Asserts that the nested control failed at the source line `line` with `message`, and nowhere else. */
+function assertControlFailedAt(run, line, message) {
+  assert.equal(run.status, 1, `the nested C615 directory run did not fail:\n${run.output}`);
+  assert.match(run.output, /✖ C615 Mac directory full tool exit census/, 'the nested run did not fail the C615 directory control');
+  assert.ok(run.output.includes(message), `the nested control did not fail with ${JSON.stringify(message)}:\n${run.output}`);
+  assert.ok(run.output.includes(`never-stop.test.mjs:${line}:`), `the nested control did not fail at line ${line}:\n${run.output}`);
+}
+
+/**
+ * The source line in the C615 directory control that holds `text`, which it holds exactly once, or
+ * the line `offset` after it.
+ */
+const controlLine = (text, offset = 0) => {
+  const lines = readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n');
+  const begins = lines.indexOf("test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {");
+  const ends = lines.indexOf('});', begins);
+  assert.ok(begins >= 0 && ends > begins, 'the C615 directory control moved');
+  const found = lines.slice(begins, ends).flatMap((line, index) => (line.includes(text) ? [begins + index + 1] : []));
+  assert.equal(found.length, 1, `the C615 directory control no longer holds ${JSON.stringify(text)} exactly once`);
+  return found[0] + offset;
+};
+
+/** The control's lines at which the nested runs here stop it. */
+const GUARD = {
+  root: () => controlLine("'the shared private evidence root is accessible to other users'"),
+  admittedAfterRoot: () => controlLine('  evidenceRoot = privateRoot;', 1),
+  work: () => controlLine('  mkdirSync(work);'),
+  tailStarted: () => controlLine("'the direct tail fixture did not start'"),
+  admittedBeforeCaller: () => controlLine('    caller = spawn(process.execPath, [callerPath', -1),
+  callerStarted: () => controlLine("'the direct caller fixture did not start'"),
+  tailRunning: () => controlLine("'the recorded tail ended before the exit census began'"),
+  listing: () => controlLine('listsTail(first.stdout), `the actual full lsof listing did not answer'),
+  state: () => controlLine("'the actual intervening ps read did not answer with the stopped tail'"),
+};
+
+/** The first full listing the nested caller read, which must have been read. */
+function firstListing(run) {
+  const [first] = fullListings(run);
+  assert.ok(first, `the nested caller never read the full lsof listing:\n${run.output}`);
+  return first;
+}
+
+/** Asserts the parent's traced teardown signals, as `[who, signal, answer]` in order. */
+const assertKills = (run, expected, why) => assert.deepEqual(tracedAs(run, 'parent', 'handle-kill-answer').map(({ who, signal, answer }) => [who, signal, answer]), expected, why);
+
+/** The finalizer's record of each teardown step. */
+const steps = ({ finalizer }) => ({ release: finalizer.release, tail: finalizer.tail, caller: finalizer.caller, command: finalizer.command, snapshot: finalizer.snapshot });
+
+test('C615 directory listing D0: the unforced control passes on its first real full listing, read within its caller budget with the tail independently in work', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'observe');
+  assertControlPassed(run);
+  const first = firstListing(run);
+  assert.ok(first.status === 0 && first.error === null && first.stderr === '' && first.l0 === 'accepted' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real, accepted, selected answer naming the tail in work');
+  const { remaining } = tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1);
+  assert.ok(first.ms < remaining, 'the first full listing did not answer within the budget it was given');
+  assert.equal(tracedAs(run, 'caller', 'tail-state').find(({ ordinal }) => ordinal === 1).cwd, 'work', 'the tail was not independently in work at the first listing');
+  const [read] = tracedAs(run, 'parent', 'command-read');
+  assert.ok(read && read.status === 1 && read.stdout === '' && read.stderr === '', 'the teardown did not find the command absent on its first read');
+});
+
+test('C615 directory caller budget: the directory control gives its census 5,000 ms, so its first full listing has more than 1,000 ms to answer', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'observe');
+  assertControlPassed(run);
+  const { remaining } = tracedAs(run, 'caller', 'read-start').find(({ ordinal }) => ordinal === 1);
+  assert.ok(remaining > CLEANUP_BOUND && remaining <= DIRECTORY_CALLER_BOUND, `the directory caller does not give its census the 5,000 ms read budget: ${remaining} ms remained for its first listing`);
+  const [unread] = run.events.filter(({ event }) => event === 'directory.unread');
+  assert.equal(unread, undefined, 'the census recorded the directory unread');
+});
+
+test('C615 directory listing hold: a real first full listing held over 1,000 ms answers within the 5,000 ms caller budget, and the control passes on that first answer', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'hold-2000');
+  assertControlPassed(run);
+  const [released] = tracedAs(run, 'controller', 'released');
+  assert.ok(released && released.heldMs >= 2_000, 'the controller did not release the held listing after 2,000 ms');
+  const first = firstListing(run);
+  assert.ok(first.ms > 1_000 && first.ms < 5_000, `the held first listing did not complete between 1,000 and 5,000 ms: ${first.ms}`);
+  assert.ok(first.status === 0 && first.error === null && first.l0 === 'accepted' && first.selected && first.parse.cell === 'D0', 'the held first listing was not the real answer naming the tail in work');
+});
+
+test('C615 directory listing D2: a real first full listing that outlasts the caller budget leaves no qualifying answer, and the control fails at its first-listing guard', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'hold-until-gone');
+  assertControlFailedAt(run, GUARD.listing(), 'the actual full lsof listing did not answer with the recorded tail cwd');
+  assert.ok(run.output.includes('ETIMEDOUT'), 'the first-listing failure does not name the timed-out read');
+  const listings = fullListings(run);
+  assert.equal(listings.length, 1, 'the census read the full listing again after its timeout');
+  assert.ok(listings[0].error?.code === 'ETIMEDOUT' && listings[0].status === null && listings[0].l0 === 'timed-out' && !listings[0].selected, 'the first full listing did not time out unanswered');
+  assert.ok(tracedAs(run, 'controller', 'held-ended-unreleased').length === 1 && tracedAs(run, 'controller', 'released').length === 0, 'the held listing was released rather than timed out');
+  assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && /timed out after \d+ ms/.test(census)), 'the caller did not record the directory as unread for its timed-out listing');
+  assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown did not end the live tail L0 never reached');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'reaped', caller: 'reaped', command: 'absent', snapshot: 'closed-copy' }, 'the teardown did not end every process after the failed guard');
+  assert.deepEqual(run.scratchLeft, [], 'the scratch was kept after a clean finalization');
+});
+
+test('C615 directory listing Lstderr: a real first full listing returned with standard error is refused by L0 but selected by the control, which then fails at its stopped-state guard', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'stderr');
+  assertControlFailedAt(run, GUARD.state(), 'the actual intervening ps read did not answer with the stopped tail');
+  const first = firstListing(run);
+  assert.ok(first.status === 0 && first.error === null && first.stderr === 'c757 forced stderr\n' && first.l0 === 'stderr-rejected' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real answer with standard error that the control selects');
+  assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && census.includes('c757 forced stderr')), 'L0 did not refuse the listing for its standard error');
+  assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown did not end the live tail L0 never stopped');
+});
+
+test('C615 directory listing LEC: a real first full listing returned with an error that has no code is refused by L0, recorded with no code, and selected by the control', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'codeless-error');
+  assertControlFailedAt(run, GUARD.state(), 'the actual intervening ps read did not answer with the stopped tail');
+  const first = firstListing(run);
+  assert.ok(first.status === 0 && first.error?.code === null && first.l0 === 'error-rejected' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real answer carrying an error with no code');
+  const manifest = linesOf(join(run.root, 'fixture', 'returned-tool-reads'), 'manifest.jsonl');
+  const ended = manifest.find(({ kind, tool, args }) => kind === 'end' && tool === '/usr/sbin/lsof' && args.includes('-u'));
+  assert.ok(ended && ended.error?.name === 'Error' && ended.error.code === undefined && ended.status === 0 && ended.stdout.type === 'string', 'the private manifest did not keep the error object with its returned listing');
+  const traced = linesOf(join(run.root, 'fixture'), 'control.trace.jsonl').find(({ kind, tool, args }) => kind === 'read-end' && tool === '/usr/sbin/lsof' && args.includes('-u'));
+  assert.ok(traced && traced.error === null && traced.status === 0, 'the control trace did not record the codeless error as null');
+  assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && census.includes('c757 forced error with no code')), 'L0 did not refuse the listing for its error');
+});
+
+test('C615 directory listing F1: a tail independently working outside work is listed without the work path, and the control fails at its first-listing guard', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'tail-elsewhere');
+  assertControlFailedAt(run, GUARD.listing(), 'the actual full lsof listing did not answer with the recorded tail cwd');
+  const first = firstListing(run);
+  assert.ok(first.status === 0 && first.l0 === 'accepted' && first.selected && first.parse.p && first.parse.u && !first.parse.n && first.parse.cell === 'D5', 'the first answer did not list the tail without the work path');
+  const [state] = tracedAs(run, 'caller', 'tail-state');
+  assert.ok(state.cwd === 'different' && state.named.endsWith('/elsewhere'), 'the tail was not independently observed outside work');
+  assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown did not end the tail L0 left');
+});
+
+test('C615 directory teardown T0/T6 no root: a control stopped before its private root makes no release, signal, command read, private write or scratch', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'observe', { shared: true });
+  assertControlFailedAt(run, GUARD.root(), 'the shared private evidence root is accessible to other users');
+  for (const event of ['handle-returned', 'handle-kill-call', 'write', 'command-read', 'copy-start']) assert.deepEqual(tracedAs(run, 'parent', event), [], `the teardown of a control with no root traced ${event}`);
+  assert.deepEqual(readdirSync(run.evidence), [], 'a control stopped before its private root wrote under it');
+  assert.deepEqual(run.scratchLeft, [], 'a control stopped before its fixture made scratch');
+});
+
+test('C615 directory teardown T0/T6 root with no directory: a control stopped after its private root finalizes and inventories it, with no release, signal, command read, copy or scratch', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'stop-after-root', { admission: true });
+  assertControlFailedAt(run, GUARD.admittedAfterRoot(), 'the focused runner closed new test work before fixture start');
+  for (const event of ['handle-returned', 'handle-kill-call', 'command-read', 'copy-start']) assert.deepEqual(tracedAs(run, 'parent', event), [], `the teardown of a control with no directory traced ${event}`);
+  assert.deepEqual(tracedAs(run, 'parent', 'write').map(({ name }) => name), ['finalizer.json', 'finalizer.json', 'inventory.json'], 'the teardown did not write only its finalizer and inventory');
+  assert.deepEqual(steps(run), { release: 'not-started', tail: 'never-started', caller: 'never-started', command: 'never-started', snapshot: 'closed-copy' }, 'the finalizer does not record a teardown with nothing started');
+  assert.ok(run.inventory.discovered.length === 0 && run.inventory.expected.filter(({ state }) => state !== 'never-produced').map(({ name }) => name).join() === 'finalizer.json', 'the inventory names a fixture file a control with no directory never made');
+  assert.deepEqual(run.scratchLeft, [], 'a control stopped before its fixture made scratch');
+});
+
+test('C615 directory teardown T6 partial setup: a control whose work directory cannot be made copies the partial fixture privately, then removes its scratch', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'work-unmade');
+  assertControlFailedAt(run, GUARD.work(), 'c757 forced work directory failure');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-returned'), [], 'a control stopped in setup started a process');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'never-started', caller: 'never-started', command: 'never-started', snapshot: 'closed-copy' }, 'the finalizer does not record a partial setup with nothing started');
+  const produced = run.inventory.expected.filter(({ state }) => state !== 'never-produced').map(({ name }) => name).sort();
+  assert.deepEqual(produced, ['finalizer.json', 'fixture/begin-exit', 'fixture/release'], 'the inventory does not match the partial fixture');
+  assert.deepEqual(run.inventory.discovered.map(({ name }) => name).sort(), ['fixture/begin-exit', 'fixture/release'], 'the private copy does not hold exactly the partial fixture');
+  assert.ok(tracedAs(run, 'parent', 'copy-returned').length === 1, 'the partial fixture was not copied privately');
+  assert.deepEqual(run.scratchLeft, [], 'the scratch was kept after a clean finalization of the partial fixture');
+});
+
+test('C615 directory teardown T2/T3/T5 live tail, no caller: a control stopped before its caller starts kills the live tail and reads no command', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'stop-at-caller', { admission: true });
+  assertControlFailedAt(run, GUARD.admittedBeforeCaller(), 'the focused runner closed new test work before fixture start');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-returned').map(({ who, pidClass }) => [who, pidClass]), [['tail', 'positive-safe']], 'the control did not start exactly a tail with a valid pid');
+  assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown did not answer a kill of the live tail');
+  assert.ok(tracedAs(run, 'parent', 'handle-exit').some(({ who, signal }) => who === 'tail' && signal === 'SIGKILL'), 'the live tail did not end by the teardown kill');
+  assert.deepEqual(tracedAs(run, 'parent', 'command-read'), [], 'the teardown read a command no caller started');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'reaped', caller: 'never-started', command: 'never-started', snapshot: 'closed-copy' }, 'the finalizer does not record the live tail ended with no caller');
+  assert.deepEqual(run.scratchLeft, [], 'the scratch was kept after a clean finalization');
+});
+
+test('C615 directory teardown T3/T5 cooperative caller: a control failing while its caller waits releases it to end on its own, and the command is gone at its first read', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'tail-ends');
+  assertControlFailedAt(run, GUARD.tailRunning(), 'the recorded tail ended before the exit census began');
+  assertKills(run, [], 'the teardown signalled a tail already ended or a caller that ends on its own');
+  assert.ok(tracedAs(run, 'parent', 'handle-exit').some(({ who, code }) => who === 'caller' && code === 0), 'the released caller did not end on its own with status 0');
+  const [read] = tracedAs(run, 'parent', 'command-read');
+  assert.ok(read && read.status === 1 && read.stdout === '', 'the command was not absent at the teardown first read');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'reaped', caller: 'reaped', command: 'absent', snapshot: 'closed-copy' }, 'the finalizer does not record the cooperative end');
+});
+
+test('C615 directory teardown T4/T5/T6 forced caller: a caller the failed release never frees is killed, a stopped command is read present then absent, and the scratch is kept', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'begin-exit-fails');
+  assertControlFailedAt(run, GUARD.tailRunning(), 'the recorded tail ended before the exit census began');
+  assert.ok(tracedAs(run, 'parent', 'write-failed-by-forcing').length === 1, 'the teardown release write was not refused');
+  const kills = tracedAs(run, 'parent', 'handle-kill-call');
+  assert.ok(kills.length === 1 && kills[0].who === 'caller' && kills[0].signal === 'SIGKILL' && kills[0].pidClass === 'positive-safe' && kills[0].ended === false, 'the teardown did not force the live caller once');
+  assertKills(run, [['caller', 'SIGKILL', true]], 'the forced caller kill was not answered');
+  assert.ok(tracedAs(run, 'parent', 'handle-exit').some(({ who, signal }) => who === 'caller' && signal === 'SIGKILL'), 'the forced caller did not end by its kill');
+  const reads = tracedAs(run, 'parent', 'command-read');
+  const command = reads[0]?.command;
+  assert.ok(reads.length >= 2 && reads[0].status === 0 && new RegExp(`^\\s*${command}\\s+T`, 'm').test(reads[0].stdout), 'the stopped command was not read present first');
+  const absent = reads.findIndex(({ status }) => status === 1);
+  assert.ok(absent > 0 && reads.slice(0, absent).every(({ status }) => status === 0) && reads.slice(absent).every(({ status, stdout, stderr }) => status === 1 && stdout === '' && stderr === ''), `the command was not read present, then absent once it went: ${JSON.stringify(reads.map(({ status, stdout }) => [status, stdout]))}`);
+  assert.deepEqual(steps(run), { release: 'failed', tail: 'reaped', caller: 'reaped', command: 'absent', snapshot: 'partial-copy-source-retained' }, 'the finalizer does not record the failed release with every process ended');
+  assert.equal(run.scratchLeft.length, 1, 'the scratch was not kept after an unconfirmed finalization');
+  assert.equal(run.inventory.completeness, 'unconfirmed-partial', 'the inventory claims a closed copy');
+});
+
+test('C615 directory teardown T2 failed tail start: a tail handle with no pid is not signalled, and its error leaves the scratch kept', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'tail-unstartable');
+  assertControlFailedAt(run, GUARD.tailStarted(), 'the direct tail fixture did not start');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-returned').map(({ who, pidClass }) => [who, pidClass]), [['tail', 'undefined']], 'the failed tail start did not return a handle with no pid');
+  assert.ok(tracedAs(run, 'parent', 'handle-error').some(({ who, error }) => who === 'tail' && error.code === 'ENOENT'), 'the failed tail start did not record its error');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-kill-call'), [], 'the teardown signalled a tail handle with no pid');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'unresolved', caller: 'never-started', command: 'never-started', snapshot: 'partial-copy-source-retained' }, 'the finalizer credits a failed tail start with a clean end');
+  assert.equal(run.scratchLeft.length, 1, 'the scratch was not kept after an unconfirmed finalization');
+});
+
+test('C615 directory teardown T3 failed caller start: a caller handle with no pid is not signalled, the live tail is, and the scratch is kept', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 directory control it runs requires macOS');
+  const run = await listingRun(t, 'caller-unstartable');
+  assertControlFailedAt(run, GUARD.callerStarted(), 'the direct caller fixture did not start');
+  assert.deepEqual(tracedAs(run, 'parent', 'handle-returned').map(({ who, pidClass }) => [who, pidClass]), [['tail', 'positive-safe'], ['caller', 'undefined']], 'the failed caller start did not return a handle with no pid');
+  assertKills(run, [['tail', 'SIGKILL', true]], 'the teardown signalled other than the live tail');
+  assert.deepEqual(tracedAs(run, 'parent', 'command-read'), [], 'the teardown read a command no caller started');
+  assert.deepEqual(steps(run), { release: 'written', tail: 'reaped', caller: 'unresolved', command: 'unresolved', snapshot: 'partial-copy-source-retained' }, 'the finalizer credits a failed caller start with a clean end');
+  assert.equal(run.scratchLeft.length, 1, 'the scratch was not kept after an unconfirmed finalization');
 });
 
 // proves R-STATE-26
