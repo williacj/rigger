@@ -447,6 +447,22 @@ export const gitRecording = (directory) => fixture(directory, 'git', ['printf \'
 /** Every call the recording stand-in in `directory` was sent, one line each. */
 export const gitCalls = (directory) => (existsSync(join(directory, 'git-calls')) ? read(directory, 'git-calls').split('\n') : []);
 
+/** Performs a fixed amount of finite filesystem work and reports where a shared deadline falls. */
+export function finiteDirectoryReads(directory, reads, deadline, report, phase) {
+  assert.ok(Number.isSafeInteger(reads) && reads >= 0 && reads <= 2_000_000, 'finite directory read count is out of range');
+  report(`${phase}.entry`, { path: directory, reads });
+  let crossed = false;
+  for (let index = 0; index < reads; index += 1) {
+    readdirSync(directory);
+    if (!crossed && index % 1000 === 0 && performance.now() >= deadline) {
+      crossed = true;
+      report(`${phase}.exhausted`, { path: directory, readIndex: index, reads });
+    }
+  }
+  report(`${phase}.return`, { path: directory, reads, crossed });
+  return crossed;
+}
+
 /**
  * Starts, outside Rigger, a process group named `name` in `directory`, as a dead engine leaves
  * one: its leader is no child of this process, so the system reaps it once it dies, as it does a
@@ -454,21 +470,130 @@ export const gitCalls = (directory) => (existsSync(join(directory, 'git-calls'))
  * killed. Settles once the `tail` runs, on the group's id, which is its leader's pid, the
  * leader's start time, and the member's pid, or rejects once the test `t` ends first.
  */
-export async function startGroup(t, directory, name) {
+export async function startGroup(t, directory, name, { observe, noMatchPolls = 0, pollFailures = 0, psCommand = '/bin/ps', markerGate, startGate, launchGate, work = {}, deadline = Infinity } = {}) {
+  const report = (phase, fields = {}) => observe?.(phase, fields);
+  const workAt = (phase) => {
+    if (work[phase] === undefined) return;
+    if (finiteDirectoryReads(directory, work[phase], deadline, report, `${phase}.work`)) {
+      assert.fail(`FM-${phase}-C0(8) S8-F-bound: finite fixture work consumed the shared 20,000 ms deadline`);
+    }
+  };
+  const quotedPs = `'${psCommand.replaceAll("'", "'\\''")}'`;
+  const quotedGate = markerGate === undefined ? null : `'${markerGate.replaceAll("'", "'\\''")}'`;
+  const now = '/usr/bin/perl -MTime::HiRes=time -e "print time"';
   if (!existsSync(join(directory, 'hold'))) writeFileSync(join(directory, 'hold'), '');
+  const memberLine = noMatchPolls === 0
+    ? '/usr/bin/tail -f "$here/hold" &'
+    : `(count=0; while [ "$count" -lt ${noMatchPolls} ]; do /bin/ps -p $$ -o pid= >/dev/null; count=$((count + 1)); done; exec /usr/bin/tail -f "$here/hold") &`;
+  const poll = observe === undefined
+    ? ['while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done']
+    : [
+      ...(pollFailures === 0 ? [] : [
+        `count=0; while [ "$count" -lt ${pollFailures} ]; do`,
+        `  started=$(${now})`,
+        '  printf "entry|%s|%s\\n" "$count" "$started" >> "$0.ps-polls"',
+        '  answer=$(/bin/ps -o ucomm= -p 99999999 2>&1)',
+        '  status=$?',
+        `  returned=$(${now})`,
+        '  printf "return|%s|%s|%s|%s\\n" "$count" "$returned" "$status" "$answer" >> "$0.ps-polls"',
+        '  count=$((count + 1))',
+        'done',
+      ]),
+      `pollIndex=${pollFailures}`,
+      'while :; do',
+      `  started=$(${now})`,
+      '  printf "entry|%s|%s\\n" "$pollIndex" "$started" >> "$0.ps-polls"',
+      `  answer=$(${quotedPs} -o ucomm= -p $! 2>&1)`,
+      '  status=$?',
+      `  returned=$(${now})`,
+      '  printf "return|%s|%s|%s|%s\\n" "$pollIndex" "$returned" "$status" "$answer" >> "$0.ps-polls"',
+      '  pollIndex=$((pollIndex + 1))',
+      '  case "$answer" in tail*) [ "$status" -eq 0 ] && break ;; esac',
+      'done',
+    ];
+  report('warm.entry');
+  workAt('warm');
   const script = fixture(directory, name, [
-    '/usr/bin/tail -f "$here/hold" &',
-    'while ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -q "^tail"; do :; done',
+    memberLine,
+    ...poll,
+    ...(quotedGate === null ? [] : ['echo waiting > "$0.marker-gate"', `IFS= read -r answer < ${quotedGate}`]),
     'echo $$ $! > "$0.tmp" && /bin/mv "$0.tmp" "$0.pids"',
     'wait',
   ].join('\n'));
+  report('warm.return', { script });
   // Perl forks, and the fork makes a group of its own and runs the script as its leader, while
   // the process this spawned exits.
+  report('launcher.entry');
+  workAt('launcher');
+  if (launchGate !== undefined) {
+    writeFileSync(`${script}.launch-gate`, 'waiting');
+    report('launcher.gate.entry', { path: launchGate });
+    await until(() => existsSync(launchGate), t);
+    report('launcher.gate.return', { path: launchGate });
+  }
   const launcher = spawn('/usr/bin/perl', ['-e', 'exit if fork; setpgrp(0, 0); exec @ARGV or die', script], { stdio: 'ignore' });
   await once(launcher, 'exit');
-  await until(() => existsSync(`${script}.pids`), t);
+  report('launcher.exit', { status: launcher.exitCode, signal: launcher.signalCode });
+  const polls = `${script}.ps-polls`;
+  let seen = 0;
+  let answered = 0;
+  let tailAnswered = false;
+  const startedByPoll = new Map();
+  let gateSeen = false;
+  report('marker.entry');
+  const drain = () => {
+    if (observe !== undefined && existsSync(polls)) {
+      const lines = readFileSync(polls, 'utf8').split('\n');
+      for (const line of lines.slice(seen, -1)) {
+        const [kind, indexText, timestamp, statusText, ...answerParts] = line.split('|');
+        const index = Number(indexText);
+        if (kind === 'entry') {
+          const startedEpochMs = Number(timestamp) * 1000;
+          startedByPoll.set(index, startedEpochMs);
+          report('ps.entry', { index, startedEpochMs });
+        } else if (kind === 'return') {
+          const answer = answerParts.join('|');
+          const status = Number(statusText);
+          const returnedEpochMs = Number(timestamp) * 1000;
+          const startedEpochMs = startedByPoll.get(index);
+          report('ps.poll', { index, status, answer, startedEpochMs, returnedEpochMs, durationMs: returnedEpochMs - startedEpochMs, outcome: status !== 0 ? 'failure' : answer.trim() === 'tail' ? 'tail' : 'no-match' });
+          if (status === 0 && answer.trim() === 'tail') tailAnswered = true;
+          answered += 1;
+        }
+        seen += 1;
+      }
+    }
+  };
+  try {
+    if (work.marker !== undefined) {
+      await until(() => { drain(); return tailAnswered; }, t);
+      workAt('marker');
+    }
+    await until(() => {
+      drain();
+      if (!gateSeen && existsSync(`${script}.marker-gate`)) {
+        gateSeen = true;
+        report('marker.gate.entry', { path: markerGate });
+      }
+      return existsSync(`${script}.pids`);
+    }, t);
+  } finally {
+    drain();
+  }
+  report('marker.return', { polls: answered });
   const [leader, member] = readFileSync(`${script}.pids`, 'utf8').trim().split(' ').map(Number);
-  return { group: leader, leader, started: startOf(leader), member };
+  report('marker.read', { leader, member });
+  report('startOf.entry', { leader });
+  workAt('startOf');
+  if (startGate !== undefined) {
+    writeFileSync(`${script}.start-gate`, 'waiting');
+    report('startOf.gate.entry', { path: startGate });
+    await until(() => existsSync(startGate), t);
+    report('startOf.gate.return', { path: startGate });
+  }
+  const started = startOf(leader);
+  report('startOf.return', { started });
+  return { group: leader, leader, started, member };
 }
 
 /**
