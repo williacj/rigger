@@ -405,3 +405,24 @@ test('a writer that fails to announce a file after the wait\'s first read found 
   assert.equal(ended.signal, 'SIGTERM');
   assert.deepEqual(readdirSync(agent.dir).filter((name) => name.endsWith('.awaited')), []);
 });
+
+// Regression for #622's cause in a directory made read-only while the wait is pending: the file
+// is written after the wait's first read found it missing, the writer has exited, and the wait,
+// told of it, settles though it cannot remove its FIFO, which stays behind closed, and says so.
+test('a run told of its file after its directory was made read-only settles, and leaves its FIFO closed and says so', SETTLES_WITHIN, async (t) => {
+  const agent = awaiting();
+  const { gate, open } = gateIn();
+  const waiter = started(t, agent, 'architect', stopping(`wrote-${CARD}-reviewer`, gate, 'after'));
+  await waiter.said('read false');
+  const writer = started(t, agent, 'reviewer');
+  assert.equal((await writer.exited).code, 0, writer.err());
+  chmodSync(agent.dir, 0o555);
+  t.after(() => chmodSync(agent.dir, 0o755));
+  await open();
+
+  const ended = await waiter.exited;
+  assert.equal(ended.code, 5, ended.err());
+  assert.match(ended.err(), /left .*\.awaited behind, closed: .*EACCES/);
+  assert.ok(lstatSync(join(agent.dir, FIFO)).isFIFO());
+  assert.throws(() => openSync(join(agent.dir, FIFO), constants.O_WRONLY | constants.O_NONBLOCK), { code: 'ENXIO' });
+});

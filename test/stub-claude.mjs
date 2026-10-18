@@ -278,7 +278,9 @@ function leaveTail(dir, card, role, cwd, options) {
  *
  * It rejects where the FIFO cannot be made or opened, or carries anything but `w` before the file
  * is heard of. However it ends, a `SIGTERM` included, it closes the FIFO and removes it, and it
- * removes no FIFO it did not make.
+ * removes no FIFO it did not make. A FIFO it cannot remove, as in a directory made read-only while
+ * it waited, stays behind closed, and the run says so on its standard error: the wait still ends as
+ * it would have, so a file it was told of still settles it.
  */
 function written(path) {
   const fifo = awaited(path);
@@ -288,7 +290,13 @@ function written(path) {
     const close = () => {
       process.off('SIGTERM', cancelled);
       heard?.destroy();
-      if (made) rmSync(fifo, { force: true });
+      if (made) {
+        try {
+          rmSync(fifo, { force: true });
+        } catch (failure) {
+          process.stderr.write(`the stand-in left ${fifo} behind, closed: ${failure.message}\n`);
+        }
+      }
       made = false;
     };
     // Removes the FIFO, then ends the run on the signal as it would have ended without this listener.
