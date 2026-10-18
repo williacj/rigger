@@ -614,11 +614,19 @@ the group's processes.
 
 Where the adapter named a folder, L1 lists it before the command starts. Once L0 has settled, where
 the command ran, L1 removes each path under that folder that the listing did not hold, and follows
-no symbolic link. Where L1 could not list the folder, or the directory it lies in, before the
-start, or at the removal either is no longer the one it listed, by real path, device and inode, L1
-removes nothing there. A folder absent when L1 listed it holds only paths the session added. L1
-removes nothing outside that folder. The dispatch's end names each path under that folder that L1
-left, and why, and, where it removed nothing there, why.
+no symbolic link. L1 removes nothing there in any of these cases:
+
+- the folder exists when L1 lists it, and L1 cannot read it;
+- the folder is absent when L1 lists it, and L1 cannot read the directory it would lie in;
+- the folder existed when L1 listed it, and at the removal the folder at its path is not the one
+  listed, by real path, device and inode;
+- the folder was absent when L1 listed it, and at the removal the directory it lies in is not the
+  one listed, by real path, device and inode.
+
+A folder absent when L1 lists it is a listing L1 made, not one it could not make. Every path such a
+folder holds at the removal is one the session added. L1 removes nothing outside that folder. The
+dispatch's end names each path the session added under that folder that L1 left, and why. Where L1
+did not remove there, the end names why. It names no path that was in the folder when L1 listed it.
 
 L1 then records the dispatch's end, after any removal under the folder. It records one end for
 every dispatch whose start it recorded, and a command that never started is included. Each end
