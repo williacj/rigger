@@ -966,8 +966,9 @@ This decision adds no requirement row.
 
 ### Notes
 
-The owner ruled rules 1, 2 and 4 in U2 Q2, and rule 3 in U3.1, on #740. A consumer that can only
-refuse such a card is left stuck, so the configuration says where each category goes.
+The owner ruled rules 1 and 2, and rule 4's once-routing, in U2 Q2. Rule 3 is U3.1, and rule 4's
+exception for a deleted record is U5.3, all on #740. A consumer that can only refuse such a card is
+left stuck, so the configuration says where each category goes.
 
 This decision cites `D3` and supersedes nothing. `D3` rule 1 bounds the paths to the owner, and a
 role destination adds none. `D3` rule 2 already gives the cost of routing to the consumer.
