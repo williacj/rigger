@@ -466,11 +466,27 @@ test('every gate and self-hosting job selects the newest cached Node 24 before c
 
       const runner = temporaryDirectory('rigger-workflow-node-cache-');
       const cache = join(runner, 'tool-cache');
-      for (const version of ['22.99.0', '24.9.9', '24.21.0']) mkdirSync(join(cache, 'node', version, 'x64', 'bin'), { recursive: true });
+      for (const version of ['22.99.0', '24.1.0', '24.9.9', '24.21.9', '24.21.10']) mkdirSync(join(cache, 'node', version, 'x64', 'bin'), { recursive: true });
       const path = join(runner, 'github-path');
       const ran = runStep(select, { RUNNER_TOOL_CACHE: cache, GITHUB_PATH: path }, {}, runner);
       assert.equal(ran.status, 0, `${workflow.name}: ${job.id}: ${ran.stdout}${ran.stderr}`);
-      assert.equal(readFileSync(path, 'utf8'), `${join(cache, 'node', '24.21.0', 'x64', 'bin')}\n`, `${workflow.name}: ${job.id}`);
+      assert.equal(readFileSync(path, 'utf8'), `${join(cache, 'node', '24.21.10', 'x64', 'bin')}\n`, `${workflow.name}: ${job.id}`);
+    }
+  }
+});
+
+test('every gate and self-hosting job refuses a cache without Node 24', () => {
+  for (const workflow of [template, live, selfHosting()]) {
+    for (const job of jobsOf(workflow)) {
+      const runner = temporaryDirectory('rigger-workflow-node-cache-');
+      const cache = join(runner, 'tool-cache');
+      mkdirSync(join(cache, 'node', '22.99.0', 'x64', 'bin'), { recursive: true });
+      const path = join(runner, 'github-path');
+      const select = stepNamed(job, 'Select Node 24 from the runner tool cache');
+      const ran = runStep(select, { RUNNER_TOOL_CACHE: cache, GITHUB_PATH: path }, {}, runner);
+      assert.equal(ran.status, 1, `${workflow.name}: ${job.id}: ${ran.stdout}${ran.stderr}`);
+      assert.match(ran.stdout, /Node 24 is absent from the runner tool cache/, `${workflow.name}: ${job.id}`);
+      assert.equal(existsSync(path), false, `${workflow.name}: ${job.id}`);
     }
   }
 });
