@@ -48,6 +48,18 @@ const UNREACHED = 15_000;
 const CLEANUP_BOUND = 1_000;
 
 /**
+ * The exit cells whose ordinary test may take a traced real-deadline cutoff in place of its
+ * answered scenario, as owner ruling O268 allows, and the state that carries that branch: forcing
+ * for a controlled cell, the controlled tests that require an answered confirmation, each exit's
+ * classification, and the result of each exit that took the cutoff.
+ */
+const CUTOFF_CELLS = ['U1', 'U2', 'C1', 'C2', 'B', 'A', 'X'];
+const exitForcings = new WeakMap();
+const exitAnswerRequired = new WeakSet();
+const exitResults = new WeakMap();
+const exitCutoffs = new Set();
+
+/**
  * The read timeout the C615 Mac directory control's caller alone gives its call, in place of
  * `CLEANUP_BOUND`: a whole-user `lsof` listing can outlast 1,000 ms on a loaded host, which leaves
  * that control no answer to read (#757). A judgment, not a measured threshold: it is L0's own
@@ -221,6 +233,45 @@ const CALLER = [
   "const kill = (target, name) => { appendFileSync(join(here, 'pairs'), `${JSON.stringify([target, name, Date.now()])}\\n`); if (name === 'SIGKILL' && options.hangAfter && target === hangs()) { appendFileSync(join(here, 'hang'), ''); trace('named-kill', { target }); } if (options.postKillTrace) { try { const answer = signalled(target, name); if (name === 0) trace('signal-0', { target, answer: 'yes' }); return answer; } catch (error) { if (name === 0) trace('signal-0', { target, answer: error.code ?? error.message }); throw error; } } return signalled(target, name); };",
   "const emitter = { emit: (event, fields) => { appendFileSync(join(here, 'events'), `${JSON.stringify({ event, ...fields })}\\n`); trace('event', { event, ...fields }); } };",
   "const onExit = (group, ending) => appendFileSync(join(here, 'ending'), JSON.stringify(ending));",
+  "if (options.ps === 'ps-sighted') {",
+  "  const exitTrace = join(here, 'exit-trace.jsonl');",
+  "  const exitPlan = existsSync(join(here, 'exit-forcing.json')) ? JSON.parse(readFileSync(join(here, 'exit-forcing.json'), 'utf8')) : { signals: [] };",
+  "  let exitSeq = 0;",
+  "  const exitNote = (row) => appendFileSync(exitTrace, JSON.stringify({ seq: ++exitSeq, ns: process.hrtime.bigint().toString(), ...row }) + '\\n');",
+  "  const exitFrames = ['within', 'readingNow', 'runNow', 'census', 'beforeKill', 'emptied'];",
+  "  const exitCounts = new Map(); let exitStep = 0; const exitClock = Date.now;",
+  "  Date.now = () => {",
+  "    const caller = new Error().stack?.split('\\n')[2] ?? '';",
+  "    const frame = exitFrames.find((name) => caller.includes(`at ${name} (`));",
+  "    if (frame === undefined) return exitClock();",
+  "    if (frame === 'within') exitStep += 1;",
+  "    const key = `${exitStep}:${frame}`; const nth = (exitCounts.get(key) ?? 0) + 1; exitCounts.set(key, nth);",
+  "    const at = exitClock();",
+  "    exitNote({ kind: 'clock', step: exitStep, frame, nth, at });",
+  "    return at;",
+  "  };",
+  "  const exitSpawn = child.spawnSync;",
+  "  child.spawnSync = function exitObservedRead(tool, argv, settings) {",
+  "    if (tool !== join(here, 'ps-sighted')) return exitSpawn.apply(this, arguments);",
+  "    exitNote({ kind: 'spawn', argv, timeout: settings?.timeout ?? null });",
+  "    let result;",
+  "    try { result = exitSpawn.apply(this, arguments); } catch (error) { exitNote({ kind: 'threw', code: error.code ?? null, message: error.message }); throw error; }",
+  "    exitNote({ kind: 'returned', status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: typeof result.stdout === 'string' ? result.stdout : null, stderr: typeof result.stderr === 'string' ? result.stderr : null });",
+  "    return result;",
+  "  };",
+  "  syncPostKillBuiltinESMExports();",
+  "  const exitSignal = process.kill; const exitSignals = new Map();",
+  "  process.kill = function exitObservedSignal(target, name) {",
+  "    const key = `${exitStep}:${target}:${name}`; const nth = (exitSignals.get(key) ?? 0) + 1; exitSignals.set(key, nth);",
+  "    const fault = exitPlan.signals.find((rule) => rule.step === exitStep && rule.name === name && rule.nth === nth && target === -Number(readFileSync(join(here, 'group.pid'), 'utf8')));",
+  "    try {",
+  "      if (fault) throw Object.assign(new Error(`kill ${fault.code}`), { code: fault.code, syscall: 'kill' });",
+  "      const answer = exitSignal.apply(process, arguments);",
+  "      exitNote({ kind: 'signal', target, name, ok: true });",
+  "      return answer;",
+  "    } catch (error) { exitNote({ kind: 'signal', target, name, ok: false, code: error.code ?? null, message: error.message, forced: Boolean(fault) }); throw error; }",
+  "  };",
+  "}",
   "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "prepareSighting(here);",
@@ -616,7 +667,24 @@ async function censusExit(t, cell, afterKill = 'omit') {
   else if (afterKill === 'zombie') joinedLate(directory);
   else holdingTwo(directory);
   sightingPs(directory, { cell, afterKill, prepared });
+  const forcing = exitForcings.get(t);
+  if (forcing) forceExit(directory, forcing);
   const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
+  if (CUTOFF_CELLS.includes(cell)) {
+    const exit = exitSighting(directory, pidIn(directory, 'group'));
+    exitResults.set(t, { exit, events, directory });
+    t.diagnostic(JSON.stringify({ exitSighting: exitSummary(exit) }));
+    if (exitAnswerRequired.has(t) || process.env.EXIT_SIGHTING_REQUIRES === 'answered') {
+      assert.equal(exit.branch, 'answered', `the controlled answered exit took the ${exit.branch} branch`);
+      assert.equal(exit.partialCensus, false, 'the controlled answered exit returned a partial census, which carries no cache proof');
+    }
+    assert.ok(exit.branch === 'answered' || exit.branch === 'cutoff', `the exit took the ${exit.branch} branch, which earns neither the answered scenario nor the cutoff: ${JSON.stringify(exitSummary(exit))}`);
+    if (exit.branch === 'answered') {
+      const two = pidIn(directory, 'two');
+      assert.ok(exit.probes.some(({ target, argv, end, start }) => target === two && argv === `-p ${two} -o stat=` && end >= start), `no real per-pid probe of the member was recorded for the answered confirmation: ${JSON.stringify(exit.probes)}`);
+    }
+    if (exit.branch === 'cutoff') return exitCutoff(directory, exit, { prepared, status, stderr, events });
+  }
   if (prepared) {
     const observation = sightingAttempts.get(directory);
     const retained = observation?.snapshotReport;
@@ -624,7 +692,8 @@ async function censusExit(t, cell, afterKill = 'omit') {
     assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
     assert.equal(retained.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
     assert.deepEqual(retained.errors, [], 'private retention reported an error');
-    assertPreparedCache(join(observation.target, 'settled', 'fixture'), cell);
+    if (!(cell === 'A' && exitResults.get(t)?.exit.partialCensus)) assertPreparedCache(join(observation.target, 'settled', 'fixture'), cell);
+    else t.diagnostic(JSON.stringify({ exitSighting: 'partial census: O270 C3 window, no prepared-cache proof claimed' }));
   }
   const group = pidIn(directory, 'group');
   const two = pidIn(directory, 'two');
@@ -669,6 +738,491 @@ async function censusExit(t, cell, afterKill = 'omit') {
   t.diagnostic(JSON.stringify({ cell: `${cell}-exit-${afterKill}`, group, members: [pidIn(directory, 'one'), two], mark, trace, kills: pairs, events }));
   if (afterKill === 'omit' && cell !== 'X') assertPostKillOmission(trace, group, two, 'exit');
   return { directory, events, group, two, trace };
+}
+
+/**
+ * The lines `forceExit` puts at the head of an exit cell's `ps` stand-in, below its warming exit.
+ * Each pre-kill read is counted by kind, and a `force.<kind>.<n>` file in the cell's directory
+ * makes the nth read of that kind hang until L0 kills it, answer with no rows, fail with standard
+ * error, answer with no rows and status 1 (an empty answer `runOnce` also accepts), answer as the
+ * stand-in does without the group leader, end the target and wait until it is
+ * reaped or (its parent stopped) a zombie before answering, stop X0's reaping parent before the
+ * X-reap read waits on it, or answer as the stand-in does and then fail or hang. Every forced read
+ * is logged to `forced`.
+ */
+const EXIT_FORCING = [
+  'case "$*" in',
+  '  "-ww -g "*" -o pid=,stat=") force_kind=state ;;',
+  '  "-ww -g "*" -o pid=,command=") force_kind=command ;;',
+  '  "-p "*" -o ucomm=") force_kind=name ;;',
+  '  "-g "*" -o pid=,stat=") force_kind=confirm ;;',
+  '  "-p "*" -o pid=,stat=") force_kind=fallback ;;',
+  '  *) force_kind=other ;;',
+  'esac',
+  'if [ -z "$EXIT_FORCE_PASS" ] && [ ! -f "$here/hang" ]; then',
+  '  force_n=$(( $(/bin/cat "$here/force-count.$force_kind" 2>/dev/null || echo 0) + 1 ))',
+  '  printf "%s" "$force_n" > "$here/force-count.$force_kind"',
+  '  if [ -f "$here/force.$force_kind.$force_n" ]; then',
+  '    force_action=$(/bin/cat "$here/force.$force_kind.$force_n")',
+  '    printf "%s %s %s\\n" "$force_kind" "$force_n" "$force_action" >> "$here/forced"',
+  '    case "$force_action" in',
+  '      hang) exec /usr/bin/tail -f /dev/null ;;',
+  '      empty) exit 0 ;;',
+  '      empty-status-1) exit 1 ;;',
+  '      fail) printf "forced failure\\n" >&2; exit 2 ;;',
+  '      omit-leader) force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@") || exit $?; printf "%s\\n" "$force_answer" | /usr/bin/awk -v pid="$(/bin/cat "$here/group.pid")" \'$1 != pid\'; exit 0 ;;',
+  '      end-target-absent) force_target=$(/bin/cat "$here/two.pid"); /bin/kill -9 "$force_target" 2> /dev/null; while /bin/ps -p "$force_target" > /dev/null 2>&1; do :; done; printf "target %s absent\\n" "$force_target" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      end-target-zombie) force_target=$(/bin/cat "$here/two.pid"); force_parent=$(/bin/ps -o ppid= -p "$force_target" | /usr/bin/tr -d " "); /bin/kill -STOP "$force_parent"; /bin/kill -9 "$force_target" 2> /dev/null; until /bin/ps -p "$force_target" -o stat= | /usr/bin/grep -q "^Z"; do :; done; printf "target %s %s parent %s stopped\\n" "$force_target" "$(/bin/ps -p "$force_target" -o stat= | /usr/bin/tr -d " ")" "$force_parent" >> "$here/forced"; force_answer=$(EXIT_FORCE_PASS=1 "$0" "$@"); force_status=$?; /bin/kill -CONT "$force_parent"; printf "%s\\n" "$force_answer"; exit $force_status ;;',
+  '      hold-reaper) force_parent=$(/bin/ps -o ppid= -p "$(/bin/cat "$here/two.pid")" | /usr/bin/tr -d " "); printf "%s" "$force_parent" > "$here/held-reaper"; /bin/kill -STOP "$force_parent"; printf "reaper %s stopped\\n" "$force_parent" >> "$here/forced"; EXIT_FORCE_PASS=1 exec "$0" "$@" ;;',
+  '      answer-then-fail) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; printf "forced failure\\n" >&2; exit 2 ;;',
+  '      answer-then-hang) EXIT_FORCE_PASS=1 "$0" "$@" > /dev/null; exec /usr/bin/tail -f /dev/null ;;',
+  '    esac',
+  '  fi',
+  'fi',
+];
+
+/**
+ * Puts `forcing` in place for the exit cell in `directory`: `reads` names the stand-in reads to
+ * force, as `EXIT_FORCING` does; `signals` has the `nth` signal `name` to the group in L0's `step`th
+ * bounded step throw `code`; `probe` makes the confirming read's real per-pid probe `fail` with no
+ * state, or `hang` until its read is ended (`sightingPs`). Each changes what L0 or the stand-in is
+ * given; the exit trace records it. No forcing moves a clock.
+ */
+function forceExit(directory, { reads = [], signals = [], probe }) {
+  const path = join(directory, 'ps-sighted');
+  const lines = readFileSync(path, 'utf8').split('\n');
+  lines.splice(3, 0, ...EXIT_FORCING);
+  writeFileSync(path, lines.join('\n'), { mode: 0o755 });
+  warmed(path);
+  for (const { kind, nth, action } of reads) writeFileSync(join(directory, `force.${kind}.${nth}`), action);
+  writeFileSync(join(directory, 'exit-forcing.json'), JSON.stringify({ signals }));
+  if (probe !== undefined) writeFileSync(join(directory, `probe-${probe}`), probe === 'hang' ? PROBE_HELD : '');
+}
+
+/**
+ * The `probe-hang` program the stand-in runs in place of its own per-pid probe (`sightingPs`): it
+ * fills a FIFO until a write would block, then starts the real `/bin/ps -p <target> -o stat=` with
+ * its output into that FIFO, so the real probe runs and cannot hand its answer back. It records the
+ * probe's pid and executable once the exec has happened, waits for the stand-in to be ended by L0,
+ * then ends the probe, removes the FIFO and records how the probe ended. Its arguments are the target, the stand-in's pid and
+ * the cell's directory. The FIFO and its record, `<directory>.probe-held`, sit beside the directory
+ * rather than in it, since the program outlives the read L0 ends and the directory's retained copy.
+ */
+const PROBE_HELD = [
+  'use strict; use Fcntl;',
+  'my ($target, $standin, $here) = @ARGV;',
+  'my $fifo = "$here.probe-fifo";',
+  'open(my $log, ">>", "$here.probe-held") or die "log: $!"; $log->autoflush(1);',
+  'system("/usr/bin/mkfifo", $fifo) == 0 or die "mkfifo: $?";',
+  'open(my $hold, "+<", $fifo) or die "hold: $!";',
+  'my $flags = fcntl($hold, F_GETFL, 0) or die "flags: $!";',
+  'fcntl($hold, F_SETFL, $flags | O_NONBLOCK) or die "nonblock: $!";',
+  'my $filled = 0;',
+  'while (defined(my $wrote = syswrite($hold, "x" x 4096))) { $filled += $wrote; }',
+  '$!{EAGAIN} or die "fill: $!";',
+  'my $probe = fork() // die "fork: $!";',
+  'if ($probe == 0) { open(STDOUT, ">", $fifo) or die "probe output: $!"; exec("/bin/ps", "-p", $target, "-o", "stat=") or die "exec: $!"; }',
+  'my $comm = "";',
+  'while (kill(0, $standin) && $comm !~ m{(^|/)ps$}) { $comm = `/bin/ps -o comm= -p $probe`; chomp $comm; }',
+  'print $log "started $probe $comm filled=$filled\n";',
+  '1 while kill(0, $standin);',
+  'my $before = `/bin/ps -o stat= -p $probe`; $before =~ s/\\s+//g;',
+  'kill("KILL", $probe); waitpid($probe, 0);',
+  'close($hold); unlink($fifo) or die "unlink: $!";',
+  'print $log "cut $probe before=$before signal=" . ($? & 127) . " exit=" . ($? >> 8) . "\n";',
+].join('\n');
+
+/** L0's words for a read it gave up on, or could not use, in an exit cleanup bounded at `CLEANUP_BOUND`. */
+const EXIT_WORDS = {
+  late: `the reads of the process table did not finish within ${CLEANUP_BOUND} ms`,
+  timeout: `the process-table read timed out after ${CLEANUP_BOUND} ms`,
+  refused: `the process-table read timed out after ${CLEANUP_BOUND} ms earlier in the exit cleanup, which does not wait on it again`,
+  spent: `the reads of the group just before its kill listed no process for ${CLEANUP_BOUND} ms while signal 0 still reached it`,
+  confirmFailed: 'the read of the group just before its kill failed while signal 0 still reached it: ',
+  fallbackAnswered: ', so the kill of the group may have ended a process the census had not named',
+  fallbackFailed: ", and the read of the census's processes by pid failed too: ",
+};
+
+/** The rows of a returned read by pid, as L0 reads them, or the failure L0 makes of one it cannot. */
+function exitRows(printed) {
+  const rows = new Map();
+  for (const line of printed.split('\n').filter(Boolean)) {
+    const row = /^\s*(\d+) (.*)$/.exec(line);
+    if (!row) throw new Error(`the process table held a row the census cannot read: ${JSON.stringify(line)}`);
+    rows.set(Number(row[1]), row[2]);
+  }
+  return rows;
+}
+
+/**
+ * The exit trace's rows as an ordered timeline: each read L0 asked for, with the time it asked, and
+ * what the stand-in returned where L0 started one, beside the clock calls and signals.
+ */
+function exitTimeline(directory) {
+  const items = [];
+  let asking;
+  let current;
+  for (const row of linesOf(directory, 'exit-trace.jsonl')) {
+    if (row.kind === 'clock' && row.frame === 'readingNow') {
+      if (asking) items.push({ ...asking, kind: 'reading' });
+      asking = row;
+      continue;
+    }
+    if (row.kind === 'clock' && row.frame === 'runNow' && asking) {
+      current = { kind: 'request', seq: asking.seq, step: asking.step, at: asking.at, spawned: false };
+      items.push(current);
+      asking = undefined;
+      continue;
+    }
+    if (asking) {
+      items.push({ ...asking, kind: 'reading' });
+      asking = undefined;
+    }
+    if (row.kind === 'spawn') Object.assign(current, { spawned: true, argv: row.argv, timeout: row.timeout });
+    else if (row.kind === 'returned') Object.assign(current, { status: row.status, signal: row.signal, error: row.error, stdout: row.stdout, stderr: row.stderr });
+    else if (row.kind === 'threw') Object.assign(current, { threw: row.code, message: row.message });
+    else if (row.kind !== 'clock' || row.frame !== 'runNow') items.push(row);
+  }
+  if (asking) items.push({ ...asking, kind: 'reading' });
+  return items;
+}
+
+/** What one read gave L0: an answer, or the failure L0 makes of it, with `deadline` its read deadline. */
+function exitOutcome(request, deadline, tool) {
+  if (!request.spawned) return deadline - request.at <= 0 ? { kind: 'late', message: EXIT_WORDS.late } : { kind: 'refused', message: EXIT_WORDS.refused };
+  if (request.error === 'ETIMEDOUT') return { kind: 'timeout', message: EXIT_WORDS.timeout };
+  if (request.threw !== undefined || request.error) return { kind: 'failed', message: request.message ?? String(request.error) };
+  if (request.stderr) return { kind: 'failed', message: `the process-table read failed: ${request.stderr.trim()}` };
+  if (request.status !== 0 && !(request.status === 1 && request.stdout === '')) return { kind: 'failed', message: `${tool} ${request.argv.join(' ')} ended with ${request.status ?? request.signal}` };
+  // A name read's whole output is one process's name, which `namesOf` takes as printed.
+  if (request.argv.at(-1) === 'ucomm=') return { kind: 'answered', printed: request.stdout, status: request.status };
+  try { return { kind: 'answered', rows: exitRows(request.stdout), status: request.status }; }
+  catch (error) { return { kind: 'failed', message: error.message }; }
+}
+
+/** Whether signal `name` to `target` reached it, from the first such record in `items`, as `answers` counts one. */
+function exitAnswers(items, target) {
+  const record = items.find((item) => item.kind === 'signal' && item.target === target && item.name === 0);
+  if (record === undefined) return undefined;
+  return record.ok || record.code === 'EPERM';
+}
+
+/**
+ * Classifies the exit cleanup of the cell in `directory`, whose group is `group`, from L0's own
+ * received originals in the exit trace: how the census ended (C), the `unseen` it kept (N), each
+ * returned-empty confirmation (E), how the confirmation loop ended (F), its fallback (B), the kill
+ * and the first read after it (K), and the complete reason L0 must give the group's kill. The
+ * branch is `answered` only where a confirming read with rows reached L0; `cutoff` only where the
+ * real deadline left no such answer; anything else is `diagnostic`, and a trace that cannot be
+ * read in source order is `unknown`.
+ */
+function exitSighting(directory, group) {
+  const tool = join(directory, 'ps-sighted');
+  const items = exitTimeline(directory);
+  const result = { group, branch: 'unknown', C: undefined, N: 'N0', n: 0, statuses: [], F: undefined, B: undefined, reason: undefined, named: [], identities: new Map(), kill: undefined, postKill: undefined, cut: undefined, why: [] };
+  const fail = (why) => { result.why.push(why); return result; };
+  const withins = items.filter((item) => item.kind === 'clock' && item.frame === 'within');
+  if (withins.length === 0) return fail('no bounded step was traced');
+  const censusDeadline = withins[0].at + CLEANUP_BOUND;
+  result.censusDeadline = censusDeadline;
+  const killAt = items.findIndex((item) => item.kind === 'signal' && item.target === -group && item.name === 'SIGKILL');
+  const beforeKill = killAt < 0 ? items : items.slice(0, killAt);
+  const confirmAt = withins.length > 1 ? items.indexOf(withins[1]) : -1;
+  const censusEnd = confirmAt >= 0 ? confirmAt : (() => { const reading = beforeKill.findIndex((item, index) => index > items.indexOf(withins[0]) && item.kind === 'reading'); return reading < 0 ? beforeKill.length : reading; })();
+  const censusItems = items.slice(items.indexOf(withins[0]) + 1, censusEnd);
+  // Every name and command line a returned read gave L0, by pid.
+  for (const item of items) {
+    if (item.kind !== 'request' || !item.spawned || item.error || item.stderr || (item.status !== 0 && item.status !== 1)) continue;
+    const args = item.argv.join(' ');
+    const known = (pid) => result.identities.get(pid) ?? result.identities.set(pid, { names: new Set(), commands: new Set() }).get(pid);
+    if (/^-p \d+ -o ucomm=$/.test(args)) {
+      const name = (item.stdout ?? '').replace(/ *\n$/, '');
+      if (name !== '') known(Number(item.argv[1])).names.add(name);
+    } else if (args.endsWith('-o pid=,command=')) {
+      let rows;
+      try { rows = exitRows(item.stdout ?? ''); } catch { continue; }
+      for (const [pid, cmd] of rows) known(pid).commands.add(cmd);
+    }
+  }
+  // The census, replayed in source order over the reads it made.
+  const live = (state) => !state.startsWith('Z');
+  const sightings = new Map();
+  let last;
+  let unseen;
+  let round = { position: 'before' };
+  let thrown;
+  let returnedBy;
+  let timedOut = false;
+  const censusRequests = censusItems.filter((item) => item.kind === 'request');
+  result.stateReads = 0;
+  // Each completed census round in order: `changed`, `settled`, or the anomalous N1/N2 it kept.
+  result.rounds = [];
+  for (const request of censusRequests) {
+    const outcome = exitOutcome(request, censusDeadline, tool);
+    request.outcome = outcome.kind;
+    if (outcome.kind === 'timeout') timedOut = true;
+    if (outcome.kind !== 'answered') {
+      result.censusCut = { step: 'census', request: request.seq, kind: outcome.kind, at: request.at, deadline: censusDeadline, remaining: censusDeadline - request.at, timeout: request.timeout ?? null };
+      result.cut = result.censusCut;
+      if (last !== undefined && (outcome.kind === 'late' || outcome.kind === 'timeout')) returnedBy = outcome.kind === 'late' ? 'C3' : 'C4';
+      else thrown = { kind: outcome.kind, message: unseen ? `the census's reads ${unseen}: ${outcome.message}` : outcome.message };
+      break;
+    }
+    const { rows } = outcome;
+    if (round.position === 'before' || round.position === 'after') result.stateReads += 1;
+    if (round.position === 'before') round = { position: 'lines', before: rows, names: new Map(), pending: [...rows].filter(([, state]) => live(state)).map(([pid]) => pid) };
+    else if (round.position === 'lines') { round.lines = rows; round.position = round.pending.length ? 'names' : 'commands'; }
+    else if (round.position === 'names') {
+      const pid = round.pending.shift();
+      const name = request.stdout.replace(/ *\n$/, '');
+      if (name !== '') round.names.set(pid, name);
+      if (round.pending.length === 0) round.position = 'commands';
+    } else if (round.position === 'commands') { round.commands = rows; round.position = 'after'; }
+    else {
+      const { before, lines, names, commands } = round;
+      const after = rows;
+      for (const pid of new Set([...before.keys(), ...lines.keys(), ...commands.keys(), ...after.keys()])) {
+        if (!sightings.has(pid)) sightings.set(pid, undefined);
+        if (names.has(pid) && commands.has(pid)) sightings.set(pid, { pid, name: names.get(pid), cmd: commands.get(pid) });
+      }
+      const following = censusItems.slice(censusItems.indexOf(request) + 1);
+      const nextRequest = following.findIndex((item) => item.kind === 'request');
+      const between = nextRequest < 0 ? following : following.slice(0, nextRequest);
+      unseen = after.size === 0 && exitAnswers(between, -group) ? 'named no process of the group while it still had one'
+        : !after.has(group) && exitAnswers(between, group) ? `left out the group's leader, ${group}, while signal 0 still reached its pid`
+          : undefined;
+      if (unseen === undefined) {
+        const living = [...after].filter(([, state]) => live(state)).map(([pid]) => pid);
+        last = living.filter((pid) => names.has(pid) && commands.has(pid)).map((pid) => ({ pid, name: names.get(pid), cmd: commands.get(pid) }));
+        // As `census` settles a round: no unknown state, the same pids, and every live one named alike.
+        const settled = [before, after].every((states) => [...states.values()].every((state) => !state.startsWith('?')))
+          && before.size === after.size && [...before.keys()].every((pid) => after.has(pid))
+          && living.every((pid) => names.has(pid) && commands.has(pid) && lines.get(pid) === commands.get(pid));
+        result.rounds.push(settled ? 'settled' : 'changed');
+      }
+      result.N = unseen === undefined ? 'N0' : unseen.startsWith('named') ? 'N1' : 'N2';
+      if (unseen !== undefined) result.rounds.push(result.N);
+      round = { position: 'before' };
+    }
+  }
+  if (thrown !== undefined) {
+    if (confirmAt >= 0) return fail('a read the census could not keep was followed by the confirmation step');
+    const cutoff = thrown.kind === 'late' || thrown.kind === 'timeout';
+    result.C = cutoff ? (unseen ? 'C2u' : 'C2') : last !== undefined ? 'C5' : 'C1';
+    result.reason = thrown.message;
+    result.unnamed = true;
+    result.branch = cutoff ? 'cutoff' : 'diagnostic';
+  } else {
+    if (confirmAt < 0) return fail('the census returned no traced end');
+    result.C = returnedBy ?? 'C0';
+    if (last === undefined) return fail('the census returned without a completed round');
+    const known = [...new Map([...sightings.values()].filter(Boolean).concat(last).map((member) => [member.pid, member])).values()];
+    const decision = withins[1].at + CLEANUP_BOUND;
+    const readDeadline = decision + CLEANUP_BOUND;
+    result.decisionDeadline = decision;
+    result.readDeadline = readDeadline;
+    const loop = beforeKill.slice(confirmAt + 1);
+    const emptiedAt = loop.findIndex((item) => item.kind === 'reading');
+    const steps = emptiedAt < 0 ? loop : loop.slice(0, emptiedAt);
+    let at = 0;
+    let why;
+    const next = (predicate) => { while (at < steps.length && !predicate(steps[at])) at++; return steps[at++]; };
+    for (;;) {
+      const occupied = next((item) => (item.kind === 'signal' && item.target === -group && item.name === 0) || item.kind === 'request');
+      if (occupied?.kind !== 'signal') return fail('the confirmation step made no occupancy check');
+      if (!occupied.ok && occupied.code === 'ESRCH') { result.F = `F0${result.n ? 'e' : 'z'}`; break; }
+      if (!occupied.ok && occupied.code !== 'EPERM') {
+        result.F = `F6${result.n ? 'e' : 'z'}`;
+        result.reason = occupied.message ?? `kill ${occupied.code}`;
+        result.unnamed = true;
+        break;
+      }
+      const check = next((item) => (item.kind === 'clock' && item.frame === 'beforeKill') || item.kind === 'request');
+      if (check?.kind !== 'clock') return fail('the confirmation step made no deadline check');
+      if (check.at >= decision) {
+        result.F = `F1${result.n ? 'e' : 'z'}`;
+        result.spentAt = check.at;
+        result.confirmCut = { step: 'confirm', kind: 'spent', at: check.at, deadline: decision, remaining: decision - check.at, timeout: null };
+        result.cut = result.confirmCut;
+        why = EXIT_WORDS.spent;
+        break;
+      }
+      const request = next((item) => item.kind === 'request');
+      if (request === undefined) return fail('the confirmation step asked for no read before its deadline');
+      const outcome = exitOutcome(request, readDeadline, tool);
+      request.outcome = outcome.kind;
+      if (outcome.kind === 'answered' && outcome.rows.size > 0) { result.F = `F3${result.n ? 'e' : 'z'}`; break; }
+      if (outcome.kind === 'answered') { result.n += 1; result.statuses.push(outcome.status); continue; }
+      if (outcome.kind === 'refused' && !timedOut) return fail('a confirming read was refused with no earlier timeout');
+      if (outcome.kind === 'timeout') timedOut = true;
+      result.confirmCut = { step: 'confirm', request: request.seq, kind: outcome.kind, at: request.at, deadline: readDeadline, remaining: readDeadline - request.at, timeout: request.timeout ?? null };
+      result.cut = result.confirmCut;
+      result.F = { late: `F5L${result.C === 'C4' ? '4' : result.n ? 'e' : 'z'}`, timeout: `F5T${result.n ? 'e' : 'z'}`, refused: 'F2z', failed: `F4${result.n ? 'e' : 'z'}` }[outcome.kind];
+      why = EXIT_WORDS.confirmFailed + outcome.message;
+      break;
+    }
+    if (why !== undefined) {
+      if (sightings.size === 0) {
+        result.B = 'B0';
+        result.reason = why + EXIT_WORDS.fallbackAnswered;
+      } else {
+        const request = next((item) => item.kind === 'request');
+        if (request === undefined) return fail('no read of the census sightings by pid followed the confirmation');
+        const outcome = exitOutcome(request, readDeadline, tool);
+        request.outcome = outcome.kind;
+        if (outcome.kind === 'refused' && !timedOut) return fail('the read by pid was refused with no earlier timeout');
+        if (outcome.kind === 'answered') {
+          result.B = outcome.rows.size > 0 ? 'B1' : 'B2';
+          const after = steps.slice(at);
+          result.named = known.filter(({ pid }) => (outcome.rows.has(pid) ? live(outcome.rows.get(pid)) : exitAnswers(after, pid))).map(({ pid }) => pid);
+          result.reason = why + EXIT_WORDS.fallbackAnswered;
+        } else {
+          if (outcome.kind === 'timeout') timedOut = true;
+          result.B = { failed: 'B3', late: 'B4', timeout: 'B5', refused: 'B6' }[outcome.kind];
+          result.reason = why + EXIT_WORDS.fallbackFailed + outcome.message;
+          result.unnamed = true;
+        }
+      }
+    }
+    const cutoff = /^F(1|2|5)/.test(result.F) && (result.F !== 'F2z' || result.C === 'C4');
+    result.branch = result.F.startsWith('F3') ? 'answered' : cutoff ? 'cutoff' : 'diagnostic';
+  }
+  const kill = killAt < 0 ? undefined : items[killAt];
+  result.kill = kill === undefined ? { sent: false } : { sent: true, ok: kill.ok, code: kill.code ?? null };
+  // The stand-in's own record of each real per-pid probe it ran inside a confirming read, and of
+  // when each marker was written; neither is an answer L0 received.
+  const probeLog = existsSync(join(directory, 'probe-log')) ? readFileSync(join(directory, 'probe-log'), 'utf8').split('\n').filter(Boolean) : [];
+  result.probes = probeLog.map((line) => /^PROBE pid=(\d+) argv=(-p (\d+) -o stat=) start=(\S+) end=(\S+) status=(\d+) stat=(.*) stderr=(.*) member-before=(\S+) member-after=(\S+)$/.exec(line)).filter(Boolean)
+    .map(([, standIn, argv, target, start, end, status, stat, stderr, before, after]) => ({ standIn: Number(standIn), argv, target: Number(target), start: Number(start), end: Number(end), status: Number(status), stat: stat.trim(), stderr, before, after }));
+  result.markers = probeLog.map((line) => /^MARKER (\S+) (\S+)$/.exec(line)).filter(Boolean).map(([, name, at]) => ({ name, at: Number(at) }));
+  result.kills = items.filter((item) => item.kind === 'signal' && item.target === -group && item.name === 'SIGKILL').map(({ ok, code }) => ({ ok, code: code ?? null }));
+  // O270's ordinary-A0 window: round 1 completed, a later census read cut before it started, fewer
+  // than three state reads returned, and a confirming answer with rows still reached L0.
+  result.partialCensus = result.C === 'C3' && result.censusCut?.kind === 'late' && result.stateReads < 3 && /^F3/.test(result.F ?? '');
+  if (kill !== undefined) {
+    const readings = items.slice(0, killAt).filter((item) => item.kind === 'reading');
+    const deadline = readings.length ? readings.at(-1).at + CLEANUP_BOUND : undefined;
+    const first = items.slice(killAt + 1).find((item) => item.kind === 'request');
+    result.postKill = first === undefined ? { kind: 'none' } : { ...exitOutcome(first, deadline ?? Infinity, tool), argv: first.argv ?? null, rows: undefined, timedOutBefore: timedOut };
+    // The members L0 could not end, as `emptied` decides them from its reads of the group after the
+    // kill: each member the last answered read found alive, where a later read was cut by the bound
+    // (late, or timed out). An answer with none alive ends the reads; a failed one is read again.
+    let living;
+    result.unended = [];
+    for (const request of items.slice(killAt + 1).filter((item) => item.kind === 'request' && item.argv?.join(' ') === `-g ${group} -o pid=,stat=,xstat=`)) {
+      const outcome = exitOutcome(request, deadline ?? Infinity, tool);
+      if (outcome.kind === 'answered') {
+        living = [...outcome.rows].filter(([, state]) => live(state)).map(([pid]) => pid);
+        if (living.length === 0) break;
+      } else if (outcome.kind === 'late' || outcome.kind === 'timeout') {
+        result.unended = living ?? [];
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+/** What `exitSighting` found, as one JSON-ready record for a diagnostic. */
+const exitSummary = (exit) => ({ ...exit, identities: Object.fromEntries([...exit.identities].map(([pid, { names, commands }]) => [pid, { names: [...names], commands: [...commands] }])) });
+
+/**
+ * The traced real-deadline cutoff of an exit cell: the exit caller ended, its private retention is
+ * whole, the census or confirmation was cut at its real bound with no confirming answer, L0 sent
+ * the group's kill and it reached the group, and L0 recorded exactly one kill of the group with
+ * the complete reason its branch gives, and named no process by an identity no read returned.
+ */
+function exitCutoff(directory, exit, { prepared, status, stderr, events }) {
+  assert.equal(status, 0, stderr);
+  if (prepared) {
+    const retained = sightingAttempts.get(directory)?.snapshotReport;
+    assert.equal(retained?.close.state, 'closed', 'the exit caller did not close before private retention');
+    assert.equal(retained.copy, 'byte-complete-at-snapshot', 'the private fixture copy was incomplete');
+    assert.deepEqual(retained.errors, [], 'private retention reported an error');
+  }
+  const observation = sightingAttempts.get(directory);
+  if (observation?.snapshotReport) {
+    // Every read the stand-in started has a settled original, and no other does: a read L0 cut
+    // before it started, or refused, has none, and a timed-out one keeps its partial original.
+    assert.equal(observation.snapshotReport.reads, 'settled-returned-originals', 'an outer read original was missing or unresolved');
+    const retained = linesOf(join(observation.target, 'settled', 'fixture'), 'sighting-reads/trace.jsonl');
+    const starts = retained.filter(({ kind }) => kind === 'start');
+    const ends = retained.filter(({ kind }) => kind === 'end' || kind === 'threw');
+    const spawned = exitTimeline(directory).filter((item) => item.kind === 'request' && item.spawned);
+    assert.deepEqual(starts.map(({ argv }) => argv.join(' ')), spawned.map(({ argv }) => argv.join(' ')), 'the retained originals differ from the reads L0 started');
+    assert.deepEqual(ends.map(({ id }) => id), starts.map(({ id }) => id), 'a started read has no retained end');
+    assert.deepEqual(ends.map(({ error }) => error?.code === 'ETIMEDOUT'), spawned.map(({ error }) => error === 'ETIMEDOUT'), 'a timed-out read was retained as answered, or the reverse');
+  }
+  const { group } = exit;
+  // The decisive real deadline of each bounded step that cut: the census step for C2, C2u, C3 and
+  // C4, the confirmation step for F1, F2 and F5. A C4 census timeout stays asserted after its
+  // refused confirmation.
+  const deadlineCut = (cut, step, bound) => {
+    assert.ok(cut, `the ${step} step names no read or deadline that its real bound cut`);
+    assert.equal(cut.step, step);
+    assert.equal(cut.deadline - cut.remaining, cut.at, `the ${step} cut's remaining time is not measured from its deadline`);
+    if (cut.kind === 'timeout') assert.ok(cut.timeout > 0 && cut.timeout === cut.remaining && cut.timeout <= bound, `the timed-out ${step} read was not bounded by its real deadline: ${JSON.stringify(cut)}`);
+    else if (cut.kind === 'late' || cut.kind === 'spent') assert.ok(cut.remaining <= 0, `the ${step} read cut before it started, or the spent deadline, had time left: ${JSON.stringify(cut)}`);
+    else if (cut.kind === 'refused') assert.ok(cut.remaining > 0 && cut.timeout === null, `the refused ${step} read had no time left or started: ${JSON.stringify(cut)}`);
+    else assert.fail(`the ${step} cut is a ${cut.kind}, not a real-deadline cut: ${JSON.stringify(cut)}`);
+  };
+  if (['C2', 'C2u', 'C3', 'C4'].includes(exit.C)) {
+    deadlineCut(exit.censusCut, 'census', CLEANUP_BOUND);
+    assert.equal(exit.censusCut.deadline, exit.censusDeadline, 'the census cut is not at the census step\'s 1,000 ms deadline');
+    if (exit.C === 'C4') assert.equal(exit.censusCut.kind, 'timeout', 'a C4 return was not cut by a started census timeout');
+    if (exit.C === 'C3') assert.equal(exit.censusCut.kind, 'late', 'a C3 return was not cut before its read started');
+  }
+  if (exit.F !== undefined) {
+    deadlineCut(exit.confirmCut, 'confirm', 2 * CLEANUP_BOUND);
+    if (/^F1/.test(exit.F)) assert.ok(exit.spentAt >= exit.decisionDeadline, 'the confirmation deadline was not spent');
+    if (exit.F === 'F2z') assert.equal(exit.censusCut?.kind, 'timeout', 'a refused confirmation followed no census timeout');
+  }
+  assert.deepEqual(exit.kill, { sent: true, ok: true, code: null }, 'the group kill was not sent, or did not reach the group');
+  const kills = events.filter(({ event, group: id }) => event === 'group.killed' && id === group);
+  assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
+  assert.equal(kills[0].census, exit.reason, 'the group kill does not carry the reason its cutoff branch gives');
+  // Every event, exactly, against the multiset the exit's reads support: each supported event is
+  // its kind and its whole field set, each field with the values a read gave L0 for it, so an event
+  // with a field added, changed or missing, or one more event of any kind, matches none.
+  const unendedPids = new Set(exit.unended ?? []);
+  const named = (pid) => exit.identities.get(pid) ?? { names: new Set(), commands: new Set() };
+  // A member's name and command line, where a read returned one, as `described` and the census give them.
+  const identified = (pid, required) => {
+    const { names, commands } = named(pid);
+    return { ...(required || names.size ? { name: [...names] } : {}), ...(required || commands.size ? { cmd: [...commands] } : {}) };
+  };
+  const supported = [
+    { event: 'group.killed', group: [group], census: [exit.reason] },
+    ...(exit.unnamed ? [] : exit.named.filter((pid) => !unendedPids.has(pid)).map((pid) => ({ event: 'survivor.killed', pid: [pid], ...identified(pid, true) }))),
+    ...[...unendedPids].map((pid) => ({ event: 'survivor.unended', pid: [pid], ...identified(pid, false), reason: [`still alive when the exit cleanup's read bound of ${CLEANUP_BOUND} ms ran out`] })),
+  ];
+  const fits = (record, spec) => {
+    const keys = Object.keys(record).sort();
+    const wanted = Object.keys(spec).sort();
+    return JSON.stringify(keys) === JSON.stringify(wanted) && record.event === spec.event && wanted.filter((key) => key !== 'event').every((key) => spec[key].includes(record[key]));
+  };
+  const unmatched = [...supported];
+  const unsupported = events.filter((record) => {
+    const at = unmatched.findIndex((spec) => fits(record, spec));
+    if (at < 0) return true;
+    unmatched.splice(at, 1);
+    return false;
+  });
+  assert.deepEqual({ unsupported, unmatched }, { unsupported: [], unmatched: [] }, `the exit's events differ from those its reads support: ${JSON.stringify(events)}`);
+  for (const record of events.filter(({ pid }) => pid !== undefined)) {
+    if (record.name === undefined && record.cmd === undefined) continue;
+    const returned = exit.identities.get(record.pid);
+    assert.ok(returned?.names.has(record.name) && returned.commands.has(record.cmd), `an identity no read returned was recorded: ${JSON.stringify(record)}`);
+  }
+  const ended = events.filter(({ event }) => event === 'survivor.killed').map(({ pid }) => pid).sort();
+  const unended = new Set(events.filter(({ event }) => event === 'survivor.unended').map(({ pid }) => pid));
+  assert.deepEqual(ended, exit.unnamed ? [] : exit.named.filter((pid) => !unended.has(pid)).sort(), 'the named kills differ from what the read by pid returned');
+  if (exit.postKill?.timedOutBefore) assert.notEqual(exit.postKill.kind, 'answered', 'a post-kill read answered through a ps already timed out');
+  const trace = existsSync(join(directory, 'sighted-ps.log')) ? read(directory, 'sighted-ps.log') : '';
+  const result = { directory, events, group, two: pidIn(directory, 'two'), trace, exit };
+  exitCutoffs.add(directory);
+  exitCutoffs.add(events);
+  return result;
 }
 
 /** Confirms a refused prepared root leaves no fixture scratch or caller process to account for. */
@@ -1042,6 +1596,7 @@ function assertUnnamedSighting(events, group, two) {
 /** Runs and verifies a member whose census sighting supplied no complete identity. */
 async function unnamedCensusCell(t, path, cell, afterKill = 'omit') {
   const { events, group, two, trace } = await (path === 'call' ? censusCall(t, cell, afterKill) : censusExit(t, cell, afterKill));
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, cell);
   if (afterKill === 'omit') assertPostKillOmission(trace, group, two, path);
   if (afterKill === 'zombie') {
@@ -1307,6 +1862,7 @@ function assertPreparedCache(retained, cell) {
 
 test('C615 fixture-preparation-valid binds the private cache to actual ps returns', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const observation = sightingAttempts.get(directory);
   const retained = join(observation.target, 'settled', 'fixture');
   const { ids, records } = assertPreparedCache(retained, 'U2');
@@ -1316,6 +1872,7 @@ test('C615 fixture-preparation-valid binds the private cache to actual ps return
 
 test('C615 fixture-cache-binding rejects a consumed value different from its preparatory original', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const observation = sightingAttempts.get(directory);
   const original = join(observation.target, 'settled', 'fixture');
   const copy = join(observation.root, `cache-consumed-mismatch-${randomUUID()}`);
@@ -1587,6 +2144,7 @@ test('C615 fixture-read-refusal retains a real ps omitted row after recorded fix
 
 test('C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads', SETTLES_WITHIN, async (t) => {
   const { directory, group, trace } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const before = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat='], 'before-kill');
   const after = answeredSightingRead(directory, trace, ['-g', String(group), '-o', 'pid=,stat=,xstat='], 'after-kill');
   assert.notEqual(before.start.id, after.start.id, 'the outer answers reused one read ID');
@@ -1687,6 +2245,7 @@ test('C615 fixture-retention denies failed copies missing bytes and unresolved f
 
 test('C615 fixture-retention reopens actual finalizer and recorded identities after teardown', SETTLES_WITHIN, async (t) => {
   const { directory } = await censusExit(t, 'U2');
+  if (exitCutoffs.has(directory)) return;
   const target = sightingAttempts.get(directory)?.target;
   assert.ok(target, 'the actual prepared attempt has no private target');
   t.after(() => t.after(() => {
@@ -1941,6 +2500,7 @@ test('B1 call: a member named by an early census read and left a zombie is recor
 // proves R-STATE-12
 test('B1 exit: a member named by an early census read and left a zombie is recorded by name', SETTLES_WITHIN, async (t) => {
   const { directory, events, two, trace } = await censusExit(t, 'B', 'zombie');
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'B');
   assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
   assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
@@ -1999,6 +2559,7 @@ test('N0 exit: a member every read including the first confirmation omits has no
 /** The shown member exited on its own, and the parent reaped it before confirmation and kill. */
 async function reapedCensusCell(t, path) {
   const { directory, events, group, two, trace } = await (path === 'call' ? censusCall(t, 'X') : censusExit(t, 'X'));
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'X');
   assert.ok(existsSync(join(directory, 'reaped-two')), 'the parent did not mark its successful waitpid');
   const reads = sightingReads(trace);
@@ -2020,9 +2581,526 @@ test('X0 exit: a once-shown member reaped on its own before confirmation has no 
   await reapedCensusCell(t, 'exit');
 });
 
+// The exit-sighting branches of owner ruling O268, each forced on its own. The words below are the
+// reasons `src/substrate/process.mjs` gives, written out here so the classification is checked
+// against them rather than against itself.
+const TIMED_OUT = 'the process-table read timed out after 1000 ms';
+const LATE_READS = 'the reads of the process table did not finish within 1000 ms';
+const REFUSED = `${TIMED_OUT} earlier in the exit cleanup, which does not wait on it again`;
+const FAILED_READ = 'the process-table read failed: forced failure';
+const CONFIRM_FAILED = 'the read of the group just before its kill failed while signal 0 still reached it: ';
+const SPENT = 'the reads of the group just before its kill listed no process for 1000 ms while signal 0 still reached it';
+const BY_PID_FAILED = ", and the read of the census's processes by pid failed too: ";
+const MAY_HAVE = ', so the kill of the group may have ended a process the census had not named';
+
+/** One forced stand-in read: the `nth` read of `kind` before the kill takes `action`. */
+const forced = (kind, nth, action) => ({ kind, nth, action });
+
+/** How each named exit cell's ordinary test runs, as its own test does. */
+const EXIT_RUNS = {
+  U1: (t) => unnamedCensusCell(t, 'exit', 'U1'),
+  U2: (t) => unnamedCensusCell(t, 'exit', 'U2'),
+  C1: (t) => unnamedCensusCell(t, 'exit', 'C1'),
+  C2: (t) => unnamedCensusCell(t, 'exit', 'C2'),
+  A0: (t) => unnamedCensusCell(t, 'exit', 'A'),
+  'A0 zombie': (t) => unnamedCensusCell(t, 'exit', 'A', 'zombie'),
+  B0: async (t) => bExit(t, 'omit'),
+  B1: async (t) => bExit(t, 'zombie'),
+  X0: (t) => reapedCensusCell(t, 'exit'),
+};
+
+/** B0 or B1's exit as its own test runs it: a traced cutoff, or its answered named-record scenario. */
+async function bExit(t, afterKill) {
+  const { directory, events, two, trace } = await censusExit(t, 'B', afterKill);
+  if (exitCutoffs.has(events)) return;
+  assertSighting(trace, two, 'B');
+  if (afterKill === 'zombie') {
+    assert.ok(processState(two).startsWith('Z'), `the member was not a zombie: ${processState(two)}`);
+    assert.match(trace, new RegExp(`ROW\\s+${two} Z`), 'no post-kill read listed the zombie');
+  }
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+}
+
+/** Each named cell's exit census, on the shared helper. */
+const EXIT_CELLS = { U1: ['U1'], U2: ['U2'], C1: ['C1'], C2: ['C2'], A0: ['A'], 'A0 zombie': ['A', 'zombie'], B0: ['B'], B1: ['B', 'zombie'], X0: ['X'] };
+
+/**
+ * Runs `name`'s exit with `forcing` and checks how L0 ended it against `expect`: a `cutoff` or
+ * `answered` run goes through the cell's ordinary test, which must pass; a `diagnostic` run, or one
+ * marked `fails`, must fail that test's answered scenario. Either way the classification and the
+ * group's recorded reason must be the ones expected.
+ *
+ * The real 1,000 ms bound still runs under forcing, so a loaded host can end the exit before the
+ * forced read or signal is reached. Such an attempt has already passed the ordinary branch checks
+ * inside `censusExit`, but it is no proof of the forced class: it is skipped, with its classification
+ * printed, and so is one where an unforced timing edge (a no-start `LATE` or a spent decision
+ * deadline) ended the exit first. Either skip is evidence for the ledger, never a pass of the class.
+ */
+async function forcedExit(t, name, forcing, expect) {
+  exitForcings.set(t, forcing);
+  let failure;
+  try { await (expect.fails ?? expect.branch === 'diagnostic' ? censusExit(t, ...EXIT_CELLS[name]) : EXIT_RUNS[name](t)); }
+  catch (error) { failure = error; }
+  const { exit, events, directory } = exitResults.get(t);
+  const reached = forcingReached(directory, forcing);
+  // A real-deadline cutoff the forcing did not ask for pre-empts any non-cutoff class: `exitCutoff`
+  // has already proved its real bound, and the class's own terminal was never reached. So does a
+  // census the real bound cut (C2, C2u, C3 or C4) where the class expects another census ending.
+  const timingEdge = (exit.branch === 'cutoff' && expect.branch !== 'cutoff') || ['late', 'spent'].includes(exit.censusCut?.kind) || ['late', 'spent'].includes(exit.confirmCut?.kind) || (expect.C !== undefined && exit.C !== expect.C && exit.censusCut !== undefined) || (exit.B === 'B4' && expect.B !== 'B4');
+  // An ordinary-path failure is never skipped: only a forced class the run did not reach is. A
+  // failure the class expects is the forcing's own result once the forcing was reached.
+  const expectsFailure = expect.fails ?? expect.branch === 'diagnostic';
+  // The one failure the forcing specifies: the ordinary test's refusal of a diagnostic branch, or
+  // the named answered-scenario assertion. Any other failure propagates before any skip.
+  const specified = expect.failure ?? /the exit took the diagnostic branch/;
+  if (failure && (!expectsFailure || !reached || !specified.test(failure.message))) throw failure;
+  if (!reached || timingEdge) {
+    t.diagnostic(JSON.stringify({ forcedClassUnproved: !reached ? 'the real bound ended the exit before the forcing was reached' : 'an unforced timing edge ended the exit', exitSighting: exitSummary(exit), failure: failure?.message ?? null }));
+    t.skip(!reached ? 'forcing not reached before the real bound' : `unforced timing edge ${exit.C}/${exit.F ?? '-'}`);
+    return undefined;
+  }
+  if (expect.fails ?? expect.branch === 'diagnostic') assert.ok(failure, 'the forced run passed the answered scenario');
+  else if (failure) throw failure;
+  for (const key of ['branch', 'C', 'N', 'F', 'B', 'n']) if (expect[key] !== undefined) assert.equal(exit[key], expect[key], `${key}: ${JSON.stringify(exitSummary(exit))}`);
+  if (expect.rounds !== undefined) assert.deepEqual(exit.rounds, expect.rounds, `rounds: ${JSON.stringify(exitSummary(exit))}`);
+  if (expect.statuses !== undefined) assert.deepEqual(exit.statuses, expect.statuses, `statuses: ${JSON.stringify(exitSummary(exit))}`);
+  if (failure) t.diagnostic(JSON.stringify({ specifiedFailure: failure.message.split('\n')[0] }));
+  if (expect.reason !== undefined) {
+    const kills = events.filter(({ event, group }) => event === 'group.killed' && group === exit.group);
+    assert.equal(kills.length, 1, `the group kill was not recorded once: ${JSON.stringify(events)}`);
+    assert.equal(kills[0].census, expect.reason(exit.group));
+  }
+  return exit;
+}
+
+/** Whether every forced read, signal and probe in `forcing` was actually reached in `directory`'s exit. */
+function forcingReached(directory, { reads = [], signals = [], probe }) {
+  const forced = existsSync(join(directory, 'forced')) ? readFileSync(join(directory, 'forced'), 'utf8') : '';
+  if (!reads.every(({ kind, nth, action }) => forced.includes(`${kind} ${nth} ${action}\n`))) return false;
+  if (signals.length > 0 && !linesOf(directory, 'exit-trace.jsonl').some((row) => row.kind === 'signal' && row.forced)) return false;
+  if (probe === 'fail' && !/^PROBE .* status=1 /m.test(existsSync(join(directory, 'probe-log')) ? readFileSync(join(directory, 'probe-log'), 'utf8') : '')) return false;
+  if (probe === 'hang' && !existsSync(`${directory}.probe-held`)) return false;
+  return true;
+}
+
+const censusTimeout = { branch: 'cutoff', C: 'C2', N: 'N0', reason: () => TIMED_OUT };
+const n1 = `the census's reads named no process of the group while it still had one: `;
+const n2 = (group) => `the census's reads left out the group's leader, ${group}, while signal 0 still reached its pid: `;
+const confirmTimedOut = { branch: 'cutoff', C: 'C0', F: 'F5Tz', B: 'B4', reason: () => CONFIRM_FAILED + TIMED_OUT + BY_PID_FAILED + LATE_READS };
+const refusedKill = { step: 2, name: 'SIGKILL', nth: 1, code: 'EPERM' };
+
+/**
+ * Asserts a forced K1: the first group kill was the refused one. What L0 sends after it is recorded
+ * rather than presumed, since it depends on whether the same `ps` still answers.
+ */
+const refusedThenSent = (exit, directory, name, t) => {
+  assert.deepEqual(exit.kills[0], { ok: false, code: 'EPERM' }, 'the first group kill was not the refused one');
+  t?.diagnostic(JSON.stringify({ laterGroupKills: exit.kills.slice(1), postKill: exit.postKill }));
+};
+
+/** Asserts the stand-in's real per-pid probe record for a confirming read that reached it. */
+const probed = (status, stat) => (exit, directory) => {
+  const two = pidIn(directory, 'two');
+  const probe = exit.probes.find(({ target }) => target === two);
+  assert.ok(probe, `no real per-pid probe of the member was recorded: ${JSON.stringify(exit.probes)}`);
+  assert.equal(probe.argv, `-p ${two} -o stat=`);
+  assert.ok(probe.end >= probe.start, 'the probe ended before it started');
+  if (status !== undefined) assert.equal(probe.status, status, `the probe exited ${probe.status}`);
+  if (stat !== undefined) assert.equal(probe.stat, stat);
+  return probe;
+};
+
+/**
+ * Each named exit cell's forcing classes. Census classes apply to every cell. A cell whose census
+ * settles in one round (C1, C2) never makes a third state read unless an anomalous round forces
+ * one, so C4 and C5 are unreachable for it (`census:775` returns on the settled round). X0's
+ * target is reaped before its confirming read (`sightingPs:44–47` waits for `reaped-two` before
+ * answering the X-reap read), so a present-target A2p is unreachable for X0, and so is A2t: a real
+ * `ps -p` of a reaped pid prints nothing, so no full pipe can hold it running until its read is cut.
+ */
+const twoRound = ['U1', 'U2', 'A0', 'A0 zombie', 'B0', 'B1', 'X0'];
+// A forced empty answer has no READ block in a prepared cell's stand-in log, so its answered
+// scenario's prepared-read accounting fails; the F3e class itself is still classified and checked.
+const preparedCells = ['U2', 'A0', 'A0 zombie', 'B0', 'B1'];
+const CELL_CASES = [
+  ['E0: its first census state read timed out', () => true, { reads: [forced('state', 1, 'hang')] }, censusTimeout],
+  ['E1: its first command read timed out', () => true, { reads: [forced('command', 1, 'hang')] }, censusTimeout],
+  ['E2: its second census state read timed out', () => true, { reads: [forced('state', 2, 'hang')] }, censusTimeout, (exit, directory, name) => {
+    if (name === 'X0') assert.equal(existsSync(join(directory, 'release-two')), false, 'the X-reap read released the member before it was cut');
+  }],
+  ['E2 failure: its second census state read failed', () => true, { reads: [forced('state', 2, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
+  ['C1: its first census read failed', () => true, { reads: [forced('state', 1, 'fail')] }, { branch: 'diagnostic', C: 'C1', reason: () => FAILED_READ }],
+  ['N1: an empty completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'empty'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => n1 + TIMED_OUT }],
+  ['N1 failure: an empty completed round then a failed read', () => true, { reads: [forced('state', 2, 'empty'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N1', reason: () => n1 + FAILED_READ }],
+  ['N2: a leaderless completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N2', reason: (group) => n2(group) + TIMED_OUT }],
+  ['N2 failure: a leaderless completed round then a failed read', () => true, { reads: [forced('state', 2, 'omit-leader'), forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C1', N: 'N2', reason: (group) => n2(group) + FAILED_READ }],
+  ['C4 F2z: its second census round timed out and the confirming read was refused', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C4', F: 'F2z', B: 'B6', reason: () => CONFIRM_FAILED + REFUSED + BY_PID_FAILED + REFUSED }, (exit, directory, name) => {
+    if (name === 'X0') assert.equal(existsSync(join(directory, 'reaped-two')), true, 'the X-reap read returned before the member was reaped');
+  }],
+  ['C5: a census read after a completed round failed', (name) => twoRound.includes(name), { reads: [forced('state', 3, 'fail')] }, { branch: 'diagnostic', C: 'C5', reason: () => FAILED_READ }],
+  ['K1 cutoff: a refused first group kill after a census timeout fails the cutoff', () => true, { reads: [forced('state', 1, 'hang')], signals: [{ ...refusedKill, step: 1 }] }, { fails: true, failure: /did not reach the group/, branch: 'cutoff', C: 'C2', reason: () => TIMED_OUT }, refusedThenSent],
+  ['F5Tz: a confirming read timed out', () => true, { reads: [forced('confirm', 1, 'hang')] }, confirmTimedOut],
+  ['F5Te: an empty confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1, statuses: [0] }],
+  ['A3 timeout: a confirming read timed out after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-hang')] }, confirmTimedOut, (exit) => assert.ok(exit.probes.length > 0, 'the confirming read was cut before its probe')],
+  ['A2t: a confirming read timed out while its real probe ran', (name) => name !== 'X0', { probe: 'hang' }, confirmTimedOut, async (exit, directory, name, t) => {
+    const record = `${directory}.probe-held`;
+    await until(() => existsSync(record) && /^cut /m.test(readFileSync(record, 'utf8')), { signal: t.signal });
+    const held = readFileSync(record, 'utf8');
+    unlinkSync(record);
+    t.diagnostic(JSON.stringify({ probeHeld: held }));
+    const started = new RegExp('^started (\\d+) (\\S*/)?ps filled=\\d+$', 'm').exec(held);
+    assert.ok(started, `the real /bin/ps probe never started: ${held}`);
+    assert.match(held, new RegExp(`^cut ${started[1]} before=\\S+ signal=9 exit=0$`, 'm'), `the real probe was not still running when its read was cut: ${held}`);
+    assert.deepEqual(exit.probes, [], 'a probe result reached the stand-in');
+    assert.equal(existsSync(join(directory, 'sighted-live')), false, 'the live marker was written without a probe result');
+  }],
+  ['F4z: a failed confirming read', () => true, { reads: [forced('confirm', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F4e: an empty confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, statuses: [0], B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['A3 failure: a confirming read failed after its probe', () => true, { reads: [forced('confirm', 1, 'answer-then-fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }, (exit) => assert.ok(exit.probes.length > 0, 'the failed confirming read made no probe')],
+  ['B2: a failed confirming read then an empty read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'empty')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B2', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['B3: a failed confirming read then a failed read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B3', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + FAILED_READ }],
+  ['B5: a failed confirming read then a timed-out read by pid', () => true, { reads: [forced('confirm', 1, 'fail'), forced('fallback', 1, 'hang')] }, { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B5', reason: () => CONFIRM_FAILED + FAILED_READ + BY_PID_FAILED + TIMED_OUT }],
+  ['F6z: an occupancy check that fails with another error', () => true, { signals: [{ step: 2, name: 0, nth: 1, code: 'EINVAL' }] }, { branch: 'diagnostic', C: 'C0', F: 'F6z', reason: () => 'kill EINVAL' }],
+  ['F3e: an empty confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1, statuses: [0] }, probed()],
+  // The same empty-answer prefix with status 1 and no output, which `runOnce:971–980` accepts as an
+  // answer: the status vector L0 kept is asserted alongside each terminal.
+  ['F3e status 1: an empty status-1 confirming answer then a live one', () => true, { reads: [forced('confirm', 1, 'empty-status-1')] }, { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, branch: 'answered', C: 'C0', F: 'F3e', n: 1, statuses: [1] }, probed()],
+  ['F4e status 1: an empty status-1 confirming answer then a failed read', () => true, { reads: [forced('confirm', 1, 'empty-status-1'), forced('confirm', 2, 'fail')] }, { branch: 'diagnostic', C: 'C0', F: 'F4e', n: 1, statuses: [1], B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }],
+  ['F5Te status 1: an empty status-1 confirming answer then a timed-out read', () => true, { reads: [forced('confirm', 1, 'empty-status-1'), forced('confirm', 2, 'hang')] }, { ...confirmTimedOut, F: 'F5Te', n: 1, statuses: [1] }],
+  ['N1 status 1: an empty status-1 completed round then a timed-out read', () => true, { reads: [forced('state', 2, 'empty-status-1'), forced('state', 3, 'hang')] }, { branch: 'cutoff', C: 'C2u', N: 'N1', reason: () => n1 + TIMED_OUT }],
+  ['A2p: a real probe that fails with no state while the member remains', (name) => name !== 'X0', { probe: 'fail' }, { fails: true, failure: /the last read before the kill did not find the member alive/, branch: 'answered', C: 'C0', F: 'F3z' }, (exit, directory) => {
+    const probe = probed(1, '')(exit, directory);
+    assert.equal(probe.stderr, '', 'the failed probe wrote standard error');
+    assert.deepEqual([probe.before, probe.after], ['present', 'present'], 'the member was not present around its failed probe');
+    assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a failed probe wrote the live marker');
+  }],
+  // X0's member is already reaped by its confirming read, so A1 there is X0's own answered scenario.
+  // A1 absent: the member is ended and reaped before its probe. A0 zombie and B1's member has a
+  // parent outside the group that never reaps it (`zombieJoiner`), so absence is unreachable there.
+  ['A1 absent: a member ended and reaped before the confirming probe', (name) => !['A0 zombie', 'B1'].includes(name), { reads: [forced('confirm', 1, 'end-target-absent')] },
+    { fails: (name) => name !== 'X0', failure: /the exit took the diagnostic branch|the last read before the kill did not find the member alive/, C: 'C0' }, (exit, directory, name) => {
+      assert.match(read(directory, 'forced'), /^target \d+ absent$/m, 'the ended member was not reaped before its probe');
+      if (preparedCells.includes(name)) {
+        // The prepared stand-in's real start-time read of an absent member fails, so it exits 79 with
+        // no outer answer (`sightingPs:59–69`).
+        assert.equal(exit.F, 'F4z', 'a prepared probe of an absent member returned an outer answer');
+        assert.match(exit.reason, /ended with 79/);
+        const probe = probed(1, '')(exit, directory);
+        assert.equal(probe.before, 'absent');
+      } else {
+        assert.equal(exit.F, 'F3z', 'the probe of an absent member returned no outer answer');
+        const probe = probed(1, '')(exit, directory);
+        assert.equal(probe.before, 'absent');
+      }
+    }],
+  // A1 zombie: the member is ended while its parent is stopped, so it stays a zombie through its
+  // probe. X0's member is already reaped by its confirming read, so a zombie is unreachable there.
+  ['A1 zombie: a member ended and left a zombie before the confirming probe', (name) => name !== 'X0', { reads: [forced('confirm', 1, 'end-target-zombie')] },
+    { fails: true, failure: /the exit took the diagnostic branch|the last read before the kill did not find the member alive/, C: 'C0' }, (exit, directory, name, t) => {
+      assert.match(read(directory, 'forced'), /^target \d+ Z\S* parent \d+ stopped$/m, 'the ended member was not a zombie before its probe');
+      const probe = probed()(exit, directory);
+      assert.match(probe.stat, /^Z/, `the probe did not read a zombie: ${probe.stat}`);
+      assert.equal(existsSync(join(directory, 'sighted-live')), false, 'a zombie probe wrote the live marker');
+      // A zombie still has its start time, so even a prepared stand-in answers L0 (`sightingPs:59–69`).
+      assert.equal(exit.F, 'F3z', 'the probe of a zombie member returned no outer answer');
+      t?.diagnostic?.(JSON.stringify({ zombieProbe: probe, F: exit.F }));
+    }],
+  // E3: a changed completed round, then a settled return and an answered confirmation. The two-round
+  // cells reach it unforced; a one-round cell reaches it after a forced anomalous first round.
+  ['E3: a changed completed round then a settled return and an answered confirmation', (name) => twoRound.includes(name), {}, { branch: 'answered', C: 'C0', F: 'F3z', rounds: ['changed', 'settled'] }, probed()],
+  ['E3 anomalous: an empty completed round then a settled return and a confirmation', () => true, { reads: [forced('state', 2, 'empty')] },
+    { fails: (name) => preparedCells.includes(name), failure: /prepared|consumed cached answer|state cache read count/, C: 'C0', F: 'F3z' }, (exit) => assert.equal(exit.rounds[0], 'N1', `rounds: ${exit.rounds}`)],
+  // E4: a changed or anomalous completed round, a settled return, then a confirmation that fails.
+  ['E4: an empty completed round, a settled return, then a failed confirming read', () => true, { reads: [forced('state', 2, 'empty'), forced('confirm', 1, 'fail')] },
+    { branch: 'diagnostic', C: 'C0', F: 'F4z', B: 'B1', reason: () => CONFIRM_FAILED + FAILED_READ + MAY_HAVE }, (exit) => assert.equal(exit.rounds[0], 'N1', `rounds: ${exit.rounds}`)],
+  // X0's X-reap read entering its own wait for `reaped-two` and cut there: the reaping parent is
+  // stopped, so the read waits inside the fixture until L0's real census bound kills it.
+  ['X-reap held: the X-reap read waits for a stopped reaper until its real bound cuts it', (name) => name === 'X0', { reads: [forced('state', 2, 'hold-reaper')] }, censusTimeout, async (exit, directory, name, t) => {
+    const reaper = Number(read(directory, 'held-reaper'));
+    try {
+      assert.ok(existsSync(join(directory, 'release-two')), 'the X-reap read never released the member, so it never entered its wait');
+      assert.equal(existsSync(join(directory, 'reaped-two')), false, 'the stopped reaper reaped the member before the cut');
+      assert.equal(exit.censusCut.kind, 'timeout', 'the X-reap read was not cut by its real census bound');
+    } finally {
+      // Once L0's kill ends the reaper's parent, the kernel may already have ended the stopped reaper
+      // as a member of an orphaned group; a reaper still there is continued.
+      try { process.kill(reaper, 'SIGCONT'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+    const two = pidIn(directory, 'two');
+    await until(() => processState(two) === '', { signal: t.signal });
+  }],
+];
+for (const name of Object.keys(EXIT_RUNS)) {
+  for (const [title, applies, forcing, expect, check] of CELL_CASES) {
+    if (!applies(name)) continue;
+    const cellExpect = { ...expect, fails: typeof expect.fails === 'function' ? expect.fails(name) : expect.fails };
+    test(`${name} exit ${title}`, SETTLES_WITHIN, async (t) => {
+      // A reaper the forcing stopped is continued in pass and fail teardown alike.
+      t.after(() => {
+        const held = exitResults.get(t)?.directory && join(exitResults.get(t).directory, 'held-reaper');
+        if (held && existsSync(held)) try { process.kill(Number(readFileSync(held, 'utf8')), 'SIGCONT'); } catch {}
+      });
+      const exit = await forcedExit(t, name, forcing, cellExpect);
+      if (exit && check) await check(exit, exitResults.get(t).directory, name, t);
+    });
+  }
+  test(`${name} exit K1 answered: a refused first group kill after an answered confirmation is recorded as it happened`, SETTLES_WITHIN, async (t) => {
+    exitForcings.set(t, { signals: [refusedKill] });
+    let failure;
+    try { await censusExit(t, ...EXIT_CELLS[name]); } catch (error) { failure = error; }
+    const { exit, events, directory } = exitResults.get(t);
+    const reached = forcingReached(directory, { signals: [refusedKill] });
+    if (exit.branch !== 'answered' || !reached) {
+      // A real-bound cutoff that still met the refused kill is the K1-cutoff class: its ordinary
+      // cutoff must fail on the refused kill, and nothing else.
+      if (failure && !(reached && exit.branch === 'cutoff' && /did not reach the group/.test(failure.message))) throw failure;
+      if (reached && exit.branch === 'cutoff') refusedThenSent(exit, directory, name, t);
+      t.diagnostic(JSON.stringify({ forcedClassUnproved: 'the real bound ended the exit before an answered confirmation', exitSighting: exitSummary(exit) }));
+      t.skip(`no answered confirmation: ${exit.C}/${exit.F ?? '-'}`);
+      return;
+    }
+    if (failure) t.diagnostic(JSON.stringify({ answeredRefusedKill: failure.message }));
+    refusedThenSent(exit, directory, name, t);
+    assert.ok(exit.kills.slice(1).some(({ ok }) => ok), 'no later group kill reached the group after the answered confirmation');
+    // X0's reaped member leaves no group record; every other answered cell records one.
+    assert.equal(events.filter(({ event, group }) => event === 'group.killed' && group === exit.group).length, name === 'X0' ? 0 : 1, JSON.stringify(events));
+  });
+}
+
+test('A0 exit forced F4z propagates a failure other than the one its forcing specifies', SETTLES_WITHIN, async (t) => {
+  const forcing = { reads: [forced('confirm', 1, 'fail')] };
+  let thrown;
+  try { await forcedExit(t, 'A0', forcing, { branch: 'diagnostic', failure: /a failure this forcing never specifies/ }); } catch (error) { thrown = error; }
+  if (!forcingReached(exitResults.get(t).directory, forcing)) return;
+  assert.match(thrown?.message ?? '', /the exit took the diagnostic branch/, 'forcedExit swallowed a failure its forcing did not specify');
+});
+
+test('A0 exit answered control: the after-state sighting is confirmed live before the kill', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  await unnamedCensusCell(t, 'exit', 'A');
+});
+
+test('X0 exit answered control: the reaping read precedes the confirming read', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  await reapedCensusCell(t, 'exit');
+});
+
+/** Runs this file's test `title` alone, in its own runner, with every exit required to answer. */
+async function answeredRun(t, title) {
+  const pattern = `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+  const env = { ...process.env, EXIT_SIGHTING_REQUIRES: 'answered' };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // A nested run its test abandons at the test's bound is ended with its group, which it leads,
+  // since a run left alive holds this file's process from exiting.
+  const abandoned = () => { try { process.kill(-run.pid, 'SIGKILL'); } catch {} };
+  t.signal.addEventListener('abort', abandoned, { once: true });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [code] = await once(run, 'close');
+  t.signal.removeEventListener('abort', abandoned);
+  t.diagnostic(output.split('\n').filter((line) => /^# (tests|pass|fail)|exitSighting/.test(line)).join('\n'));
+  assert.equal(code, 0, output);
+  // Node 20 counts the tests the pattern skips (CI run 38755885716); Node 26 does not. Either way exactly
+  // one test passed, it is the one named, and none failed or was cancelled.
+  assert.match(output, /^# pass 1$/m, output);
+  assert.match(output, /^# fail 0$/m, output);
+  assert.match(output, /^# cancelled 0$/m, output);
+  assert.match(output, new RegExp(`^ok \\d+ - ${pattern.slice(1, -1)}$`, 'm'), output);
+}
+
+for (const title of [
+  'C615 fixture-preparation-valid binds the private cache to actual ps returns',
+  'C615 fixture-cache-binding rejects a consumed value different from its preparatory original',
+  'C615 fixture-outer-order rejects failed missing mismatched and reversed returned reads',
+  'C615 fixture-retention reopens actual finalizer and recorded identities after teardown',
+]) {
+  test(`${title}, answered control`, SETTLES_WITHIN, async (t) => {
+    await answeredRun(t, title);
+  });
+}
+
+// Each record a real U1 E0 cutoff's events could be given beside L0's own, none of which any read
+// of that exit supports: the cutoff check refuses every one.
+for (const [label, extra] of [
+  ['an unended survivor no post-kill read returned', { event: 'survivor.unended', pid: 999999 }],
+  ['a named kill of a pid no read returned', { event: 'survivor.killed', pid: 999999 }],
+  ['an event the exit cleanup does not record', { event: 'directory.unread', directory: '/nowhere', census: 'invented' }],
+]) {
+  test(`U1 exit E0: the cutoff check refuses ${label}`, SETTLES_WITHIN, async (t) => {
+    const exit = await forcedExit(t, 'U1', { reads: [forced('state', 1, 'hang')] }, censusTimeout);
+    if (exit === undefined) return;
+    const { events, directory } = exitResults.get(t);
+    assert.throws(() => exitCutoff(directory, exit, { prepared: false, status: 0, stderr: '', events: [...events, extra] }), /the exit's events differ from those its reads support/);
+  });
+}
+
+/** Every event kind L0's source records, with the `.unended` each `.killed` kind ends as. */
+const L0_EVENT_KINDS = ['group.killed', 'survivor.killed', 'survivor.unended', 'timeout.killed', 'timeout.unended', 'recorded.killed', 'recorded.unended', 'directory.unread', 'directory.skipped', 'output.held'];
+
+/** Every field an L0 event of the exit cleanup or a directory census carries, beside one no event carries. */
+const L0_EVENT_FIELDS = ['group', 'census', 'pid', 'name', 'cmd', 'reason', 'directory', 'killed', 'bound', 'invented'];
+
+/**
+ * Each mechanical variant of `events`, by label: every event with each field it lacks added, each
+ * field it has changed and each removed, and its kind changed; and one extra event of every kind,
+ * a copy of the exit's own where it has one.
+ */
+function eventVariants(events) {
+  const variants = [];
+  const swapped = (index, record) => events.map((each, at) => (at === index ? record : each));
+  events.forEach((record, index) => {
+    const at = `${record.event} #${index}`;
+    for (const field of L0_EVENT_FIELDS) if (!(field in record)) variants.push([`${at} gains ${field}`, swapped(index, { ...record, [field]: ['pid', 'group', 'bound'].includes(field) ? 999999 : 'ghost' })]);
+    for (const field of Object.keys(record).filter((key) => key !== 'event')) {
+      variants.push([`${at} with ${field} changed`, swapped(index, { ...record, [field]: typeof record[field] === 'number' ? record[field] + 1 : `${JSON.stringify(record[field])}-changed` })]);
+      const { [field]: _removed, ...rest } = record;
+      variants.push([`${at} without ${field}`, swapped(index, rest)]);
+    }
+    variants.push([`${at} as another kind`, swapped(index, { ...record, event: L0_EVENT_KINDS.find((kind) => kind !== record.event) })]);
+  });
+  for (const kind of L0_EVENT_KINDS) {
+    const own = events.find(({ event }) => event === kind);
+    variants.push([`an extra ${kind}`, [...events, own ? { ...own } : { event: kind, pid: 999999, group: 999999 }]]);
+  }
+  return variants;
+}
+
+// A forced E0 census timeout: a real-deadline cutoff in every cell.
+const E0_FORCING = { reads: [forced('state', 1, 'hang')] };
+
+for (const [cell, run] of [
+  ['U1', (t) => forcedExit(t, 'U1', E0_FORCING, censusTimeout)],
+  ['X0', (t) => forcedExit(t, 'X0', E0_FORCING, censusTimeout)],
+  // As the C615 tests run it: a prepared U2 exit through `censusExit`, its returned originals retained.
+  ['C615 U2', async (t) => { exitForcings.set(t, E0_FORCING); await censusExit(t, 'U2'); return exitResults.get(t).exit; }],
+]) {
+  test(`${cell} exit E0: the cutoff check refuses every changed, added or extra event`, SETTLES_WITHIN, async (t) => {
+    const exit = await run(t);
+    if (exit === undefined) return;
+    if (exit.branch !== 'cutoff') return t.skip(`the exit took the ${exit.branch} branch, not a cutoff`);
+    const { events, directory } = exitResults.get(t);
+    const check = (list) => exitCutoff(directory, exit, { prepared: false, status: 0, stderr: '', events: list });
+    check(events);
+    const variants = eventVariants(events);
+    const missed = [];
+    for (const [label, list] of variants) {
+      try { check(list); missed.push(label); }
+      catch (error) { if (!(error instanceof assert.AssertionError)) throw error; }
+    }
+    t.diagnostic(JSON.stringify({ events, variants: variants.length, missed }));
+    assert.deepEqual(missed, [], 'the cutoff check accepted these variants of the exit\'s own events');
+  });
+}
+
+/**
+ * This process's live descendants by pid, state and command line: every process it started, or
+ * one of those started, that has not ended, a zombie excepted, and the listing's own `ps` aside.
+ */
+function liveDescendants() {
+  const rows = spawnSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,command='], { encoding: 'utf8' }).stdout.split('\n')
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)).filter(Boolean)
+    .map(([, pid, ppid, stat, command]) => ({ pid: Number(pid), ppid: Number(ppid), stat, command }));
+  const ours = new Set([process.pid]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const row of rows) if (!ours.has(row.pid) && ours.has(row.ppid)) { ours.add(row.pid); grew = true; }
+  }
+  return rows.filter(({ pid, stat, command }) => pid !== process.pid && ours.has(pid) && !stat.startsWith('Z') && !command.startsWith('/bin/ps -axo'));
+}
+
+// The tests a nested run of this file defines where `EXIT_LEAK_HARNESS` names them, so that a test
+// below can abandon an answered run, or an exit caller, at its own bound and see whether the file
+// it ran in still exits. `leak hold` holds until its process is killed.
+if (process.env.EXIT_LEAK_HARNESS === 'answered') {
+  test('leak hold', async () => {
+    const hold = spawn('/usr/bin/tail', ['-f', '/dev/null'], { stdio: 'ignore' });
+    await once(hold, 'exit');
+  });
+  test('leak abandoned answered run', { timeout: 1 }, (t) => answeredRun(t, 'leak hold'));
+}
+if (process.env.EXIT_LEAK_HARNESS === 'exit') {
+  test('leak abandoned exit caller', { timeout: 1 }, (t) => {
+    // The callers running under this run's own temporary directory as the bound ends the test.
+    t.signal.addEventListener('abort', () => {
+      const callers = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR) && line.includes('caller.mjs'));
+      process.stderr.write(`leak callers at abort: ${callers.length}\n`);
+    });
+    return censusExit(t, 'U1');
+  });
+}
+if (process.env.EXIT_LEAK_HARNESS === 'forced') {
+  // The forced class whose run overran its bound in CI run 38947643018, run as its own test does.
+  const [, , forcing, expect] = CELL_CASES.find(([title]) => title.startsWith('A3 failure:'));
+  test('leak abandoned X0 exit A3 failure', { timeout: 1 }, (t) => {
+    // The processes under this run's own temporary directory as the bound ends the test.
+    t.signal.addEventListener('abort', () => {
+      const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+      process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
+    });
+    return forcedExit(t, 'X0', forcing, { ...expect, fails: typeof expect.fails === 'function' ? expect.fails('X0') : expect.fails });
+  });
+  // The same run, abandoned only once its forced confirming read has been reached: the test ends
+  // there with the run still pending, as a test past its bound does.
+  test('leak abandoned X0 exit A3 failure after its forced read', async (t) => {
+    const pending = forcedExit(t, 'X0', forcing, { ...expect, fails: typeof expect.fails === 'function' ? expect.fails('X0') : expect.fails });
+    pending.catch(() => {});
+    const reached = () => readdirSync(process.env.TMPDIR).some((name) => name.startsWith('rigger-process-') && existsSync(join(process.env.TMPDIR, name, 'forced')) && readFileSync(join(process.env.TMPDIR, name, 'forced'), 'utf8').includes('confirm 1 answer-then-fail'));
+    await until(reached, { signal: t.signal });
+    const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+    process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
+    throw new Error('abandoned after its forced read');
+  });
+}
+
+if (process.env.EXIT_LEAK_HARNESS) {
+  // Run after the abandoned test's teardown: nothing it started may still be running. An abandoned
+  // answered run is ended by a signal, so it is looked for again a bounded number of times; the
+  // scratch sweep has already ended an exit caller before this test begins. Whatever is left is
+  // killed here, so the file can still exit and report this failure.
+  test('leak left nothing running', (t) => {
+    let left = liveDescendants();
+    for (let look = 1; left.length > 0 && look < 20; look += 1) left = liveDescendants();
+    t.after(() => { for (const { pid } of left) try { process.kill(pid, 'SIGKILL'); } catch {} });
+    assert.deepEqual(left, [], 'a process the abandoned test started was still running after its teardown');
+  });
+}
+
+/**
+ * Runs this file's test `title` in a nested `node --test` whose process group is its own, with
+ * `EXIT_LEAK_HARNESS` set to `harness`, and settles on its exit status and output once it has
+ * closed. The group is killed at teardown, so a run that never closes ends with the test.
+ */
+async function leakRun(t, harness, title) {
+  const env = { ...process.env, EXIT_LEAK_HARNESS: harness, TMPDIR: realpathSync(temporaryDirectory('rigger-leak-', { context: t })) };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^(${title}|leak left nothing running)$`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let closed = false;
+  t.after(() => { if (!closed) try { process.kill(-run.pid, 'SIGKILL'); } catch {} });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  const [code] = await once(run, 'close');
+  closed = true;
+  return { code, output };
+}
+
+for (const [harness, title] of [['answered', 'leak abandoned answered run'], ['exit', 'leak abandoned exit caller'], ['forced', 'leak abandoned X0 exit A3 failure'], ['forced', 'leak abandoned X0 exit A3 failure after its forced read']]) {
+  test(`a file whose test ${title.replace('leak abandoned ', 'abandons its ')} at the test's bound still exits`, SETTLES_WITHIN, async (t) => {
+    const { code, output } = await leakRun(t, harness, title);
+    assert.equal(code, 1, output);
+    assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
+    assert.match(output, title.endsWith('forced read') ? /abandoned after its forced read/ : /test timed out after 1ms/, output);
+    if (harness !== 'answered') assert.match(output, /leak callers at abort: 1$/m, output);
+    assert.match(output, /^ok \d+ - leak left nothing running$/m, output);
+  });
+}
+
 // proves R-STATE-12
 test('B0 exit: a member named by the first census round remains recorded after later reads omit it', SETTLES_WITHIN, async (t) => {
   const { directory, events, two, trace } = await censusExit(t, 'B');
+  if (exitCutoffs.has(events)) return;
   assertSighting(trace, two, 'B');
   assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
 });
