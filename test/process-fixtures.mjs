@@ -11,6 +11,7 @@ import { closeSync, constants as files, existsSync, openSync, readdirSync, readF
 import { statSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -42,7 +43,7 @@ export function finishFixtureWarmBatch(directory) {
   const paths = fixtureWarmBatches.get(directory);
   assert.ok(paths, `fixture warming was not begun for ${directory}`);
   fixtureWarmBatches.delete(directory);
-  const run = spawnSync(process.execPath, [new URL(import.meta.url).pathname, '--warm-fixtures', ...paths], {
+  const run = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--warm-fixtures', ...paths], {
     encoding: 'utf8',
     env: process.env,
   });
@@ -121,13 +122,12 @@ export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
 
 /** Record shell readiness results without changing the generated command's normal path. */
 function tracedReadiness(body, name) {
-  if (process.env.RIGGER_779_MOVE_FAIL === '1') body = body.replaceAll('/bin/mv "$here/child.$1.tmp" "$here/child.$1"', '/bin/rm -f "$here/child.$1.tmp"\n/bin/mv "$here/child.$1.tmp" "$here/child.$1"');
   const observed = body.replaceAll('/bin/ps -o ucomm= -p $!', 'rigger779_capture_ps -o ucomm= -p $!');
   return [
     'if [ -f "$here/.rigger779-trace" ]; then',
     `  rigger779_script=${name}`,
     '  rigger779_label=$1; rigger779_round=0',
-    '  rigger779_capture_ps() { /bin/ps "$@" | /usr/bin/tee -a "$here/ps.stdout"; rigger779_actual=${PIPESTATUS[0]}; [ -f "$here/.rigger779-ps-status-1" ] && return 1; return "$rigger779_actual"; }',
+    '  rigger779_capture_ps() { /bin/ps "$@" | /usr/bin/tee -a "$here/ps.stdout"; rigger779_actual=${PIPESTATUS[0]}; return "$rigger779_actual"; }',
     '  rigger779_previous=',
     '  rigger779_debug() {',
     '    rigger779_status=$1; rigger779_pipeline=$2; rigger779_next=$3',
@@ -207,7 +207,7 @@ export function warmed(path, args = []) {
   return path;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname && process.argv[2] === '--warm-fixtures') {
+if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === '--warm-fixtures') {
   const pending = process.argv.slice(3);
   const warm = async (path) => {
     if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.warm.start', path })}\n`);

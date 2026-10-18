@@ -1,16 +1,20 @@
 // ABOUTME: Tests the process fixtures' own bounds: a condition wait whose test has ended, failed or
 // timed out, no longer holds the test file's process open, and the teardown that kills a scratch
 // directory's processes ends, naming any it could not kill.
+// It also controls raw process-table outcomes and a warm runner under a path containing a space.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { scratch, sweep } from './process-fixtures.mjs';
 import { running } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const childProcess = createRequire(import.meta.url)('node:child_process');
 
@@ -35,6 +39,17 @@ function withProcessTableResults(results, check) {
 }
 
 const processTableResult = (status, stdout, extra = {}) => ({ status, stdout, stderr: '', signal: null, error: undefined, ...extra });
+
+test('warm runner resolves its module path when the checkout path contains a space', async (t) => {
+  const directory = temporaryDirectory('rigger fixture space ', { context: t });
+  for (const name of ['process-fixtures.mjs', 'temporary-directory.mjs']) {
+    copyFileSync(new URL(`./${name}`, import.meta.url), join(directory, name));
+  }
+  const fixtures = await import(pathToFileURL(join(directory, 'process-fixtures.mjs')).href);
+  fixtures.beginFixtureWarmBatch(directory);
+  fixtures.fixture(directory, 'warm-control', 'exit 0');
+  assert.doesNotThrow(() => fixtures.finishFixtureWarmBatch(directory));
+});
 
 /**
  * How long a test file of two tests, each ending while its wait is unmet, is given to exit. A
@@ -96,7 +111,7 @@ test('given a process the teardown\'s pkill cannot kill, which pgrep lists howev
   });
 });
 
-test('a process-table read keeps raw status separate from its parsed list', () => {
+test('control: a process-table read keeps raw status separate from its parsed list', () => {
   for (const status of [0, 1, 2, 3, 255, null]) {
     for (const stdout of ['', '4242\n', 'not-a-pid\n']) {
       const result = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
@@ -114,7 +129,7 @@ test('a process-table read keeps raw status separate from its parsed list', () =
   });
 });
 
-test('sweep returns on a parsed empty read, including raw statuses that cannot prove no match', () => {
+test('control: sweep returns on a parsed empty read, including raw statuses that cannot prove no match', () => {
   for (const status of [0, 1, 2, 3, 255, null]) {
     withProcessTableResults([processTableResult(status, '', status === null ? { signal: 'SIGTERM' } : {})], (calls) => {
       sweep('rigger-779-absent');
@@ -127,7 +142,7 @@ test('sweep returns on a parsed empty read, including raw statuses that cannot p
   });
 });
 
-test('sweep checks first, later and final reads after occupied lists despite failed pkill returns', () => {
+test('control: sweep checks first, later and final reads after occupied lists despite failed pkill returns', () => {
   for (const status of [0, 1, 2, 3, 255, null]) {
     for (const stdout of ['4242\n', 'not-a-pid\n']) {
       withProcessTableResults([

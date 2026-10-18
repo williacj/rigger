@@ -18,6 +18,7 @@ import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
 import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -199,7 +200,6 @@ const CALLER = [
  */
 function fixtures(directory, options = {}) {
   if (process.env.RIGGER_779_TRACE === '1') writeFileSync(join(directory, '.rigger779-trace'), '');
-  if (process.env.RIGGER_779_PS_STATUS === '1') writeFileSync(join(directory, '.rigger779-ps-status-1'), '');
   if (options.ps || options.commands) beginFixtureWarmBatch(directory);
   writeFileSync(join(directory, 'hold'), '');
   writeFileSync(join(directory, 'ps-hold'), '');
@@ -209,12 +209,19 @@ function fixtures(directory, options = {}) {
   const child = [
     "(trap '' TERM; exec /usr/bin/tail -f \"$here/hold\") &",
     'echo $! > "$here/child.$1.tmp"',
-    'if [ "$RIGGER_779_TRACE" = 1 ]; then echo "child-readiness-start $1" >> "$here/fixture.trace"; fi',
     "while kill -0 $! 2>/dev/null && ! /bin/ps -o ucomm= -p $! | /usr/bin/grep -qx 'tail *'; do :; done",
-    'if [ "$RIGGER_779_TRACE" = 1 ]; then echo "child-readiness-return $1" >> "$here/fixture.trace"; fi',
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
   ].join('\n');
   fixture(directory, 'command', `echo $$ > "$here/group.$1"\n/usr/bin/mkfifo "$here/hold.$1"\n${child}\nwait\nread answer < "$here/hold.$1"`);
+  if (process.env.RIGGER_779_PS_STATUS === '1') {
+    // This control keeps the real ps output for grep while changing only ps's returned status.
+    const path = join(directory, 'command');
+    const script = readFileSync(path, 'utf8');
+    const returnedStatus = 'rigger779_actual=${PIPESTATUS[0]}; return "$rigger779_actual";';
+    assert.ok(script.includes(returnedStatus), 'the readiness observer was not installed');
+    writeFileSync(path, script.replace(returnedStatus, 'rigger779_actual=${PIPESTATUS[0]}; return 1;'));
+    if (!options.ps && !options.commands) warmed(path);
+  }
   if (!options.ps && !options.commands) return;
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
