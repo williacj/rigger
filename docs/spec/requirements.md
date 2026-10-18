@@ -341,7 +341,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-VERDICT-8 | `rigger verdict` posts the owner's verdict on a pull request, in the form the gate rule reads as an owner's marker. The verdict rules on every acceptance item and on coverage, against the head and the acceptance standing when the owner runs it. | the engine | the test suite | D25 |
 | R-VERDICT-9 | `rigger verdict` shows the owner the whole verdict, with each acceptance item beside its ruling, and posts it only once the owner confirms it. No argument or setting skips that confirmation. | the engine | the test suite | D25 |
 | R-VERDICT-10 | `rigger verdict` asks for that confirmation on a terminal at its standard input, and posts nothing where its standard input is no terminal. Its edges are in `### R-VERDICT-10 — Who can confirm the owner's verdict`. | the engine | the test suite | D25 |
-| R-VERDICT-11 | Nothing Rigger dispatches or runs, with the standard input Rigger started it with, posts the owner's verdict through `rigger verdict`. Rigger never runs that verb itself. Its edges are in `### R-VERDICT-10 — Who can confirm the owner's verdict`. | the engine | the test suite | D25 |
+| R-VERDICT-11 | Nothing Rigger dispatches or runs, with the standard input Rigger started it with, posts the owner's verdict through `rigger verdict`. Rigger never runs that verb itself. A process under a dispatch that opens a terminal of its own lies outside this row (`D25` rule 2). | the engine | the test suite | D25 |
 | R-VERDICT-12 | `rigger verdict` posts each verdict as one new comment, at most once for each confirmation. It never edits or deletes a comment on the forge. | the engine | the test suite | D25 |
 | R-VERDICT-13 | `rigger verdict` posts nothing, and names the reason, where the owner's input or the forge's state cannot make a verdict the gate reads at the pull request's head. The cases are in `### R-VERDICT-13 — When the owner's verdict is posted`. | the engine | the test suite | D25 |
 
@@ -354,10 +354,10 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | a job a scheduler starts, such as launchd or cron | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
 | a role Rigger dispatched, or a process under it, with the standard input Rigger started it with | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
 | a provisioning step Rigger runs, or a process under it, with the standard input Rigger started it with | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
-| a process under a Rigger dispatch that opens a terminal of its own | that terminal | — | out: `D25` rule 2 accepts a session writing as the owner |
+| a process under a Rigger dispatch that opens a terminal of its own | that terminal | — | out: `D25` rule 2 |
 | an agent session the owner started, which Rigger did not dispatch, running the verb with its tool's standard input | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
-| that agent session opening a terminal of its own and running the verb there | that terminal | — | out: `D25` rule 2 accepts a session writing as the owner |
-| an agent session the owner started, which Rigger did not dispatch, handed the owner's terminal | that terminal | — | out: Rigger cannot tell it from the owner (`D25` rule 2), and the question still appears on the owner's terminal |
+| that agent session opening a terminal of its own and running the verb there | that terminal | — | out: `D25` rule 2 |
+| an agent session the owner started, which Rigger did not dispatch, handed the owner's terminal | that terminal | — | out: `D25` rule 2, and the question still appears on the owner's terminal |
 | any process posting a verdict with `gh` itself | — | — | out: `D25` rule 2 |
 
 ### R-VERDICT-13 — When the owner's verdict is posted
@@ -384,9 +384,9 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | a card whose kind names no owner judge | posted, as on any other card | in |
 | a card no kind selects, or one carrying the epic label | posted, as on any other card | in |
 | an owner's verdict already posted at the same head and acceptance | posted as a new verdict, leaving the earlier one as it was | in |
-| the head or the acceptance changed after the verb last read them, before its comment landed | — | out: the gate reads that verdict as stale (`R-GATE-7`) |
+| the head or the acceptance changed after the verb last read them, before its comment landed | — | out: `R-GATE-7` |
 | the Rigger the gate or the self-hosting check runs reading the card's acceptance differently from the Rigger the owner installed | — | out: that check refuses the verdict and says why |
-| an owner's account without write access to the repository | — | out: the gate counts no verdict from it |
+| an owner's account without write access to the repository | — | out: `ARCHITECTURE.md`'s "The gate" |
 
 ## R-GATE — what admits a merge
 
