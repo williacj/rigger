@@ -139,7 +139,40 @@ under the test above.
 | R-SCHED-13 | A kind of work selects a card that carries any one of the labels the consumer's configuration names for that kind, and never selects a card carrying none of them. | the engine | the test suite | |
 | R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 | R-SCHED-15 | Rigger never makes two merges at the same moment. Its bound is in `### R-SCHED-15 — Merges Rigger serializes`. | the engine | the event record, by overlapping merge intervals | |
+| R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
+| R-SCHED-21 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person removes the label from is no longer the status issue. | the engine | the test suite | |
+| R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
+| R-SCHED-23 | Admission that Rigger closed reopens when the owner runs `rigger resume` while the admission record can be read, or when the status issue is closed. Any close of the issue but `resume`'s counts as the owner's under `R-SCHED-4`, whoever or whatever made it. Closing the issue never lifts the owner's own `rigger pause`: only `rigger resume` does. Admission reopens on nothing else, except that losing Rigger's state directory leaves it open. Its states are in `### R-SCHED-23 — The status issue and admission`. | the engine | the test suite | |
+| R-SCHED-24 | When `rigger resume` reopens admission, it closes every open issue carrying the status label. | the engine | the test suite | |
+| R-SCHED-25 | Where an open issue carrying the status label exists when Rigger closes admission, Rigger comments on it, naming the reason and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-26 | Before Rigger's lane gives up on a merge because the forge reads the pull request's mergeability as unknown, Rigger reads that mergeability again. It reads again 5 seconds after each read that answers unknown. It gives up only at an unknown read made 60 seconds or more after the first. Its states are in `### R-SCHED-26 — Unknown mergeability at a merge`. | the engine | the test suite | |
+
+### R-SCHED-23 — The status issue and admission
+
+| What closed admission | The status issue | What follows | Scope |
+|---|---|---|---|
+| Rigger | open | admission stays closed | in |
+| Rigger | closed by the owner | admission reopens, and Rigger records the issue's close as what reopened it | in |
+| Rigger | closed by another account with write or triage access | admission reopens, as the owner's act | in |
+| Rigger | closed by a closing keyword in a merged pull request | admission reopens, as the owner's act | in |
+| Rigger | closed by a board workflow, such as "Auto-close issue" | admission reopens, as the owner's act | in |
+| Rigger | deleted, transferred to another repository, or never opened | admission stays closed, and Rigger opens another | in |
+| Rigger | unreadable, or its read timed out | admission stays closed; Rigger claims nothing, names the issue, and reads again at the next trigger | in |
+| Rigger | its opening refused, or timed out | admission stays closed; Rigger names the failure in its output and its event, and tries again at the next trigger | in |
+| Rigger | opened, and adding it to the board or setting its column refused | admission stays closed; Rigger names the failure, and places it again at the next trigger | in |
+| Rigger | the status label missing from the repository | — | out: these rows hold only where the repository has the status label, however it came to lack it |
+| Rigger, then the owner runs `rigger resume` | open | admission reopens, and Rigger closes the issue | in |
+| Rigger, then `rigger resume`, whose close of the issue is refused | open | admission reopens; `rigger resume` exits non-zero, naming the issue left open | in |
+| Rigger, then `rigger resume` while the admission record cannot be read | open | admission stays closed; `rigger resume` names the record and changes nothing, and the issue stays open | in |
+| Rigger, then the owner's `rigger pause` | open | admission stays closed until `rigger resume`; closing the issue alone reopens nothing | in |
+| the owner's `rigger pause`, then a card's second failure the same way | opened, naming that card | admission stays closed by the owner; closing the issue reopens nothing; `rigger resume` reopens it and closes the issue | in |
+| Rigger, then a second card's hold | open | admission stays closed; Rigger comments on the open issue, naming the second card | in |
+| Rigger, and Rigger's state directory then lost | open | admission is open; the issue is stale, and a later hold comments on it, naming the new card | in |
+| any, and an issue reopened by a person while admission is open | open | a reopened issue changes nothing while admission is open | in |
+| any, and the status label copied onto another issue by a person | open | that issue is never worked, and `rigger resume` closes it too | in |
+| the owner's `rigger pause` | none is opened | admission stays closed until `rigger resume` | in |
+| any, and a board workflow setting the issue's column after Rigger set Owner | — | — | out: the consumer's board setting |
+| any, and a notification beside the issue | — | — | out: optional, M6-11d |
 
 ### R-SCHED-15 — Merges Rigger serializes
 
