@@ -160,7 +160,7 @@ under the test above.
 | Rigger | unreadable, or its read timed out | admission stays closed; Rigger claims nothing, names the issue, and reads again at the next trigger | in |
 | Rigger | its opening refused, or timed out | admission stays closed; Rigger names the failure in its output and its event, and tries again at the next trigger | in |
 | Rigger | opened, and adding it to the board or setting its column refused | admission stays closed; Rigger names the failure, and places it again at the next trigger | in |
-| Rigger | the status label missing from the repository | — | out: `rigger setup-board` creates the board's labels (`README.md`), so a repository missing the status label is outside these rows |
+| Rigger | the status label missing from the repository | — | out: these rows hold only where the repository has the status label, however it came to lack it |
 | Rigger, then the owner runs `rigger resume` | open | admission reopens, and Rigger closes the issue | in |
 | Rigger, then `rigger resume`, whose close of the issue is refused | open | admission reopens; `rigger resume` exits non-zero, naming the issue left open | in |
 | Rigger, then `rigger resume` while the admission record cannot be read | open | admission stays closed; `rigger resume` names the record and changes nothing, and the issue stays open | in |
