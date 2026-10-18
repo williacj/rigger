@@ -147,9 +147,12 @@ reports no gap of its own; the register carries the reason.
 | R-ESCALATE-18 | **gap** |
 | R-ESCALATE-19 | **gap** |
 | R-ESCALATE-20 | **gap** |
-| R-ESCALATE-21 | **gap** |
 | R-ESCALATE-22 | **gap** |
 | R-ESCALATE-23 | **gap** |
+| R-ESCALATE-21 | **gap** |
+| R-ESCALATE-24 | **gap** |
+| R-ESCALATE-25 | **gap** |
+| R-ESCALATE-26 | **gap** |
 | R-STATE-1 | `test/restart.test.mjs` after a run, every file under the state directory is one R-STATE-4 permits, and the directory holds the run's event stream<br>`test/restart.test.mjs` a restart after the state directory is deleted dispatches the same cards in the same order as a restart with it intact, and both dispatch at least one card<br>`test/restart.test.mjs` given a card left in Coding by the first run and then moved to the done column on the fake board, the restarted engine does not dispatch it<br>`test/restart.test.mjs` a full fake-board run with HOME and TMPDIR pointed at empty temporary directories leaves both empty afterwards |
 | R-STATE-2 | `test/restart.test.mjs` given an unclaimed Coding card and an unclaimed Review card the forge holds nothing for, so no marker makes either fresh, a fresh engine dispatches both again<br>`test/restart.test.mjs` given a run stopped while card X's dispatch is unfinished, a second engine with nothing carried from the first dispatches X again, handed only what the board holds for X<br>`test/restart.test.mjs` given the same stopped run, the write record shows no move of X out of the coding column between the restart and the return of X's new dispatch<br>`test/restart.test.mjs` given the same stopped run, once the restarted run drains, no card that was on the board before the stop remains in the coding column |
 | R-STATE-3 | **gap** |

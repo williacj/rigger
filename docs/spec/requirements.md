@@ -246,12 +246,12 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | a person moved the card to Done before Rigger read the merge | out: Rigger reads no Done card, and its directories stay |
 | a Ready or Coding card whose pull request is merged | out: Rigger refuses it under `R-WORK-19`, and its directories stay |
 | a pull request closed without merging | in: nothing removed |
-| a judge's or an escalation role's dispatch of the card still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
+| a dispatch of the card by a judge, or by a role an escalation goes to, still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
 | a process Rigger did not start working in a directory | out: removal proceeds, as it does when Rigger replaces the directory |
 | a process Rigger started and could not end, working in a directory | out: removal proceeds, as for a process Rigger did not start |
 | a workspace with uncommitted changes or commits not on the forge | in: removed, as `R-WORK-13` replaces it |
 | a workspace path named through a symbolic link to the card's worktree, or anything else `R-WORK-13` refuses | in: as `R-WORK-13` answers it: the worktree and the link removed, or the path left and named |
-| a symbolic link at a judge's, an escalation role's or a scratch directory's path, or anything else `R-WORK-20`, `R-WORK-26` or `R-WORK-32` refuses | in: left and named |
+| a symbolic link at the path of a judge's directory, of a scratch directory, or of the directory of a role an escalation goes to, or anything else `R-WORK-20`, `R-WORK-26` or `R-WORK-32` refuses | in: left and named |
 | `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges`, `escalations` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
@@ -337,19 +337,22 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-ESCALATE-5 | A kind of work naming the owner as its last judge is the loop running, not an escalation. | the engine | the event record, by owner dispatches against escalations | D3 |
 | R-ESCALATE-6 | When a judge returns a fault that must not merge, the loop escalates the card in that category rather than spending its rounds. | the engine | the event record, by the category on each escalation | D3 |
 | R-ESCALATE-7 | An escalation carries the card, the reason it escalated, and the work as it stands. | the engine | the event record, by what each escalation carried | D3 |
-| R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-14 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
+| R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-13 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
 | R-ESCALATE-14 | Rigger refuses a configuration naming a role as the destination of a recorded-decision change or of critical, and the refusal names the category. | the config validator | the test suite | D14, D26 |
 | R-ESCALATE-15 | Only an ambiguous escalation a maker raises goes to a role, where its category's destination is a role. Rigger sends every escalation the loop raises to the owner, whatever its configured destination. | the engine | the test suite | D26 |
 | R-ESCALATE-16 | A card already sent to a role, as its issue shows, goes to the owner when it escalates as ambiguous again. A card whose issue no longer shows it, because a person deleted that record, may go to a role again. | the engine | the test suite | D26 |
 | R-ESCALATE-17 | A card whose kind names, as its maker or as one of its judges, the role its ambiguous escalation would go to goes to the owner instead. | the engine | the test suite | D26 |
 | R-ESCALATE-18 | Rigger hands a role an escalation goes to the card, its acceptance and the maker's reason, and hands it no judge's verdict. What the maker's reason quotes, and what the role reads through the forge itself, are outside this row. | the engine | the event record, by what each dispatch carried | D26, D18 |
 | R-ESCALATE-19 | The set holds exactly three: a change to a recorded decision, a fault that must not merge — the same fault a verdict names — and an ambiguity neither the maker nor its judges could resolve. | the engine | the test suite | D3 |
-| R-ESCALATE-20 | Every escalation is one of Rigger's categories. A card escalated to the owner proceeds no further until the owner answers it. | the engine | the event record, by the category on each escalation | D3 |
-| R-ESCALATE-21 | A card goes to the owner where the role it went to writes an escalation note of its own, in any category, or exits non-zero, or where the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
+| R-ESCALATE-20 | Every escalation is one of Rigger's categories. A card escalated to the owner proceeds no further until the owner answers it. A card whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers. | the engine | the event record, by the category on each escalation | D3 |
 | R-ESCALATE-22 | A category given no destination goes to the owner. | the engine | the test suite | D3, D26 |
 | R-ESCALATE-23 | While a role works on a card, the card keeps its column and carries no escalation label. | the engine | the test suite | D26 |
+| R-ESCALATE-21 | Rigger sends a card to the owner, after it went to a role, where any one of these holds: | the engine | the test suite | D26 |
+| R-ESCALATE-24 | — the role writes an escalation note of its own, in any category; | the engine | the test suite | D26 |
+| R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
+| R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
 
-### R-ESCALATE-14 — Escalation destinations
+### R-ESCALATE-13 — Escalation destinations
 
 | What the configuration says | What Rigger does | Scope |
 |---|---|---|

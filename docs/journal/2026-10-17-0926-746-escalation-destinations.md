@@ -3,7 +3,7 @@ what the draft missed, and what the reference check does not verify.
 
 # Escalation destinations, proposed
 
-#746 proposes `D26`, eleven `R-ESCALATE` rows, two `R-WORK` rows and the destinations table. It
+#746 proposes `D26`, fourteen `R-ESCALATE` rows, two `R-WORK` rows and the destinations table. It
 withdraws `R-ESCALATE-1` to `-3` and `R-WORK-30`. The pull request is the proposal; the owner
 ratifies it under `D25` rule 4.
 
@@ -20,7 +20,7 @@ with that id absent from both registers. The attack on #746 read the check's pas
 `D26`'s citations; it is not. A citation of an id another open card allocates resolves only once
 that card merges, so the merge order is the evidence, and the pull request names it.
 
-**A row's table may be headed by a sibling row's id.** The card heads the destinations table
-`### R-ESCALATE-14`, and `R-ESCALATE-13` is the row that cites it. The preamble has the heading
-begin with the citing row's id. The heading is the card's acceptance, so it stands, and the pull
-request names the gap for the card's author.
+**A row's table is headed by the row that owns its bound.** The first draft headed the
+destinations table `### R-ESCALATE-14`, though `R-ESCALATE-13` cites it. The preamble has the
+heading begin with the citing row's id. All three round-1 judges found it, and the card's author
+renamed it `### R-ESCALATE-13` in round 2.

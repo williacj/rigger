@@ -948,8 +948,9 @@ This decision adds no requirement row.
 3. Only an ambiguity a maker raises may go to a role. An ambiguity the loop raises goes to the
    owner. That covers rounds spent on a disagreement (`R-LOOP-10`, `D18` rule 6), and a
    card-local refusal under `R-ESCALATE-12`, which only the owner may clear.
-4. A card goes to a role once for an ambiguity. Its next ambiguity goes to the owner, so no card
-   loops between roles.
+4. A card goes to a role once for an ambiguity, as the card's issue shows. Its next ambiguity goes
+   to the owner, so no card loops between roles. A person who deletes that record lets the card go
+   to a role again.
 5. A role an escalation goes to is handed no judge's verdict, and is never its card's maker or one
    of its judges. A card the role cannot settle goes to the owner.
 
