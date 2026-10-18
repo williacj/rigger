@@ -29,7 +29,7 @@ const PULL = 12;
 const BRANCH = `rigger-${CARD}`;
 const HEAD = 'c'.repeat(40);
 
-/** The config every test's default branch holds unless it says otherwise: this repository's own, its `change` kind judged by the reviewer alone. */
+/** The config every test's default branch holds unless it says otherwise: this repository's own, its `change` kind judged by the reviewer and the architect. */
 function configWith(change = {}) {
   const config = structuredClone(rigger);
   config.kinds.change = { ...config.kinds.change, ...change };
@@ -102,7 +102,7 @@ function refusedUnread(where, pattern, pull = PULL, head = HEAD) {
 }
 
 test('the script admits a pull request whose every judge holds a sound marker at its head, exits 0, and prints the head SHA it read', () => {
-  const where = forge({ pullRequests: [pullFrom({ comments: [marker()] })] });
+  const where = forge({ pullRequests: [pullFrom({ comments: [marker(), marker({ role: 'architect' })] })] });
 
   const ran = ruled(where);
 
@@ -115,7 +115,7 @@ test('the script admits a pull request whose every judge holds a sound marker at
 });
 
 test('the script refuses a pull request a judge holds no marker on, exits non-zero, prints the head SHA and the reason, and prints the block that judge must post beside its provider', () => {
-  const where = forge({ pullRequests: [pullFrom()] });
+  const where = forge({ pullRequests: [pullFrom({ comments: [marker({ role: 'architect' })] })] });
 
   const ran = ruled(where);
 
@@ -137,7 +137,7 @@ test('a block copied from the run summary, with its placeholders filled and the 
   const body = ['Sound, by a judge Rigger did not dispatch.', ...block].join('\n');
   assert.equal(parseMarker(body, 1).state, 'marker', body);
   // Read through the script itself: the filled block, posted as a comment, admits the pull request.
-  const posted = forge({ pullRequests: [pullFrom({ comments: [{ body, createdAt: '2026-10-12T10:00:00Z', author: { login: 'judge' } }] })] });
+  const posted = forge({ pullRequests: [pullFrom({ comments: [{ body, createdAt: '2026-10-12T10:00:00Z', author: { login: 'judge' } }, marker({ role: 'architect' })] })] });
 
   const ran = ruled(posted);
 
@@ -308,7 +308,7 @@ test('the script hands the form check the title the forge holds, never the event
 
 test('the script reads the card\'s body from the forge, never from the event: where the event holds an older body, it rules on the forge\'s acceptance digest', () => {
   const older = '## Acceptance\n\n- An older item.\n';
-  const where = forge({ pullRequests: [pullFrom({ comments: [marker({ body: BODY })] })] });
+  const where = forge({ pullRequests: [pullFrom({ comments: [marker({ body: BODY }), marker({ role: 'architect', body: BODY })] })] });
   const event = join(temporaryDirectory('rigger-gate-event-'), 'event.json');
   writeFileSync(event, JSON.stringify({ issue: { number: CARD, title: 'Card seven', body: older, labels: [] } }));
 
@@ -412,14 +412,14 @@ test('the script refuses where the default branch\'s config is absent, throws on
 
 test('the script refuses where the default branch\'s config names another repository than the event, naming both, and reads no marker; a difference of letter case alone is the same repository', () => {
   refusedUnread(forge({ main: moduleOf({ ...configWith(), repo: 'someone/else' }), pullRequests: [pullFrom()] }), /names the repository someone\/else, and the event names williacj\/rigger/);
-  const cased = forge({ main: moduleOf({ ...configWith(), repo: 'WilliaCJ/Rigger' }), pullRequests: [pullFrom({ comments: [marker()] })] });
+  const cased = forge({ main: moduleOf({ ...configWith(), repo: 'WilliaCJ/Rigger' }), pullRequests: [pullFrom({ comments: [marker(), marker({ role: 'architect' })] })] });
   assert.equal(ruled(cased).status, 0);
 });
 
 test('the script counts no marker from an author whose permission is not admin, maintain or write, nor from one the forge answers 404 for, and logs each author\'s permission', () => {
   const where = forge({
-    pullRequests: [pullFrom({ comments: [marker({ author: 'reader' }), marker({ author: 'stranger' })] })],
-    permissions: { reader: 'read' },
+    pullRequests: [pullFrom({ comments: [marker({ author: 'reader' }), marker({ author: 'stranger' }), marker({ role: 'architect' })] })],
+    permissions: { reader: 'read', judge: 'write' },
   });
 
   const ran = ruled(where);
@@ -446,7 +446,7 @@ test('where the forge refuses a permission read, the comments read fails, no mar
 });
 
 test('the script hands the rule no required checks: a context the base branch requires neither refuses the pull request nor is read', () => {
-  const where = forge({ pullRequests: [pullFrom({ comments: [marker()], checks: { 'check (24)': { state: 'failed', creator: null } } })] });
+  const where = forge({ pullRequests: [pullFrom({ comments: [marker(), marker({ role: 'architect' })], checks: { 'check (24)': { state: 'failed', creator: null } } })] });
 
   const ran = ruled(where);
 
@@ -513,7 +513,7 @@ test('the gate rule gives the same answer for every mapped workflow event and ac
   ]);
 
   for (const { name, comments, status } of [
-    { name: 'admitting', comments: [marker()], status: 0 },
+    { name: 'admitting', comments: [marker(), marker({ role: 'architect' })], status: 0 },
     { name: 'refusing', comments: [], status: 1 },
   ]) {
     const where = forge({ pullRequests: [pullFrom({ comments })] });

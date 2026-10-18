@@ -339,9 +339,9 @@ test('handed this repository\'s config, the panel function requires codex of eve
   }
 });
 
-test('a maker:codex change card requires claude of its reviewer', () => {
+test('a maker:codex change card requires claude of its reviewer and of its architect', () => {
   const kind = config.kinds.change;
   const given = card(1, [...kind.select.labels, 'maker:codex']);
   assert.deepEqual(providerOf(given, 'engineer', config.roles.engineer), { provider: 'codex' });
-  assert.deepEqual(panelOf(given, kind, config.roles), [{ role: 'reviewer', provider: 'claude' }]);
+  assert.deepEqual(panelOf(given, kind, config.roles), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'claude' }]);
 });
