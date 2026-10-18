@@ -38,7 +38,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
-| **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, answers to escalations | | | | A person |
+| **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, or where the consumer's own check asks for it, answers to escalations | | | | A person |
 
 ## Boundary rules
 
@@ -63,7 +63,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    - The schema-write side changes the board's fields and their options and the repository's
      labels. Only the CLI's verbs reach it, never a layer.
    - The repository-write side admits two writes, a merge of a pull request and a comment on one,
-     and only L2 reaches it.
+     and L2 is the one layer that reaches it. The `verdict` verb also reaches it, for one write: a
+     comment on a pull request holding the owner's verdict, which L2's `composeMarker` composes.
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
@@ -344,9 +345,18 @@ follows:
 
 The owner's verdict is a marker in the same schema, with the role `owner`, and the owner writes it.
 L2 never writes it. A marker the owner writes, or one written by a judge Rigger did not dispatch,
-carries neither a dispatch id nor an evidence digest. Its writer takes the head, the acceptance
-digest, the items and, for an agent judge, the provider required of it from the gate check's
-run summary. The owner's marker carries no provider.
+carries neither a dispatch id nor an evidence digest. The owner's `verdict` verb builds the head,
+the acceptance digest and the items itself, with the functions the gate script and the
+`self-hosting` check build them with. A judge Rigger did not dispatch takes them, and the provider
+required of it, from the gate check's run summary. The owner's marker carries no provider.
+
+The verb runs the Rigger the owner installed. The gate runs the Rigger it pins (`D25` rule 6), and
+this repository's `self-hosting` check runs the default branch's tree. Where either reads a card's
+acceptance differently from the verb, that check refuses the owner's verdict, naming why.
+
+The verb asks for its confirmation only on a terminal at its standard input, and reads the answer
+there. No process L0 starts has a terminal at its standard input. A process under one that opens a
+terminal of its own can still confirm, which `D25` rule 2 accepts.
 
 ### The required check on the forge
 
@@ -709,8 +719,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | The gate | 400 |
 | L3 | 1,000 |
 | L5 | 1,500 |
-| L6 | 1,500 |
-| CLI and config | 1,500 |
+| L6 | 1,200 |
+| CLI and config | 1,800 |
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
