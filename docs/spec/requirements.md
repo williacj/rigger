@@ -354,7 +354,8 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 
 | What the forge refused | What the board then shows | What follows | Scope |
 |---|---|---|---|
-| nothing | the card in the owner's column, labelled, with one comment | — | in |
+| nothing, on the card's first escalation | the card in the owner's column, labelled, with one comment | — | in |
+| nothing, on an escalation retried after a refused move or label | the card in the owner's column, labelled, with one copy of the comment for each invocation that posted it, each naming the same category and reason | — | in |
 | the comment | nothing changed | a later invocation escalates the card again | in |
 | the move, after the comment | the comment, the card in its column, no label | a later invocation escalates again, and the comment may repeat | in |
 | the label, after the comment and the move | the comment, the card in the owner's column, no label | a later invocation escalates again, and the comment may repeat | in |
@@ -418,9 +419,11 @@ Each failure is one of three classes:
 | two attempts failing in different host ways | out | — | out: the card stops, and admission stays open |
 | an optional step that failed or never started | out | — | out: `R-PROV-2` |
 | a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
-| a maker that ran and failed | out | — | out: the work's failure, not the environment's (`R-FAIL-1`) |
+| a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
-| a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`), its kinds (`R-SCHED-12`), or its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
 
 ## R-PROV — provisioning
 

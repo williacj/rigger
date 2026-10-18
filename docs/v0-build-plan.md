@@ -19,8 +19,9 @@ cites it, and the citation is where the binding text lives; a conflict resolves 
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting (`ARCHITECTURE.md`, Extension points).
 3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
-   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A repeated
-   host fault closes admission rather than stopping cards (`R-FAIL-5`); L3 owns that hold.
+   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A host fault
+   that repeats the same way on one card's attempts closes admission rather than stopping cards
+   (`R-FAIL-5`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
@@ -361,7 +362,8 @@ Exit:
 - A closed admission and its reason are still in force after the engine restarts (`R-STATE-4`).
 - A critical verdict moves the card to Owner, carrying the escalation label, with one comment on
   its issue holding the category, the reason and the work as it stands (`R-ESCALATE-7`,
-  `R-ESCALATE-8`, `R-ESCALATE-9`).
+  `R-ESCALATE-8`, `R-ESCALATE-9`). Where the forge refused one of the escalation's writes and
+  Rigger retried, the comment may repeat, each copy naming the same category and reason.
 
 **M7. Report complete, clock triggers.**
 
