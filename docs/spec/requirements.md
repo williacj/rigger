@@ -139,6 +139,10 @@ under the test above.
 | R-SCHED-13 | A kind of work selects a card that carries any one of the labels the consumer's configuration names for that kind, and never selects a card carrying none of them. | the engine | the test suite | |
 | R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 | R-SCHED-15 | Rigger never makes two merges at the same moment. Its bound is in `### R-SCHED-15 — Merges Rigger serializes`. | the engine | the event record, by overlapping merge intervals | |
+| R-SCHED-16 | A card Rigger has not claimed is a new card under `R-SCHED-3`, whatever its column, under `rigger once` as under `rigger run`. | the engine | the test suite | |
+| R-SCHED-17 | `rigger doctor` reports admission as open, as closed with what closed it and why, or as a record it cannot read. A closed admission leaves `doctor`'s exit status as it is, and an unreadable record fails it. | the engine | the test suite | |
+| R-SCHED-18 | While admission is closed, or its record cannot be read, `rigger plan` shows no card the next run would pull, and says why. | the engine | the test suite | |
+| R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
 | R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-21 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person removes the label from is no longer the status issue. | the engine | the test suite | |
 | R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
@@ -348,6 +352,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
 | R-LOOP-16 | A role runs on the provider the consumer declares for it, unless a card label the consumer declares selects another provider for that role. Rigger refuses a card carrying two labels that select different providers for one role, naming the role and each label. | the engine | the test suite | D24 |
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
+| R-LOOP-18 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker ran, exited non-zero, and left the forge holding nothing of the card's line of work. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 
@@ -446,6 +451,21 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-5 | A kind of work naming the owner as its last judge is the loop running, not an escalation. | the engine | the event record, by owner dispatches against escalations | D3 |
 | R-ESCALATE-6 | When a judge returns a fault that must not merge, the loop escalates the card in that category rather than spending its rounds. | the engine | the event record, by the category on each escalation | D3 |
 | R-ESCALATE-7 | An escalation carries the card, the reason it escalated, and the work as it stands. | the engine | the event record, by what each escalation carried | D3 |
+| R-ESCALATE-8 | A card Rigger escalates to the owner moves to the owner's column and carries the escalation label, a label Rigger fixes. | the engine | the test suite | D3 |
+| R-ESCALATE-9 | Rigger posts each escalation to the owner as a comment on the card's issue, carrying what `R-ESCALATE-7` lists, and never leaves the escalation label on a card without that comment. A retried escalation may post the comment again, each copy naming the same category and reason. Its edges are in `### R-ESCALATE-9 — An escalation partly written`. | the engine | the test suite | D3 |
+| R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-30` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
+| R-ESCALATE-11 | Rigger reads an escalation as answered once the escalation label is gone from the card, and never removes that label itself. | the engine | the test suite | D3 |
+| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-5 — Environment failures and the hold`. | the engine | the test suite | D3 |
+
+### R-ESCALATE-9 — An escalation partly written
+
+| What the forge refused | What the board then shows | What follows | Scope |
+|---|---|---|---|
+| nothing, on the card's first escalation | the card in the owner's column, labelled, with one comment | — | in |
+| nothing, on an escalation retried after a refused move or label | the card in the owner's column, labelled, with one copy of the comment for each invocation that posted it, each naming the same category and reason | — | in |
+| the comment | nothing changed | a later invocation escalates the card again | in |
+| the move, after the comment | the comment, the card in its column, no label | a later invocation escalates again, and the comment may repeat | in |
+| the label, after the comment and the move | the comment, the card in the owner's column, no label | a later invocation escalates again, and the comment may repeat | in |
 
 ## R-STATE — what survives a restart
 
@@ -476,8 +496,41 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 |---|---|---|---|---|
 | R-FAIL-1 | Work that failed before the maker ran its first command is tried again rather than judged. Nothing about the work has been shown. | the engine | the event record, by whether a maker emitted anything | D12 |
 | R-FAIL-2 | An infrastructure failure dispatches no maker, and the card is tried once more. | the engine | the event record, by attempts against starts | D12 |
-| R-FAIL-3 | A second failure of the same kind, without a success between them, closes admission and records why. | the engine | the event record, by failures counted against the hold | D12 |
 | R-FAIL-4 | An infrastructure failure never escalates to the owner as a fault in the work. | the engine | the event record, by the category on each escalation | D3, D12 |
+| R-FAIL-5 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-5 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
+
+### R-FAIL-5 — Environment failures and the hold
+
+Each failure is one of three classes:
+
+- **a host failure:** a second attempt that fails the same way closes admission;
+- **card-local:** it escalates under `R-ESCALATE-12` at once, and an attempt pair that includes one escalates rather than stops;
+- **out:** neither.
+
+| Failure | Class | The same way when | Scope |
+|---|---|---|---|
+| the workspace not made, because git or the file system gave no answer, or none in time | host | always | in |
+| a continuing workspace's fetch failing or timing out (`R-WORK-25`) | host | always | in |
+| a required provisioning step that never started | host | it is the same step | in |
+| a required step that exited non-zero or ran past its time | host | it is the same step | in |
+| the maker's dispatch never started, its scratch directory made | host | always | in |
+| the directory at the card's workspace path, refused under `R-WORK-13` | card-local | — | in: `R-ESCALATE-12` |
+| a role's scratch directory refused under `R-WORK-26`, the maker's or a judge's | card-local | — | in: `R-ESCALATE-12` |
+| a judge's directory refused under `R-WORK-20` | card-local | — | in: `R-ESCALATE-12` |
+| the card's branch checked out in a worktree elsewhere (`R-WORK-25`) | card-local | — | in: `R-ESCALATE-12` |
+| the forge holding the card's line of work, or a merged pull request from it, under `R-WORK-19` | card-local | — | in: `R-ESCALATE-12` |
+| more than one open pull request from the card's line of work | card-local | — | in: `R-ESCALATE-12` |
+| a card in the owner's column with no pull request from its line of work | card-local | — | in: `R-ESCALATE-12` |
+| a host failure on one attempt and a card-local refusal on the other | card-local | — | in: `R-ESCALATE-12`, never a hold |
+| the line of work moved, or deleted, since L2 read it (`R-WORK-25`) | out | — | out: the next pull reads the forge again |
+| two attempts failing in different host ways | out | — | out: the card stops, and admission stays open |
+| an optional step that failed or never started | out | — | out: `R-PROV-2` |
+| a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
+| two cards each failing once | out | — | out: counted per card |
+| a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
 
 ## R-PROV — provisioning
 
