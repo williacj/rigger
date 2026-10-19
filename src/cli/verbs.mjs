@@ -31,6 +31,7 @@ export const VERBS = [
   ['pause', 'stop admitting new cards; in-flight cards finish'],
   ['resume', 'reopen admission'],
   ['report', 'derive the signals from the event stream'],
+  ['verdict', 'post your verdict on a pull request, once you confirm it'],
 ];
 
 /**
