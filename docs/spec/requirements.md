@@ -139,7 +139,40 @@ under the test above.
 | R-SCHED-13 | A kind of work selects a card that carries any one of the labels the consumer's configuration names for that kind, and never selects a card carrying none of them. | the engine | the test suite | |
 | R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 | R-SCHED-15 | Rigger never makes two merges at the same moment. Its bound is in `### R-SCHED-15 — Merges Rigger serializes`. | the engine | the event record, by overlapping merge intervals | |
+| R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
+| R-SCHED-21 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person removes the label from is no longer the status issue. | the engine | the test suite | |
+| R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
+| R-SCHED-23 | Admission that Rigger closed reopens when the owner runs `rigger resume` while the admission record can be read, or when the status issue is closed. Any close of the issue but `resume`'s counts as the owner's under `R-SCHED-4`, whoever or whatever made it. Closing the issue never lifts the owner's own `rigger pause`: only `rigger resume` does. Admission reopens on nothing else, except that losing Rigger's state directory leaves it open. Its states are in `### R-SCHED-23 — The status issue and admission`. | the engine | the test suite | |
+| R-SCHED-24 | When `rigger resume` reopens admission, it closes every open issue carrying the status label. | the engine | the test suite | |
+| R-SCHED-25 | Where an open issue carrying the status label exists when Rigger closes admission, Rigger comments on it, naming the reason and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-26 | Before Rigger's lane gives up on a merge because the forge reads the pull request's mergeability as unknown, Rigger reads that mergeability again. It reads again 5 seconds after each read that answers unknown. It gives up only at an unknown read made 60 seconds or more after the first. Its states are in `### R-SCHED-26 — Unknown mergeability at a merge`. | the engine | the test suite | |
+
+### R-SCHED-23 — The status issue and admission
+
+| What closed admission | The status issue | What follows | Scope |
+|---|---|---|---|
+| Rigger | open | admission stays closed | in |
+| Rigger | closed by the owner | admission reopens, and Rigger records the issue's close as what reopened it | in |
+| Rigger | closed by another account with write or triage access | admission reopens, as the owner's act | in |
+| Rigger | closed by a closing keyword in a merged pull request | admission reopens, as the owner's act | in |
+| Rigger | closed by a board workflow, such as "Auto-close issue" | admission reopens, as the owner's act | in |
+| Rigger | deleted, transferred to another repository, or never opened | admission stays closed, and Rigger opens another | in |
+| Rigger | unreadable, or its read timed out | admission stays closed; Rigger claims nothing, names the issue, and reads again at the next trigger | in |
+| Rigger | its opening refused, or timed out | admission stays closed; Rigger names the failure in its output and its event, and tries again at the next trigger | in |
+| Rigger | opened, and adding it to the board or setting its column refused | admission stays closed; Rigger names the failure, and places it again at the next trigger | in |
+| Rigger | the status label missing from the repository | — | out: these rows hold only where the repository has the status label, however it came to lack it |
+| Rigger, then the owner runs `rigger resume` | open | admission reopens, and Rigger closes the issue | in |
+| Rigger, then `rigger resume`, whose close of the issue is refused | open | admission reopens; `rigger resume` exits non-zero, naming the issue left open | in |
+| Rigger, then `rigger resume` while the admission record cannot be read | open | admission stays closed; `rigger resume` names the record and changes nothing, and the issue stays open | in |
+| Rigger, then the owner's `rigger pause` | open | admission stays closed until `rigger resume`; closing the issue alone reopens nothing | in |
+| the owner's `rigger pause`, then a card's second failure the same way | opened, naming that card | admission stays closed by the owner; closing the issue reopens nothing; `rigger resume` reopens it and closes the issue | in |
+| Rigger, then a second card's hold | open | admission stays closed; Rigger comments on the open issue, naming the second card | in |
+| Rigger, and Rigger's state directory then lost | open | admission is open; the issue is stale, and a later hold comments on it, naming the new card | in |
+| any, and an issue reopened by a person while admission is open | open | a reopened issue changes nothing while admission is open | in |
+| any, and the status label copied onto another issue by a person | open | that issue is never worked, and `rigger resume` closes it too | in |
+| the owner's `rigger pause` | none is opened | admission stays closed until `rigger resume` | in |
+| any, and a board workflow setting the issue's column after Rigger set Owner | — | — | out: the consumer's board setting |
+| any, and a notification beside the issue | — | — | out: optional, M6-11d |
 
 ### R-SCHED-15 — Merges Rigger serializes
 
@@ -201,6 +234,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-WORK-28 | — it lies in no git checkout, and no git checkout lies in it; | the engine | the test suite | |
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
 | R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | the engine | the test suite | |
+| R-WORK-31 | A session Rigger dispatches leaves no file of its own outside its dispatch's directory and its scratch directory, read on real paths once the session's process has ended. Its bound is in `### R-WORK-31 — Where a dispatched session's files land`. | the engine | the test suite | |
 | R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | the engine | the test suite | |
 
 ### R-WORK-25 — Continuing workspace states
@@ -254,6 +288,30 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | `judges/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
+
+### R-WORK-31 — Where a dispatched session's files land
+
+Claude Code's configuration home is `~/.claude` unless the consumer moves it. Each row below writes that home as `<home>`, and names each path under it from there. Each in-scope row holds for a maker in its workspace, for a judge in its `main` reaching `head`, and for a role dispatched to answer an escalation.
+
+| What the session writes | Agent CLI | Scope |
+|---|---|---|
+| a tool result too large to return inline, from `Bash`, `Read` or a tool of the directory's own MCP server | Claude Code | in |
+| its transcript under `<home>/projects/`, in the entry for the directory the session runs in | Claude Code | in |
+| files under `/tmp/claude-<uid>/` named for the directory the session runs in | Claude Code | in |
+| a background task's output | Claude Code | in |
+| any other path under `<home>` that a session creates or changes | Claude Code | in |
+| the automatic memory under the session's entry in `<home>/projects/` | Claude Code | out: Rigger dispatches no session with automatic memory |
+| `<home>/session-env/<session id>/` | Claude Code | out: until a card measures a route that confines it |
+| a file under `<home>`, or `~/.claude.json` beside it, that every session shares and no session id or directory names, of which `~/.claude.json`, `<home>/backups/`, `<home>/history.jsonl`, `<home>/.last-cleanup` and `<home>/.last-update-result.json` are instances | Claude Code | out: no test can attribute a write to it while other sessions run |
+| a file a command the agent runs writes, rather than the agent CLI itself, such as `npm`'s cache | any | out: the command's own behaviour, outside the adapter |
+| a write through a symbolic link inside the dispatch's directory to a target outside it | any | out: the link is the work's, and Rigger cannot confine where it points |
+| anything a session that persists writes | Claude Code | out: Rigger dispatches no session that persists |
+| output from `WebFetch` or `WebSearch` | Claude Code | out: no live run here reaches the public web |
+| output from `Grep`, `Glob`, the agent tool or `Workflow` | Claude Code | out: Rigger does not offer them |
+| `Edit`, `Write` or `NotebookEdit` | Claude Code | out: they return no command or file output |
+| what a session killed at its timeout writes | Claude Code | out: the file's place is fixed before the session ends, a judgment |
+| anything | Codex | out: no claiming card yet; the home Codex keeps for the dispatch, written `<Codex home>`, lies under its scratch directory, and its linked `<Codex home>/auth.json` (#646) is the known path outside |
+| anything | a Claude Code version other than the one the claiming test names | out |
 
 ### R-WORK-34 — The head a continuing attempt is judged at
 

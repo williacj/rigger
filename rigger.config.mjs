@@ -20,16 +20,20 @@ export default {
   roles: {
     engineer: { agent: '.claude/agents/engineer.md', provider: 'claude', tier: 'standard', providerLabels: { 'maker:codex': 'codex' } },
     reviewer: { agent: '.claude/agents/reviewer.md', provider: 'claude', tier: 'high' },
-    pm: { agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high' },
+    pm: { agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high', providerLabels: { 'maker:codex': 'codex' } },
     architect: { agent: '.claude/agents/architect.md', provider: 'claude', tier: 'high' },
     spikeEngineer: { agent: '.claude/agents/spike-engineer.md', provider: 'claude', tier: 'high' },
   },
   kinds: {
-    // One judge. `rounds` omitted, so the default of three applies (`R-LOOP-9`).
+    // Two agent judges, neither of them the maker's role (`R-LOOP-3`). `rounds` omitted, so the
+    // default of three applies (`R-LOOP-9`).
     change: {
       select: { labels: ['type:change'] },
       maker: 'engineer',
-      judges: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } }],
+      judges: [
+        { role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } },
+        { role: 'architect', provider: { claude: 'codex', codex: 'claude' } },
+      ],
       provisioning: ['npm-ci', 'vhs'],
     },
     // The panel case: three agent judges concurrently, the owner last. The architect rules on a

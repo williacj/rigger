@@ -14,6 +14,7 @@ import rigger from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { roleTimeout } from '../src/config/validate.mjs';
 import { judgeRole } from '../src/config/validate.mjs';
+import { panelOf } from '../src/workflow/next-action.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -22,13 +23,53 @@ test('this repository config assigns opposite-provider agent judges for all five
   assert.deepEqual(rigger.roles.engineer.providerLabels, { 'maker:codex': 'codex' });
   assert.equal(Object.hasOwn(rigger.roles, 'codex'), false);
   assert.deepEqual(Object.fromEntries(Object.entries(rigger.kinds).map(([name, kind]) => [name, kind.judges])), {
-    change: [opposite('reviewer')],
+    change: [opposite('reviewer'), opposite('architect')],
     spec: [opposite('reviewer'), opposite('engineer'), opposite('architect'), 'owner'],
     structure: [opposite('reviewer'), 'owner'],
     intake: [opposite('reviewer'), 'owner'],
     spike: [opposite('reviewer')],
   });
   assert.deepEqual(validate(rigger), []);
+});
+
+test('no kind in this repository config names its maker role among its judges, and the validator refuses nothing in it', () => {
+  for (const [name, kind] of Object.entries(rigger.kinds)) {
+    assert.equal(kind.judges.map(judgeRole).includes(kind.maker), false, `kinds.${name} is judged by its maker \`${kind.maker}\``);
+  }
+  assert.deepEqual(validate(rigger), []);
+});
+
+test('this repository config reads maker:codex on a spec card as a codex pm', () => {
+  assert.deepEqual(rigger.roles.pm.providerLabels, { 'maker:codex': 'codex' });
+});
+
+/** The panel this repository config requires of a card of `kind` carrying `labels` beside the kind's own. */
+const livePanel = (kind, labels = []) => panelOf({ number: 715, labels: [...rigger.kinds[kind].select.labels, ...labels] }, rigger.kinds[kind], rigger.roles);
+
+test('a change card without maker:codex requires codex of its reviewer and of its architect', () => {
+  assert.deepEqual(livePanel('change'), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }]);
+});
+
+test('a change card with maker:codex requires claude of its reviewer and of its architect', () => {
+  assert.deepEqual(livePanel('change', ['maker:codex']), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'claude' }]);
+});
+
+test('a spec card with maker:codex requires claude of its reviewer, its engineer and its architect, then the owner', () => {
+  assert.deepEqual(livePanel('spec', ['maker:codex']), [
+    { role: 'reviewer', provider: 'claude' },
+    { role: 'engineer', provider: 'claude' },
+    { role: 'architect', provider: 'claude' },
+    { role: 'owner' },
+  ]);
+});
+
+test('a spec card without maker:codex requires codex of its reviewer, its engineer and its architect, then the owner', () => {
+  assert.deepEqual(livePanel('spec'), [
+    { role: 'reviewer', provider: 'codex' },
+    { role: 'engineer', provider: 'codex' },
+    { role: 'architect', provider: 'codex' },
+    { role: 'owner' },
+  ]);
 });
 
 /**
