@@ -1,0 +1,17 @@
+<!-- ABOUTME: Records what card #750 learned placing admission and the hold in ARCHITECTURE.md. -->
+
+# Card #750: admission and the hold
+
+The card's budget edit was drafted when the CLI and config row read 1,500. Card #801 then moved
+300 lines from L6 to that row, so main read 1,800 when this card was made. The draft's move of 200
+lines from L3 was rebased onto 1,800, giving 2,000, because the rows must still sum to the package
+total of 12,000. A budget edit written as absolute figures goes stale when another card moves the
+same row. Writing it as a move between rows would have survived.
+
+Every "Why" cell in the memory table names what goes wrong without the memory: the next pull in
+the same invocation acts on the card again at once. That one test kept two cells from restating
+their case (the attack, N2).
+
+The escalated-card sentence in the draft leaned on structure card #749 adds and main does not yet
+hold. It now cites `R-ESCALATE-10`, which is ratified on main, so it holds whichever card merges
+first.
