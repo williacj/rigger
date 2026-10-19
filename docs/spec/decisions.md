@@ -66,6 +66,7 @@ reused.
 | D23 | The forge refuses a push to the main line | Ratified |
 | D24 | A judge's provider is configured and enforced | Ratified |
 | D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
+| D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified |
 
 ## D1 — Redo over resume
@@ -932,6 +933,58 @@ still use the owner's token (rule 3), so the ruleset still cannot tell the owner
 session's.
 
 This decision adds no requirement row.
+
+## D26 — An escalation goes where the consumer sends it
+
+**Status:** Ratified.
+
+### Rule
+
+1. Each escalation category has a destination the consumer configures: the owner, or one of the
+   consumer's roles. A category given no destination goes to the owner. `R-ESCALATE-13` and
+   `R-ESCALATE-22` hold it.
+2. A recorded-decision change and a critical fault always go to the owner. Only the owner changes
+   a recorded decision, and `D14` makes critical a fault no maker revision resolves without the
+   owner.
+3. Only an ambiguity a maker raises may go to a role. An ambiguity the loop raises goes to the
+   owner. That covers rounds spent on a disagreement (`R-LOOP-10`, `D18` rule 6), and a
+   card-local refusal under `R-ESCALATE-12`, which only the owner may clear.
+4. A card goes to a role once for an ambiguity, as the card's issue shows. Its next ambiguity goes
+   to the owner, so no card loops between roles. A person who deletes that record lets the card go
+   to a role again.
+5. A role an escalation goes to is handed no judge's verdict, and is never its card's maker or one
+   of its judges. A card the role cannot settle goes to the owner.
+
+**Reversed by:**
+
+- **Rule 1:** a card sent to a role reaching the owner anyway on its next ambiguity often enough,
+  as `report` shows by each escalation's destination, that the route buys nothing.
+- **Rule 3:** `D18`'s deferred adjudicator returning on its own trigger.
+- **Rule 4:** the owner sending cards back to the same role after their second ambiguity often
+  enough that a second visit would have settled them.
+- **Rule 5:** a role that needed a verdict to settle a card, often enough that withholding it
+  costs more than the separation buys.
+
+### Notes
+
+The owner ruled rules 1 and 2, and rule 4's once-routing, in U2 Q2. Rule 3 is U3.1, and rule 4's
+exception for a deleted record is U5.3, all on #740. A consumer that can only refuse such a card is
+left stuck, so the configuration says where each category goes.
+
+This decision cites `D3` and supersedes nothing. `D3` rule 1 bounds the paths to the owner, and a
+role destination adds none. `D3` rule 2 already gives the cost of routing to the consumer.
+
+Rule 3 keeps `R-LOOP-10` and `D18` rule 6 as they stand. A maker may raise an ambiguity about a
+judge's finding in a later round, so a role may then act on a live disagreement. That is no
+settlement: the role can change the bar, as the card's author, and the judges then rule against
+it again. `R-LOOP-10`'s check is the config validator, which cannot see this case, so the reason
+is recorded here.
+
+Rule 5 is the structural guard on `R-LOOP-10`. A role handed no verdict cannot rule on one. A role
+that is also the card's maker or judge would change the acceptance it then works or judges.
+
+Rule 4 needs no state. The fact that a role was already sent is on the card's issue, where the
+forge holds it.
 
 ## D27 — An escalated card carries a label only the owner removes
 

@@ -152,7 +152,7 @@ test('given a workspace handle that is not a function, loop throws when built, n
   }
 });
 
-// proves R-WORK-30
+// proves R-WORK-33
 test('given a removal handle that is not a function, loop throws when built, naming the handle', () => {
   for (const removeDirectories of [undefined, null, '/a/path', { path: '/a/path' }]) {
     assert.throws(() => loop({ ...handed(), removeDirectories }), /\bremoveDirectories\b/, String(removeDirectories));

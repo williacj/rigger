@@ -200,7 +200,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | unknown, then a read on which Rigger answers other than a merge for another reason | in: not merged; `R-RECORD-10` names the answer |
 | unknown, then a read that fails | in: not merged, and the card stays where it is |
 | unknown, then the pull request at another head | in: not merged, and the card stays where it is |
-| unknown, then the pull request merged | in: not merged; a later pull reads the merge, under `R-WORK-30` |
+| unknown, then the pull request merged | in: not merged; a later pull reads the merge, under `R-WORK-33` |
 | the forge refuses the merge call because the mergeability is unknown | in: Rigger counts the refusal as a read that answers unknown. Where that read is the last, the merge ends `refused`, naming the refusal |
 | another merge queued behind this one | in: it waits until this merge ends, under `R-SCHED-15` |
 | unknown at a pull, before any merge starts | out: no merge starts, and a later pull reads it again |
@@ -237,8 +237,9 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-WORK-27 | — it is a directory and not a symbolic link, and so are the card's directory above it and the directory named `scratch` under the worktree root; | the engine | the test suite | |
 | R-WORK-28 | — it lies in no git checkout, and no git checkout lies in it; | the engine | the test suite | |
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
-| R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | the engine | the test suite | |
 | R-WORK-31 | A session Rigger dispatches leaves no file of its own outside its dispatch's directory and its scratch directory, read on real paths once the session's process has ended. Its bound is in `### R-WORK-31 — Where a dispatched session's files land`. | the engine | the test suite | |
+| R-WORK-32 | Where a directory is at the path Rigger makes for the dispatch of a role an escalation goes to, Rigger replaces it only when `R-WORK-21` to `R-WORK-23` all hold of it. Otherwise Rigger dispatches no role there, names the path, and changes nothing. | the engine | the test suite | |
+| R-WORK-33 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-33 — When a merged card's directories are removed`. | the engine | the test suite | |
 | R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | the engine | the test suite | |
 
 ### R-WORK-25 — Continuing workspace states
@@ -260,7 +261,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | any | the fetch fails, or times out | in: refused as an environment failure, path named |
 | any | deleted before L2 read it | out: the forge closes the pull request, and `R-WORK-24` answers a start from the beginning |
 
-### R-WORK-30 — When a merged card's directories are removed
+### R-WORK-33 — When a merged card's directories are removed
 
 | Situation | Scope |
 |---|---|
@@ -272,8 +273,8 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | the engine killed between the merge and the removal | in: the card stays where it is; removed at a later pull that reads the merge |
 | a removal failing after another of the card's directories was removed | in: the card stays where it is; each remaining path named; a later pull removes them |
 | a removal failing partway through one directory | in: the card stays where it is; the path named; a later pull removes it where its row still lets Rigger replace it, and otherwise leaves and names it |
-| a check `R-WORK-13`, `R-WORK-20` or `R-WORK-26` asks for that Rigger cannot make, because git or the file system gives no answer to it, or does not answer in time | in: a failed removal, not a refusal: the path left and named; the card stays where it is; a later pull removes again |
-| a check `R-WORK-13`, `R-WORK-20` or `R-WORK-26` asks for that git or the file system answers, finding that the condition does not hold | in: a refusal: the path left and named; it does not hold back the Done move |
+| a check `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` asks for that Rigger cannot make, because git or the file system gives no answer to it, or does not answer in time | in: a failed removal, not a refusal: the path left and named; the card stays where it is; a later pull removes again |
+| a check `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` asks for that git or the file system answers, finding that the condition does not hold | in: a refusal: the path left and named; it does not hold back the Done move |
 | a workspace directory whose `.git` entry is still there after git dropped its registration, as a removal failing partway leaves it | in: a refusal under `R-WORK-13`: the path left and named; it does not hold back the Done move |
 | Rigger cannot record an event of the removal | in: the card stays where it is; Rigger says what went unrecorded; a later pull removes again |
 | a second removal pass over a card already removed | in: nothing changes, and nothing fails |
@@ -283,13 +284,13 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | a person moved the card to Done before Rigger read the merge | out: Rigger reads no Done card, and its directories stay |
 | a Ready or Coding card whose pull request is merged | out: Rigger refuses it under `R-WORK-19`, and its directories stay |
 | a pull request closed without merging | in: nothing removed |
-| a judge's dispatch of the card still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
+| a dispatch of the card by a judge, or by a role an escalation goes to, still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
 | a process Rigger did not start working in a directory | out: removal proceeds, as it does when Rigger replaces the directory |
 | a process Rigger started and could not end, working in a directory | out: removal proceeds, as for a process Rigger did not start |
 | a workspace with uncommitted changes or commits not on the forge | in: removed, as `R-WORK-13` replaces it |
 | a workspace path named through a symbolic link to the card's worktree, or anything else `R-WORK-13` refuses | in: as `R-WORK-13` answers it: the worktree and the link removed, or the path left and named |
-| a symbolic link at a judge's or a scratch directory's path, or anything else `R-WORK-20` or `R-WORK-26` refuses | in: left and named |
-| `judges/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges` or `scratch` above it; otherwise left and named |
+| a symbolic link at the path of a judge's directory, of a scratch directory, or of the directory of a role an escalation goes to, or anything else `R-WORK-20`, `R-WORK-26` or `R-WORK-32` refuses | in: left and named |
+| `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges`, `escalations` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
 
@@ -440,22 +441,33 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-GATE-8 | — the consumer's own checks have passed; | the gate | the test suite | |
 | R-GATE-9 | — every configured agent judge's verdict names the provider the configuration requires of that judge for the card, and the owner's verdict names none. | the gate | the test suite | D24 |
 
-## R-ESCALATE — what reaches the owner
+## R-ESCALATE — where an escalation goes
 
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
-| R-ESCALATE-1 | Every escalation to the owner is one of the configured categories. A card escalated to the owner proceeds no further until the owner answers it. | the engine | the event record, by the category on each escalation | D3 |
-| R-ESCALATE-2 | The set of categories is Rigger's. A consumer chooses which of them are the owner's to decide, and adds none. All are the owner's unless the consumer says otherwise. | the engine | the config validator | D3 |
-| R-ESCALATE-3 | The set holds exactly three: a change to a recorded decision, a fault that must not merge — the same fault a verdict names — and an ambiguity no role could resolve. | the engine | the test suite | D3 |
 | R-ESCALATE-4 | A maker or the loop raises an escalation. A judge does not; a judge returns a verdict. | the engine | the event record, by what raised each escalation | D3 |
 | R-ESCALATE-5 | A kind of work naming the owner as its last judge is the loop running, not an escalation. | the engine | the event record, by owner dispatches against escalations | D3 |
 | R-ESCALATE-6 | When a judge returns a fault that must not merge, the loop escalates the card in that category rather than spending its rounds. | the engine | the event record, by the category on each escalation | D3 |
 | R-ESCALATE-7 | An escalation carries the card, the reason it escalated, and the work as it stands. | the engine | the event record, by what each escalation carried | D3 |
 | R-ESCALATE-8 | A card Rigger escalates to the owner moves to the owner's column and carries the escalation label, a label Rigger fixes. | the engine | the test suite | D3 |
 | R-ESCALATE-9 | Rigger posts each escalation to the owner as a comment on the card's issue, carrying what `R-ESCALATE-7` lists, and never leaves the escalation label on a card without that comment. A retried escalation may post the comment again, each copy naming the same category and reason. Its edges are in `### R-ESCALATE-9 — An escalation partly written`. | the engine | the test suite | D3 |
-| R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-30` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
+| R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
 | R-ESCALATE-11 | Rigger reads an escalation as answered once the escalation label is gone from the card, and never removes that label itself. | the engine | the test suite | D3 |
 | R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-5 — Environment failures and the hold`. | the engine | the test suite | D3 |
+| R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-13 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
+| R-ESCALATE-14 | Rigger refuses a configuration naming a role as the destination of a recorded-decision change or of critical, and the refusal names the category. | the config validator | the test suite | D14, D26 |
+| R-ESCALATE-15 | Only an ambiguous escalation a maker raises goes to a role, where its category's destination is a role. Rigger sends every escalation the loop raises to the owner, whatever its configured destination. | the engine | the test suite | D26 |
+| R-ESCALATE-16 | A card already sent to a role, as its issue shows, goes to the owner when it escalates as ambiguous again. A card whose issue no longer shows it, because a person deleted that record, may go to a role again. | the engine | the test suite | D26 |
+| R-ESCALATE-17 | A card whose kind names, as its maker or as one of its judges, the role its ambiguous escalation would go to goes to the owner instead. | the engine | the test suite | D26 |
+| R-ESCALATE-18 | Rigger hands a role an escalation goes to the card, its acceptance and the maker's reason, and hands it no judge's verdict. What the maker's reason quotes, and what the role reads through the forge itself, are outside this row. | the engine | the event record, by what each dispatch carried | D26, D18 |
+| R-ESCALATE-19 | The set holds exactly three: a change to a recorded decision, a fault that must not merge — the same fault a verdict names — and an ambiguity neither the maker nor its judges could resolve. | the engine | the test suite | D3 |
+| R-ESCALATE-20 | Every escalation is one of Rigger's categories. A card escalated to the owner proceeds no further until the owner answers it. A card whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers. | the engine | the event record, by the category on each escalation | D3 |
+| R-ESCALATE-22 | A category given no destination goes to the owner. | the engine | the test suite | D3, D26 |
+| R-ESCALATE-23 | While a role works on a card, the card keeps its column and carries no escalation label. | the engine | the test suite | D26 |
+| R-ESCALATE-21 | Rigger sends a card to the owner, after it went to a role, where any one of these holds: | the engine | the test suite | D26 |
+| R-ESCALATE-24 | — the role writes an escalation note of its own, in any category; | the engine | the test suite | D26 |
+| R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
+| R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
 
 ### R-ESCALATE-9 — An escalation partly written
 
@@ -466,6 +478,21 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | the comment | nothing changed | a later invocation escalates the card again | in |
 | the move, after the comment | the comment, the card in its column, no label | a later invocation escalates again, and the comment may repeat | in |
 | the label, after the comment and the move | the comment, the card in the owner's column, no label | a later invocation escalates again, and the comment may repeat | in |
+
+### R-ESCALATE-13 — Escalation destinations
+
+| What the configuration says | What Rigger does | Scope |
+|---|---|---|
+| no `escalate` key | every category goes to the owner | in |
+| a category's key absent | that category goes to the owner | in |
+| a category's destination `owner` | it goes to the owner | in |
+| `ambiguous` to a declared role | a maker-raised ambiguity goes to that role; every other goes to the owner | in |
+| `ambiguous` to the kind's maker or one of its judges | the card goes to the owner | in |
+| `critical` or `recorded-decision` to a declared role | refused, naming the category | in |
+| any category to a role the configuration does not declare | refused, naming the role | in |
+| any category to a value that is not a string | refused, naming the category | in |
+| a key that is no category | refused, naming the key | in |
+| `escalate` as a list of categories | refused, naming the key | in |
 
 ## R-STATE — what survives a restart
 
