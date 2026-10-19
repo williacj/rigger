@@ -105,12 +105,12 @@ export function world({ main = moduleOf(configWith()), consumer, repo = REPO, is
   const cwd = repositoryIn('rigger-verdict-consumer-', held === null ? { README: 'no config\n' } : { 'rigger.config.mjs': held });
   const statePath = join(dirname(fake.gh), 'board.json');
   const control = () => JSON.parse(readFileSync(controlPath, 'utf8'));
-  return {
+  const where = {
     fake,
     cwd,
     path,
     gh,
-    env: verbEnvironment(path),
+    env: verbEnvironment(path, temporaryDirectory('rigger-verdict-home-')),
     /** Fails the `nth` command whose words hold `match`, counting from 1. */
     failing: (match, nth = 1) => {
       const held = control();
@@ -128,16 +128,26 @@ export function world({ main = moduleOf(configWith()), consumer, repo = REPO, is
       writeFileSync(statePath, JSON.stringify(state));
     },
   };
+  const real = realGhOn(where);
+  if (real.length > 0) throw new Error(`a gh other than the relay is on the verb's PATH, in ${real.join(', ')}, so a test could reach the real forge`);
+  return where;
 }
 
 /**
  * The directories the verb's PATH holds: the relay's first, then Node's, git's and the shell's. A
- * real `gh` in any of the others is a route to the real GitHub, so `noRealGh` finds none there.
+ * real `gh` in any of the others is a route to the real GitHub, so `world` refuses to run where
+ * `realGhOn` finds one there.
  */
 const verbPath = (path) => [path, dirname(process.execPath), '/usr/bin', '/bin'];
 
-/** The environment the verb is run under: that PATH, and the home and scratch directories. */
-const verbEnvironment = (path) => ({ PATH: verbPath(path).join(delimiter), HOME: process.env.HOME, TMPDIR: process.env.TMPDIR });
+/**
+ * The environment the verb is run under: that PATH, the scratch directory, and a home of its own
+ * that holds nothing. A shell reads startup files from its home, and a runner's can put the real
+ * `gh` ahead of the relay: bash reads `~/.bashrc` even under `-c` where its standard input is a
+ * socket, which is what Node gives a child for a pipe (measured with macOS 27.0's /bin/bash,
+ * 2026-10-19). An empty home holds no such file, and no `gh` credential either.
+ */
+const verbEnvironment = (path, home) => ({ PATH: verbPath(path).join(delimiter), HOME: home, TMPDIR: process.env.TMPDIR });
 
 /** Every directory on the verb's PATH, after the relay's, that holds an executable named `gh`. */
 export const realGhOn = (where) => verbPath(where.path).slice(1).filter((directory) => existsSync(join(directory, 'gh')));
@@ -170,21 +180,23 @@ export const ASKED = '[y/N] ';
  * The verb run as its own process with `args` at a pseudo-terminal, which `script` opens and gives
  * as its standard input, standard output and standard error. `stty -onlcr` leaves each line ending
  * as the verb wrote it. Once the question has been printed, `atPrompt` runs, and then `answer` is
- * typed, a line and its ending; `null` types nothing and ends the input instead. Where the verb
+ * typed, a line and its ending; `null` types nothing and ends the input instead. `command`, the
+ * verb's own command line unless given, is what runs at the terminal. Where the verb
  * ends before it asks, nothing is typed. It answers the exit status and everything the terminal
  * showed, the typed answer's echo included.
  *
  * `script`'s standard input must be a pipe and not a socket, which is what Node gives a child, so
  * bash's process substitution makes one, through `cat`. The test ends the pipe when `script`'s
- * output ends, so `cat` ends with it.
+ * output ends, so `cat` ends with it. Bash reads no startup file (`--norc`, `--noprofile`), since
+ * one could put another `gh` ahead of the relay.
  */
-export function atTerminal(where, args, { answer = 'y', atPrompt = () => {} } = {}) {
+export function atTerminal(where, args, { answer = 'y', atPrompt = () => {}, command = [process.execPath, RIGGER, 'verdict', ...args] } = {}) {
   const raw = join(where.path, 'raw.sh');
   if (!existsSync(raw)) {
     writeFileSync(raw, '#!/bin/sh\nstty -onlcr\nexec "$@"\n');
     chmodSync(raw, 0o755);
   }
-  const child = spawn('/bin/bash', ['-c', 'exec /usr/bin/script -q /dev/null "$@" < <(exec cat)', 'bash', raw, process.execPath, RIGGER, 'verdict', ...args], {
+  const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c', 'exec /usr/bin/script -q /dev/null "$@" < <(exec cat)', 'bash', raw, ...command], {
     cwd: where.cwd,
     env: where.env,
     stdio: ['pipe', 'pipe', 'pipe'],

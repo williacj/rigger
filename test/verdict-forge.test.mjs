@@ -95,6 +95,35 @@ test('table C: the head moving between the verb showing the verdict and the owne
   assertRefused(where, ran, before, new RegExp(`head moved from ${HEAD} to ${moved}`));
 });
 
+/** The pull request closing or merging while the owner is asked, each as the fake holds it. */
+const ENDED = [
+  ['closed', (held) => { held.pullRequests[0].closed = true; }],
+  ['merged', (held) => { held.pullRequests[0].merged = true; }],
+];
+
+for (const [state, end] of ENDED) {
+  test(`table C: the pull request ${state} between the verb showing the verdict and the owner's answer posts nothing and names the state`, BOUND, async () => {
+    const where = world();
+    const before = where.comments();
+
+    const ran = await atTerminal(where, [pr, 'sound'], { atPrompt: () => where.change(end) });
+
+    assert.ok(ran.asked, ran.shown);
+    assertRefused(where, ran, before, new RegExp(`pull request #${PULL} is ${state}, not open, after the verdict was shown`));
+  });
+}
+
+// proves R-VERDICT-13
+test('table C: a pull request closed while the owner is asked is refused before any comment is written', BOUND, async () => {
+  const where = world();
+
+  const ran = await atTerminal(where, [pr, 'needs-revision', '--to-sound', 't'], { atPrompt: () => where.change((held) => { held.pullRequests[0].closed = true; }) });
+
+  assert.notEqual(ran.status, 0, ran.shown);
+  assert.equal(where.comments().length, 0);
+  assertWrites(where, 0);
+});
+
 // proves R-VERDICT-13
 test('table C: the acceptance changing between the verb showing the verdict and the owner\'s answer posts nothing and says so', BOUND, async () => {
   const where = world();

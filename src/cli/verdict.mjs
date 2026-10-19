@@ -166,6 +166,7 @@ async function posting(opened, given) {
   // The round is read again, so a verdict shown against one head or acceptance never lands on another.
   const again = await read(`pull request #${number}`, () => reads.readPullRequestByNumber(number));
   if (again.problem) return refused(again.problem);
+  if (again.value.state !== 'open') return refused(`pull request #${number} is ${again.value.state}, not open, after the verdict was shown`);
   if (again.value.head !== pull.head) return refused(`pull request #${number}'s head moved from ${pull.head} to ${again.value.head} after the verdict was shown`);
   const reissued = await read(`issue #${card}`, () => reads.readIssue(card));
   if (reissued.problem) return refused(reissued.problem);

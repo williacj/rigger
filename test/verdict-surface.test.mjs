@@ -29,21 +29,43 @@ function* nodesOf(node) {
 }
 
 /**
- * Every module of `tree`, a map of repository path to source, that imports `target` by any route
- * a module names another by: a static import, a re-export, or a dynamic `import()` of a fixed
- * specifier, each resolved against the importing module's directory.
+ * The string `node` always evaluates to, where the source fixes it: a string literal, a template
+ * whose every part is fixed, or a `+` of two fixed strings. Undefined anywhere else.
+ */
+function fixed(node) {
+  if (node?.type === 'Literal') return typeof node.value === 'string' ? node.value : undefined;
+  if (node?.type === 'TemplateLiteral') {
+    const parts = node.expressions.map(fixed);
+    if (parts.some((part) => part === undefined)) return undefined;
+    return node.quasis.map((quasi, at) => quasi.value.cooked + (parts[at] ?? '')).join('');
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const [left, right] = [fixed(node.left), fixed(node.right)];
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+}
+
+/**
+ * Every module of `tree`, a map of repository path to source, that imports `target`, or may: a
+ * static import, a re-export, or a dynamic `import()`, each specifier evaluated where the source
+ * fixes it and resolved against the importing module's directory. A dynamic `import()` whose
+ * specifier the source does not fix could name `target`, so its module is named too, unless
+ * `boundaryReport` admits it under the config-load exception, which loads the consumer's config.
  */
 export function importersOf(tree, target) {
+  const exempt = boundaryReport(tree).exempt;
   const importers = [];
   for (const [file, source] of tree) {
     if (!/\.(?:m|c)?js$/.test(file) || file === target) continue;
-    const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true });
-    const named = [...nodesOf(program)]
-      .filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type))
-      .map((node) => node.source)
-      .map((source) => (source?.type === 'Literal' ? source.value : source?.type === 'TemplateLiteral' && source.expressions.length === 0 ? source.quasis[0].value.cooked : undefined))
-      .filter((specifier) => typeof specifier === 'string' && specifier.startsWith('.'));
-    if (named.some((specifier) => posix.normalize(posix.join(posix.dirname(file), specifier)) === target)) importers.push(file);
+    const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
+    const imports = [...nodesOf(program)].filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source);
+    const names = (node) => {
+      const specifier = fixed(node.source);
+      if (specifier === undefined) return node.type === 'ImportExpression' && !exempt.some((held) => held.file === file && held.line === node.loc.start.line);
+      return specifier.startsWith('.') && posix.normalize(posix.join(posix.dirname(file), specifier)) === target;
+    };
+    if (imports.some(names)) importers.push(file);
   }
   return importers.sort();
 }
@@ -69,6 +91,24 @@ test('a module under src/ importing the verdict verb, by a static import, a re-e
     'src/execution/loads-it.mjs',
     'src/scheduling/hands-it-on.mjs',
     'src/workflow/posts-for-the-owner.mjs',
+  ]);
+});
+
+// proves R-VERDICT-11
+test('a module under src/ importing the verdict verb through a specifier built at run time, or one the check cannot read, is named by the check above', () => {
+  const tree = new Map(sourceTree(ROOT));
+  // The judge's round-1 counterexample, appended to a module that exists.
+  tree.set('src/cli/once.mjs', `${tree.get('src/cli/once.mjs')}\nexport const verdictImportedAtRuntime = () => import('./' + 'verdict.mjs');\n`);
+  tree.set('src/workflow/spelled-in-parts.mjs', "export const later = () => import(`../cli/${'verdict'}.mjs`);\n");
+  tree.set('src/scheduling/by-name.mjs', 'export const later = (name) => import(name);\n');
+  tree.set('src/execution/joined.mjs', "export const later = () => import(['..', 'cli', 'verdict.mjs'].join('/'));\n");
+
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), [
+    'src/cli/once.mjs',
+    'src/cli/verbs.mjs',
+    'src/execution/joined.mjs',
+    'src/scheduling/by-name.mjs',
+    'src/workflow/spelled-in-parts.mjs',
   ]);
 });
 

@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -102,4 +103,37 @@ test('table A: started under /bin/sh by L0\'s process adapter, as a provisioning
   const ran = await throughL0(where, { command: step.command, args: step.args, cwd: step.cwd, env: step.env });
 
   assertRefused(where, ran, before, NO_TERMINAL);
+});
+
+/** What a shell prints of the PATH it was given and the `gh` that PATH selects. */
+const SHELL_PROBE = ['/bin/sh', '-c', 'printf "PATH=%s\\ngh=%s\\n" "$PATH" "$(command -v gh)"'];
+
+/**
+ * What a Node process prints of the `gh` its own spawn reaches: the relay hands an argument no
+ * `gh` takes to the fake, which names it as a command it does not model, and a real `gh` would
+ * answer something else.
+ */
+const NODE_PROBE = [process.execPath, '-e', "const r = require('node:child_process').spawnSync('gh', ['--rigger-which-gh'], { encoding: 'utf8' }); console.log('node-gh=' + JSON.stringify((r.stdout ?? '') + (r.stderr ?? '') + (r.error ? r.error.message : '')));"];
+
+/** What the fake answers the probe's argument with, which no real `gh` prints. */
+const FAKE_ANSWER = 'the fake gh does not model `gh --rigger-which-gh`';
+
+test('outside a terminal, a shell and a Node process given the verb\'s environment reach the relay as `gh`', BOUND, () => {
+  const where = world();
+
+  const shell = spawnSync(SHELL_PROBE[0], SHELL_PROBE.slice(1), { cwd: where.cwd, env: where.env, encoding: 'utf8' });
+  const node = spawnSync(NODE_PROBE[0], NODE_PROBE.slice(1), { cwd: where.cwd, env: where.env, encoding: 'utf8' });
+
+  assert.equal(shell.stdout, `PATH=${where.env.PATH}\ngh=${where.gh}\n`, shell.stderr);
+  assert.ok(node.stdout.includes(FAKE_ANSWER), node.stdout + node.stderr);
+});
+
+test('at the pseudo-terminal the verb is run at, a shell and a Node process given the verb\'s environment reach the relay as `gh`', BOUND, async () => {
+  const where = world();
+
+  const shell = await atTerminal(where, [], { command: SHELL_PROBE });
+  const node = await atTerminal(where, [], { command: NODE_PROBE });
+
+  assert.ok(shell.shown.includes(`PATH=${where.env.PATH}\ngh=${where.gh}\n`), shell.shown);
+  assert.ok(node.shown.includes(FAKE_ANSWER), node.shown);
 });
