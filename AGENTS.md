@@ -38,7 +38,7 @@ permission first.
   and the docs. If you cannot finish, say what is left and leave the card open. Where you are
   making the thing, escalate it. Name which of three categories it is, because that is how the
   engine routes it: `recorded-decision` for a change to a decision the owner recorded,
-  `critical` for a fault that must not merge, `ambiguous` for a question no role could resolve.
+  `critical` for a fault that must not merge, `ambiguous` for a question neither the maker nor its judges could resolve.
   Where you are judging it, you return a verdict and never an escalation; the loop raises one
   if your verdict calls for it.
 - **Write the acceptance before the work.** A card states what done means before anything
