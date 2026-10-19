@@ -130,6 +130,7 @@ Rigger merges code without a person in the loop, so this section is explicit.
 - merge without a verdict fresh for both the head commit and the card's acceptance;
 - ratify a change to one of your recorded decisions;
 - push to the default branch except through a gated merge;
+- post your verdict for you: `rigger verdict` posts one only once you confirm it at your terminal;
 - continue past an ambiguity it cannot resolve.
 
 **Credentials.** Rigger stores none. It calls `gh` and your agent CLI, each authenticated by you,
@@ -143,6 +144,8 @@ process left in its group or working in its directory, unless Rigger itself is k
 Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
 that dispatch ends. A process that leaves its group and works elsewhere is outside that
 containment. Rigger cannot make an agent more restricted than the account it runs under.
+An agent running as you can still post a verdict in your name with `gh`, or confirm one with
+`rigger verdict` at a terminal it opens itself, and the gate cannot tell either from yours.
 
 **Agents use only what your repository declares.** A dispatched agent uses only the tools and
 connectors your repository declares. A connector is an outside service, such as mail or a shop,
@@ -212,6 +215,7 @@ npx @williacj/rigger run           # run until the board drains
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
 npx @williacj/rigger resume        # reopen admission
 npx @williacj/rigger report        # derive the signals from the event stream
+npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull request, once you confirm it
 ```
 
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means
