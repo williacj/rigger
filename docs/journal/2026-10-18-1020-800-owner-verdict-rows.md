@@ -2,7 +2,7 @@
 
 # The owner's verdict verb, as rows
 
-M6-21 proposes `R-VERDICT-8` to `R-VERDICT-13` and their two dimensions tables, from U6 and U7. The draft came from card #800 at acceptance revision `fa6b55109bd5`, and every check the card names read 0 findings on the first run.
+M6-21 proposes `R-VERDICT-8` to `R-VERDICT-13` and their two dimensions tables, from U6 and U7. The draft came from card #800 at acceptance revision `fa6b55109bd5`.
 
 The judges of round 1 returned two faults of form that no lint catches. First, the draft's `R-VERDICT-11` named `R-VERDICT-10`'s table as its edges. The preamble ties a dimensions table to the row whose id heads it, so `R-VERDICT-11` now states its own bound: a process under a dispatch that opens a terminal of its own lies outside it. Second, several out-of-scope cells retold what `D25` rule 2, `R-GATE-7` and `ARCHITECTURE.md`'s "The gate" own. Each now cites its source and keeps its scope.
 

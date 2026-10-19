@@ -385,7 +385,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | a card no kind selects, or one carrying the epic label | posted, as on any other card | in |
 | an owner's verdict already posted at the same head and acceptance | posted as a new verdict, leaving the earlier one as it was | in |
 | the head or the acceptance changed after the verb last read them, before its comment landed | — | out: `R-GATE-7` |
-| the Rigger the gate or the self-hosting check runs reading the card's acceptance differently from the Rigger the owner installed | — | out: that check refuses the verdict and says why |
+| the Rigger the gate or the self-hosting check runs reading the card's acceptance differently from the Rigger the owner installed | — | out: `ARCHITECTURE.md`'s "The gate", `AGENTS.md`'s "Self-hosting" and `D25` rule 7 |
 | an owner's account without write access to the repository | — | out: `ARCHITECTURE.md`'s "The gate" |
 
 ## R-GATE — what admits a merge
