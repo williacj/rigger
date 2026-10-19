@@ -66,6 +66,7 @@ reused.
 | D23 | The forge refuses a push to the main line | Ratified |
 | D24 | A judge's provider is configured and enforced | Ratified |
 | D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
+| D27 | An escalated card carries a label only the owner removes | Ratified |
 
 ## D1 — Redo over resume
 
@@ -931,3 +932,41 @@ still use the owner's token (rule 3), so the ruleset still cannot tell the owner
 session's.
 
 This decision adds no requirement row.
+
+## D27 — An escalated card carries a label only the owner removes
+
+**Status:** Ratified.
+
+### Rule
+
+1. L2 marks a card it escalates to the owner with a label Rigger fixes. L2 answers no action for a
+   card carrying it, except one whose pull request the forge holds as merged, which `R-WORK-30`
+   answers. No code of Rigger's removes the label.
+2. The owner answers the escalation by removing the label.
+
+**Reversed by:**
+
+- **Rule 1:** a second forge adapter whose forge has no labels.
+- **Rule 1's exception:** the owner wanting a merged escalated card held in Owner until the label
+  goes, which would withdraw `R-WORK-30` under a new id.
+- **Rule 2:** labels removed with no decision behind them often enough that the owner wants a
+  different answer.
+
+### Notes
+
+The label costs no read, because board items already carry their labels. It covers every raiser:
+a marker, a maker's note and a refusal all leave it. The board shows it to the owner. Removing it
+is an act no code of Rigger's performs, so it cannot be mistaken for any move L2 makes.
+
+Three alternatives were weighed. Deriving the state from markers misses a maker's escalation and a
+refusal, which leave no marker. Reading back L2's own comment would make the owner's answer an edit
+or deletion of Rigger's comment, which the board does not show. It would also need an
+issue-comments read in `src/substrate/forge/read.mjs`, while the label needs none, because board
+items already carry their labels. A new board column is the consumer's to configure, and `D18`'s
+deferred table treats adding one to a board in use as untested. Of the three, the label is the only
+one a person can see and change from the board.
+
+L2 writes the label last, so a refused write never leaves it without its comment. The cost is that
+a retried escalation may post its comment again, until L2 reads its own comment back.
+
+The owner ruled rule 2 in U1 Q1 on #740, and rule 1's exception in U4.7 on #740.

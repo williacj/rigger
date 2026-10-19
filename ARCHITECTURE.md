@@ -62,9 +62,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    - The item-write side changes a board item, and only L2 reaches it.
    - The schema-write side changes the board's fields and their options and the repository's
      labels. Only the CLI's verbs reach it, never a layer.
-   - The repository-write side admits two writes, a merge of a pull request and a comment on one,
-     and L2 is the one layer that reaches it. The `verdict` verb also reaches it, for one write: a
-     comment on a pull request holding the owner's verdict, which L2's `composeMarker` composes.
+   - The repository-write side admits four writes: a merge of a pull request, a comment on one, a
+     comment on a card's issue, and adding a label to a card's issue. L2 is the one layer that
+     reaches it. The `verdict` verb also reaches it, for one write: a comment on a pull request
+     holding the owner's verdict, which L2's `composeMarker` composes.
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
@@ -104,7 +105,7 @@ flowchart TB
   L0 -->|exit code| L1
   L0 -->|board items| L3
   L0 -->|card facts| L2
-  L2 -->|column changes, merges and comments| L0
+  L2 -->|column changes, labels, merges and comments| L0
   L0 -.->|events| L5
   L1 -.->|events| L5
   L2 -.->|events| L5
@@ -140,7 +141,7 @@ workaround.
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
-| **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not | L2 | Fixed |
+| **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not. A maker raises one by an escalation note on the card's issue | L2 | Fixed |
 | **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | The resolver ships under scripts/ in the package. The consumer's own checks invoke it with the consumer repository's root as an argument. No layer reads it | Yes |
 | **Provisioning steps** | A command line, which L1 runs under `/bin/sh` in the card's workspace. Optionally a working directory under that workspace, and the time the step may run. Whether the work requires it, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it. | L2 selects a card's steps and reads whether each is required. L3 dispatches each. L1 runs it. | Yes |
 | **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
@@ -475,6 +476,37 @@ The forge check carries three residuals of its own:
 
 Neither place stops a token that can rewrite the repository's settings (`D23` rule 3).
 
+## Escalation
+
+L2 routes every escalation, whatever raised it. For an escalation to the owner, L2 writes three
+things, in this order:
+
+1. one comment on the card's issue, naming the category and the reason, and the pull request and
+   its head where they exist;
+2. the move to Owner;
+3. the escalation label, last.
+
+A refused write therefore never leaves the label on without its comment. A later invocation
+escalates the card again, and the comment may repeat. L2 posts the comment on the issue, never on
+the pull request, so one place holds every escalation, a maker's and a refusal's included.
+
+The escalation label is `rigger:escalated`, one of Rigger's fixed labels. `src/config/` names them
+beside the escalation categories, so the validator, `setup-board` and L2 read one list. The
+repository-write side's runner admits a label write by its shape, one label added to one issue, and
+never checks which label: L2 alone chooses it. L2 answers no action for a card carrying the
+escalation label, in every column, with one exception. A card whose pull request the forge holds as
+merged is moved to Done, and its directories removed, as `R-WORK-30` requires. No code of Rigger's
+removes the label: the owner answers an escalation by removing it.
+
+A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
+comment on the card's issue holding a fenced block: the category, the item's ordinal, the reason,
+and the dispatch id its instruction names. `src/workflow/escalation.mjs` composes the instruction
+for the note and parses the note back, so the two cannot drift, as `marker.mjs` does for markers.
+L2 reads notes when it answers the maker's outcome, through the forge adapter's read side. It reads
+only notes written by an account with write access to the repository. A note a session writes with
+the owner's token is the same residual a marker carries ("What the gate cannot tell apart"). While
+every category goes to the owner, such a note can only halt a card.
+
 ## Failure model
 
 Rigger owns every process it starts. Every command Rigger runs, a dispatch or not, runs in a process
@@ -510,7 +542,8 @@ verb, which exits non-zero naming it.
 
 L3 then reads the board, and L2 computes each card's next action from its stage and observable
 facts. Those facts are the card's column, its pull request, that request's head SHA, the head SHA
-and acceptance digest each marker names, and the last transition the board shows. L2 derives them on
+and acceptance digest each marker names, and the last transition the board shows. They also include
+the escalation label the card carries and the escalation notes on its issue. L2 derives them on
 every read, so no card state is kept. The one exception is L3's memory of the cards it does not
 pull again in one invocation, set out below, after the rule that an environment failure retries
 the card once.
