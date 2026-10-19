@@ -626,7 +626,9 @@ no symbolic link. L1 removes nothing there in any of these cases:
 A folder absent when L1 lists it is a listing L1 made, not one it could not make. Every path such a
 folder holds at the removal is one the session added. L1 removes nothing outside that folder. The
 dispatch's end names each path the session added under that folder that L1 left, and why. Where L1
-did not remove there, the end names why. It names no path that was in the folder when L1 listed it.
+did not run that removal at all, the end names why. A removal that ran and left no path the session
+added, whether it removed some paths or none, leaves that part of the end empty. The end names no
+path that was in the folder when L1 listed it.
 
 L1 then records the dispatch's end, after any removal under the folder. It records one end for
 every dispatch whose start it recorded, and a command that never started is included. Each end
