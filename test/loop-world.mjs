@@ -4,6 +4,7 @@
 // stop one mid-dispatch.
 
 import { existsSync } from 'node:fs';
+import { watch } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -328,6 +329,15 @@ export function world({
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
   workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock,
 } = {}) {
+  const phaseTrace = [{ phase: 'warm.start', at: performance.now() }];
+  if (process.env.RIGGER_596_PHASE_ACTIVE) {
+    const startKill = kill;
+    kill = async (...args) => {
+      phaseTrace.push({ phase: 'kill.start', at: performance.now() });
+      try { return await startKill(...args); }
+      finally { phaseTrace.push({ phase: 'kill.end', at: performance.now() }); }
+    };
+  }
   // Whether the test that made this world has ended. From then on the sink refuses every append
   // and no workspace is answered, so a run the test left going starts nothing and records
   // nothing, and teardown ends its stand-ins and waits out every L1 dispatch still in flight
@@ -384,6 +394,7 @@ export function world({
       return {
         emit: (event, fields) => {
           const attempt = { layer: context.layer, card: context.card, dispatch: context.dispatch, event, fields, accepted: false };
+          if (process.env.RIGGER_596_PHASE_ACTIVE) attempt.at = performance.now();
           attempts.push(attempt);
           observe(attempt);
           if (stopped) throw new Error('the test that made this world has ended, so it records nothing more');
@@ -408,10 +419,19 @@ export function world({
   };
   const repository = createFakeRepository(forge);
   const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: { postComment: repository.postComment, mergePullRequest: repository.mergePullRequest } });
+  if (process.env.RIGGER_596_PHASE_ACTIVE) {
+    const settle = l2.settled.bind(l2);
+    l2.settled = async (card, ...args) => {
+      phaseTrace.push({ phase: 'l2.settled.start', at: performance.now(), card: card.number });
+      try { return await settle(card, ...args); }
+      finally { phaseTrace.push({ phase: 'l2.settled.end', at: performance.now(), card: card.number }); }
+    };
+  }
   const decisions = [];
   const pulls = () => recorded().filter((event) => event.run === run && event.trigger === 'pull').length;
   const decide = (card, outcomes, options = {}) => {
     const action = nextAction(card, kinds, undefined, { roles: settings.roles, provisioning, outcomes, sink, ...options });
+    if (process.env.RIGGER_596_PHASE_ACTIVE) phaseTrace.push({ phase: 'l3.decision', at: performance.now(), card: card.number, action: action.action });
     decisions.push({ card: card.number, action, pull: pulls() });
     return action;
   };
@@ -424,6 +444,31 @@ export function world({
     repository.open({ number: 1000 + pullRequests.length, head, sha: String(number).padStart(40, '0') });
   };
   const dispatches = heldStandIns(agent, role, attempts);
+  phaseTrace.push({ phase: 'warm.end', at: performance.now() });
+  if (process.env.RIGGER_596_PHASE_ACTIVE) {
+    const releaseAll = dispatches.releaseAll;
+    dispatches.releaseAll = () => {
+      for (const card of dispatches.holding()) phaseTrace.push({ phase: 'stand-in.signal', at: performance.now(), card, pid: agent.holder(card, role) });
+      return releaseAll();
+    };
+  }
+  const seenRuns = new Set();
+  const seenMarkers = new Set();
+  const sampleTrace = () => {
+    for (const run of agent.runs()) {
+      if (seenRuns.has(run.pid)) continue;
+      seenRuns.add(run.pid);
+      phaseTrace.push({ phase: 'stand-in.exec.observed', at: performance.now(), card: run.card, pid: run.pid });
+    }
+    for (const card of dispatches.started) {
+      const pid = agent.holder(card, role);
+      if (pid === undefined || seenMarkers.has(pid)) continue;
+      seenMarkers.add(pid);
+      phaseTrace.push({ phase: 'held.marker.observed', at: performance.now(), card, pid });
+    }
+  };
+  const traceWatcher = process.env.RIGGER_596_PHASE_ACTIVE ? watch(agent.dir, sampleTrace) : null;
+  if (traceWatcher) after(() => traceWatcher.close());
   const handed = [];
   // The dispatch ids of the makers L3 started, by card.
   const makerIds = new Map();
@@ -467,6 +512,18 @@ export function world({
       throw failure;
     }
   };
+  if (process.env.RIGGER_596_PHASE_ACTIVE) {
+    board = { ...board };
+    for (const name of ['readColumns', 'readPriority', 'readItems']) {
+      if (typeof board[name] !== 'function') continue;
+      const read = board[name].bind(board);
+      board[name] = async (...args) => {
+        phaseTrace.push({ phase: `${name}.start`, at: performance.now() });
+        try { return await read(...args); }
+        finally { phaseTrace.push({ phase: `${name}.end`, at: performance.now() }); }
+      };
+    }
+  }
   const watched = board;
   board = {
     readColumns: ending((...args) => watched.readColumns(...args)),
@@ -499,6 +556,9 @@ export function world({
     return [...open];
   };
   return {
+    phaseTrace,
+    sampleTrace,
+    closeTrace: () => traceWatcher?.close(),
     fake, l2, dispatches, sequence, layers, handed, decisions, directory,
     repository,
     attempts,

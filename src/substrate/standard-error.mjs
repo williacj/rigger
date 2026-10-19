@@ -6,13 +6,14 @@ import { writeSync } from 'node:fs';
 
 /**
  * The longest a write to standard error waits on a reader that takes nothing, before it gives up
- * and drops what it has not written. It gives up sooner, once the reader has taken nothing for this
- * less `SPARE` and a `PAUSE`, 899 ms, so that it has returned by this even where a pause ends late.
- * A judgment, not a measurement. Its premise is a measurement: over 20 writes of 2,000,000 bytes,
- * each by a loop that tried a full pipe again at once, to a reader draining the pipe
- * (`spawnSync`'s), the longest the reader left the pipe full was 1.04 ms, with Node 26.5.0 on macOS
- * 27.0 on 2026-09-28, at a load average of about 42. Nine tenths of a second is over 800 times
- * that, room for a loaded host, and a process whose reader never drains ends within one second.
+ * and drops what it has not written. It gives up sooner, once the reader has taken nothing for
+ * `WAIT` of a pipe found full, or for this less `SPARE` and a `PAUSE`, 899 ms, whichever comes
+ * first, so that it has returned by this even where a pause ends late. A judgment, not a
+ * measurement. Its premise is a measurement: over 20 writes of 2,000,000 bytes, each by a loop that
+ * tried a full pipe again at once, to a reader draining the pipe (`spawnSync`'s), the longest the
+ * reader left the pipe full was 1.04 ms, with Node 26.5.0 on macOS 27.0 on 2026-09-28, at a load
+ * average of about 42. `WAIT` is over 500 times that, room for a loaded host, and a process whose
+ * reader never drains ends within one second.
  */
 export const UNDRAINED_BOUND = 1_000;
 
@@ -33,6 +34,15 @@ const PAUSE = 1;
  * overrun.
  */
 const SPARE = UNDRAINED_BOUND / 10;
+
+/**
+ * The longest a write waits on a pipe it found full, from when it found it full, before it gives
+ * up. A judgment, not a measurement. It leaves four tenths of the bound in hand, four times
+ * `SPARE`, for a final pause that a host ends late when no pause before it ran late, so the write
+ * had nothing to see it coming by. Under #440's forcing, a final pause ending 250 ms late took a
+ * write that waited until 899 ms to 1,103.7 ms.
+ */
+const WAIT = UNDRAINED_BOUND * 0.6;
 
 /** What a write pauses on: a cell nothing ever wakes, so each wait lasts its whole timeout. */
 const idle = new Int32Array(new SharedArrayBuffer(4));
@@ -83,10 +93,20 @@ let abandoned = false;
  * running from the call, and what the call spent before it, opening `process.stderr` included,
  * counts against the bound. A pause is begun only where it would end `SPARE` before the bound, so
  * the write gives up within the bound even where the host ends its last pause late by up to that.
+ * Where an earlier pause of the same write ended later than that, the write keeps that much in hand
+ * instead: a host loaded for the whole of the wait ends every pause late, so the last is taken to
+ * end as late as the latest before it. A host can also hold only the last pause, when none before it
+ * ran late, so the write gives up once it has waited `WAIT` on a pipe it found full, with the rest
+ * of the bound in hand. A pause the host holds longer than that rest still holds the write past the
+ * bound: the call cannot return while its wait is blocked (#440).
  */
 export function writeWhole(text) {
   let deadline = performance.now() + UNDRAINED_BOUND;
   let full = false;
+  // The latest any pause of this write has ended, past its `PAUSE`.
+  let late = 0;
+  // When this write found the pipe full, since the reader last took anything.
+  let found;
   // Opened for what it leaves the descriptor, not to write through.
   void process.stderr;
   let rest = Buffer.from(text);
@@ -96,14 +116,19 @@ export function writeWhole(text) {
       abandoned = false;
       if (full) deadline = performance.now() + UNDRAINED_BOUND;
       full = false;
+      found = undefined;
     } catch (error) {
       if (error.code !== 'EAGAIN') throw error;
-      if (abandoned || performance.now() + PAUSE + SPARE > deadline) {
+      const now = performance.now();
+      found ??= now;
+      if (abandoned || now + PAUSE + Math.max(SPARE, late) > deadline || now - found >= WAIT) {
         abandoned = true;
         return;
       }
       full = true;
+      const paused = performance.now();
       Atomics.wait(idle, 0, 0, PAUSE);
+      late = Math.max(late, performance.now() - paused - PAUSE);
     }
   }
 }

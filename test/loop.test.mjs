@@ -8,6 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { readdirSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
@@ -30,6 +33,67 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { stoppedCard } from './stop-failure.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { PASSING } from './loop-world.mjs';
+
+const synchronousCalls = [];
+let synchronousDeadline = Infinity;
+function startSynchronousTrace() {
+  synchronousCalls.length = 0;
+  const sampledSites = new Set();
+  const record = (call) => {
+    const key = `${call.call}:${call.path ?? call.file}`;
+    if (!sampledSites.has(key) || (call.start <= synchronousDeadline && call.end >= synchronousDeadline)) {
+      call.site = new Error().stack?.split('\n')[3]?.trim();
+      sampledSites.add(key);
+    }
+    synchronousCalls.push(call);
+  };
+  const originalSpawn = childProcess.spawnSync;
+  childProcess.spawnSync = (file, args, options) => {
+    const start = performance.now();
+    try { return originalSpawn(file, args, options); }
+    finally {
+      if (process.env.RIGGER_596_PHASE_ACTIVE) record({ call: 'spawnSync', file, warm: options?.env?.RIGGER_FIXTURE_WARMING ? 'fixture' : options?.env?.NODE_OPTIONS ? 'agent' : undefined, start, end: performance.now() });
+    }
+  };
+  const originals = new Map();
+  for (const name of ['mkdtempSync', 'mkdirSync', 'writeFileSync', 'renameSync', 'chmodSync', 'readFileSync', 'readdirSync']) {
+    const original = fs[name];
+    originals.set(name, original);
+    fs[name] = (...args) => {
+      const start = performance.now();
+      try { return original(...args); }
+      finally {
+        if (process.env.RIGGER_596_PHASE_ACTIVE) record({ call: name, path: String(args[0]), start, end: performance.now() });
+      }
+    };
+  }
+  syncBuiltinESMExports();
+  return () => {
+    childProcess.spawnSync = originalSpawn;
+    for (const [name, original] of originals) fs[name] = original;
+    syncBuiltinESMExports();
+    synchronousDeadline = Infinity;
+  };
+}
+
+/** Keep the first and last observed call at each site and every call crossing the shared deadline. */
+function synchronousSummary(bodyStart, deadline, worlds = [], bodyEnd = Infinity) {
+  const groups = new Map();
+  const crossing = [];
+  const boundaries = worlds.flatMap(({ limit, begun, built }) => [
+    { world: limit ?? 'N', phase: 'construction.start', at: begun },
+    ...(built?.phaseTrace.map(({ phase, at }) => ({ world: limit ?? 'N', phase, at })) ?? []),
+  ]).filter(({ at }) => at <= bodyEnd).sort((left, right) => left.at - right.at);
+  for (const call of synchronousCalls.filter(({ start }) => start >= bodyStart && start <= bodyEnd)) {
+    const key = `${call.call}:${call.path ?? call.file}`;
+    const group = groups.get(key) ?? { count: 0, first: call, last: call };
+    group.count += 1;
+    group.last = call;
+    groups.set(key, group);
+    if (call.start <= deadline && call.end >= deadline) crossing.push({ ...call, firstLaterBoundary: boundaries.find(({ at }) => at > call.end) ?? 'not reached' });
+  }
+  return { groups: [...groups.values()], crossing };
+}
 
 /**
  * Fires two pull triggers at a time, lets every start they make happen, then releases every held
@@ -1066,6 +1130,56 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
  */
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
+/** The first condition still missing from a timed single-pull world. */
+function targetBoundary(record, bodyStart) {
+  const { built, limit, begun } = record;
+  const elapsedMs = performance.now() - bodyStart;
+  if (!built) return { phase: 'W', cell: `W-b-${limit ?? 'N'}`, world: limit ?? 'N', maker: 'not reached', elapsedMs, beforeBound: elapsedMs < SETTLES_WITHIN.timeout, lastBoundary: 'construction.start', firstMissingCondition: 'world construction end' };
+  const phases = built.phaseTrace;
+  const has = (name) => phases.some(({ phase }) => phase === name);
+  const attempts = built.attempts;
+  const makerAttempts = attempts.filter(({ layer, event, fields, accepted }) => layer === 'L3' && event === 'dispatch' && fields.role !== undefined && accepted);
+  const markerCards = new Set(phases.filter(({ phase }) => phase === 'held.marker.observed').map(({ card }) => card));
+  const pendingMaker = makerAttempts.find(({ card }) => !markerCards.has(card)) ?? makerAttempts.at(-1);
+  const maker = pendingMaker ? { card: pendingMaker.card, dispatch: pendingMaker.dispatch } : 'not reached';
+  const lastBoundary = phases.at(-1)?.phase ?? 'construction.end';
+  const answer = (phase, firstMissingCondition, reachedMaker = maker) => ({ phase, cell: firstMissingCondition.startsWith('none;') ? 'complete' : `${phase}-b-${limit ?? 'N'}`, world: limit ?? 'N', maker: reachedMaker, elapsedMs, beforeBound: elapsedMs < SETTLES_WITHIN.timeout, begun, lastBoundary, firstMissingCondition });
+  const identity = (attempt) => ({ card: attempt.card, dispatch: attempt.dispatch });
+  if (!has('warm.end') || !has('pull.call')) return answer('W', has('warm.end') ? 'pull call' : 'second real warm completion');
+  if (!attempts.some(({ layer, event, accepted }) => layer === 'L3' && event === 'pull' && accepted)) {
+    const read = phases.findLast(({ phase }) => phase === 'readColumns.start' || phase === 'readPriority.start');
+    return answer('Q', read ? `${read.phase.replace('.start', '')} completion and first claim` : 'first claim after pull trigger and pre-claim reads');
+  }
+  if (makerAttempts.some(({ card }) => !markerCards.has(card)) || !has('markers.held')) return answer('D', `held marker for claimed maker ${pendingMaker?.card ?? 'not reached'}`);
+  if (!has('columns.read.end')) return answer('H', 'post-marker columnsOf/readItems completion');
+  if (!has('release.call')) return answer('H', 'release call after post-marker read');
+  const exited = new Set(attempts.filter(({ layer, event }) => layer === 'L1' && event === 'dispatch.end').map(({ dispatch }) => dispatch));
+  const pendingExit = makerAttempts.find(({ dispatch }) => !exited.has(dispatch));
+  if (pendingExit) return answer('P', `stand-in exit and L1 dispatch.end for maker ${pendingExit.card}`, identity(pendingExit));
+  const settledCards = new Set(phases.filter(({ phase }) => phase === 'l2.settled.end').map(({ card }) => card));
+  const pendingSettlement = makerAttempts.find(({ card }) => !settledCards.has(card));
+  if (pendingSettlement) return answer('S2', `L2 settlement end for maker ${pendingSettlement.card}`, identity(pendingSettlement));
+  const postDecided = new Set(phases.filter(({ phase, action }) => phase === 'l3.decision' && action !== 'dispatch').map(({ card }) => card));
+  const pendingDecision = makerAttempts.find(({ card }) => !postDecided.has(card));
+  if (pendingDecision) return answer('S4', `post-settlement L3 decision for maker ${pendingDecision.card}`, identity(pendingDecision));
+  const released = new Set(attempts.filter(({ layer, event }) => layer === 'L3' && event === 'slot.release').map(({ card }) => card));
+  const pendingRelease = makerAttempts.find(({ card }) => !released.has(card));
+  if (pendingRelease) return answer('S4', `slot release and freed return for maker ${pendingRelease.card}`, identity(pendingRelease));
+  if (!has('pull.settled')) return answer('S4', 'trigger worked-claims completion and pull settlement');
+  return answer('E', has('directory.asserted') ? 'none; exact directory assertion completed' : 'exact directory assertion');
+}
+
+/** A condition-based phase guard which reports only while the named progress condition is false. */
+async function diagnosticGuard({ done, snapshot, within }) {
+  try {
+    await waitFor(done, within);
+  } catch (failure) {
+    if (!failure.message?.includes(`did not hold within ${within} ms`)) throw failure;
+    return snapshot();
+  }
+  return undefined;
+}
+
 /** Settles once `built`'s maker stand-in holds at least `cards` cards, as `until` waits. */
 const makersHold = (built, cards, t) => until(() => built.dispatches.held() >= cards, t);
 
@@ -1112,17 +1226,44 @@ test('`loop`\'s single pull hands the maker stand-in exactly the cards it claime
  * the step that claims it, before any card reaches the maker.
  */
 async function claimOnce({ cards = [1, 2, 3, 4], concurrency, limit } = {}, t) {
+  const begun = performance.now();
+  const record = t.rigger596Worlds ? { limit, begun, built: null, constructionEnd: 'not reached' } : null;
+  if (record) t.rigger596Worlds.push(record);
   const built = world({ cards, concurrency });
+  if (record) {
+    record.built = built;
+    record.constructionEnd = performance.now();
+  }
+  if (record && limit === undefined && process.env.RIGGER_596_TARGET_HOLD === 'second') {
+    t.rigger596ReleaseHold = built.fake.holdNextRead();
+  }
+  if (process.env.RIGGER_596_PHASE_ACTIVE) {
+    const readItems = built.fake.operations.readItems;
+    built.fake.operations.readItems = async (...args) => {
+      built.phaseTrace.push({ phase: 'columns.readItems.start', at: performance.now() });
+      try { return await readItems(...args); }
+      finally { built.phaseTrace.push({ phase: 'columns.readItems.end', at: performance.now() }); }
+    };
+  }
+  built.phaseTrace.push({ phase: 'pull.call', at: performance.now() });
   let settled = false;
   const pulled = built.loop.pull(limit).finally(() => {
     settled = true;
+    built.phaseTrace.push({ phase: 'pull.settled', at: performance.now() });
   });
   await until(() => settled || (built.dispatches.held() > 0 && built.dispatches.held() === cardsOf(built, 'pull').length), t);
+  if (process.env.RIGGER_596_PHASE_ACTIVE) built.sampleTrace();
+  built.phaseTrace.push({ phase: 'markers.held', at: performance.now(), cards: built.dispatches.holding() });
   const claimed = numbersOf(built.handed.map(({ card }) => card));
+  built.phaseTrace.push({ phase: 'columns.read.start', at: performance.now() });
   const columns = await columnsOf(built.fake);
+  built.phaseTrace.push({ phase: 'columns.read.end', at: performance.now() });
   const release = async () => {
+    built.phaseTrace.push({ phase: 'release.call', at: performance.now(), cards: built.dispatches.holding() });
     built.dispatches.releaseAll();
     await pulled;
+    if (process.env.RIGGER_596_PHASE_ACTIVE) built.sampleTrace();
+    built.phaseTrace.push({ phase: 'release.end', at: performance.now() });
   };
   return { claimed, columns, built, release };
 }
@@ -1284,13 +1425,129 @@ test('given concurrency 3, no ready card, and one dispatchable card each in codi
 });
 
 test('after `loop`\'s single pull returns, the state directory holds nothing but the event stream', SETTLES_WITHIN, async (t) => {
+  const bodyStart = performance.now();
+  const deadline = bodyStart + 10_000;
+  synchronousDeadline = deadline;
+  const stopSynchronousTrace = startSynchronousTrace();
+  process.env.RIGGER_596_PHASE_ACTIVE = '1';
+  t.rigger596Worlds = [];
+  let finished = false;
+  let bodyEnd;
+  const guard = diagnosticGuard({
+    done: () => finished,
+    snapshot: () => {
+      const record = t.rigger596Worlds.find(({ built }) => !built || !built.phaseTrace.some(({ phase }) => phase === 'directory.asserted')) ?? t.rigger596Worlds.at(-1) ?? { limit: 1, begun: bodyStart };
+      return targetBoundary(record, bodyStart);
+    },
+    within: 8_000,
+  }).then((report) => {
+    if (!report) return;
+    console.error(`RIGGER596_GUARD ${JSON.stringify(report)}`);
+    t.rigger596ReleaseHold?.();
+  });
+  t.after(async () => {
+    const traceEnd = bodyEnd ?? performance.now();
+    t.rigger596ReleaseHold?.();
+    finished = true;
+    await guard;
+    for (const limit of LIMITS) {
+      const record = t.rigger596Worlds.find((each) => each.limit === limit);
+      if (!record) {
+        console.error(`RIGGER596_TRACE ${JSON.stringify({ limit: limit ?? 'N', bodyStart, deadline, construction: 'not reached', pull: 'not reached', laterPhases: 'not reached' })}`);
+        continue;
+      }
+      const { built, begun, constructionEnd } = record;
+      if (!built) {
+        console.error(`RIGGER596_TRACE ${JSON.stringify({ limit: limit ?? 'N', bodyStart, deadline, bodyEnd: bodyEnd ?? 'not reached', begun, constructionEnd, pull: 'not reached', laterPhases: 'not reached', synchronousCalls: synchronousSummary(bodyStart, deadline, t.rigger596Worlds, traceEnd) })}`);
+        continue;
+      }
+      built.sampleTrace();
+      const attempts = built.attempts.map(({ layer, card, dispatch, event, accepted, at, fields }) => ({ layer, card, dispatch, event, accepted, at: at ?? 'not reached', fields }));
+      const runs = built.agent.runs().map(({ card, role, pid }) => ({ card, role, pid }));
+      const boundary = targetBoundary(record, bodyStart);
+      console.error(`RIGGER596_TRACE ${JSON.stringify({ limit: limit ?? 'N', bodyStart, deadline, bodyEnd: bodyEnd ?? 'not reached', begun, constructionEnd, boundary, synchronousCalls: synchronousSummary(bodyStart, deadline, t.rigger596Worlds, traceEnd), phaseTrace: built.phaseTrace, attempts, runs, board: built.fake.requests(), directory: readdirSync(built.directory, { recursive: true }) })}`);
+      built.closeTrace();
+    }
+    delete process.env.RIGGER_596_PHASE_ACTIVE;
+    stopSynchronousTrace();
+  });
   for (const limit of LIMITS) {
     const { claimed, built, release } = await claimOnce({ concurrency: 3, limit }, t);
     await release();
 
     assert.ok(claimed.length > 0, String(limit));
     assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json'], String(limit));
+    built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
+  bodyEnd = performance.now();
+});
+
+test('a loop world records its stand-in warm before the pull can begin', () => {
+  const built = world({ cards: [], concurrency: 1 });
+
+  assert.deepEqual(built.phaseTrace.map(({ phase }) => phase), ['warm.start', 'warm.end']);
+  assert.ok(built.phaseTrace[0].at <= built.phaseTrace[1].at);
+});
+
+test('a held pre-claim read reports the missing Q boundary before the single-pull timeout', SETTLES_WITHIN, async () => {
+  const fake = boardOf([1, 2, 3, 4]);
+  const releaseRead = fake.holdNextRead();
+  const bodyStart = performance.now();
+  process.env.RIGGER_596_PHASE_ACTIVE = '1';
+  const built = world({ fake, concurrency: 3 });
+  built.phaseTrace.push({ phase: 'pull.call', at: performance.now() });
+  let settled = false;
+  const pulled = built.loop.pull(1).finally(() => { settled = true; });
+  try {
+    const report = await diagnosticGuard({
+      done: () => settled || built.handed.length > 0,
+      snapshot: () => targetBoundary({ limit: 1, built, begun: bodyStart }, bodyStart),
+      within: 250,
+    });
+    console.error(`RIGGER596_CONTROL ${JSON.stringify(report)}`);
+    assert.equal(report.phase, 'Q');
+    assert.equal(report.world, 1);
+    assert.equal(report.maker, 'not reached');
+    assert.equal(report.lastBoundary, 'readColumns.start');
+    assert.match(report.firstMissingCondition, /readColumns/);
+    assert.ok(report.elapsedMs < SETTLES_WITHIN.timeout, `guard reported after ${report.elapsedMs} ms`);
+    assert.equal(built.handed.length, 0);
+  } finally {
+    releaseRead();
+    await waitFor(() => built.dispatches.held() === 1 || settled);
+    built.dispatches.releaseAll();
+    await pulled;
+    built.closeTrace();
+    delete process.env.RIGGER_596_PHASE_ACTIVE;
+  }
+});
+
+test('the target guard reports a held second-world board read before its shared bound', { timeout: 20_000 }, () => {
+  const env = { ...process.env, RIGGER_596_TARGET_HOLD: 'second' };
+  delete env.NODE_TEST_CONTEXT;
+  const targetName = "after `loop`'s single pull returns, the state directory holds nothing but the event stream";
+  const target = spawnSync(process.execPath, [
+    '--test',
+    `--test-name-pattern=^${targetName}$`,
+    decodeURIComponent(new URL(import.meta.url).pathname),
+  ], {
+    env,
+    encoding: 'utf8',
+    timeout: 18_000,
+  });
+  const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  const guardLine = output.split('\n').find((line) => line.includes('RIGGER596_GUARD '));
+  assert.ok(guardLine, `the target guard did not report its hold: ${output.slice(-2000)}`);
+  const report = JSON.parse(guardLine.slice(guardLine.indexOf('RIGGER596_GUARD ') + 'RIGGER596_GUARD '.length));
+  assert.equal(report.phase, 'Q');
+  assert.equal(report.world, 'N');
+  assert.equal(report.maker, 'not reached');
+  assert.equal(report.lastBoundary, 'readColumns.start');
+  assert.match(report.firstMissingCondition, /readColumns completion and first claim/);
+  assert.ok(report.elapsedMs >= 8_000 && report.elapsedMs < SETTLES_WITHIN.timeout, `guard elapsed ${report.elapsedMs} ms`);
+  assert.equal(report.beforeBound, true);
+  assert.equal(target.status, 0, output.slice(-4000));
+  console.error(`RIGGER596_TARGET_CONTROL ${JSON.stringify(report)}`);
 });
 
 test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', SETTLES_WITHIN, async (t) => {

@@ -239,9 +239,9 @@ test('no step in any job of the workflow has a uses:', () => {
   }
 });
 
-test('every job in the workflow runs on macos-latest', () => {
+test('every job in the workflow runs on ubuntu-latest', () => {
   for (const workflow of [template, live]) {
-    for (const job of jobsOf(workflow)) assert.equal(job['runs-on'], 'macos-latest', job.id);
+    for (const job of jobsOf(workflow)) assert.equal(job['runs-on'], 'ubuntu-latest', job.id);
   }
 });
 
@@ -442,6 +442,54 @@ const SELF_HOSTING = join(ROOT, '.github', 'workflows', 'self-hosting.yml');
 
 /** The self-hosting workflow, parsed when a test reads it. */
 const selfHosting = () => parseWorkflow(readFileSync(SELF_HOSTING, 'utf8'));
+
+test('every gate and self-hosting job runs on ubuntu-latest', () => {
+  for (const workflow of [template, live, selfHosting()]) {
+    for (const job of jobsOf(workflow)) assert.equal(job['runs-on'], 'ubuntu-latest', `${workflow.name}: ${job.id}`);
+  }
+});
+
+test('plain issue comments skip the card job in every gate and self-hosting workflow', () => {
+  for (const workflow of [template, live, selfHosting()]) {
+    assert.equal(workflow.jobs.card.if, "github.event_name != 'issue_comment' || github.event.issue.pull_request", workflow.name);
+  }
+});
+
+test('every gate and self-hosting job selects the newest cached Node 24 before checking its version', () => {
+  for (const workflow of [template, live, selfHosting()]) {
+    for (const job of jobsOf(workflow)) {
+      const names = job.steps.map((step) => step.name);
+      const select = stepNamed(job, 'Select Node 24 from the runner tool cache');
+      assert.ok(names.indexOf(select.name) < names.indexOf('Check the Node version'), `${workflow.name}: ${job.id}`);
+      assert.equal(select.uses, undefined);
+      assert.doesNotMatch(select.run, /\bcurl\b|\bwget\b|\bnpm install\b|https?:\/\//);
+
+      const runner = temporaryDirectory('rigger-workflow-node-cache-');
+      const cache = join(runner, 'tool-cache');
+      for (const version of ['22.99.0', '24.1.0', '24.9.9', '24.21.9', '24.21.10']) mkdirSync(join(cache, 'node', version, 'x64', 'bin'), { recursive: true });
+      const path = join(runner, 'github-path');
+      const ran = runStep(select, { RUNNER_TOOL_CACHE: cache, GITHUB_PATH: path }, {}, runner);
+      assert.equal(ran.status, 0, `${workflow.name}: ${job.id}: ${ran.stdout}${ran.stderr}`);
+      assert.equal(readFileSync(path, 'utf8'), `${join(cache, 'node', '24.21.10', 'x64', 'bin')}\n`, `${workflow.name}: ${job.id}`);
+    }
+  }
+});
+
+test('every gate and self-hosting job refuses a cache without Node 24', () => {
+  for (const workflow of [template, live, selfHosting()]) {
+    for (const job of jobsOf(workflow)) {
+      const runner = temporaryDirectory('rigger-workflow-node-cache-');
+      const cache = join(runner, 'tool-cache');
+      mkdirSync(join(cache, 'node', '22.99.0', 'x64', 'bin'), { recursive: true });
+      const path = join(runner, 'github-path');
+      const select = stepNamed(job, 'Select Node 24 from the runner tool cache');
+      const ran = runStep(select, { RUNNER_TOOL_CACHE: cache, GITHUB_PATH: path }, {}, runner);
+      assert.equal(ran.status, 1, `${workflow.name}: ${job.id}: ${ran.stdout}${ran.stderr}`);
+      assert.match(ran.stdout, /Node 24 is absent from the runner tool cache/, `${workflow.name}: ${job.id}`);
+      assert.equal(existsSync(path), false, `${workflow.name}: ${job.id}`);
+    }
+  }
+});
 
 /** The scripts the self-hosting workflow runs, by their paths inside the tree it fetched. */
 const TREE_SCRIPTS = /node "\$\{RUNNER_TEMP\}\/\$\{TREE\}\/(scripts\/gate-check\.mjs|\.github\/scripts\/self-hosting-check\.mjs)"/;

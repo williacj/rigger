@@ -139,7 +139,44 @@ under the test above.
 | R-SCHED-13 | A kind of work selects a card that carries any one of the labels the consumer's configuration names for that kind, and never selects a card carrying none of them. | the engine | the test suite | |
 | R-SCHED-14 | Rigger refuses a configuration in which a kind of work names an empty list of labels to select by, and the refusal names that kind. | the config validator | the test suite | |
 | R-SCHED-15 | Rigger never makes two merges at the same moment. Its bound is in `### R-SCHED-15 — Merges Rigger serializes`. | the engine | the event record, by overlapping merge intervals | |
+| R-SCHED-16 | A card Rigger has not claimed is a new card under `R-SCHED-3`, whatever its column, under `rigger once` as under `rigger run`. | the engine | the test suite | |
+| R-SCHED-17 | `rigger doctor` reports admission as open, as closed with what closed it and why, or as a record it cannot read. A closed admission leaves `doctor`'s exit status as it is, and an unreadable record fails it. | the engine | the test suite | |
+| R-SCHED-18 | While admission is closed, or its record cannot be read, `rigger plan` shows no card the next run would pull, and says why. | the engine | the test suite | |
+| R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
+| R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
+| R-SCHED-21 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person removes the label from is no longer the status issue. | the engine | the test suite | |
+| R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
+| R-SCHED-23 | Admission that Rigger closed reopens when the owner runs `rigger resume` while the admission record can be read, or when the status issue is closed. Any close of the issue but `resume`'s counts as the owner's under `R-SCHED-4`, whoever or whatever made it. Closing the issue never lifts the owner's own `rigger pause`: only `rigger resume` does. Admission reopens on nothing else, except that losing Rigger's state directory leaves it open. Its states are in `### R-SCHED-23 — The status issue and admission`. | the engine | the test suite | |
+| R-SCHED-24 | When `rigger resume` reopens admission, it closes every open issue carrying the status label. | the engine | the test suite | |
+| R-SCHED-25 | Where an open issue carrying the status label exists when Rigger closes admission, Rigger comments on it, naming the reason and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-26 | Before Rigger's lane gives up on a merge because the forge reads the pull request's mergeability as unknown, Rigger reads that mergeability again. It reads again 5 seconds after each read that answers unknown. It gives up only at an unknown read made 60 seconds or more after the first. Its states are in `### R-SCHED-26 — Unknown mergeability at a merge`. | the engine | the test suite | |
+
+### R-SCHED-23 — The status issue and admission
+
+| What closed admission | The status issue | What follows | Scope |
+|---|---|---|---|
+| Rigger | open | admission stays closed | in |
+| Rigger | closed by the owner | admission reopens, and Rigger records the issue's close as what reopened it | in |
+| Rigger | closed by another account with write or triage access | admission reopens, as the owner's act | in |
+| Rigger | closed by a closing keyword in a merged pull request | admission reopens, as the owner's act | in |
+| Rigger | closed by a board workflow, such as "Auto-close issue" | admission reopens, as the owner's act | in |
+| Rigger | deleted, transferred to another repository, or never opened | admission stays closed, and Rigger opens another | in |
+| Rigger | unreadable, or its read timed out | admission stays closed; Rigger claims nothing, names the issue, and reads again at the next trigger | in |
+| Rigger | its opening refused, or timed out | admission stays closed; Rigger names the failure in its output and its event, and tries again at the next trigger | in |
+| Rigger | opened, and adding it to the board or setting its column refused | admission stays closed; Rigger names the failure, and places it again at the next trigger | in |
+| Rigger | the status label missing from the repository | — | out: these rows hold only where the repository has the status label, however it came to lack it |
+| Rigger, then the owner runs `rigger resume` | open | admission reopens, and Rigger closes the issue | in |
+| Rigger, then `rigger resume`, whose close of the issue is refused | open | admission reopens; `rigger resume` exits non-zero, naming the issue left open | in |
+| Rigger, then `rigger resume` while the admission record cannot be read | open | admission stays closed; `rigger resume` names the record and changes nothing, and the issue stays open | in |
+| Rigger, then the owner's `rigger pause` | open | admission stays closed until `rigger resume`; closing the issue alone reopens nothing | in |
+| the owner's `rigger pause`, then a card's second failure the same way | opened, naming that card | admission stays closed by the owner; closing the issue reopens nothing; `rigger resume` reopens it and closes the issue | in |
+| Rigger, then a second card's hold | open | admission stays closed; Rigger comments on the open issue, naming the second card | in |
+| Rigger, and Rigger's state directory then lost | open | admission is open; the issue is stale, and a later hold comments on it, naming the new card | in |
+| any, and an issue reopened by a person while admission is open | open | a reopened issue changes nothing while admission is open | in |
+| any, and the status label copied onto another issue by a person | open | that issue is never worked, and `rigger resume` closes it too | in |
+| the owner's `rigger pause` | none is opened | admission stays closed until `rigger resume` | in |
+| any, and a board workflow setting the issue's column after Rigger set Owner | — | — | out: the consumer's board setting |
+| any, and a notification beside the issue | — | — | out: optional, M6-11d |
 
 ### R-SCHED-15 — Merges Rigger serializes
 
@@ -200,6 +237,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-WORK-27 | — it is a directory and not a symbolic link, and so are the card's directory above it and the directory named `scratch` under the worktree root; | the engine | the test suite | |
 | R-WORK-28 | — it lies in no git checkout, and no git checkout lies in it; | the engine | the test suite | |
 | R-WORK-29 | — it is no worktree of the repository Rigger works, lies in none, and holds none. | the engine | the test suite | |
+| R-WORK-31 | A session Rigger dispatches leaves no file of its own outside its dispatch's directory and its scratch directory, read on real paths once the session's process has ended. Its bound is in `### R-WORK-31 — Where a dispatched session's files land`. | the engine | the test suite | |
 | R-WORK-32 | Where a directory is at the path Rigger makes for the dispatch of a role an escalation goes to, Rigger replaces it only when `R-WORK-21` to `R-WORK-23` all hold of it. Otherwise Rigger dispatches no role there, names the path, and changes nothing. | the engine | the test suite | |
 | R-WORK-33 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-33 — When a merged card's directories are removed`. | the engine | the test suite | |
 | R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | the engine | the test suite | |
@@ -256,6 +294,30 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
 
+### R-WORK-31 — Where a dispatched session's files land
+
+Claude Code's configuration home is `~/.claude` unless the consumer moves it. Each row below writes that home as `<home>`, and names each path under it from there. Each in-scope row holds for a maker in its workspace, for a judge in its `main` reaching `head`, and for a role dispatched to answer an escalation.
+
+| What the session writes | Agent CLI | Scope |
+|---|---|---|
+| a tool result too large to return inline, from `Bash`, `Read` or a tool of the directory's own MCP server | Claude Code | in |
+| its transcript under `<home>/projects/`, in the entry for the directory the session runs in | Claude Code | in |
+| files under `/tmp/claude-<uid>/` named for the directory the session runs in | Claude Code | in |
+| a background task's output | Claude Code | in |
+| any other path under `<home>` that a session creates or changes | Claude Code | in |
+| the automatic memory under the session's entry in `<home>/projects/` | Claude Code | out: Rigger dispatches no session with automatic memory |
+| `<home>/session-env/<session id>/` | Claude Code | out: until a card measures a route that confines it |
+| a file under `<home>`, or `~/.claude.json` beside it, that every session shares and no session id or directory names, of which `~/.claude.json`, `<home>/backups/`, `<home>/history.jsonl`, `<home>/.last-cleanup` and `<home>/.last-update-result.json` are instances | Claude Code | out: no test can attribute a write to it while other sessions run |
+| a file a command the agent runs writes, rather than the agent CLI itself, such as `npm`'s cache | any | out: the command's own behaviour, outside the adapter |
+| a write through a symbolic link inside the dispatch's directory to a target outside it | any | out: the link is the work's, and Rigger cannot confine where it points |
+| anything a session that persists writes | Claude Code | out: Rigger dispatches no session that persists |
+| output from `WebFetch` or `WebSearch` | Claude Code | out: no live run here reaches the public web |
+| output from `Grep`, `Glob`, the agent tool or `Workflow` | Claude Code | out: Rigger does not offer them |
+| `Edit`, `Write` or `NotebookEdit` | Claude Code | out: they return no command or file output |
+| what a session killed at its timeout writes | Claude Code | out: the file's place is fixed before the session ends, a judgment |
+| anything | Codex | out: no claiming card yet; the home Codex keeps for the dispatch, written `<Codex home>`, lies under its scratch directory, and its linked `<Codex home>/auth.json` (#646) is the known path outside |
+| anything | a Claude Code version other than the one the claiming test names | out |
+
 ### R-WORK-34 — The head a continuing attempt is judged at
 
 | The maker | What Rigger reads after the maker exits | Scope |
@@ -291,6 +353,7 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
 | R-LOOP-16 | A role runs on the provider the consumer declares for it, unless a card label the consumer declares selects another provider for that role. Rigger refuses a card carrying two labels that select different providers for one role, naming the role and each label. | the engine | the test suite | D24 |
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
+| R-LOOP-18 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker ran, exited non-zero, and left the forge holding nothing of the card's line of work. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 
@@ -314,6 +377,55 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-VERDICT-5 | A verdict is bound to the work it ruled on and to the acceptance it ruled against, so a later reader can tell what it covered. | the engine | the event record, by what each verdict names | D2 |
 | R-VERDICT-6 | A judge returns critical, the verdict for a fault that must not merge, only where no maker revision could resolve that fault without an owner decision. A fault a maker revision could resolve is needs revision. | the role prompt | nothing yet | D14 |
 | R-VERDICT-7 | An agent judge's verdict names the provider it ran on. | the engine, through the judge's instruction | the event record, by the provider each marker.read event names | D24 |
+| R-VERDICT-8 | `rigger verdict` posts the owner's verdict on a pull request, in the form the gate rule reads as an owner's marker. The verdict rules on every acceptance item and on coverage, against the head and the acceptance standing when the owner runs it. | the engine | the test suite | D25 |
+| R-VERDICT-9 | `rigger verdict` shows the owner the whole verdict, with each acceptance item beside its ruling, and posts it only once the owner confirms it. No argument or setting skips that confirmation. | the engine | the test suite | D25 |
+| R-VERDICT-10 | `rigger verdict` asks for that confirmation on a terminal at its standard input, and posts nothing where its standard input is no terminal. Its edges are in `### R-VERDICT-10 — Who can confirm the owner's verdict`. | the engine | the test suite | D25 |
+| R-VERDICT-11 | Nothing Rigger dispatches or runs, with the standard input Rigger started it with, posts the owner's verdict through `rigger verdict`. Rigger never runs that verb itself. A process under a dispatch that opens a terminal of its own lies outside this row (`D25` rule 2). | the engine | the test suite | D25 |
+| R-VERDICT-12 | `rigger verdict` posts each verdict as one new comment, at most once for each confirmation. It never edits or deletes a comment on the forge. | the engine | the test suite | D25 |
+| R-VERDICT-13 | `rigger verdict` posts nothing, and names the reason, where the owner's input or the forge's state cannot make a verdict the gate reads at the pull request's head. The cases are in `### R-VERDICT-13 — When the owner's verdict is posted`. | the engine | the test suite | D25 |
+
+### R-VERDICT-10 — Who can confirm the owner's verdict
+
+| Who runs the verb | Its standard input | What follows | Scope |
+|---|---|---|---|
+| the owner, at a shell in a terminal | that terminal | the verb shows the verdict, asks, and posts it once the owner confirms | in |
+| the owner, with standard input from a file or a pipe | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
+| a job a scheduler starts, such as launchd or cron | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
+| a role Rigger dispatched, or a process under it, with the standard input Rigger started it with | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
+| a provisioning step Rigger runs, or a process under it, with the standard input Rigger started it with | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
+| a process under a Rigger dispatch that opens a terminal of its own | that terminal | — | out: `D25` rule 2 |
+| an agent session the owner started, which Rigger did not dispatch, running the verb with its tool's standard input | no terminal | the verb posts nothing, and says it has no terminal to ask on | in |
+| that agent session opening a terminal of its own and running the verb there | that terminal | — | out: `D25` rule 2 |
+| an agent session the owner started, which Rigger did not dispatch, handed the owner's terminal | that terminal | — | out: `D25` rule 2, and the question still appears on the owner's terminal |
+| any process posting a verdict with `gh` itself | — | — | out: `D25` rule 2 |
+
+### R-VERDICT-13 — When the owner's verdict is posted
+
+| Case | What follows | Scope |
+|---|---|---|
+| a sound verdict ruling an item unmet | nothing posted, naming `R-VERDICT-4` | in |
+| a sound verdict given a line naming what would make it sound | nothing posted | in |
+| a verdict other than sound given no line naming what would make it sound | nothing posted, naming `R-VERDICT-3` | in |
+| that line, or the reason for an insufficient coverage ruling, empty or holding a line break | nothing posted | in |
+| an insufficient coverage ruling given no reason | nothing posted | in |
+| a verdict outside the three `R-VERDICT-2` fixes | nothing posted | in |
+| a ruling on an item number the acceptance does not hold, or on one item twice | nothing posted | in |
+| no consumer config in the directory the verb runs in | nothing posted, naming the missing config | in |
+| a consumer config there that Rigger refuses | nothing posted, naming the refusal | in |
+| that config naming a repository other than the one the default branch's config names | nothing posted, naming both | in |
+| no pull request at the number given, or one closed or merged | nothing posted | in |
+| a pull request whose head is in another repository | nothing posted | in |
+| a pull request whose branch names no card, or names a number that is no issue | nothing posted | in |
+| a card whose acceptance holds no item the form check counts (`R-CARD-7`) | nothing posted | in |
+| a read of the forge failing | nothing posted, naming the read | in |
+| the head or the acceptance changed between the verb showing the verdict and posting it | nothing posted, naming the change | in |
+| the post failing | the verb says the post failed, and posts no second time | in |
+| a card whose kind names no owner judge | posted, as on any other card | in |
+| a card no kind selects, or one carrying the epic label | posted, as on any other card | in |
+| an owner's verdict already posted at the same head and acceptance | posted as a new verdict, leaving the earlier one as it was | in |
+| the head or the acceptance changed after the verb last read them, before its comment landed | — | out: `R-GATE-7` |
+| the Rigger the gate or the self-hosting check runs reading the card's acceptance differently from the Rigger the owner installed | — | out: `ARCHITECTURE.md`'s "The gate", `AGENTS.md`'s "Self-hosting" and `D25` rule 7 |
+| an owner's account without write access to the repository | — | out: `ARCHITECTURE.md`'s "The gate" |
 
 ## R-GATE — what admits a merge
 
@@ -337,6 +449,11 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-ESCALATE-5 | A kind of work naming the owner as its last judge is the loop running, not an escalation. | the engine | the event record, by owner dispatches against escalations | D3 |
 | R-ESCALATE-6 | When a judge returns a fault that must not merge, the loop escalates the card in that category rather than spending its rounds. | the engine | the event record, by the category on each escalation | D3 |
 | R-ESCALATE-7 | An escalation carries the card, the reason it escalated, and the work as it stands. | the engine | the event record, by what each escalation carried | D3 |
+| R-ESCALATE-8 | A card Rigger escalates to the owner moves to the owner's column and carries the escalation label, a label Rigger fixes. | the engine | the test suite | D3 |
+| R-ESCALATE-9 | Rigger posts each escalation to the owner as a comment on the card's issue, carrying what `R-ESCALATE-7` lists, and never leaves the escalation label on a card without that comment. A retried escalation may post the comment again, each copy naming the same category and reason. Its edges are in `### R-ESCALATE-9 — An escalation partly written`. | the engine | the test suite | D3 |
+| R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
+| R-ESCALATE-11 | Rigger reads an escalation as answered once the escalation label is gone from the card, and never removes that label itself. | the engine | the test suite | D3 |
+| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-5 — Environment failures and the hold`. | the engine | the test suite | D3 |
 | R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-13 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
 | R-ESCALATE-14 | Rigger refuses a configuration naming a role as the destination of a recorded-decision change or of critical, and the refusal names the category. | the config validator | the test suite | D14, D26 |
 | R-ESCALATE-15 | Only an ambiguous escalation a maker raises goes to a role, where its category's destination is a role. Rigger sends every escalation the loop raises to the owner, whatever its configured destination. | the engine | the test suite | D26 |
@@ -351,6 +468,16 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | R-ESCALATE-24 | — the role writes an escalation note of its own, in any category; | the engine | the test suite | D26 |
 | R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
 | R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
+
+### R-ESCALATE-9 — An escalation partly written
+
+| What the forge refused | What the board then shows | What follows | Scope |
+|---|---|---|---|
+| nothing, on the card's first escalation | the card in the owner's column, labelled, with one comment | — | in |
+| nothing, on an escalation retried after a refused move or label | the card in the owner's column, labelled, with one copy of the comment for each invocation that posted it, each naming the same category and reason | — | in |
+| the comment | nothing changed | a later invocation escalates the card again | in |
+| the move, after the comment | the comment, the card in its column, no label | a later invocation escalates again, and the comment may repeat | in |
+| the label, after the comment and the move | the comment, the card in the owner's column, no label | a later invocation escalates again, and the comment may repeat | in |
 
 ### R-ESCALATE-13 — Escalation destinations
 
@@ -396,8 +523,41 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 |---|---|---|---|---|
 | R-FAIL-1 | Work that failed before the maker ran its first command is tried again rather than judged. Nothing about the work has been shown. | the engine | the event record, by whether a maker emitted anything | D12 |
 | R-FAIL-2 | An infrastructure failure dispatches no maker, and the card is tried once more. | the engine | the event record, by attempts against starts | D12 |
-| R-FAIL-3 | A second failure of the same kind, without a success between them, closes admission and records why. | the engine | the event record, by failures counted against the hold | D12 |
 | R-FAIL-4 | An infrastructure failure never escalates to the owner as a fault in the work. | the engine | the event record, by the category on each escalation | D3, D12 |
+| R-FAIL-5 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-5 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
+
+### R-FAIL-5 — Environment failures and the hold
+
+Each failure is one of three classes:
+
+- **a host failure:** a second attempt that fails the same way closes admission;
+- **card-local:** it escalates under `R-ESCALATE-12` at once, and an attempt pair that includes one escalates rather than stops;
+- **out:** neither.
+
+| Failure | Class | The same way when | Scope |
+|---|---|---|---|
+| the workspace not made, because git or the file system gave no answer, or none in time | host | always | in |
+| a continuing workspace's fetch failing or timing out (`R-WORK-25`) | host | always | in |
+| a required provisioning step that never started | host | it is the same step | in |
+| a required step that exited non-zero or ran past its time | host | it is the same step | in |
+| the maker's dispatch never started, its scratch directory made | host | always | in |
+| the directory at the card's workspace path, refused under `R-WORK-13` | card-local | — | in: `R-ESCALATE-12` |
+| a role's scratch directory refused under `R-WORK-26`, the maker's or a judge's | card-local | — | in: `R-ESCALATE-12` |
+| a judge's directory refused under `R-WORK-20` | card-local | — | in: `R-ESCALATE-12` |
+| the card's branch checked out in a worktree elsewhere (`R-WORK-25`) | card-local | — | in: `R-ESCALATE-12` |
+| the forge holding the card's line of work, or a merged pull request from it, under `R-WORK-19` | card-local | — | in: `R-ESCALATE-12` |
+| more than one open pull request from the card's line of work | card-local | — | in: `R-ESCALATE-12` |
+| a card in the owner's column with no pull request from its line of work | card-local | — | in: `R-ESCALATE-12` |
+| a host failure on one attempt and a card-local refusal on the other | card-local | — | in: `R-ESCALATE-12`, never a hold |
+| the line of work moved, or deleted, since L2 read it (`R-WORK-25`) | out | — | out: the next pull reads the forge again |
+| two attempts failing in different host ways | out | — | out: the card stops, and admission stays open |
+| an optional step that failed or never started | out | — | out: `R-PROV-2` |
+| a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
+| two cards each failing once | out | — | out: counted per card |
+| a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
 
 ## R-PROV — provisioning
 

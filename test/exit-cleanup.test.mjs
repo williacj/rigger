@@ -4,9 +4,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
@@ -16,10 +17,32 @@ import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
+import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
+import { warmed } from './process-fixtures.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
 const ENDS_WITHIN = { timeout: 30_000 };
+
+const trace779 = (event, fields = {}) => {
+  if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event, ...fields })}\n`);
+};
+
+/** Observe the raw synchronous command result before this test interprets it. */
+const spawnSync = (...input) => {
+  if (process.env.RIGGER_779_TRACE !== '1') return rawSpawnSync(...input);
+  const [command, args] = input;
+  const started = Date.now();
+  process.stderr.write(`${JSON.stringify({ at: started, event: 'sync-command.entry', command, args })}\n`);
+  try {
+    const result = rawSpawnSync(...input);
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.returned', command, args, status: result.status, signal: result.signal, stdout: result.stdout ?? null, stderr: result.stderr ?? null, error: result.error ? { message: result.error.message, code: result.error.code ?? null } : null })}\n`);
+    return result;
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ at: Date.now(), started, event: 'sync-command.threw', command, args, error: { message: error.message, code: error.code ?? null } })}\n`);
+    throw error;
+  }
+};
 
 /** The URL of the module at `path`, relative to this file, as a string literal. */
 const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
@@ -71,6 +94,20 @@ const CALLER = [
   'const directory = process.argv[2];',
   'const options = JSON.parse(process.argv[3]);',
   'const trace = (event, fields = {}) => appendFileSync(join(directory, "trace.1"), JSON.stringify({ at: Date.now(), event, ...fields }) + "\\n");',
+  'const trace779 = (event, fields = {}) => { if (process.env.RIGGER_779_TRACE === "1") trace(event, fields); };',
+  'const goChecks = new Map();',
+  'function tracedGo(site) {',
+  '  const check = (goChecks.get(site) ?? 0) + 1;',
+  '  goChecks.set(site, check);',
+  '  try {',
+  '    const waiting = !existsSync(join(directory, "go"));',
+  '    trace779("go.check", { site, check, present: !waiting });',
+  '    return waiting;',
+  '  } catch (error) {',
+  '    trace779("go.check.error", { site, check, code: error.code ?? null, message: error.message });',
+  '    throw error;',
+  '  }',
+  '}',
   "const state = join(directory, 'state');",
   "const sink = openSink({ directory: options.sink === 'named' ? state : undefined, run: 'r-test', now: () => 0 });",
   'let began;',
@@ -92,6 +129,7 @@ const CALLER = [
   'let settled = 0;',
   'const over = new Map();',
   'function begin(label) {',
+  '  trace779("begin.start", { label });',
   "  const command = join(directory, options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
   "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
@@ -99,15 +137,20 @@ const CALLER = [
   "    ? dispatch({ id: `d-${label}`, card: label + 6, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, ending) => writeFileSync(join(directory, `exit.${label}`), JSON.stringify(ending))) });",
   "  started.then(() => over.set(label, 'it resolved'), (error) => over.set(label, error.message));",
+  '  started.then(() => trace779("begin.resolved", { label }), (error) => trace779("begin.rejected", { label, message: error.message }));',
   "  started.catch(() => {}).finally(() => { settled += 1; if (options.exitOnSettle) process.exit(0); });",
   '}',
   // A call can settle before its command is up, as where L0 ends the group because a read of the
   // process table did not answer. Its child then never comes up, so the wait ends and says why.
   'async function up(label) {',
+  '  trace779("up.start", { label });',
   "  while (!existsSync(join(directory, `child.${label}`))) {",
+  '    trace779("up.check", { label, marker: false, settled: over.has(label) });',
   "    if (over.has(label)) throw new Error(`the call starting command ${label} settled before its command was up: ${over.get(label)}`);",
   '    await turn();',
   '  }',
+  '  trace779("up.check", { label, marker: true });',
+  '  trace779("up.ready", { label });',
   '}',
   'async function start(label) {',
   '  begin(label);',
@@ -127,17 +170,20 @@ const CALLER = [
   "  ChildProcess.prototype.emit = function (event, ...rest) { const emitted = emit.call(this, event, ...rest); if (event === 'exit' && this.pid === Number(readFileSync(join(directory, 'group.1'), 'utf8'))) process.exit(0); return emitted; };",
   '}',
   'if (options.groups) {',
+  '  trace779("groups.start");',
   '  const labels = Array.from({ length: options.count ?? 2 }, (_, n) => n + 1);',
   '  for (const label of labels) begin(label);',
   '  await Promise.all(labels.map(up));',
+  '  trace779("groups.ready");',
   '}',
   'if (options.after) eval(options.after);',
   "process.stdout.write('ready\\n');",
+  'trace779("caller.ready-written");',
   // The test reads the process table before the caller ends, and says so by writing `go`.
   // It waits at least one turn whether or not `go` is already there, so an ending always comes
   // after an await. A rejection at the top level of the module before any await prints Node's
   // module-loader frames too, and the report would then depend on which the test won.
-  "if (options.ending !== 'wait') do await turn(); while (!existsSync(join(directory, 'go')));",
+  "if (options.ending !== 'wait') do await turn(); while (tracedGo('ending'));",
   "if (options.ending === 'exit 0') process.exit(0);",
   "if (options.ending === 'exit 1') process.exit(1);",
   "if (options.ending === 'throw') setImmediate(() => { throw new Error('the caller threw this'); });",
@@ -152,7 +198,9 @@ const CALLER = [
  * `tail` and runs until killed; `leaving`, which starts its `tail` and exits; and a stand-in for
  * `ps` whose first read never answers and whose later reads are `ps`'s.
  */
-function fixtures(directory) {
+function fixtures(directory, options = {}) {
+  if (process.env.RIGGER_779_TRACE === '1') writeFileSync(join(directory, '.rigger779-trace'), '');
+  if (options.ps || options.commands) beginFixtureWarmBatch(directory);
   writeFileSync(join(directory, 'hold'), '');
   writeFileSync(join(directory, 'ps-hold'), '');
   // The child's pid is written only once it is `tail`, so a census never finds it mid-exec. It
@@ -165,6 +213,16 @@ function fixtures(directory) {
     '/bin/mv "$here/child.$1.tmp" "$here/child.$1"',
   ].join('\n');
   fixture(directory, 'command', `echo $$ > "$here/group.$1"\n/usr/bin/mkfifo "$here/hold.$1"\n${child}\nwait\nread answer < "$here/hold.$1"`);
+  if (process.env.RIGGER_779_PS_STATUS === '1') {
+    // This control keeps the real ps output for grep while changing only ps's returned status.
+    const path = join(directory, 'command');
+    const script = readFileSync(path, 'utf8');
+    const returnedStatus = 'rigger779_actual=${PIPESTATUS[0]}; return "$rigger779_actual";';
+    assert.ok(script.includes(returnedStatus), 'the readiness observer was not installed');
+    writeFileSync(path, script.replace(returnedStatus, 'rigger779_actual=${PIPESTATUS[0]}; return 1;'));
+    if (!options.ps && !options.commands) warmed(path);
+  }
+  if (!options.ps && !options.commands) return;
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
     'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
@@ -380,7 +438,97 @@ function fixtures(directory) {
     'case " $* " in *" -p $(/bin/cat "$here/child.1" 2>/dev/null) -o ucomm= "*) /bin/mkdir "$here/gone" 2>/dev/null && exit 1 ;; esac',
     'exec /bin/ps "$@"',
   ].join('\n'));
+  if (options.ps || options.commands) finishFixtureWarmBatch(directory);
 }
+
+test('the ordinary two-group caller warms only the command fixture it runs', async (t) => {
+  const directory = scratch(t);
+  fixtures(directory, { ending: 'exit 1', sink: 'named', groups: true });
+  const expected = process.env.RIGGER_779_TRACE === '1' ? ['.rigger779-trace', 'command', 'hold', 'ps-hold'] : ['command', 'hold', 'ps-hold'];
+  assert.deepEqual(readdirSync(directory).sort(), expected);
+});
+
+for (const [name, script, error] of [
+  ['returned failure', '#!/bin/sh\nexit 7\n', /warming fixtures/],
+  ['failed launch', '#!/no-such-rigger779-interpreter\n', /ENOENT/],
+]) {
+  test(`a selected fixture warm ${name} stops before a caller starts`, (t) => {
+    const directory = scratch(t);
+    beginFixtureWarmBatch(directory);
+    const path = fixture(directory, 'warm-control', '');
+    writeFileSync(path, script);
+    assert.throws(() => finishFixtureWarmBatch(directory), error);
+    assert.equal(existsSync(join(directory, 'caller.mjs')), false);
+  });
+}
+
+test('the fixture observer records returned shell readiness commands before a caller can be ready', ENDS_WITHIN, async (t) => {
+  const diagnostics = [];
+  const originalDiagnostic = t.diagnostic.bind(t);
+  t.diagnostic = (message) => { diagnostics.push(message); originalDiagnostic(message); };
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"fixture.shell"')), 'the shell trace was not retained in the test original'));
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"caller.trace"') && message.includes('groups.ready')), 'the passing caller trace was not retained in the test original'));
+  t.after(() => assert.ok(diagnostics.some((message) => message.includes('"event":"caller.trace"') && message.includes('go.check')), 'the passing caller go checks were not retained in the test original'));
+  const previous = process.env.RIGGER_779_TRACE;
+  process.env.RIGGER_779_TRACE = '1';
+  try {
+    const { directory } = await endCaller(t, { ending: 'exit 0', sink: 'named', groups: true });
+    const observed = readFileSync(join(directory, 'fixture.trace'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    for (const command of ['/bin/ps', '/usr/bin/grep', '/bin/mv']) {
+      assert.ok(observed.some(({ command: ran, status }) => ran === command && status === 0), `${command} did not return success before readiness`);
+    }
+    assert.deepEqual([...new Set(observed.filter(({ command }) => command === '/bin/ps').map(({ label }) => label))].sort(), ['1', '2']);
+    assert.match(readFileSync(join(directory, 'ps.stdout'), 'utf8'), /tail/, 'the process-table answer was not retained beside its raw status');
+    const shell = readFileSync(join(directory, 'fixture.commands'), 'utf8');
+    assert.match(shell, /^entry\t\d+\tcommand\t.*\/bin\/mv/m, 'the marker move has no timed entry');
+    assert.match(shell, /^return\t\d+\tcommand\t.*\/bin\/mv[^\t]*\t0\t/m, 'the marker move has no timed return');
+  } finally {
+    if (previous === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previous;
+  }
+});
+
+test('a matching grep reaches the child marker even when the preceding ps exits nonzero', ENDS_WITHIN, async (t) => {
+  const previousTrace = process.env.RIGGER_779_TRACE;
+  const previousStatus = process.env.RIGGER_779_PS_STATUS;
+  process.env.RIGGER_779_TRACE = '1';
+  process.env.RIGGER_779_PS_STATUS = '1';
+  try {
+    const { directory, status, signal, processes } = await endCaller(t, { ending: 'exit 0', sink: 'named', groups: true });
+    assert.deepEqual({ status, signal }, { status: 0, signal: null });
+    await assertNoneAlive(directory);
+    assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+    const observed = readFileSync(join(directory, 'fixture.trace'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+    for (const label of ['1', '2']) {
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/bin/ps' && code === 1 && seen === label), `ps did not return status 1 for group ${label}`);
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/usr/bin/grep' && code === 0 && seen === label), `grep did not match for group ${label}`);
+      assert.ok(observed.some(({ command, status: code, label: seen }) => command === '/bin/mv' && code === 0 && seen === label), `the marker move failed for group ${label}`);
+    }
+  } finally {
+    if (previousTrace === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previousTrace;
+    if (previousStatus === undefined) delete process.env.RIGGER_779_PS_STATUS;
+    else process.env.RIGGER_779_PS_STATUS = previousStatus;
+  }
+});
+
+test('a real no-match process-table read retains its raw status and empty output', (t) => {
+  const directory = scratch(t);
+  const previousTrace = process.env.RIGGER_779_TRACE;
+  const originalWrite = process.stderr.write;
+  const captured = [];
+  process.env.RIGGER_779_TRACE = '1';
+  process.stderr.write = function (chunk, ...rest) { captured.push(String(chunk)); return originalWrite.call(this, chunk, ...rest); };
+  try {
+    assert.deepEqual(running(`${directory}/not-running`), []);
+    const records = captured.flatMap((chunk) => chunk.split('\n').filter(Boolean).map(JSON.parse));
+    assert.ok(records.some(({ event, command, status, stdout, error }) => event === 'sync-command.returned' && command === '/usr/bin/pgrep' && status === 1 && stdout === '' && error === null), 'the real no-match read lost its status, output, or spawn result');
+  } finally {
+    process.stderr.write = originalWrite;
+    if (previousTrace === undefined) delete process.env.RIGGER_779_TRACE;
+    else process.env.RIGGER_779_TRACE = previousTrace;
+  }
+});
 
 /**
  * Runs the caller in a scratch directory under `options`, sends it `signal` once it is ready,
@@ -393,7 +541,20 @@ function fixtures(directory) {
  */
 async function endCaller(t, options, { signal, again, refusing = false, inspect, whileHeard, stuck = false } = {}) {
   const directory = scratch(t);
-  fixtures(directory);
+  const tracing779 = process.env.RIGGER_779_TRACE === '1';
+  const report779 = (event, fields = {}) => {
+    if (tracing779) t.diagnostic(JSON.stringify({ at: Date.now(), event, ...fields }));
+  };
+  if (tracing779) t.signal.addEventListener('abort', () => {
+    if (!existsSync(directory)) return;
+    const contents = (name) => existsSync(join(directory, name)) ? readFileSync(join(directory, name), 'utf8') : null;
+    report779('test.aborted', { entries: readdirSync(directory), caller: contents('trace.1'), fixture: contents('fixture.trace'), commands: contents('fixture.commands') });
+  }, { once: true });
+  report779('scratch.created', { directory });
+  report779('fixtures.start');
+  if (process.env.RIGGER_779_FORCE === '1') process.env.RIGGER_779_FORCE_GROUPS = options.groups ? '1' : '0';
+  fixtures(directory, options);
+  report779('fixtures.returned');
   if (options.markWait) {
     // The signal tests observe the shell after bare wait and before cleanup's kill.
     const path = join(directory, 'command');
@@ -408,34 +569,73 @@ async function endCaller(t, options, { signal, again, refusing = false, inspect,
   }
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
+  report779('caller.spawn.start');
   const run = spawn(process.execPath, [caller, directory, JSON.stringify(options)], { stdio: ['ignore', 'pipe', stuck ? undrained(t, directory).writer : 'pipe'] });
+  report779('caller.spawn.returned', { pid: run.pid });
   let stdout = '';
   let stderr = '';
   run.stderr?.on('data', (chunk) => { stderr += chunk; });
+  run.stderr?.on('data', (chunk) => report779('caller.stderr.chunk', { bytes: chunk.length, cumulative: stderr.length, stderr }));
   const ready = new Promise((resolve) => {
     run.stdout.on('data', (chunk) => {
       stdout += chunk;
+      report779('caller.stdout.chunk', { bytes: chunk.length, stdout, ready: stdout.includes('ready\n'), heard: stdout.includes('heard\n') });
       if (stdout.includes('ready\n')) resolve();
     });
   });
   let closed = false;
   const ended = once(run, 'close').finally(() => { closed = true; });
+  report779('caller.ready-or-close.start');
   await Promise.race([ready, ended]);
+  report779('caller.ready-or-close.returned', { closed, stdout });
   // What the process table says of each process, read while the caller still holds them. A caller
   // that ended without saying `ready` holds none, and is sent nothing.
+  report779('described.start', { reached: options.groups && !closed });
   const processes = options.groups && !closed ? described(directory) : [];
+  report779('described.returned', { count: processes.length });
   const seen = inspect?.(directory);
   let heard;
   const signalled = performance.now();
+  report779('first-signal.start', { signal, closed });
   if (signal !== undefined && !closed) process.kill(run.pid, signal);
+  report779('first-signal.returned');
   // A caller that ends without saying `heard` ends the wait, and the test then reads how it ended.
   if (whileHeard !== undefined) {
-    while (!stdout.includes('heard\n') && !closed) await turn(t);
+    report779('heard-wait.start');
+    let heardChecks = 0;
+    const stillWaitingForHeard = () => {
+      const check = ++heardChecks;
+      try {
+        const heardNow = stdout.includes('heard\n');
+        const waiting = !heardNow && !closed;
+        report779('heard.check', { check, heard: heardNow, closed: heardNow ? null : !waiting, waiting });
+        return waiting;
+      } catch (error) {
+        report779('heard.check.error', { check, code: error.code ?? null, message: error.message });
+        throw error;
+      }
+    };
+    while (stillWaitingForHeard()) await turn(t);
+    report779('heard-wait.returned', { closed, stdout });
     heard = whileHeard(directory);
+    report779('heard-callback.returned');
   }
+  report779('second-signal-or-go.start', { again, closed });
   if (again !== undefined && !closed) process.kill(run.pid, again);
   else if (signal === undefined || whileHeard !== undefined) writeFileSync(join(directory, 'go'), '');
+  report779('second-signal-or-go.returned');
+  report779('caller.close.start');
   const [status, killedBy] = await ended;
+  report779('caller.close.returned', { status, killedBy });
+  if (tracing779) {
+    const callerTrace = join(directory, 'trace.1');
+    report779('caller.trace', { directory, trace: existsSync(callerTrace) ? readFileSync(callerTrace, 'utf8') : null });
+    const shell = join(directory, 'fixture.trace');
+    const ps = join(directory, 'ps.stdout');
+    const commands = join(directory, 'fixture.commands');
+    const cat = join(directory, 'cat.stdout');
+    report779('fixture.shell', { directory, trace: existsSync(shell) ? readFileSync(shell, 'utf8') : null, psStdout: existsSync(ps) ? readFileSync(ps, 'utf8') : null, commands: existsSync(commands) ? readFileSync(commands, 'utf8') : null, catStdout: existsSync(cat) ? readFileSync(cat, 'utf8') : null });
+  }
   return { directory, processes, seen, heard, status, signal: killedBy, stderr, took: performance.now() - signalled };
 }
 
@@ -448,16 +648,44 @@ function processesOf(directory, labels = [1, 2]) {
 }
 
 /** Whether any process is left in `group`, a zombie included. */
+const groupProbePositions = new Map();
+let groupProbeOrdinal = 0;
 function occupied(group) {
+  const probe = ++groupProbeOrdinal;
+  const position = groupProbePositions.get(group) ?? null;
+  trace779('group.probe.entry', { probe, group, position });
   try {
     process.kill(-group, 0);
+    trace779('group.probe.returned', { probe, group, position, result: 'occupied', shortCircuit: position !== null });
     return true;
   } catch (error) {
+    trace779('group.probe.error', { probe, group, position, code: error.code ?? null, shortCircuit: position !== null && error.code === 'EPERM' });
     if (error.code === 'ESRCH') return false;
     if (error.code === 'EPERM') return true;
     throw error;
   }
 }
+
+test('a group probe keeps empty, occupied and unexpected kill results distinct', () => {
+  const originalKill = process.kill;
+  let outcome;
+  process.kill = (pid, signal) => {
+    assert.deepEqual([pid, signal], [-7779, 0]);
+    if (outcome) throw Object.assign(new Error('group probe failed'), { code: outcome });
+  };
+  try {
+    outcome = undefined;
+    assert.equal(occupied(7779), true);
+    outcome = 'ESRCH';
+    assert.equal(occupied(7779), false);
+    outcome = 'EPERM';
+    assert.equal(occupied(7779), true);
+    outcome = 'EINVAL';
+    assert.throws(() => occupied(7779), { code: 'EINVAL', message: 'group probe failed' });
+  } finally {
+    process.kill = originalKill;
+  }
+});
 
 /**
  * Whether both of a caller's groups are empty, waiting, a turn of the event loop at a time, until
@@ -465,16 +693,22 @@ function occupied(group) {
  * inherits it from the caller reaps it, so the wait is on the group emptying.
  */
 async function emptied(directory, labels = [1, 2], within = 10_000) {
+  trace779('groups.empty.start', { directory, labels, within });
   const groups = labels.map((label) => Number(read(directory, `group.${label}`)));
+  groups.forEach((group, index) => groupProbePositions.set(group, { index, total: groups.length }));
   const deadline = Date.now() + within;
   while (groups.some(occupied) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
+  trace779('groups.empty.final-read', { directory, labels });
   return !groups.some(occupied);
 }
 
 /** Every process a caller's two commands recorded is dead, and both groups are empty. */
 async function assertNoneAlive(directory, labels = [1, 2]) {
+  trace779('assert.none.start', { directory, labels });
   assert.equal(await emptied(directory, labels), true, 'a process of one of the caller\'s groups is alive');
+  trace779('assert.none.groups-empty', { directory, labels });
   for (const { pid } of processesOf(directory, labels)) assert.equal(alive(pid), false, `process ${pid} is alive`);
+  trace779('assert.none.returned', { directory, labels });
 }
 
 /**
@@ -482,10 +716,15 @@ async function assertNoneAlive(directory, labels = [1, 2]) {
  * caller ends, so the record is compared with the process table and not with the adapter's census.
  */
 function described(directory) {
+  trace779('processes.described.start', { directory });
   return processesOf(directory).map(({ pid }) => ({
+    ...(() => { trace779('processes.name.start', { pid }); return {}; })(),
     pid,
     name: spawnSync('/bin/ps', ['-o', 'ucomm=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trimEnd(),
+    ...(() => { trace779('processes.name.returned', { pid }); return {}; })(),
+    ...(() => { trace779('processes.command.start', { pid }); return {}; })(),
     cmd: spawnSync('/bin/ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8', env: { LC_ALL: 'C.UTF-8' } }).stdout.trimEnd(),
+    ...(() => { trace779('processes.command.returned', { pid }); return {}; })(),
   }));
 }
 
@@ -515,12 +754,19 @@ const unrecordedIn = (stderr) => stderr.split('\n')
 for (const ending of ['exit 0', 'exit 1']) {
   const status = Number(ending.split(' ')[1]);
   test(`a caller holding two groups that calls process.exit(${status}) leaves no process of either alive, exits ${status}, and records each kill`, ENDS_WITHIN, async (t) => {
+    trace779('target.start', { mode: `exit ${status}`, deadline: Date.now() + ENDS_WITHIN.timeout });
     const { directory, processes, status: exited, signal, stderr } = await endCaller(t, { ending, sink: 'named', groups: true });
 
+    trace779('assert.signal.start', { mode: `exit ${status}` });
     assert.equal(signal, null, stderr);
+    trace779('assert.signal.returned', { mode: `exit ${status}` });
+    trace779('assert.status.start', { mode: `exit ${status}` });
     assert.equal(exited, status, stderr);
+    trace779('assert.status.returned', { mode: `exit ${status}` });
     await assertNoneAlive(directory);
+    trace779('assert.kills.start', { mode: `exit ${status}` });
     assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+    trace779('assert.kills.returned', { mode: `exit ${status}` });
   });
 }
 
@@ -534,7 +780,7 @@ for (const ending of ['exit 0', 'exit 1']) {
 const LISTENERS = [
   {
     title: 'a `once` listener added before its first group, which says `heard` and exits 3 once the test says `go`',
-    before: "process.once('SIGTERM', async () => { process.stdout.write('heard\\n'); while (!existsSync(join(directory, 'go'))) await turn(); process.exit(3); });",
+    before: "process.once('SIGTERM', async () => { process.stdout.write('heard\\n'); while (tracedGo('listener')) await turn(); process.exit(3); });",
     heard: true,
   },
   {
@@ -553,18 +799,27 @@ const LISTENERS = [
 
 for (const { title, before, after, heard } of LISTENERS) {
   test(`a caller holding two groups, with ${title}, ends on SIGTERM as it does holding none, with no process of either alive and each kill recorded`, ENDS_WITHIN, async (t) => {
+    trace779('target.start', { mode: title, deadline: Date.now() + ENDS_WITHIN.timeout });
     const extra = { signal: 'SIGTERM', whileHeard: heard ? () => true : undefined };
+    trace779('control.start', { mode: title });
     const expected = await endCaller(t, { ending: 'wait', sink: 'named', groups: false, before, after }, extra);
+    trace779('control.returned', { mode: title, status: expected.status, signal: expected.signal });
 
+    trace779('two-groups.start', { mode: title });
     const { directory, processes, status, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, before, after }, extra);
 
+    trace779('assert.status-signal.start', { mode: title });
     assert.deepEqual({ status, signal }, { status: expected.status, signal: expected.signal }, stderr);
+    trace779('assert.status-signal.returned', { mode: title });
     await assertNoneAlive(directory);
+    trace779('assert.kills.start', { mode: title });
     assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+    trace779('assert.kills.returned', { mode: title });
   });
 }
 
 test('a caller whose own listener keeps it running past a first SIGTERM, and starts a third group, leaves none of the three alive after a second', ENDS_WITHIN, async (t) => {
+  trace779('target.start', { mode: 'third group', deadline: Date.now() + ENDS_WITHIN.timeout });
   // At the first signal the listener starts group 3 and says `heard`. At the second, it removes
   // every listener and raises the signal again.
   const after = [
@@ -580,14 +835,22 @@ test('a caller whose own listener keeps it running past a first SIGTERM, and sta
 
   const { directory, heard, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, after }, { signal: 'SIGTERM', whileHeard: third, again: 'SIGTERM' });
 
+  trace779('assert.signal.start', { mode: 'third group' });
   assert.equal(signal, 'SIGTERM', stderr);
+  trace779('assert.signal.returned', { mode: 'third group' });
   await assertNoneAlive(directory);
   const [group, child] = heard;
   const deadline = Date.now() + 10_000;
+  trace779('assert.third-group-empty.start', { group, deadline });
   while (occupied(group) && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(occupied(group), false, 'a process of the third group is alive');
+  trace779('assert.third-group-empty.returned', { group });
+  trace779('assert.third-child-dead.start', { child });
   assert.equal(alive(child), false, `process ${child} is alive`);
+  trace779('assert.third-child-dead.returned', { child });
+  trace779('assert.third-kill.start', { child });
   assert.ok(streamOf(directory).some(({ pid }) => pid === child), 'the third group\'s child was not recorded as killed');
+  trace779('assert.third-kill.returned', { child });
 });
 
 /**
@@ -601,17 +864,33 @@ async function control(t, ending) {
 
 for (const [ending, message] of [['throw', 'the caller threw this'], ['reject', 'the caller rejected this']]) {
   test(`a caller holding two groups that ends on an unhandled ${ending} leaves no process of either alive, ends with Node's status and report, and records each kill`, ENDS_WITHIN, async (t) => {
+    trace779('target.start', { mode: ending, deadline: Date.now() + ENDS_WITHIN.timeout });
+    trace779('control.start', { mode: ending });
     const expected = await control(t, ending);
+    trace779('control.returned', { mode: ending, status: expected.status });
+    trace779('assert.control-status.start', { mode: ending });
     assert.notEqual(expected.status, 0, 'Node gave the control run a zero status');
+    trace779('assert.control-status.returned', { mode: ending });
+    trace779('assert.control-report.start', { mode: ending });
     assert.match(expected.stderr, new RegExp(message));
+    trace779('assert.control-report.returned', { mode: ending });
 
+    trace779('two-groups.start', { mode: ending });
     const { directory, processes, status, signal, stderr } = await endCaller(t, { ending, sink: 'named', groups: true });
 
+    trace779('assert.signal.start', { mode: ending });
     assert.equal(signal, null, stderr);
+    trace779('assert.signal.returned', { mode: ending });
+    trace779('assert.status.start', { mode: ending });
     assert.equal(status, expected.status, stderr);
+    trace779('assert.status.returned', { mode: ending });
+    trace779('assert.report.start', { mode: ending });
     assert.ok(stderr.replaceAll(directory, '<directory>').startsWith(expected.stderr), `Node's report did not reach standard error whole:\n${stderr}`);
+    trace779('assert.report.returned', { mode: ending });
     await assertNoneAlive(directory);
+    trace779('assert.kills.start', { mode: ending });
     assert.deepEqual(kills(streamOf(directory)), byPid(processes));
+    trace779('assert.kills.returned', { mode: ending });
   });
 }
 
@@ -777,15 +1056,24 @@ for (const { title, options, signal, ended } of ENDINGS) {
   for (const { sink, refusing, events } of SINKS) {
     const which = refusing ? 'a sink that refuses every append' : `${sink === 'named' ? 'a named' : 'an unnamed'} sink`;
     test(`given a process-table read that never answers and ${which}, after ${title} no process of either group is alive, the caller ends as it would have, and each group's kill is recorded unnamed`, ENDS_WITHIN, async (t) => {
+      trace779('target.start', { mode: `ps-never ${which} ${title}`, deadline: Date.now() + ENDS_WITHIN.timeout });
       const { directory, status, signal: killedBy, stderr } = await endCaller(t, { ...options, sink, groups: true, ps: 'ps-never', readTimeout: 300 }, { signal, refusing });
 
+      trace779('assert.status-signal.start', { directory });
       assert.deepEqual({ status, signal: killedBy }, ended, stderr);
+      trace779('assert.status-signal.returned', { directory });
       await assertNoneAlive(directory);
-      assert.deepEqual(running(`${directory}/ps-hold`), [], 'the stand-in for ps is alive');
+      trace779('assert.ps-never.start', { directory });
+      const noStandIn = spawnSync('/usr/bin/pgrep', ['-f', literally(`${directory}/ps-hold`)], { encoding: 'utf8' });
+      trace779('assert.ps-never.observed', { directory, status: noStandIn.status, stdout: noStandIn.stdout, error: noStandIn.error?.message });
+      assert.deepEqual({ status: noStandIn.status, stdout: noStandIn.stdout, error: noStandIn.error }, { status: 1, stdout: '', error: undefined }, 'the stand-in for ps is alive');
+      trace779('assert.ps-never.returned', { directory });
       const groups = [1, 2].map((label) => Number(read(directory, `group.${label}`))).sort((one, other) => one - other);
+      trace779('assert.events.start', { directory, groups });
       const recorded = events(directory, stderr).filter(({ event }) => event === 'group.killed');
       assert.deepEqual(recorded.map(({ group }) => group).sort((one, other) => one - other), groups, stderr);
       for (const { census } of recorded) assert.match(census, /process-table read timed out/);
+      trace779('assert.events.returned', { directory, groups, count: recorded.length });
     });
   }
 }
@@ -942,7 +1230,12 @@ test('E2: every failed confirmation read records the group kill', ENDS_WITHIN, a
 
 // proves R-STATE-12, R-STATE-19
 test('E3: an answering confirmation that lists a joiner records the group kill', ENDS_WITHIN, async (t) => {
+  trace779('target.start', { mode: 'E3', deadline: Date.now() + ENDS_WITHIN.timeout });
+  const diagnostics = [];
+  const originalDiagnostic = t.diagnostic.bind(t);
+  t.diagnostic = (message) => { diagnostics.push(message); originalDiagnostic(message); };
   const { directory, signal, stderr } = await endCaller(t, { ending: 'wait', sink: 'named', groups: true, commands: { 1: 'joining' }, ps: 'ps-logged-join', before: KILL_LOGGER }, { signal: 'SIGTERM' });
+  trace779('assert.E3.start', { directory });
   assert.equal(signal, 'SIGTERM', stderr);
   await assertNoneAlive(directory);
   const group = Number(read(directory, 'group.1'));
@@ -952,6 +1245,13 @@ test('E3: an answering confirmation that lists a joiner records the group kill',
   const events = streamOf(directory);
   t.diagnostic(JSON.stringify({ cell: 'E3', group, members: membersOf(directory, 1), joined, trace, kills: read(directory, 'kills.log'), events }));
   assert.equal(groupKills(events, group).length, 1, 'the joiner was not recorded by the group kill: ' + JSON.stringify(events));
+  if (process.env.RIGGER_779_TRACE === '1') {
+    const shell = readFileSync(join(directory, 'fixture.commands'), 'utf8');
+    assert.match(shell, /ps-join.*\/bin\/cat/s, 'the confirmation script did not retain its group read');
+    assert.match(shell, /ps-join.*\/bin\/mkdir/s, 'the confirmation script did not retain its branch marker');
+    assert.ok(diagnostics.some((message) => message.includes('"catStdout":')), 'the command substitution output was not retained in the test original');
+  }
+  trace779('assert.E3.returned', { directory, group, joined });
 });
 
 test('a live member the census and the kill leave out, which the last read before the group\'s kill finds, is recorded by name and command line', ENDS_WITHIN, async (t) => {
