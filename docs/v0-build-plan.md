@@ -349,7 +349,8 @@ Exit, against a fixture configured with three agent judges:
   and the evidence.
 - A card's second failure in its environment the same way, in one run, pauses admission with a
   logged reason and one telemetry event, leaving every card in its column.
-- Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason.
+- Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason;
+  `verdict` posts the owner's verdict once the owner confirms it.
 - The launchd assets that start the engine again at the owner's next login after a reboot, which
   L0 owns.
 

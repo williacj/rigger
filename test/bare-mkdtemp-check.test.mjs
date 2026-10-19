@@ -21,8 +21,9 @@ const HELPER = 'temporary-directory.mjs';
  * - `dispatch.test.mjs:357`: `WRITES`, the `node:fs` calls that create, change, move or remove a
  *   path, which that test wraps to record every path a dispatch writes. It names `mkdtempSync` to
  *   watch it, and makes no directory.
+ * - `loop.test.mjs:59`: watches `mkdtempSync` only to timestamp directory creation by the shared `temporaryDirectory` helper; it makes no directory.
  */
-const EXCEPTIONS = new Set(['dispatch.test.mjs:357']);
+const EXCEPTIONS = new Set(['dispatch.test.mjs:357', 'loop.test.mjs:59']);
 
 /** The name the check looks for, built in two parts so that this file holds no token it names. */
 const NAME = 'mkdtemp' + 'Sync';
