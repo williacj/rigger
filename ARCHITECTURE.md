@@ -146,7 +146,7 @@ workaround.
 | **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
-| **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
+| **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
@@ -241,7 +241,10 @@ A provider adapter is the one place Rigger holds a fact about its agent CLI. Tha
 which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
 command line, standard input and environment. A variable the adapter sets holds a path under the
 dispatch's directory or its scratch directory, and is never one that L1 removes. L1 runs that
-command line as it runs a step's. The adapter passes the CLI no setting that widens what the
+command line as it runs a step's. The adapter also names, from the directory a dispatch runs in and
+the environment it runs under, the one folder its CLI keeps for that directory outside the
+dispatch's directories, or none. This document uses folder for that directory alone. The Codex
+adapter names none. The adapter passes the CLI no setting that widens what the
 consumer's own provider settings allow, with two exceptions:
 
 - **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
@@ -617,10 +620,31 @@ the head of the card's pull request, and L3 dispatches the card's provisioning s
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
-the group's processes. L1 then records the dispatch's end. It records one end for every dispatch
-whose start it recorded, and a command that never started is included. Each end carries the exit
-code or why the command did not start. An end recorded as Rigger exits may instead say why the
-command's exit code could not be read. L3 frees a card's slot only once L1 has handed back the
+the group's processes.
+
+Where the adapter named a folder, L1 lists it before the command starts. Once L0 has settled, where
+the command ran, L1 removes each path under that folder that the listing did not hold, and follows
+no symbolic link. L1 removes nothing there in any of these cases:
+
+- the folder exists when L1 lists it, and L1 cannot read it;
+- the folder is absent when L1 lists it, and L1 cannot read the directory it would lie in;
+- the folder existed when L1 listed it, and at the removal the folder at its path is not the one
+  listed, by real path, device and inode;
+- the folder was absent when L1 listed it, and at the removal the directory it lies in is not the
+  one listed, by real path, device and inode.
+
+A folder absent when L1 lists it is a listing L1 made, not one it could not make. Every path such a
+folder holds at the removal is one the session added. L1 removes nothing outside that folder. The
+dispatch's end names each path the session added under that folder that L1 left, and why. Where L1
+did not run that removal at all, the end names why. A removal that ran and left no path the session
+added, whether it removed some paths or none, leaves that part of the end empty. The end names no
+path that was in the folder when L1 listed it.
+
+L1 then records the dispatch's end, after any removal under the folder. It records one end for
+every dispatch whose start it recorded, and a command that never started is included. Each end
+carries the exit code or why the command did not start. An end recorded as Rigger exits may
+instead say why the command's exit code could not be read. An end recorded as Rigger exits follows
+no removal. L3 frees a card's slot only once L1 has handed back the
 outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
