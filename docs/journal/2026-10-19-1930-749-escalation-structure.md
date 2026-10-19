@@ -21,5 +21,10 @@ The pre-dispatch attack's B4 ruling, that the runner admits a label write by sha
 the card's commentary. It is now one sentence in the section, because the M6-04a engineer needs it
 to keep L0 from importing `src/config/`.
 
-#746 is retargeting `R-ESCALATE-10` from `R-WORK-30` to `R-WORK-33` (K11). This delta cites
-`R-WORK-30` as main holds it, so whichever of the two merges second follows the other's citation.
+The first round's judge found that the merged-card exception said every merged labelled card goes
+to Done. `R-WORK-33`'s table refuses a merged Ready or Coding card and keeps its directories. The
+section now defers to that row and its table rather than restating them, so it and `D27` rule 1
+give the same answer.
+
+#746 merged first and withdrew `R-WORK-30` in favour of `R-WORK-33` (K11). The section and `D27`
+follow it, and the register keeps `D26` and `D27` in id order.

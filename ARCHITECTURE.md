@@ -494,9 +494,9 @@ The escalation label is `rigger:escalated`, one of Rigger's fixed labels. `src/c
 beside the escalation categories, so the validator, `setup-board` and L2 read one list. The
 repository-write side's runner admits a label write by its shape, one label added to one issue, and
 never checks which label: L2 alone chooses it. L2 answers no action for a card carrying the
-escalation label, in every column, with one exception. A card whose pull request the forge holds as
-merged is moved to Done, and its directories removed, as `R-WORK-30` requires. No code of Rigger's
-removes the label: the owner answers an escalation by removing it.
+escalation label, in every column, with one exception. L2 answers a card whose pull request the
+forge holds as merged as `R-WORK-33` and its table require. No code of Rigger's removes the label:
+the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
 comment on the card's issue holding a fenced block: the category, the item's ordinal, the reason,

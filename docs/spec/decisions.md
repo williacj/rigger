@@ -993,7 +993,7 @@ forge holds it.
 ### Rule
 
 1. L2 marks a card it escalates to the owner with a label Rigger fixes. L2 answers no action for a
-   card carrying it, except one whose pull request the forge holds as merged, which `R-WORK-30`
+   card carrying it, except one whose pull request the forge holds as merged, which `R-WORK-33`
    answers. No code of Rigger's removes the label.
 2. The owner answers the escalation by removing the label.
 
@@ -1001,7 +1001,7 @@ forge holds it.
 
 - **Rule 1:** a second forge adapter whose forge has no labels.
 - **Rule 1's exception:** the owner wanting a merged escalated card held in Owner until the label
-  goes, which would withdraw `R-WORK-30` under a new id.
+  goes, which would withdraw `R-WORK-33` under a new id.
 - **Rule 2:** labels removed with no decision behind them often enough that the owner wants a
   different answer.
 
