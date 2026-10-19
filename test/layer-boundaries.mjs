@@ -31,7 +31,8 @@ const runnerOf = (side) => `${side.replace(/-(\w)/g, (_, letter) => letter.toUpp
  */
 const IMPORTERS = [
   { rule: 'rule 1', sides: ['schema-write', 'item-write', 'repository-write'], barred: (file) => file.startsWith('src/scheduling/'), says: 'src/scheduling/ imports the read side only' },
-  { rule: 'rule 5', sides: ['item-write', 'repository-write'], barred: (file) => !file.startsWith('src/workflow/'), says: 'only src/workflow/ imports the item-write or repository-write side' },
+  { rule: 'rule 5', sides: ['item-write'], barred: (file) => !file.startsWith('src/workflow/'), says: 'only src/workflow/ imports the item-write or repository-write side' },
+  { rule: 'rule 5', sides: ['repository-write'], barred: (file) => !file.startsWith('src/workflow/') && file !== 'src/cli/verdict.mjs', says: 'only src/workflow/, and src/cli/verdict.mjs for the owner\'s verdict, import the repository-write side' },
   { rule: 'rule 6', sides: ['schema-write'], barred: (file) => !file.startsWith('src/cli/'), says: 'only src/cli/ imports the schema-write side' },
 ];
 
