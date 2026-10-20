@@ -19,8 +19,9 @@ cites it, and the citation is where the binding text lives; a conflict resolves 
 2. **Concurrency is required.** The engine works N cards at once on one host, where N is the
    `concurrency` setting (`ARCHITECTURE.md`, Extension points).
 3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
-   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A repeated
-   host fault closes admission rather than stopping cards (`R-FAIL-3`); L3 owns that hold.
+   (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A host fault
+   that repeats the same way on one card's attempts closes admission rather than stopping cards
+   (`R-FAIL-5`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
@@ -346,18 +347,24 @@ Exit, against a fixture configured with three agent judges:
 
 - The configured escalation set routes to the owner's column, with a comment carrying the reason
   and the evidence.
-- A second identical failure in one run pauses admission with a logged reason and one telemetry
-  event, leaving every card in its column.
+- A card's second failure in its environment the same way, in one run, pauses admission with a
+  logged reason and one telemetry event, leaving every card in its column.
 - Verbs: `pause` and `resume` set and clear admission; `doctor` reports a hold and its reason;
   `verdict` posts the owner's verdict once the owner confirms it.
-- The launchd assets that keep the engine alive across a reboot, which L0 owns.
+- The launchd assets that start the engine again at the owner's next login after a reboot, which
+  L0 owns.
 
 Exit:
 
-- A card that fails on infrastructure twice yields two attempts, one hold, and zero escalations.
-  Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-3`, `R-FAIL-4`).
+- A card that fails on infrastructure twice, the same way, yields two attempts, one hold, and zero
+  escalations. Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-5`,
+  `R-FAIL-4`).
 - `pause` during a run finishes in-flight cards and admits none (`R-SCHED-3`).
 - A closed admission and its reason are still in force after the engine restarts (`R-STATE-4`).
+- A critical verdict moves the card to Owner, carrying the escalation label, with one comment on
+  its issue holding the category, the reason and the work as it stands (`R-ESCALATE-7`,
+  `R-ESCALATE-8`, `R-ESCALATE-9`). Where the forge refused one of the escalation's writes and
+  Rigger retried, the comment may repeat, each copy naming the same category and reason.
 
 **M7. Report complete, clock triggers.**
 

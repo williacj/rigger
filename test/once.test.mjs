@@ -226,7 +226,7 @@ for (const { action, ruling, merged, expectedColumn, line } of [
   });
 }
 
-// proves R-WORK-30
+// proves R-WORK-33
 test('once removes a person-merged card’s real worktrees and scratch before moving it to Done', async () => {
   const temporary = temporaryDirectory('rigger-once-removal-');
   const worktrees = join(temporary, 'workspaces');
@@ -260,7 +260,7 @@ test('once removes a person-merged card’s real worktrees and scratch before mo
   assert.ok(events.filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').every((event) => events.indexOf(event) < done), JSON.stringify(events));
 });
 
-// proves R-WORK-30
+// proves R-WORK-33
 test('once leaves a closed unmerged pull request’s workspace in place', async () => {
   const temporary = temporaryDirectory('rigger-once-closed-');
   const worktrees = join(temporary, 'workspaces');
