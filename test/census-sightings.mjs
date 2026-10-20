@@ -20,6 +20,22 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
     'target=$(/bin/cat "$here/two.pid" 2>/dev/null)',
     'args="$*"',
     'if [ -f "$here/hang" ]; then phase=after-kill; else phase=before-kill; fi',
+    // Linux can show a killed task in D before it becomes the zombie this fixture requires.
+    // The caller's existing read bound also bounds this condition wait.
+    ...(process.platform === 'linux' ? [
+      'if [ "$phase" = after-kill ] && [ "$afterKill" = zombie ]; then',
+      '  killed=yes',
+      '  if [ -f "$here/exit-trace.jsonl" ]; then',
+      '    group=$(< "$here/group.pid")',
+      `    /usr/bin/grep -Fq '"kind":"signal","target":-'"$group"',"name":"SIGKILL","ok":true' "$here/exit-trace.jsonl" || killed=no`,
+      '  fi',
+      '  if [ "$killed" = yes ]; then',
+      '    while state=$(/bin/ps -p "$target" -o stat= 2>/dev/null); do',
+      '      case "$state" in Z*) break ;; esac',
+      '    done',
+      '  fi',
+      'fi',
+    ] : []),
     'if [ "$cell" = U1 ] && [ "$1" = -p ] && [ "$2" = "$target" ]; then',
     '  printf "READ %s\\nFAIL 1 empty\\n" "$args" >> "$here/sighted-ps.log"',
     '  exit 1',

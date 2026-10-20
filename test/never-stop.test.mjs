@@ -3191,6 +3191,11 @@ test('on the exit cleanup, a member no read before the kill found, which a read 
   assert.equal(status, 0);
   assert.deepEqual(events.filter(({ pid }) => pid === one || pid === two).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }]);
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed').length, 1);
+  if (process.platform === 'linux') {
+    // A killed orphan can remain a zombie until its adopting parent reaps it.
+    for (const pid of [one, two]) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
+    await until(() => [one, two].every((pid) => !alive(pid)), t);
+  }
   assert.deepEqual([one, two].map(alive), [false, false]);
 });
 
