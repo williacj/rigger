@@ -1,11 +1,12 @@
 #!/bin/sh
-# ABOUTME: What `npm test` runs: `node --test` with a refusing, recording `gh` first on PATH, so no
-# test that inherits the suite's PATH reaches the real forge, and a run in which any test called it fails.
-# It does the same for `claude` and `codex`, so no test reaches a real agent session either.
+# ABOUTME: Runs the deterministic and host test tiers through `node --test` with a refusing,
+# recording `gh` first on PATH, so no test that inherits the suite's PATH reaches the real forge,
+# and a run in which any test called it fails. It does the same for `claude` and `codex`, so no
+# test reaches a real agent session either.
 #
 # Placement and shape are the architect's ruling on #276
-# (https://github.com/williacj/rigger/issues/276#issuecomment-5835306379). Every argument is
-# forwarded to `node --test`, which alone decides what counts as a test (`D16` rule 1).
+# (https://github.com/williacj/rigger/issues/276#issuecomment-5835306379). After its mode
+# switches, arguments go to `node --test`, which alone decides what counts as a test (`D16` rule 1).
 #
 # The refusing `gh` records beside itself, in the directory its own path names, and not to a path
 # passed in the environment. So a child whose environment was rebuilt around an inherited PATH
@@ -14,6 +15,210 @@
 # record is what fails the run.
 
 set -u
+
+# These three lists implement the file placements in #816, Part 2. The last two shrink as
+# their cards convert and split tests. An entry must name the file that still exists.
+host_tests='
+test/codex-judge-shell.test.mjs
+test/command-gate-hook.test.mjs
+test/demo.test.mjs
+test/directory-census.test.mjs
+test/dispatch.test.mjs
+test/doctor-claude-live.test.mjs
+test/event-sink.test.mjs
+test/exit-cleanup.test.mjs
+test/forge-runners.test.mjs
+test/forge-spawn.test.mjs
+test/guard-probe-kill.test.mjs
+test/init.test.mjs
+test/judge-head-live.test.mjs
+test/kill-recorded.test.mjs
+test/listing-stand-in.test.mjs
+test/maker-dispatch.test.mjs
+test/never-stop.test.mjs
+test/package.test.mjs
+test/process-adapter.test.mjs
+test/process-fixtures.test.mjs
+test/provider-claude-installed-live.test.mjs
+test/provider-claude-live.test.mjs
+test/provider-claude-reach-live.test.mjs
+test/provider-codex-live.test.mjs
+test/push-hook.test.mjs
+test/read-deadline.test.mjs
+test/record-commit.test.mjs
+test/restart-concurrency.test.mjs
+test/restart-kill.test.mjs
+test/stand-in-agent.test.mjs
+test/step-restart-kill.test.mjs
+test/suite-reaper.test.mjs
+test/suite-record.test.mjs
+test/suite-tiers.test.mjs
+test/verb-forge-kill.test.mjs
+test/workflow-files.test.mjs
+test/worktrees.test.mjs
+'
+awaiting_tests='
+test/codex-judge-shell.test.mjs
+test/command-gate-hook.test.mjs
+test/demo.test.mjs
+test/directory-census.test.mjs
+test/dispatch.test.mjs
+test/doctor-claude-live.test.mjs
+test/event-sink.test.mjs
+test/exit-cleanup.test.mjs
+test/forge-runners.test.mjs
+test/forge-spawn.test.mjs
+test/guard-probe-kill.test.mjs
+test/init.test.mjs
+test/judge-head-live.test.mjs
+test/kill-recorded.test.mjs
+test/listing-stand-in.test.mjs
+test/maker-dispatch.test.mjs
+test/never-stop.test.mjs
+test/package.test.mjs
+test/process-adapter.test.mjs
+test/process-fixtures.test.mjs
+test/provider-claude-installed-live.test.mjs
+test/provider-claude-live.test.mjs
+test/provider-claude-reach-live.test.mjs
+test/provider-codex-live.test.mjs
+test/push-hook.test.mjs
+test/read-deadline.test.mjs
+test/record-commit.test.mjs
+test/restart-concurrency.test.mjs
+test/restart-kill.test.mjs
+test/stand-in-agent.test.mjs
+test/step-restart-kill.test.mjs
+test/suite-reaper.test.mjs
+test/suite-record.test.mjs
+test/verb-forge-kill.test.mjs
+test/workflow-files.test.mjs
+test/worktrees.test.mjs
+'
+converting_tests='
+test/absorption-check.test.mjs
+test/attempt.test.mjs
+test/budget-checks.test.mjs
+test/build-test-matrix.test.mjs
+test/cli.test.mjs
+test/command-gate.test.mjs
+test/doctor.test.mjs
+test/environment-retry.test.mjs
+test/facts-pull.test.mjs
+test/fake-gh.test.mjs
+test/foreground-suite-settle.test.mjs
+test/forge-board-sharing.test.mjs
+test/forge-contract.test.mjs
+test/forge-priority.test.mjs
+test/forge-read.test.mjs
+test/gate-check.test.mjs
+test/git-environment.test.mjs
+test/judge-directory.test.mjs
+test/judge-dispatch.test.mjs
+test/judge-head-cleanup.test.mjs
+test/lane.test.mjs
+test/loop-world.test.mjs
+test/loop.test.mjs
+test/mixed-judges.test.mjs
+test/once.test.mjs
+test/package-budget.test.mjs
+test/plan.test.mjs
+test/provider-codex.test.mjs
+test/provider-contract.test.mjs
+test/pull-outcomes.test.mjs
+test/redo-settle.test.mjs
+test/report.test.mjs
+test/restart.test.mjs
+test/retry.test.mjs
+test/role-dispatch.test.mjs
+test/run.test.mjs
+test/scratch-teardown.test.mjs
+test/self-hosting-check.test.mjs
+test/settle.test.mjs
+test/setup-board.test.mjs
+test/spec-style-lint.test.mjs
+test/stand-in-warming.test.mjs
+test/step-run.test.mjs
+test/temporary-directory.test.mjs
+test/transitions.test.mjs
+test/verb-facts.test.mjs
+test/verbs-judges.test.mjs
+test/verbs-provision.test.mjs
+test/workspace.test.mjs
+test/worktree-root-inside.test.mjs
+'
+
+validate_list() {
+  list_name=$1
+  shift
+  for entry do
+    if [ ! -f "$entry" ]; then
+      printf '%s\n' "npm test: $list_name list names missing $entry" >&2
+      exit 1
+    fi
+  done
+}
+validate_list host $host_tests
+validate_list awaiting $awaiting_tests
+validate_list converting $converting_tests
+on_host_list() {
+  for entry in $host_tests; do
+    [ "$entry" = "$1" ] && return 0
+  done
+  return 1
+}
+
+if [ "${1-}" = --list ]; then
+  case ${2-} in
+    host) set -- $host_tests ;;
+    awaiting) set -- $awaiting_tests ;;
+    converting) set -- $converting_tests ;;
+    *) printf '%s\n' 'usage: sh test/suite.sh --list host|awaiting|converting' >&2; exit 2 ;;
+  esac
+  printf '%s\n' "$@"
+  exit 0
+fi
+
+suite_mode=deterministic
+node_flags=
+if [ "${1-}" = --host ]; then
+  suite_mode=host
+  node_flags=--test-concurrency=1
+  shift
+  if [ "$#" -eq 0 ]; then
+    set -- $host_tests
+  fi
+  for file do
+    case $file in
+      -*) continue ;;
+      test/*.test.mjs) ;;
+      *) continue ;;
+    esac
+    if ! on_host_list "$file"; then
+      printf '%s\n' "test:host: $file is not on the host list" >&2
+      exit 1
+    fi
+  done
+  major=$(node -p 'process.versions.node.split(".")[0]') || exit 1
+  if [ "${GITHUB_ACTIONS-}" = true ]; then
+    printf '%s\n' "${ImageOS}-${ImageVersion}-${RUNNER_ARCH}-node$major"
+  else
+    printf 'macos-%s-%s-node%s\n' "$(sw_vers -productVersion)" "$(uname -m)" "$major"
+  fi
+else
+  for file do
+    if on_host_list "$file"; then
+      printf '%s\n' "npm test: $file is on the host list; run npm run test:host" >&2
+      exit 1
+    fi
+  done
+fi
+RIGGER_SUITE_MODE=$suite_mode
+RIGGER_SUITE_HOST_FILES=$host_tests
+RIGGER_SUITE_AWAITING_FILES=$awaiting_tests
+RIGGER_SUITE_CONVERTING_FILES=$converting_tests
+export RIGGER_SUITE_MODE RIGGER_SUITE_HOST_FILES RIGGER_SUITE_AWAITING_FILES RIGGER_SUITE_CONVERTING_FILES
+
 
 # Keep Mac control originals beside, not inside, the suite's disposable TMPDIR.
 suite_caller_tmpdir=$(cd "${TMPDIR:-/tmp}" && pwd -P) || exit 1
@@ -35,6 +240,12 @@ run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
 run=$(cd "$run" && pwd -P) || exit 1
 TMPDIR=$run
 export TMPDIR
+allowed="$run/allowed"
+mkdir "$allowed" || exit 1
+ln -s /usr/bin/git "$allowed/git" || exit 1
+ln -s /usr/bin/tar "$allowed/tar" || exit 1
+RIGGER_SUITE_ALLOWED_PATH=$allowed
+export RIGGER_SUITE_ALLOWED_PATH
 dir="$run/rigger-refusing-gh"
 mkdir "$dir" || exit 1
 trap 'rm -rf "$run"' EXIT
@@ -93,7 +304,9 @@ export RIGGER_REFUSING_AGENT_DIR
 PATH="$agents:$PATH"
 
 mkfifo "$run/ended" || exit 1
-: > "$run/runner.cjs"
+cat > "$run/runner.cjs" <<'RUNNER'
+require(require('node:path').resolve('test/suite-guard.cjs')).registerHostHooks(require('node:test'));
+RUNNER
 /usr/bin/perl -e 'setpgrp(0, 0); die "reaper group: $!" if getpgrp != $$; exec @ARGV or die "reaper exec: $!"' node test/suite-reaper "$run" "$run/ended" 3>&- &
 reaper=$!
 exec 3> "$run/ended"
@@ -106,7 +319,7 @@ finish() {
   exit "$result"
 }
 trap finish EXIT
-PATH="$dir:$PATH" node --require "$run/runner.cjs" --test "$@" 3>&- &
+PATH="$dir:$PATH" node --require "$run/runner.cjs" --test $node_flags "$@" 3>&- &
 runner=$!
 trap 'kill -TERM "$runner" 2>/dev/null || :; exit 143' TERM
 trap 'kill -INT "$runner" 2>/dev/null || :; exit 130' INT

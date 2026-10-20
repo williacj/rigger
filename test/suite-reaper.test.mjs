@@ -187,7 +187,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
   const output = join(directory, 'suite-output');
   const fd = openSync(output, 'w');
   const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const child = spawn('/bin/sh', [suite, file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
+  const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
   t.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
