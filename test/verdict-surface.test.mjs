@@ -5,13 +5,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { readFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parse } from 'acorn';
 
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 import { PULL, assertRefused, run, world } from './verdict-world.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,47 +48,78 @@ function fixed(node) {
 }
 
 /**
- * The repository path a module at `file` names by `specifier`, resolved as Node resolves an import:
- * as a URL against the module's own file URL, and read back as the file that URL's path names. A
- * query or a fragment does not change the file a `file:` URL loads, and the path read back leaves
- * both out; an escape names the character it stands for, and the path read back decodes it.
- * A specifier that is no relative path, absolute path or `file:` URL names no file here, since the
- * package declares no `exports` or `imports` a bare specifier could reach the verb by.
+ * The URL Node's ESM resolver gives `specifier`, imported by the module at `parent`, or undefined
+ * where it resolves to none here. A specifier starting `/`, `./` or `../` resolves as a URL
+ * against the importer's URL. Any other specifier that parses as an absolute URL, whatever its
+ * scheme or the scheme's letter case, is that URL. Anything else is a bare specifier, which reaches
+ * a package, and the package declares no `exports` or `imports` that could reach the verb.
+ * A specifier that is not a URL at all, such as one with an escaped slash, Node refuses too.
  */
-function resolvedIn(file, specifier) {
-  if (!/^(?:\.{0,2}\/|file:)/.test(specifier)) return undefined;
+function resolved(specifier, parent) {
   try {
-    const url = new URL(specifier, pathToFileURL(join(ROOT, file)));
-    return relative(ROOT, fileURLToPath(url)).split(sep).join('/');
+    if (/^\.{0,2}\//.test(specifier)) return new URL(specifier, parent);
+    return new URL(specifier);
   } catch {
-    // A specifier Node could not load either, such as an escaped slash, names no file.
     return undefined;
   }
 }
 
 /**
- * Every module of `tree`, a map of repository path to source, that imports `target`, or may: a
- * static import, a re-export, or a dynamic `import()`, each specifier evaluated where the source
- * fixes it and resolved against the importing module's directory. A dynamic `import()` whose
- * specifier the source does not fix could name `target`, so its module is named too, unless
- * `boundaryReport` admits it under the config-load exception, which loads the consumer's config.
+ * Whether two `file:` URLs load one module. Node loads a module by its real path, so a path
+ * reaching the file through a symbolic link loads it too. A path that does not exist, or a
+ * `file:` URL naming a host other than this one, loads nothing, so names no file.
+ */
+function sameFile(url, target) {
+  try {
+    return realpathSync(fileURLToPath(url)) === realpathSync(fileURLToPath(target));
+  } catch {
+    return false;
+  }
+}
+
+/** The source text a `data:` URL holds, as Node reads a JavaScript module from one. */
+function dataSource(url) {
+  const comma = url.pathname.indexOf(',');
+  const head = url.pathname.slice(0, comma);
+  const body = url.href.slice(url.href.indexOf(',') + 1);
+  return head.endsWith(';base64') ? Buffer.from(decodeURIComponent(body), 'base64').toString('utf8') : decodeURIComponent(body);
+}
+
+/**
+ * Whether the module `source`, at `parent`, imports the file at `target`'s URL, or may: a static
+ * import, a re-export, or a dynamic `import()`, each specifier evaluated where the source fixes it
+ * and resolved as Node resolves it. A `file:` URL names the file its path names, whatever its
+ * query, fragment, host or escapes. A `data:` URL holds a module of its own, whose imports are
+ * read the same way. A dynamic `import()` whose specifier the source does not fix could name
+ * `target`, so it counts, unless `exempted` admits it by its line.
+ */
+function imports(source, parent, target, exempted = () => false) {
+  const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
+  const named = [...nodesOf(program)].filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source);
+  return named.some((node) => {
+    const specifier = fixed(node.source);
+    if (specifier === undefined) return node.type === 'ImportExpression' && !exempted(node.loc.start.line);
+    const url = resolved(specifier, parent);
+    if (url?.protocol === 'file:') return sameFile(url, target);
+    if (url?.protocol === 'data:') return imports(dataSource(url), url, target);
+    return false;
+  });
+}
+
+/**
+ * Every module of `tree`, a map of repository path to source, that imports `target`, or may, as
+ * `imports` reads each. `target` is read too, since the verb's module importing itself is a
+ * module under src/ importing it. The one unfixed `import()` admitted is the config load
+ * `boundaryReport` exempts, which loads the consumer's config.
  */
 export function importersOf(tree, target) {
   const exempt = boundaryReport(tree).exempt;
-  const importers = [];
-  for (const [file, source] of tree) {
-    // `target` is checked too: the verb's module importing itself is a module under src/ importing it.
-    if (!/\.(?:m|c)?js$/.test(file)) continue;
-    const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
-    const imports = [...nodesOf(program)].filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source);
-    const names = (node) => {
-      const specifier = fixed(node.source);
-      if (specifier === undefined) return node.type === 'ImportExpression' && !exempt.some((held) => held.file === file && held.line === node.loc.start.line);
-      return resolvedIn(file, specifier) === target;
-    };
-    if (imports.some(names)) importers.push(file);
-  }
-  return importers.sort();
+  const url = pathToFileURL(join(ROOT, target));
+  return [...tree]
+    .filter(([file]) => /\.(?:m|c)?js$/.test(file))
+    .filter(([file, source]) => imports(source, pathToFileURL(join(ROOT, file)), url, (line) => exempt.some((held) => held.file === file && held.line === line)))
+    .map(([file]) => file)
+    .sort();
 }
 
 // proves R-VERDICT-11
@@ -157,6 +189,44 @@ test('a module under src/ importing the verdict verb by a specifier carrying a q
     'src/scheduling/escaped.mjs',
     'src/workflow/by-fragment.mjs',
   ]);
+});
+
+// proves R-VERDICT-11
+test('a module under src/ importing the verdict verb by any spelling Node resolves to it, a scheme in any case, a URL with a host, an absolute path or a data: URL importing it, is named by the check above', () => {
+  const tree = new Map(sourceTree(ROOT));
+  const url = pathToFileURL(join(ROOT, VERB));
+  const exported = `export * from ${JSON.stringify(url.href)};`;
+  const spelled = (specifier) => `export const later = () => import(${JSON.stringify(specifier)});\n`;
+  // The judge's round-4 counterexample, appended to a module that exists.
+  tree.set('src/cli/once.mjs', `${tree.get('src/cli/once.mjs')}\n${spelled(url.href.replace(/^file:/, 'FILE:'))}`);
+  tree.set('src/workflow/mixed-case.mjs', spelled(url.href.replace(/^file:/, 'FiLe:')));
+  tree.set('src/scheduling/with-host.mjs', spelled(`file://localhost${url.pathname}`));
+  tree.set('src/execution/one-slash.mjs', spelled(`file:${url.pathname}`));
+  tree.set('src/observation/absolute-path.mjs', spelled(join(ROOT, VERB)));
+  tree.set('src/improvement/by-data.mjs', spelled(`data:text/javascript,${encodeURIComponent(exported)}`));
+  tree.set('src/config/by-base64.mjs', spelled(`data:text/javascript;base64,${Buffer.from(exported).toString('base64')}`));
+
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), [
+    'src/cli/once.mjs',
+    'src/cli/verbs.mjs',
+    'src/config/by-base64.mjs',
+    'src/execution/one-slash.mjs',
+    'src/improvement/by-data.mjs',
+    'src/observation/absolute-path.mjs',
+    'src/scheduling/with-host.mjs',
+    'src/workflow/mixed-case.mjs',
+  ]);
+});
+
+// proves R-VERDICT-11
+test('a module under src/ importing the verdict verb through a symbolic link to it is named by the check above, and one naming another host is not', (t) => {
+  const tree = new Map(sourceTree(ROOT));
+  const linked = join(temporaryDirectory('rigger-verdict-link-', { context: t }), 'owner.mjs');
+  symlinkSync(join(ROOT, VERB), linked);
+  tree.set('src/workflow/through-a-link.mjs', `export const later = () => import(${JSON.stringify(pathToFileURL(linked).href)});\n`);
+  tree.set('src/scheduling/elsewhere.mjs', `export const later = () => import(${JSON.stringify(`file://elsewhere.example${pathToFileURL(join(ROOT, VERB)).pathname}`)});\n`);
+
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), ['src/cli/verbs.mjs', 'src/workflow/through-a-link.mjs']);
 });
 
 /** The rule-5 violations `boundaryReport` finds in the tree with `file` holding `appended` after its source. */
