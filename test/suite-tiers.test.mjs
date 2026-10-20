@@ -47,6 +47,19 @@ function hostProbe(t, source, { awaiting = false, env = {} } = {}) {
   return { directory, file, result };
 }
 
+function reportsPassedTest(output, title) {
+  return output.split('\n').some((line) =>
+    line.startsWith(`✔ ${title} (`) ||
+    (/^ok [0-9]+ - /.test(line) && line.replace(/^ok [0-9]+ - /, '') === title));
+}
+
+test('pass reports accept spec and TAP while excluding a TAP skip', () => {
+  spawnSync('/usr/bin/true', []);
+  assert.equal(reportsPassedTest('✔ selected (1ms)\n', 'selected'), true);
+  assert.equal(reportsPassedTest('ok 1 - selected\n', 'selected'), true);
+  assert.equal(reportsPassedTest('ok 1 - selected # SKIP filtered\n', 'selected'), false);
+});
+
 const originalHost = [
   'test/codex-judge-shell.test.mjs',
   'test/command-gate-hook.test.mjs',
@@ -200,8 +213,8 @@ test('host mode forwards node test options to a named fixture outside test', (t)
     encoding: 'utf8', env: environment, timeout: 60_000,
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /✔ selected host fixture/);
-  assert.doesNotMatch(result.stdout, /✔ excluded host fixture/);
+  assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
+  assert.equal(reportsPassedTest(result.stdout, 'excluded host fixture'), false, result.stdout);
 });
 
 test('both suite modes reach the one reaper launch', () => {
@@ -337,7 +350,7 @@ test('deterministic git clone finds upload-pack when the caller starts from git-
 test('clones through guarded git', () => { clonedFromOrigin(new URL('./case', import.meta.url).pathname); });`;
   const { result } = runProbe(t, source, {}, { PATH: `${execPath.stdout.trim()}:${process.env.PATH}` });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /✔ clones through guarded git/);
+  assert.ok(reportsPassedTest(result.stdout, 'clones through guarded git'), result.stdout);
 });
 
 for (const scope of ['global', 'system']) {
@@ -550,7 +563,7 @@ test('host runner counts process starts per test', (t) => {
 test('awaiting-split host files may hold a test that starts no process', (t) => {
   const { result } = hostProbe(t, "test('awaiting split', () => {});", { awaiting: true });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /✔ awaiting split/);
+  assert.ok(reportsPassedTest(result.stdout, 'awaiting split'), result.stdout);
 });
 
 test('host runner prints the local host key first', (t) => {
@@ -573,7 +586,7 @@ test('host tests receive both refusing CLI directories on PATH', (t) => {
   const source = "import assert from 'node:assert/strict';\nimport { existsSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { spawnSync } from 'node:child_process';\ntest('sees refusing directories', () => { assert.ok(existsSync(join(process.env.RIGGER_REFUSING_GH_DIR, 'gh'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'claude'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'codex'))); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_GH_DIR)); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_AGENT_DIR)); spawnSync('git', ['--version']); });";
   const { result } = hostProbe(t, source);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /✔ sees refusing directories/);
+  assert.ok(reportsPassedTest(result.stdout, 'sees refusing directories'), result.stdout);
 });
 
 for (const cli of ['gh', 'claude', 'codex']) {
@@ -663,7 +676,7 @@ test('host runner runs two listed files with no overlap', (t) => {
   const { NODE_TEST_CONTEXT, ...environment } = process.env;
   const result = spawnSync('sh', [copy, '--host'], { encoding: 'utf8', env: environment, timeout: 60_000 });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /✔ records its interval/);
+  assert.ok(reportsPassedTest(result.stdout, 'records its interval'), result.stdout);
   const times = Object.fromEntries(['a', 'b'].map((name) => [name, {
     start: BigInt(readFileSync(join(directory, name + '-start'), 'utf8')),
     end: BigInt(readFileSync(join(directory, name + '-end'), 'utf8')),
