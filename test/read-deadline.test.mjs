@@ -6,8 +6,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, heldOutput, holding, leave, read, until } from './process-fixtures.mjs';
+import { PS, runCommand } from '../src/substrate/process.mjs';
+import { TAIL, alive, fixture, shellQuote, heldOutput, holding, leave, read, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
@@ -19,11 +19,11 @@ function cutCensus(t) {
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
   const cut = heldOutput(t, directory, 'printf "123"');
   const ps = fixture(directory, 'ps', [
-    'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac',
+    ("case \"$*\" in *lstart=*) exec " + shellQuote(PS) + " \"$@\" ;; esac"),
     'if /bin/mkdir "$here/first" 2>/dev/null; then',
     cut.body,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const events = [];
   const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
@@ -58,11 +58,11 @@ test('a timed-out read settles while the descendant still holds its output open'
 test('run keeps before-deadline failures and a fired nonzero read distinct from a held-output exit-0 timeout', SETTLES_WITHIN, async (t) => {
   for (const [failure, body, remove] of [
     ['SIGTERM', 'kill -TERM $$', false],
-    ['ENOENT', 'exec /bin/ps "$@"', true],
+    ['ENOENT', ("exec " + shellQuote(PS) + " \"$@\""), true],
   ]) {
     const directory = holding(t);
     const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
-    const ps = fixture(directory, 'ps', `case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\n${body}`);
+    const ps = fixture(directory, 'ps', `case "$*" in *lstart=*) exec ${shellQuote(PS)} "$@" ;; esac\n${body}`);
     const events = [];
     await runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout: 300, onGroup: remove ? () => unlinkSync(ps) : undefined, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
     const unread = events.find(({ event }) => event === 'group.killed');
@@ -74,11 +74,11 @@ test('run keeps before-deadline failures and a fired nonzero read distinct from 
   const nonzeroCommand = fixture(nonzeroDirectory, 'command', leave(TAIL, 'survivor'));
   const nonzeroCut = heldOutput(t, nonzeroDirectory, 'printf "123"', 'exit 2');
   const nonzeroPs = fixture(nonzeroDirectory, 'ps', [
-    'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac',
+    ("case \"$*\" in *lstart=*) exec " + shellQuote(PS) + " \"$@\" ;; esac"),
     'if /bin/mkdir "$here/first" 2>/dev/null; then',
     nonzeroCut.body,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const nonzeroEvents = [];
   const nonzeroSettled = runCommand({ command: nonzeroCommand, args: [], cwd: nonzeroDirectory, env: {}, timeout: 15_000, ps: nonzeroPs, readTimeout: 300, emitter: { emit: (event, fields) => nonzeroEvents.push({ event, ...fields }) } });
@@ -108,7 +108,7 @@ test('a read just before the group kill cut at its deadline records the kill as 
     cut.body,
     '  fi',
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const events = [];
@@ -129,11 +129,11 @@ test('a read that writes standard error before its deadline is still timed out o
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
   const cut = heldOutput(t, directory, 'printf "ps: failed" >&2');
   const ps = fixture(directory, 'ps', [
-    'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac',
+    ("case \"$*\" in *lstart=*) exec " + shellQuote(PS) + " \"$@\" ;; esac"),
     'if /bin/mkdir "$here/first" 2>/dev/null; then',
     cut.body,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const events = [];
 
@@ -149,20 +149,20 @@ test('a read that writes standard error before its deadline is still timed out o
 // proves R-STATE-12, R-STATE-19
 test('whole rows and the whole answer are timed out when their output closes after the deadline', SETTLES_WITHIN, async (t) => {
   for (const [shape, output] of [
-    ['whole rows', '/bin/ps "$@" | /usr/bin/head -n 1'],
-    ['whole answer', '/bin/ps "$@"'],
+    ['whole rows', ("" + shellQuote(PS) + " \"$@\" | /usr/bin/head -n 1")],
+    ['whole answer', ("" + shellQuote(PS) + " \"$@\"")],
   ]) {
     const directory = holding(t);
     const readTimeout = 300;
     const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
     const cut = heldOutput(t, directory, '');
     const ps = fixture(directory, 'ps', [
-      'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac',
+      ("case \"$*\" in *lstart=*) exec " + shellQuote(PS) + " \"$@\" ;; esac"),
       'if /bin/mkdir "$here/first" 2>/dev/null; then',
       output,
       cut.body,
       'fi',
-      'exec /bin/ps "$@"',
+      ("exec " + shellQuote(PS) + " \"$@\""),
     ].join('\n'));
     const events = [];
 
@@ -186,7 +186,7 @@ test('startOf refuses an exit-0 read whose output stays open past the synchronou
     '  echo "$2" > "$here/group.pid"',
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const caller = join(directory, 'caller.mjs');

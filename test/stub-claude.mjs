@@ -129,7 +129,7 @@ export function installStandInAgent(dir, plan = {}) {
     /** What the test set the stand-in to do for `card` in `role`, or undefined where it set nothing. */
     act: (card, role) => read()[card]?.[role],
     /** Every run, oldest first: its name, arguments, working directory, card, role, input, recorded variables and pid. */
-    runs: () => (existsSync(join(dir, RUNS)) ? readFileSync(join(dir, RUNS), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []),
+    runs: () => (existsSync(join(dir, RUNS)) ? readFileSync(join(dir, RUNS), 'utf8').split('\n').slice(0, -1).filter(Boolean).map((line) => JSON.parse(line)) : []),
     /** Whether a run for `card` in `role` is holding: it has said so, and has not yet been released. */
     held: (card, role = 'engineer') => existsSync(marker(dir, 'held', card, role)),
     /** Whether the run for `card` in `role` that held is still alive. */

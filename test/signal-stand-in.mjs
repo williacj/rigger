@@ -2,6 +2,7 @@
 // L0 sends, or a process L0 may not signal, or one its kill does not end, without a real one.
 
 import { spawnSync } from 'node:child_process';
+import { PS } from '../src/substrate/process.mjs';
 
 /** The failure `process.kill` throws where the sender may not signal the process. */
 const refusal = () => Object.assign(new Error('kill EPERM'), { code: 'EPERM', errno: -1, syscall: 'kill' });
@@ -10,7 +11,7 @@ const refusal = () => Object.assign(new Error('kill EPERM'), { code: 'EPERM', er
 const absence = () => Object.assign(new Error('kill ESRCH'), { code: 'ESRCH', errno: -3, syscall: 'kill' });
 
 /** The pid of each process in the group `group`, as `ps` reads them. */
-const membersOf = (group) => spawnSync('/bin/ps', ['-g', String(group), '-o', 'pid='], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map(Number);
+const membersOf = (group) => spawnSync(PS, ['-g', String(group), '-o', 'pid='], { env: process.env, encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map(Number);
 
 /**
  * A signal call that answers as `process.kill` does, and records each `[target, signal]` it is given

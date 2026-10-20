@@ -15,8 +15,26 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { scratch, sweep } from './process-fixtures.mjs';
 import { running } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { fixture } from './process-fixtures.mjs';
+
+test('process fixtures execute the Bash file substitutions used by census controls', (t) => {
+  const directory = scratch(t);
+  writeFileSync(join(directory, 'answer'), 'tail');
+  const path = fixture(directory, 'read-answer', 'answer=$(< "$here/answer"); printf "%s" "$answer"');
+  const result = spawnSync(path, [], { env: process.env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'tail');
+});
 
 const childProcess = createRequire(import.meta.url)('node:child_process');
+
+test('a process search excludes the caller whose command line contains the search text', () => {
+  const code = `import { running } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; console.log(JSON.stringify({ pid: process.pid, found: running(process.argv[1]) }));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code, 'rigger-process-search-observer'], { encoding: 'utf8', env: process.env });
+  assert.equal(result.status, 0, result.stderr);
+  const { pid, found } = JSON.parse(result.stdout);
+  assert.equal(found.includes(String(pid)), false, 'the process observer counted itself as a fixture');
+});
 
 function withProcessTableResults(results, check) {
   const original = childProcess.spawnSync;

@@ -12,7 +12,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import * as processAdapter from '../src/substrate/process.mjs';
-import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, startOf, warmed } from './process-fixtures.mjs';
+import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, shellQuote, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { sightingPs } from './census-sightings.mjs';
 
@@ -359,7 +359,7 @@ test('given an onGroup and a start-time read that prints the start time and a fa
   // failure to standard error as `ps` writes every failure it reports (`run`). It is `warmed`,
   // because the read of the leader's start time is its first exec, which must reach its body
   // within `readTimeout`.
-  const ps = fixture(directory, 'ps', 'case "$*" in *lstart=*) /bin/ps "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec /bin/ps "$@"');
+  const ps = fixture(directory, 'ps', 'case "$*" in *lstart=*) ' + shellQuote(PS) + ' "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec ' + shellQuote(PS) + ' "$@"');
   let called = false;
 
   await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .*ps: failing on purpose/);
@@ -396,7 +396,7 @@ test('given an onGroup that throws and a sink that refuses every append, the cal
 
 test('the process-table tool the adapter reads by default is named by absolute path, and is ps', () => {
   assert.ok(isAbsolute(PS), `${PS} is not an absolute path`);
-  assert.equal(basename(PS), 'ps');
+  assert.equal(basename(PS), process.platform === 'linux' ? 'process-table.sh' : 'ps');
   accessSync(PS, constants.X_OK);
 });
 
@@ -521,12 +521,12 @@ test('a process that joins the group after the group is killed is dead when the 
 function reExecuting(directory) {
   fixture(directory, 'first', `: > "$here/running"\nwhile [ ! -f "$here/go" ]; do :; done\nexec ${TAIL}`);
   const ps = fixture(directory, 'ps', [
-    'case "$5" in *,command=) ;; *) exec /bin/ps "$@" ;; esac',
-    '/bin/ps "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
+    'case "$5" in *,command=) ;; *) exec ' + shellQuote(PS) + ' "$@" ;; esac',
+    '' + shellQuote(PS) + ' "$1" "$2" "$3" -o "${5%,command=}" > "$here/names"',
     ': > "$here/go"',
     'survivor=$(/bin/cat "$here/survivor.pid")',
     'until /bin/ps -o ucomm= -p "$survivor" | /usr/bin/grep -q "^tail"; do :; done',
-    '/bin/ps "$1" "$2" "$3" -o command= > "$here/arguments"',
+    '' + shellQuote(PS) + ' "$1" "$2" "$3" -o command= > "$here/arguments"',
     '/usr/bin/paste -d " " "$here/names" "$here/arguments"',
   ].join('\n'));
   // `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
@@ -594,9 +594,9 @@ test('a survivor whose state reads as ? is read again, not left unnamed', SETTLE
   const ps = fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) /bin/mkdir "$here/named" 2>/dev/null && { echo mid-exec; exit 0; } ;; esac',
     'if /bin/mkdir "$here/called" 2>/dev/null; then',
-    `  /bin/ps "$@" | /usr/bin/sed -E 's/^( *[0-9]+) .*$/\\1 ?/'`,
+    `  ${shellQuote(PS)} "$@" | /usr/bin/sed -E 's/^( *[0-9]+) .*$/\\1 ?/'`,
     'else',
-    '  exec /bin/ps "$@"',
+    '  exec ' + shellQuote(PS) + ' "$@"',
     'fi',
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -640,7 +640,7 @@ test('a survivor missing from one of the census\'s reads is read again, not left
   // `readTimeout`.
   const ps = fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) /bin/mkdir "$here/names-read" 2>/dev/null && exit 1 ;; esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
@@ -915,7 +915,7 @@ function unreaped(directory, more = '', left = leave(TAIL, 'tail')) {
 }
 
 /** The first character of the state `ps` reads for each process in `group`. */
-const statesIn = (group) => spawnSync('/bin/ps', ['-g', String(group), '-o', 'stat='], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map((state) => state[0]);
+const statesIn = (group) => spawnSync(PS, ['-g', String(group), '-o', 'stat='], { env: process.env, encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map((state) => state[0]);
 
 test('a group holding a zombie that its parent outside the group never reaps settles, with no live process of the group left and no kill of the zombie recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -1004,7 +1004,7 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
     '    if (pipe(answer) != 0) return 127;',
     '    pid_t reader = fork();',
     '    if (reader < 0) return 127;',
-    '    if (reader == 0) { dup2(answer[1], 1); close(answer[0]); close(answer[1]); execv("/bin/ps", argv); _exit(127); }',
+    '    if (reader == 0) { dup2(answer[1], 1); close(answer[0]); close(answer[1]); execv(' + JSON.stringify(PS) + ', argv); _exit(127); }',
     '    close(answer[1]);',
     '    FILE *in = fdopen(answer[0], "r");',
     '    char line[4096];',
@@ -1021,12 +1021,12 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
     '  }',
     '  int states = 0;',
     '  for (int i = 1; i < argc; i++) if (strstr(argv[i], "stat=")) states = 1;',
-    '  if (!states || strcmp(argv[1], "-ww") != 0) { execv("/bin/ps", argv); return 127; }',
+    '  if (!states || strcmp(argv[1], "-ww") != 0) { execv(' + JSON.stringify(PS) + ', argv); return 127; }',
     '  int out[2];',
     '  if (pipe(out) != 0) return 127;',
     '  pid_t pid = fork();',
     '  if (pid < 0) return 127;',
-    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv("/bin/ps", argv); _exit(127); }',
+    '  if (pid == 0) { dup2(out[1], 1); close(out[0]); close(out[1]); execv(' + JSON.stringify(PS) + ', argv); _exit(127); }',
     '  close(out[1]);',
     '  FILE *in = fdopen(out[0], "r");',
     '  char line[4096];',
@@ -1074,8 +1074,8 @@ test('after a whole census round, a first state read reporting mid-exec skips re
   const ps = fixture(directory, 'ps', [
     'printf "%s\\n" "$*" >> "$here/calls"',
     'case "$*" in',
-    '  "-ww -g "*" -o pid=,stat=") /bin/ps "$@" | /usr/bin/sed -E "s/^( *[0-9]+) .*$/\\1 ?/" ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    '  "-ww -g "*" -o pid=,stat=") ' + shellQuote(PS) + ' "$@" | /usr/bin/sed -E "s/^( *[0-9]+) .*$/\\1 ?/" ;;',
+    '  *) exec ' + shellQuote(PS) + ' "$@" ;;',
     'esac',
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
@@ -1181,7 +1181,7 @@ test('a survivor the census named that exits on its own before the kill is not r
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     'case "$*" in *stat=*)',
     '  if [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null; then',
-    '    table=$(/bin/ps "$@")',
+    '    table=$(' + shellQuote(PS) + ' "$@")',
     '    quitter=$(/bin/cat "$here/quitter.pid")',
     '    : > "$here/go"',
     '    while kill -0 "$quitter" 2>/dev/null; do :; done',
@@ -1189,7 +1189,7 @@ test('a survivor the census named that exits on its own before the kill is not r
     '    exit 0',
     '  fi ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'tail'), leave('"$here/quitter"', 'quitter', 'bash')].join('\n'));
 
@@ -1223,11 +1223,14 @@ for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) 
   });
 }
 
-test('survivors whose executables\' names are longer than 16 bytes are each recorded by their first 16 bytes', SETTLES_WITHIN, async (t) => {
+test('survivors whose executables\' names exceed the kernel limit are each recorded by the kernel name', SETTLES_WITHIN, async (t) => {
   // `ucomm` holds the kernel's cut of the name at 16 bytes (`D16` rule 3). The first name's cut
   // ends in a letter, the second's holds a newline, and the third's ends in a space, which `ps`'s
   // padding makes indistinguishable from the name's own, so it is not recorded.
-  const names = [['abcdefghijklmnopqrs', 'abcdefghijklmnop'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmno'], ['abcdefghijklmno xyz', 'abcdefghijklmno']];
+  // Linux proc_pid_comm(5) counts the terminating NUL in its 16-byte limit.
+  const names = process.platform === 'linux'
+    ? [['abcdefghijklmnopqrs', 'abcdefghijklmno'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmn'], ['abcdefghijklmno xyz', 'abcdefghijklmno']]
+    : [['abcdefghijklmnopqrs', 'abcdefghijklmnop'], ['x\nbcdefghijklmnop', 'x\nbcdefghijklmno'], ['abcdefghijklmno xyz', 'abcdefghijklmno']];
   const directory = holding(t);
   waiter(directory, 'waiter');
   const command = fixture(directory, 'command', names.map(([name], n) => leaveNamed(`$'${[...Buffer.from(name)].map((byte) => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}'`, `long${n}`, name[0])).join('\n'));
@@ -1240,7 +1243,7 @@ test('survivors whose executables\' names are longer than 16 bytes are each reco
 
 test('a survivor whose argv[0] differs from its executable\'s name is recorded by the executable\'s name as ucomm holds it', SETTLES_WITHIN, async (t) => {
   // Each is an executable's name, the argv[0] it is run under, and the name recorded.
-  const runs = [['abcdefghijklmnopq', '/elsewhere/abcdefghijklmnopXYZ', 'abcdefghijklmnop'], ['w', 'w  ', 'w']];
+  const runs = [['abcdefghijklmnopq', '/elsewhere/abcdefghijklmnopXYZ', process.platform === 'linux' ? 'abcdefghijklmno' : 'abcdefghijklmnop'], ['w', 'w  ', 'w']];
   const directory = holding(t);
   waiter(directory, 'waiter');
   const command = fixture(directory, 'command', runs.map(([name, argv0], n) => [
@@ -1269,7 +1272,7 @@ test('a survivor whose argv[0] differs from its executable\'s name is recorded b
  * stand-in is `warmed`, because the census's first read is its first exec, which must reach its
  * body within `readTimeout`.
  */
-function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"' } = {}) {
+function quittingUnreaped(directory, { at = 'census', later = 'exec ' + shellQuote(PS) + ' "$@"' } = {}) {
   // Perl, not a `fixture`: perl hands a file whose `#!` line names another interpreter to it.
   writeFileSync(join(directory, 'keeper'), [
     'my $here = $ARGV[0];',
@@ -1282,7 +1285,7 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"
   const ps = fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     `case "$*" in *stat=*) ${at === 'kill' ? '[ "$1" = "-g" ]' : 'true'} ;; *) false ;; esac && [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {`,
-    '  table=$(/bin/ps "$@")',
+    '  table=$(' + shellQuote(PS) + ' "$@")',
     '  quitter=$(/bin/cat "$here/quitter.pid")',
     '  : > "$here/go"',
     '  until /bin/ps -o stat= -p "$quitter" | /usr/bin/grep -q "^Z"; do :; done',
@@ -1290,7 +1293,7 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec /bin/ps "$@"
     '  exit 0',
     '}',
     `case "$*" in *stat=*) [ -d "$here/told" ] && { ${later}; } ;; esac`,
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', [
     '/usr/bin/perl "$here/keeper" "$here" &',
@@ -1356,14 +1359,14 @@ test('a survivor the census named that exits on its own before the kill, and who
   const ps = fixture(directory, 'ps', [
     'case "$*" in *ucomm=*) : > "$here/named" ;; esac',
     'case "$*" in "-ww -g "*" -o pid=,stat=") [ -f "$here/named" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
-    '  table=$(/bin/ps "$@")',
+    '  table=$(' + shellQuote(PS) + ' "$@")',
     '  quitter=$(/bin/cat "$here/quitter.pid")',
     '  : > "$here/go"',
     '  while kill -0 "$quitter" 2>/dev/null; do :; done',
     '  printf "%s\\n" "$table"',
     '  exit 0',
     '} ;; esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   // The quitter is the group's one member once the command exits.
   const command = fixture(directory, 'command', [
@@ -1405,7 +1408,7 @@ test('a kill whose reads of the group after the kill never answer still records 
     'case "$*" in "-g "*" -o pid=,stat=")',
     '  /bin/mkdir "$here/before" 2>/dev/null || { : > "$here/after"; exec /usr/bin/tail -f "$here/hold"; } ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
@@ -1434,7 +1437,7 @@ const failingOnce = (directory, failing) => fixture(directory, 'ps', [
   failing,
   '  fi ;;',
   'esac',
-  'exec /bin/ps "$@"',
+  'exec ' + shellQuote(PS) + ' "$@"',
 ].join('\n'));
 
 /**
@@ -1464,11 +1467,11 @@ test('a kill whose read just before it exits 1 and prints nothing records every 
 });
 
 for (const [what, failing, options] of [
-  ['exits non-zero after printing only part of the table', '    /bin/ps "$@" | /usr/bin/head -n 1\n    exit 1'],
+  ['exits non-zero after printing only part of the table', '    ' + shellQuote(PS) + ' "$@" | /usr/bin/head -n 1\n    exit 1'],
   ['does not answer within its timeout', '    exec /usr/bin/tail -f "$here/hold"', { readTimeout: 2_000 }],
   // `ps` from adv_cmds-237 exits 0 so, where its read of the kernel's table fails (`run`).
   ['exits 0 printing nothing but a failure to standard error', '    echo "Failure calling sysctl: Cannot allocate memory" >&2\n    exit 0'],
-  ['exits 0 after printing only part of the table', '    /bin/ps "$@" | /usr/bin/head -n 1\n    exit 0'],
+  ['exits 0 after printing only part of the table', '    ' + shellQuote(PS) + ' "$@" | /usr/bin/head -n 1\n    exit 0'],
 ]) {
   test(`a kill whose read just before it ${what} records every process of the group it ended`, SETTLES_WITHIN, async (t) => {
     await recordsEveryProcess(t, failing, options);
@@ -1481,7 +1484,7 @@ test('a census whose every read of the group exits 1 and prints nothing while th
   // The census reads the group with `-ww`, and the kill and the wait read it without, so the
   // stand-in fails every read of the census and none other. It is `warmed`, because the census's
   // first read is its first exec, which must reach its body within `readTimeout`.
-  const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec /bin/ps "$@"');
+  const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec ' + shellQuote(PS) + ' "$@"');
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
@@ -1501,10 +1504,10 @@ test('a census whose every read of the group lists only one of two survivors sti
   const ps = fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*)',
     '  : > "$here/cut"',
-    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/one.pid") "',
+    '  ' + shellQuote(PS) + ' "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/one.pid") "',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
@@ -1527,10 +1530,10 @@ test('a census whose every read of the group lists only its zombie, while a surv
   const ps = fixture(directory, 'ps', [
     'case "$*" in "-ww -g "*)',
     '  : > "$here/cut"',
-    '  /bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") "',
+    '  ' + shellQuote(PS) + ' "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") "',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = unreaped(directory);
 
@@ -1568,13 +1571,13 @@ test('a census, and the kill\'s every read after the read just before it, that l
   // answers every other read as `ps` does. It is `warmed`, because the census's first read is its
   // first exec, which must reach its body within `readTimeout`.
   const ps = fixture(directory, 'ps', [
-    'case "$*" in "-g "*" -o pid=,stat=") /bin/mkdir "$here/kill.read" 2>/dev/null && exec /bin/ps "$@" ;; esac',
+    'case "$*" in "-g "*" -o pid=,stat=") /bin/mkdir "$here/kill.read" 2>/dev/null && exec ' + shellQuote(PS) + ' "$@" ;; esac',
     'case "$*" in "-ww -g "*|"-g "*" -o pid=,stat=")',
     '  case "$*" in "-ww -g "*) : > "$here/census.cut" ;; *) : > "$here/kill.cut" ;; esac',
-    '  /bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
+    '  ' + shellQuote(PS) + ' "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
@@ -1603,15 +1606,15 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   // which must reach its body within `readTimeout`.
   const ps = fixture(directory, 'ps', [
     'case "$*" in "-g "*" -o pid=,stat=") : > "$here/kill.read" ;; esac',
-    'case "$*" in "-ww -g "*) exec /bin/ps "$@" ;; esac',
+    'case "$*" in "-ww -g "*) exec ' + shellQuote(PS) + ' "$@" ;; esac',
     'case "$*" in *"-g "*)',
-    '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
+    '  rows=$(' + shellQuote(PS) + ' "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
     '  [ -z "$rows" ] && exit 0',
     '  case "$*" in "-g "*" -o pid=,stat=") /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/kill.cut" ;; esac',
     '  echo "$rows"',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
   // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
@@ -1639,13 +1642,13 @@ test('a census whose every read of the group lists only its zombie, while its le
   // must reach its body within `readTimeout`.
   const ps = fixture(directory, 'ps', [
     'case "$*" in *"-g "*)',
-    '  rows=$(/bin/ps "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
+    '  rows=$(' + shellQuote(PS) + ' "$@" | /usr/bin/grep "^ *$(/bin/cat "$here/zombie.pid") ")',
     '  [ -z "$rows" ] && exit 0',
     '  case "$*" in "-ww -g "*) /bin/kill -0 "$(/bin/cat "$here/group")" 2>/dev/null && : > "$here/census.cut" ;; esac',
     '  echo "$rows"',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   // The group holds its leader, which becomes a `tail` once the zombie is there, and the zombie,
   // so the leader is alive when the timeout kills the group. It is `warmed`, because it must be
@@ -1689,7 +1692,7 @@ async function lastReadFailing(t, failing) {
     '  : > "$here/failed"',
     failing,
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   const command = unreaped(directory);
 
@@ -2169,7 +2172,9 @@ test('an executable no system loader can run rejects as a failure to start, nami
   const directory = scratch(t);
   // Node throws this failure from the spawn itself, where the others arrive after it returns.
   const command = join(directory, 'garbage');
-  writeFileSync(command, 'not a program', { mode: 0o755 });
+  // Linux's execvp fallback runs plain text through sh; a missing interpreter cannot load.
+  const program = process.platform === 'linux' ? `#!${join(directory, 'absent-loader')}\n` : 'not a program';
+  writeFileSync(command, program, { mode: 0o755 });
 
   unstarted(await rejection(directory, { command }), command);
 });

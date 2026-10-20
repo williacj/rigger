@@ -16,6 +16,8 @@ import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs
 import { alive, fixture, scratch, startGroup, startOf, until, withoutLeader } from './process-fixtures.mjs';
 import { finiteDirectoryReads } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
+import { shellQuote } from './process-fixtures.mjs';
+import { PS } from '../src/substrate/process.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
@@ -78,7 +80,7 @@ test('given a recorded group whose leader\'s start time matches, the stream reco
   // member can hold a lower pid than the leader it started under.
   const under = { layer: 'L0', dispatch: 'd-7f3a', card: 77 };
   assert.deepEqual(killsIn(directory).sort((one, other) => one.name.localeCompare(other.name)), [
-    { ...under, pid: started.leader, name: 'bash', cmd: `/bin/sh ${join(directory, 'group')}` },
+    { ...under, pid: started.leader, name: process.platform === 'linux' ? 'group' : 'bash', cmd: `${process.platform === 'linux' ? '/bin/bash' : '/bin/sh'} ${join(directory, 'group')}` },
     { ...under, pid: started.member, name: 'tail', cmd: `/usr/bin/tail -f ${join(directory, 'hold')}` },
   ]);
 });
@@ -199,7 +201,8 @@ async function zombieLedGroup(t, directory) {
     '  syswrite($fromMember, "joined\\n");',
     '  exec("/usr/bin/tail", "-f", "$ARGV[0]/hold") or die;',
     '}',
-    'my $first = time(); 1 while time() <= $first;',
+    // Cross an additional clock boundary on Linux so ps distinguishes the two starts.
+    `my $first = time(); 1 while time() <= $first + ${process.platform === 'linux' ? 1 : 0};`,
     'my $leader = fork() // die;',
     'if ($leader == 0) { setpgrp(0, 0); <$toLeader>; exit 0 }',
     'setpgrp($leader, $leader);',
@@ -610,7 +613,7 @@ test('startGroup returns the detached shell leader, tail member, process group a
   const leader = processes.find(({ pid }) => pid === started.leader);
   const member = processes.find(({ pid }) => pid === started.member);
   assert.equal(started.group, started.leader, 'fixture group differs from the detached leader PID');
-  assert.equal(leader?.command, 'bash', 'fixture leader is not the detached shell');
+  assert.equal(leader?.command, process.platform === 'linux' ? 'group' : 'bash', 'fixture leader is not the detached shell');
   assert.equal(leader?.group, started.group, 'fixture shell is outside its process group');
   assert.notEqual(leader?.parent, process.pid, 'fixture shell remains a direct child of the test process');
   assert.equal(member?.command, 'tail', 'fixture member is not tail');
@@ -1028,7 +1031,7 @@ test('a start-time read that exits 0 but leaves output open past its deadline do
     'if /bin/mkdir "$here/first" 2>/dev/null; then',
     cut.body,
     'fi',
-    'exec /bin/ps "$@"',
+    `exec ${shellQuote(PS)} "$@"`,
   ].join('\n'));
 
   const failed = killIn(directory, { ps, readTimeout }).then(() => undefined, (error) => error);
@@ -1087,7 +1090,7 @@ for (const [how, [body, cause]] of Object.entries(FAILING_READS)) {
 const startsAs = (directory, lstart) => fixture(directory, 'ps', [
   'case "$*" in',
   `  *lstart*) read leader member < "$here/group.pids"; printf "%s S %s\\n" "$leader" "${lstart}" "$member" "${lstart}" ;;`,
-  '  *) exec /bin/ps "$@" ;;',
+  `  *) exec ${shellQuote(PS)} "$@" ;;`,
   'esac',
 ].join('\n'));
 
@@ -1146,7 +1149,7 @@ test('given a recorded group whose leader\'s start falls on a one-digit day, and
   const entry = entryFor(started, { started: 1788220800 });
   writeGroups(stateOf(directory), [entry]);
 
-  await killIn(directory, { ps: startsAs(directory, '$(/bin/date -r 1788220800 +%c)    ') });
+  await killIn(directory, { ps: startsAs(directory, process.platform === 'linux' ? '$(/bin/date -d @1788220800 +%c)    ' : '$(/bin/date -r 1788220800 +%c)    ') });
 
   assert.equal(alive(started.leader) || alive(started.member), false, 'a process of the group is alive');
   assert.deepEqual(readGroups(stateOf(directory)), []);
@@ -1182,7 +1185,7 @@ const PRINTS_TABLE = 'while IFS= read -r row; do printf "%s\\n" "$row"; done < "
  * times, less its leader's row. Its pid is the group's id.
  */
 function writeTableLess(directory, group) {
-  const read = spawnSync('/bin/ps', ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], { env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, encoding: 'utf8' });
+  const read = spawnSync(PS, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], { env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, encoding: 'utf8' });
   assert.equal(read.status, 0, `reading group ${group}'s table failed: ${read.error?.message ?? read.stderr}`);
   const rows = read.stdout.split('\n').filter((row) => row !== '' && !new RegExp(`^ *${group} `).test(row));
   assert.notEqual(rows.length, 0, `group ${group}'s table held no row but its leader's: ${read.stdout}`);
@@ -1269,7 +1272,7 @@ test('given a recorded group and no time to read its start times, the call reads
   const entry = entryFor(started, { dispatch: 'd-no-time', card: 37 });
   writeGroups(stateOf(directory), [entry]);
   // A read of `ps` that ran would mark `read`, and answer as `ps` does.
-  const ps = fixture(directory, 'ps', ': > "$here/read"\nexec /bin/ps "$@"');
+  const ps = fixture(directory, 'ps', `: > "$here/read"\nexec ${shellQuote(PS)} "$@"`);
 
   await assert.rejects(killIn(directory, { ps, readTimeout: 0 }), (failure) => {
     for (const named of [`group ${started.group}`, 'd-no-time', '#37']) assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
