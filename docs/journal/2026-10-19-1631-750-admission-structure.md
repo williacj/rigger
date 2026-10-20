@@ -26,3 +26,9 @@ status issue would then have lifted the owner's pause, which `R-SCHED-23` forbid
 exists, a third replacing write costs nothing: `pause` over a hold adds the owner as a second
 closer. The lesson is to check every replacing write against the requirement's table of states,
 and not only against the race a judge names.
+
+Round 2 found the same fault one level down. A replacing write guarded by "the record still holds
+the close I read" still erased an owner added since that read. A guard that compares is weaker
+than a rule that rebuilds from a read made under the lock. Round 2 also found that "a continuing
+workspace `R-WORK-25` refuses" took in a host fetch failure as well. A citation of a whole row is
+wider than the class it means.
