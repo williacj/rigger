@@ -100,7 +100,7 @@ function once(board, { record = 'accepting', seed, extraEnv = {}, settings, prep
   const stream = join(consumer, '.rigger', 'events.jsonl');
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
   const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-once-wrap-'), fake.gh, stream))] : [];
-  const env = { ...process.env, ...extraEnv, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), ...extraEnv, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   const invoke = () => {
     const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env });
     assert.equal(ran.error, undefined);
@@ -471,7 +471,7 @@ function onceWithAgent(t, agent, board, { settings = config(), files = {}, env =
   const dir = temporaryDirectory('rigger-once-maker-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
   prepare({ consumer, origin, fake });
-  const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   let out = '';
   let err = '';
@@ -864,7 +864,7 @@ test('given once over a Review card whose every agent judge has findings at the 
   assert.deepEqual(bodies.map((body) => body.split('\n').filter((line) => /^(head|role): /.test(line))), [[`head: ${head}`, 'role: reviewer']], 'the first once left no marker at the head, so the test proves nothing');
   const before = eventsOf({ consumer }).length;
 
-  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
 
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual([...again.stdout.split('\n'), ...again.stderr.split('\n')].filter(Boolean), [`rigger once: from board ${PROJECT}, no card was pullable`]);
@@ -919,7 +919,7 @@ test('given once over a Review card whose agent judge has no findings at the hea
   assert.ok(first.err.split('\n').includes(judgeLine(10, 'reviewer', 'exited 3')), first.err);
   agent.plan(10, 'reviewer', { findings: true });
 
-  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+  const again = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
 
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual(again.stdout.split('\n').filter((line) => /#10\b/.test(line)), [

@@ -67,6 +67,23 @@ test('every module in the adapter map answers the provider adapter interface', a
   }
 });
 
+// proves R-WORK-31
+test('each provider answer names its CLI folder, or explicitly names none', async (t) => {
+  const directory = scratch();
+  const real = join(directory, 'repo');
+  mkdirSync(real);
+  mkdirSync(join(real, '.scratch'));
+  writeFileSync(join(real, 'agent.md'), '# Agent\n');
+  const inherited = process.env.PATH;
+  process.env.PATH = standInCodex().first();
+  t.after(() => { process.env.PATH = inherited; });
+  const claude = await ADAPTERS.claude.invocation({ agent: join(real, 'agent.md'), tier: 'standard', prompt: '', directory: real, environment: { HOME: directory }, emitter: silent });
+  assert.deepEqual(claude.folder, { home: join(directory, '.claude'), name: realpathSync.native(real).replace(/[^A-Za-z0-9]/g, '-') });
+  const codex = await ADAPTERS.codex.invocation({ agent: join(real, 'agent.md'), tier: 'standard', prompt: '', directory: real, scratch: join(real, '.scratch'), emitter: silent });
+  assert.equal(Object.hasOwn(codex, 'folder'), true);
+  assert.equal(codex.folder, undefined);
+});
+
 test('the contract names the module that answers otherwise, and how', async (t) => {
   const directory = scratch();
   const plain = {

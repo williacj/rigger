@@ -98,7 +98,7 @@ function run(board, { concurrency, record = 'accepting' }) {
   const stream = join(consumer, '.rigger', 'events.jsonl');
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
   const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-run-wrap-'), fake.gh, stream))] : [];
-  const env = { ...process.env, PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   const shared = { consumer, model: fake.model, agentRuns: agent.runs };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
@@ -426,7 +426,7 @@ function runWithAgent(agent, board, { settings = config(3), files = {} } = {}) {
   withOrigin(consumer, origin);
   const dir = temporaryDirectory('rigger-run-maker-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
-  const ran = spawnRun(consumer, { ...process.env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
+  const ran = spawnRun(consumer, { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
   return { ...ran, consumer, fake };
 }
 
@@ -564,7 +564,7 @@ function runRefusingArchitect(agent, board, concurrency) {
   withOrigin(consumer, origin);
   const dir = temporaryDirectory('rigger-run-mixed-gh-');
   installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
-  const ran = spawnRun(consumer, { ...process.env, NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}`, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
+  const ran = spawnRun(consumer, { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), NODE_OPTIONS: `--import ${refusingJudgeStart('architect')}`, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
   return { ...ran, consumer };
 }
 
