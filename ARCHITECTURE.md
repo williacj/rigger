@@ -410,9 +410,9 @@ mapping and config read from that tree. It reads the lists at the default-branch
 the config at, and reaches the forge through L0's read side alone.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
-required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
-would not do: any Actions run's `GITHUB_TOKEN` satisfies it, a workflow on another branch included
-(#643, Q-a).
+of those two contexts is pinned to the App's id. Pinned to GitHub Actions' integration, 15368,
+neither would do: any Actions run's `GITHUB_TOKEN` satisfies such a pin, a workflow on another
+branch included (#643, Q-a).
 
 Correctness never relies on cancellation, because a run GitHub marked cancelled still posted (#701,
 finding 6). Each posting job instead runs in a concurrency group keyed on the card, with
@@ -433,13 +433,16 @@ ruleset is (`D23`):
 - the `gate` environment, with a deployment-branch policy admitting only the default branch, and
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
-- the required contexts, each pinned to the App's id.
+- the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
+  the App's id; and, in this repository, `check (20)` and `check (24)`, each pinned to GitHub
+  Actions' integration, 15368.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
 `doctor` reads each of those settings through L0's read side but the App and its installation,
-which a user's token cannot read (#659). For them it reads each required context's pin against
-the variable `GATE_APP_ID`. No verb writes one.
+which a user's token cannot read (#659). Of the required contexts it checks only `rigger/gate`:
+that the rules require it, and, in the App's place, that its pin matches the variable
+`GATE_APP_ID`. No verb writes any of them.
 
 ### The engine's merge decision
 
