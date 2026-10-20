@@ -15,3 +15,8 @@ their case (the attack, N2).
 The escalated-card sentence in the draft leaned on structure card #749 adds and main does not yet
 hold. It now cites `R-ESCALATE-10`, which is ratified on main, so it holds whichever card merges
 first.
+
+The first round's judge found that the write adding the status issue's number could rename a closed
+record back over `resume`'s removal. A link-based first close guards only against two closes. A
+replacing write races every opening too. The fix keeps the draft's two replacing writes, and has
+them and every opening take one lock. A close still takes none.

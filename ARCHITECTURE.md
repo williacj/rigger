@@ -517,7 +517,8 @@ the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
-temporary file, which a write renames or links into place, belongs to its record. Two more things
+temporary file, which a write renames or links into place, belongs to its record, and so does the
+admission record's lock. Two more things
 outlive a restart outside it: a card's workspace, and the markers on its pull request, which
 the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
 a card's work from the beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
@@ -535,6 +536,17 @@ hard-links it to the record's name. The link fails where a record exists, so the
 without a read, and the later close is still recorded as an event. A write that must replace a
 record renames over it. Two writes do so: `pause` over an unreadable record, and the write that
 adds the status issue's number.
+
+Opening, and each write that replaces a record, first takes the record's lock,
+`.rigger/admission.lock`. A writer takes it by hard-linking to that name a temporary file named for
+its own process, which names that process and its start. The link fails while another writer holds
+the lock. The writer then waits, up to a bound L3 sets, and past it names the lock and changes
+nothing. Holding the lock, a replacing write renames over the record only where the record still
+holds the close it read before it began, and writes nothing otherwise. The writer removes the lock
+once its write is done. An opening that falls between that read and the rename therefore leaves
+admission open. A close takes no lock, because its link refuses any record already there. Only a
+writer's death leaves a lock behind, and the next start removes a lock whose holder is gone before
+it reads admission.
 
 `once` and `run` read the record inside `take`'s synchronous claim. The next pull after a `pause`
 from another process therefore claims nothing, and claims already held finish. `plan` and `doctor`
@@ -566,14 +578,14 @@ pulls for these reasons, and no others:
 |---|---|
 | stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
 | answered `hold`, where admission could not be closed | the card is neither held nor remembered otherwise, so the next pull would attempt it at once; the verb reports the failure and exits non-zero |
-| judges L2 withheld for an environment failure | `R-FAIL-5` makes no second attempt at a judge's directory in one invocation |
+| judges L2 withheld for an environment failure | the memory is how L3 meets the row of `R-FAIL-5`'s table for a judge's directory not made |
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
-admission. An escalated card needs none either, because `R-ESCALATE-10` has Rigger dispatch nothing
-for a card carrying the escalation label.
+admission. An escalated card needs none either, because every pull meets `R-ESCALATE-10` from the
+card's labels as the board shows them.
 
 An attempt at a card runs in this order, under the card's one claim and slot:
 
