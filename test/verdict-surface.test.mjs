@@ -57,7 +57,8 @@ export function importersOf(tree, target) {
   const exempt = boundaryReport(tree).exempt;
   const importers = [];
   for (const [file, source] of tree) {
-    if (!/\.(?:m|c)?js$/.test(file) || file === target) continue;
+    // `target` is checked too: the verb's module importing itself is a module under src/ importing it.
+    if (!/\.(?:m|c)?js$/.test(file)) continue;
     const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
     const imports = [...nodesOf(program)].filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source);
     const names = (node) => {
@@ -110,6 +111,15 @@ test('a module under src/ importing the verdict verb through a specifier built a
     'src/scheduling/by-name.mjs',
     'src/workflow/spelled-in-parts.mjs',
   ]);
+});
+
+// proves R-VERDICT-11
+test('the verdict verb\'s module importing itself is named by the check above', () => {
+  const tree = new Map(sourceTree(ROOT));
+  // The judge's round-2 counterexample: the verb's own module, as an importer of itself.
+  tree.set(VERB, `${tree.get(VERB)}\nexport const loadSelf = () => import('./verdict.mjs');\n`);
+
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), ['src/cli/verbs.mjs', VERB]);
 });
 
 /** The rule-5 violations `boundaryReport` finds in the tree with `file` holding `appended` after its source. */
