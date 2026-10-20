@@ -48,18 +48,16 @@ function fixed(node) {
 
 /**
  * The repository path a module at `file` names by `specifier`, resolved as Node resolves an import:
- * as a URL against the module's own file URL. A query or a fragment does not change the file a
- * `file:` URL loads, and an escape names the character it stands for, so both are read through.
+ * as a URL against the module's own file URL, and read back as the file that URL's path names. A
+ * query or a fragment does not change the file a `file:` URL loads, and the path read back leaves
+ * both out; an escape names the character it stands for, and the path read back decodes it.
  * A specifier that is no relative path, absolute path or `file:` URL names no file here, since the
  * package declares no `exports` or `imports` a bare specifier could reach the verb by.
  */
 function resolvedIn(file, specifier) {
   if (!/^(?:\.{0,2}\/|file:)/.test(specifier)) return undefined;
-  let url;
   try {
-    url = new URL(specifier, pathToFileURL(join(ROOT, file)));
-    url.search = '';
-    url.hash = '';
+    const url = new URL(specifier, pathToFileURL(join(ROOT, file)));
     return relative(ROOT, fileURLToPath(url)).split(sep).join('/');
   } catch {
     // A specifier Node could not load either, such as an escaped slash, names no file.
