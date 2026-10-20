@@ -527,15 +527,19 @@ work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
 Admission lives in `.rigger/admission.json`, and an absent record is the only open state. A closed
-record holds what closed it, `owner` or `hold`, the reason, the time and the run id. A record that
-does not parse to all of those is unreadable. L3's `src/scheduling/admission.mjs` is the one module
-that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers of that module.
+record holds what closed it, `owner`, `hold`, or `hold` with the owner added, the reason, the time
+and the run id. A record that does not parse to all of those is unreadable. L3's
+`src/scheduling/admission.mjs` is the one module that reads, closes and opens it, and `pause` and
+`resume` are the CLI's thin callers of that module.
 
 Opening removes the record. Closing writes a temporary file named for its own process, then
 hard-links it to the record's name. The link fails where a record exists, so the first closer wins
 without a read, and the later close is still recorded as an event. A write that must replace a
-record renames over it. Two writes do so: `pause` over an unreadable record, and the write that
-adds the status issue's number.
+record renames over it. Three writes do so: `pause` over an unreadable record; `pause` over a record
+closed by `hold`, which adds the owner as a second closer; and the write that adds the status
+issue's number. A record that names the owner reopens only by `resume`, so closing the status issue
+never lifts the owner's own `pause` (`R-SCHED-23`). No replacing write undoes a `resume` that ran
+after it read the record.
 
 Opening, and each write that replaces a record, first takes the record's lock,
 `.rigger/admission.lock`. A writer takes it by hard-linking to that name a temporary file named for

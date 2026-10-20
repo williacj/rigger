@@ -20,3 +20,9 @@ The first round's judge found that the write adding the status issue's number co
 record back over `resume`'s removal. A link-based first close guards only against two closes. A
 replacing write races every opening too. The fix keeps the draft's two replacing writes, and has
 them and every opening take one lock. A close still takes none.
+
+Under first-closer-wins, the owner's `pause` after a hold left the record reading `hold`. Closing the
+status issue would then have lifted the owner's pause, which `R-SCHED-23` forbids. Once a lock
+exists, a third replacing write costs nothing: `pause` over a hold adds the owner as a second
+closer. The lesson is to check every replacing write against the requirement's table of states,
+and not only against the race a judge names.
