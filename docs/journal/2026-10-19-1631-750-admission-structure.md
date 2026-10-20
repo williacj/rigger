@@ -32,3 +32,9 @@ the close I read" still erased an owner added since that read. A guard that comp
 than a rule that rebuilds from a read made under the lock. Round 2 also found that "a continuing
 workspace `R-WORK-25` refuses" took in a host fetch failure as well. A citation of a whole row is
 wider than the class it means.
+
+Round 4 found the last writer that took no lock: a close. Each earlier fix guarded one writer
+against another, and each left an order the guard did not cover. Taking the lock for every write,
+closes included, turns every interleaving into some order of writers acting one at a time. A check
+then only has to walk the record's five states (absent, `hold`, `owner`, `hold` with the owner
+added, unreadable) through each writer once.

@@ -578,17 +578,24 @@ A record that names the owner reopens only by `resume`, so closing the status is
 owner's own `pause` (`R-SCHED-23`). No replacing write undoes a `resume` that ran after it read the
 record.
 
-Opening, and each write that replaces a record, first takes the record's lock,
-`.rigger/admission.lock`. A writer takes it by hard-linking to that name a temporary file named for
-its own process, which names that process and its start. The link fails while another writer holds
-the lock. The writer then waits, up to a bound L3 sets, and past it names the lock and changes
-nothing. Holding the lock, a replacing write reads the record again and builds its replacement from
-that read alone. It therefore keeps every closer the record names, an owner added after its first
-read included. Where the record is absent, an opening removed it, and the write restores nothing:
-the status issue's number is not written, and a `pause` closes admission as any close does. The
-writer removes the lock once its write is done. A close takes no lock, because its link refuses any
-record already there. Only a writer's death leaves a lock behind, and the next start removes a lock
-whose holder is gone before it reads admission.
+Every write of the record takes the record's lock first, a close and an opening included, and holds
+it until that write is done. A writer takes it by hard-linking to `.rigger/admission.lock` a
+temporary file named for its own process, which names that process and its start. The link fails
+while another writer holds the lock. The writer then waits, up to a bound L3 sets, and past it names
+the lock and changes nothing. No write therefore falls between another's read and its write, and
+writers that overlap act one at a time, in some order. Holding the lock, each writer acts on the
+record as it reads it then:
+
+- a close links its record, and where the link fails, the close is an event;
+- a `pause` whose link fails over a record closed by `hold` adds the owner, under the same lock;
+- the write that adds the status issue's number writes it only where the record still holds the
+  hold that issue was opened for, and keeps every closer the record names;
+- the opening when the status issue closes removes the record only where it names `hold` alone and
+  that issue's number.
+
+The writer removes the lock once its write is done. Only a writer's death leaves a lock behind, and
+the next start removes a lock whose holder is gone before it reads admission. A hold whose close
+cannot take the lock is a hold where admission could not be closed.
 
 `once` and `run` read the record inside `take`'s synchronous claim. The next pull after a `pause`
 from another process therefore claims nothing, and claims already held finish. `plan` and `doctor`
