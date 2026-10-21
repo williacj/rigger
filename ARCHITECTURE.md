@@ -560,19 +560,22 @@ enters L1 only after a recorded production incident in which redo was demonstrab
 
 Admission lives in the directory `.rigger/admission/`, which holds one file per closer. Admission is
 open where no closer file exists, and that is its only open state. Every file in it but a temporary
-file is a closer. A temporary file is named `.tmp-<process>`, and no reader reads it. A closer file
-names the reason, the time and the run id, and no closer file's content changes after it appears. A
-closer whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is
-the one module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers
-of that module.
+file is a closer. A temporary file is named `.tmp-<id>`, and no reader reads it. A closer file names
+the reason, the time and the run id, and no closer file's content changes after it appears. A closer
+whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is the one
+module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers of that
+module.
 
 Every write is one `link`, `rename` or `unlink` of a name no other write reuses, so no write
-replaces another and no lock is needed. Each `pause` links its own `owner-<id>.json` from a
-temporary file, and each hold links its own `hold-<id>.json`. Each id is one no other closer has
-had, in this run or any earlier one, such as a random id. A `pause` while an owner closer exists
-still links its own, and a second card's hold is a second file, so no closer wins over another. Only
-`resume` removes the owner's closers. A `pause` adds its closer beside a hold's, and replaces
-nothing.
+replaces another and no lock is needed. Each `pause` links its own `owner-<id>.json`, and each hold
+links its own `hold-<id>.json`, each from a temporary file of its own. Each id is one no other
+closer has had, in this run or any earlier one, such as a random id. A temporary file's id is one no
+other file in the directory has had, in this run or any earlier one, so no two writes share a
+temporary file. `admission.mjs` writes a closer's content to its temporary file before the link, and
+removes that temporary file after it, so the closer is then the file's only name. A temporary file
+left by a write that died is never reused. A `pause` while an owner closer exists still links its
+own, and a second card's hold is a second file, so no closer wins over another. Only `resume`
+removes the owner's closers. A `pause` adds its closer beside a hold's, and replaces nothing.
 
 An opening removes its closer by name. Where the status issue's close opens admission, L3 removes
 exactly that hold's closer and never the owner's, so closing the issue never lifts the owner's own

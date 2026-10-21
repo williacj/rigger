@@ -46,3 +46,9 @@ mutual exclusion, and a recoverable lock file cannot give it without leases. Giv
 name no other write reuses leaves every write a single `link`, `rename` or `unlink`, so the
 interleavings the judges found have nothing left to race on. When three guards in a row each open
 the next interleaving, question the data's shape before writing a fourth.
+
+Round 6 found that `.tmp-<process>` breaks for two holds in one engine. A second write either finds
+the name taken, or writes through the first closer's inode and changes a published closer. Naming
+each temporary file by an id of its own, and unlinking it once the closer is linked, means no write
+shares a temporary file and every closer ends with one name. A per-process name was the old lock
+design's habit carried over. Under a no-shared-names rule, every file needs a name of its own.
