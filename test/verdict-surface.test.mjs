@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isBuiltin } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parse } from 'acorn';
@@ -77,48 +78,139 @@ function sameFile(url, target) {
   }
 }
 
-/** The source text a `data:` URL holds, as Node reads a JavaScript module from one. */
-function dataSource(url) {
-  const comma = url.pathname.indexOf(',');
-  const head = url.pathname.slice(0, comma);
-  const body = url.href.slice(url.href.indexOf(',') + 1);
-  return head.endsWith(';base64') ? Buffer.from(decodeURIComponent(body), 'base64').toString('utf8') : decodeURIComponent(body);
+/** Each syntax node under `node`, `node` first, with the nodes enclosing it, outermost first. */
+function* withAncestors(node, ancestors = []) {
+  if (!node || typeof node.type !== 'string') return;
+  yield [node, ancestors];
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'loc') continue;
+    for (const held of Array.isArray(value) ? value : [value]) if (held && typeof held === 'object') yield* withAncestors(held, [...ancestors, node]);
+  }
+}
+
+/** The names a binding pattern binds. */
+function boundNames(pattern) {
+  switch (pattern?.type) {
+    case 'Identifier': return [pattern.name];
+    case 'ObjectPattern': return pattern.properties.flatMap((held) => boundNames(held.type === 'RestElement' ? held.argument : held.value));
+    case 'ArrayPattern': return pattern.elements.flatMap(boundNames);
+    case 'RestElement': return boundNames(pattern.argument);
+    case 'AssignmentPattern': return boundNames(pattern.left);
+    default: return [];
+  }
+}
+
+/** Each binding under `node`, as `[name, node binding it]`: declarations, parameters, imports, functions, classes and caught errors. */
+function bindingsIn(node) {
+  const found = [];
+  for (const [held] of withAncestors(node)) {
+    if (held.type === 'VariableDeclarator') found.push(...boundNames(held.id).map((name) => [name, held]));
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(held.type)) {
+      if (held.id) found.push([held.id.name, held]);
+      found.push(...held.params.flatMap(boundNames).map((name) => [name, held]));
+    }
+    if (['ClassDeclaration', 'ClassExpression'].includes(held.type) && held.id) found.push([held.id.name, held]);
+    if (held.type === 'CatchClause') found.push(...boundNames(held.param).map((name) => [name, held]));
+    if (['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier'].includes(held.type)) found.push([held.local.name, held]);
+  }
+  return found;
 }
 
 /**
- * Whether the module `source`, at `parent`, imports the file at `target`'s URL, or may: a static
- * import, a re-export, or a dynamic `import()`, each specifier evaluated where the source fixes it
- * and resolved as Node resolves it. A `file:` URL names the file its path names, whatever its
- * query, fragment, host or escapes. A `data:` URL holds a module of its own, whose imports are
- * read the same way. A dynamic `import()` whose specifier the source does not fix could name
- * `target`, so it counts, unless `exempted` admits it by its line.
+ * The one name `program` binds, anywhere, to export `exported` of module `from`, imported by name,
+ * or undefined where it binds that name otherwise too, so a shadow could stand in for it.
  */
-function imports(source, parent, target, exempted = () => false) {
-  const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
-  const named = [...nodesOf(program)].filter((node) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source);
-  return named.some((node) => {
-    const specifier = fixed(node.source);
-    if (specifier === undefined) return node.type === 'ImportExpression' && !exempted(node.loc.start.line);
-    const url = resolved(specifier, parent);
-    if (url?.protocol === 'file:') return sameFile(url, target);
-    if (url?.protocol === 'data:') return imports(dataSource(url), url, target);
-    return false;
-  });
+function soleImport(program, from, exported) {
+  const declaration = program.body.find((node) => node.type === 'ImportDeclaration' && node.source.value === from);
+  const local = declaration?.specifiers.find((held) => held.type === 'ImportSpecifier' && (held.imported.name ?? held.imported.value) === exported)?.local.name;
+  if (local === undefined) return undefined;
+  return bindingsIn(program).filter(([name]) => name === local).length === 1 ? local : undefined;
+}
+
+/** The string `module` exports as the const `name`, initialised to a string literal, or undefined. */
+function exportedString(module, name) {
+  for (const node of module.body) {
+    if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration' || node.declaration.kind !== 'const') continue;
+    const held = node.declaration.declarations.find((declarator) => declarator.id.type === 'Identifier' && declarator.id.name === name);
+    if (held) return held.init?.type === 'Literal' && typeof held.init.value === 'string' ? held.init.value : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Whether the dynamic `import()` `node`, in module `file` of `tree`, can load nothing but a file
+ * whose name is a fixed one other than `target`'s, as the config load does:
+ * `import(pathToFileURL(path))`, `path` being the one binding of its name in the function the
+ * import is in, a top-level `const path = join(…, NAME)` there, with `pathToFileURL` from
+ * `node:url`, `join` from `node:path` and `NAME` imported from a module of `tree` exporting it as
+ * a const string that is a plain file name. Each of those names is bound once in its module, so
+ * no shadow stands in for it. `path.join` ends its answer in its last argument where that is a
+ * plain name, so the import loads a file of that name, whatever the directory.
+ */
+function loadsOnlyNamed(node, ancestors, program, file, tree, target) {
+  const url = soleImport(program, 'node:url', 'pathToFileURL');
+  const joined = soleImport(program, 'node:path', 'join');
+  const call = node.source;
+  if (url === undefined || joined === undefined || call.type !== 'CallExpression' || call.callee.type !== 'Identifier' || call.callee.name !== url) return false;
+  if (call.arguments.length !== 1 || call.arguments[0].type !== 'Identifier') return false;
+  const path = call.arguments[0].name;
+  const fn = [...ancestors].reverse().find((held) => ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(held.type));
+  if (fn?.body?.type !== 'BlockStatement') return false;
+  const bound = bindingsIn(fn).filter(([name]) => name === path);
+  if (bound.length !== 1 || bound[0][1].type !== 'VariableDeclarator') return false;
+  const declarator = bound[0][1];
+  const statement = fn.body.body.find((held) => held.type === 'VariableDeclaration' && held.declarations.includes(declarator));
+  if (statement?.kind !== 'const' || declarator.id.type !== 'Identifier') return false;
+  const init = declarator.init;
+  if (init?.type !== 'CallExpression' || init.callee.type !== 'Identifier' || init.callee.name !== joined || init.arguments.length < 1) return false;
+  const last = init.arguments.at(-1);
+  if (last.type !== 'Identifier') return false;
+  const from = program.body.find((held) => held.type === 'ImportDeclaration' && held.specifiers.some((specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === last.name));
+  const imported = from?.specifiers.find((specifier) => specifier.local.name === last.name);
+  if (!from || soleImport(program, from.source.value, imported.imported.name ?? imported.imported.value) !== last.name) return false;
+  const exporter = resolved(from.source.value, pathToFileURL(join(ROOT, file)));
+  const module = exporter?.protocol === 'file:' ? tree.get(fileURLToPath(exporter).slice(ROOT.length + 1)) : undefined;
+  if (module === undefined) return false;
+  const name = exportedString(parse(module, { ecmaVersion: 'latest', sourceType: 'module' }), imported.imported.name ?? imported.imported.value);
+  return typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name) && name !== target.split('/').at(-1);
+}
+
+/**
+ * Whether module `file` of `tree` imports `target`, or may. An import counts unless the check can
+ * prove it loads another module:
+ * - a specifier the source fixes, resolved as Node resolves it, that is a `file:` URL whose real
+ *   path is not `target`'s, or a builtin;
+ * - a dynamic `import()` whose specifier the source does not fix, only where `loadsOnlyNamed`
+ *   proves it loads a file of another fixed name.
+ * Everything else counts, a `data:` URL, another scheme and a bare specifier among them: their
+ * spellings are Node's to read, and no module under src/ uses one.
+ */
+function imports(file, tree, target) {
+  const program = parse(tree.get(file), { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, locations: true });
+  const parent = pathToFileURL(join(ROOT, file));
+  const url = pathToFileURL(join(ROOT, target));
+  return [...withAncestors(program)]
+    .filter(([node]) => ['ImportDeclaration', 'ExportAllDeclaration', 'ExportNamedDeclaration', 'ImportExpression'].includes(node.type) && node.source)
+    .some(([node, ancestors]) => {
+      const specifier = fixed(node.source);
+      if (specifier === undefined) return node.type !== 'ImportExpression' || !loadsOnlyNamed(node, ancestors, program, file, tree, target);
+      const found = resolved(specifier, parent);
+      if (found?.protocol === 'file:') return sameFile(found, url);
+      if (found === undefined && isBuiltin(specifier)) return false;
+      if (found?.protocol === 'node:' && isBuiltin(specifier)) return false;
+      return true;
+    });
 }
 
 /**
  * Every module of `tree`, a map of repository path to source, that imports `target`, or may, as
  * `imports` reads each. `target` is read too, since the verb's module importing itself is a
- * module under src/ importing it. The one unfixed `import()` admitted is the config load
- * `boundaryReport` exempts, which loads the consumer's config.
+ * module under src/ importing it.
  */
 export function importersOf(tree, target) {
-  const exempt = boundaryReport(tree).exempt;
-  const url = pathToFileURL(join(ROOT, target));
-  return [...tree]
-    .filter(([file]) => /\.(?:m|c)?js$/.test(file))
-    .filter(([file, source]) => imports(source, pathToFileURL(join(ROOT, file)), url, (line) => exempt.some((held) => held.file === file && held.line === line)))
-    .map(([file]) => file)
+  return [...tree.keys()]
+    .filter((file) => /\.(?:m|c)?js$/.test(file))
+    .filter((file) => imports(file, tree, target))
     .sort();
 }
 
@@ -227,6 +319,67 @@ test('a module under src/ importing the verdict verb through a symbolic link to 
   tree.set('src/scheduling/elsewhere.mjs', `export const later = () => import(${JSON.stringify(`file://elsewhere.example${pathToFileURL(join(ROOT, VERB)).pathname}`)});\n`);
 
   assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), ['src/cli/verbs.mjs', 'src/workflow/through-a-link.mjs']);
+});
+
+// proves R-VERDICT-11
+test('a module under src/ importing anything the check cannot prove is a module other than the verb, a data: URL in any spelling, another scheme or a bare specifier that is no builtin, is named by the check above', () => {
+  const tree = new Map(sourceTree(ROOT));
+  const exported = Buffer.from(`export * from ${JSON.stringify(pathToFileURL(join(ROOT, VERB)).href)};`).toString('base64');
+  const spelled = (specifier) => `export const later = () => import(${JSON.stringify(specifier)});\n`;
+  // The judge's round-5 counterexample, appended to a module that exists.
+  tree.set('src/cli/once.mjs', `${tree.get('src/cli/once.mjs')}\n${spelled(`data:text/javascript;BASE64,${exported}`)}`);
+  tree.set('src/workflow/mixed-base64.mjs', spelled(`data:text/javascript;BaSe64,${exported}`));
+  tree.set('src/scheduling/over-https.mjs', spelled('https://example.invalid/src/cli/verdict.mjs'));
+  tree.set('src/execution/package-import.mjs', "import { verdict } from '#owner-verdict';\nexport default verdict;\n");
+  tree.set('src/observation/package-name.mjs', "export * from '@williacj/rigger/src/cli/verdict.mjs';\n");
+  // A builtin, by either spelling, is no module of this repository.
+  tree.set('src/config/builtins.mjs', "import { join } from 'node:path';\nimport { readFileSync } from 'fs';\nexport { join, readFileSync };\n");
+
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), [
+    'src/cli/once.mjs',
+    'src/cli/verbs.mjs',
+    'src/execution/package-import.mjs',
+    'src/observation/package-name.mjs',
+    'src/scheduling/over-https.mjs',
+    'src/workflow/mixed-base64.mjs',
+  ]);
+});
+
+/** `src/cli/doctor.mjs` with its config path's declaration replaced by `declared`. */
+function doctorDeclaring(declared) {
+  const source = sourceTree(ROOT).get('src/cli/doctor.mjs');
+  const original = '  const path = join(target, CONFIG);\n';
+  assert.equal(source.split(original).length, 2, 'doctor.mjs declares its config path other than once, as this test expects');
+  return source.replace(original, declared);
+}
+
+// proves R-VERDICT-11
+test('doctor\'s config load is admitted only while it can load nothing but a file named rigger.config.mjs', () => {
+  const routes = {
+    // The judge's round-5 counterexample: only the path's declaration changed.
+    'a path chosen by the target': "  const path = target.endsWith('/judge-verdict') ? join(dirname(fileURLToPath(import.meta.url)), 'verdict.mjs') : join(target, CONFIG);\n",
+    'a path joined past the config': "  const path = join(target, CONFIG, '..', 'src', 'cli', 'verdict.mjs');\n",
+    'a path joined to another name': "  const path = join(target, 'verdict.mjs');\n",
+    'a path that can be reassigned': "  let path = join(target, CONFIG);\n  if (target.endsWith('/judge-verdict')) path = fileURLToPath(new URL('./verdict.mjs', import.meta.url));\n",
+    'a path shadowed where it is loaded': "  const path = join(target, CONFIG);\n  { const path = fileURLToPath(new URL('./verdict.mjs', import.meta.url)); void path; }\n",
+  };
+  for (const [route, declared] of Object.entries(routes)) {
+    const tree = new Map(sourceTree(ROOT));
+    tree.set('src/cli/doctor.mjs', doctorDeclaring(declared));
+    assert.ok(importersOf(tree, VERB).includes('src/cli/doctor.mjs'), `doctor.mjs with ${route} is not named`);
+  }
+  // The name doctor joins last, `CONFIG` from init.mjs, made the verb's name, or a path to it.
+  for (const name of ['verdict.mjs', '../cli/verdict.mjs', '..']) {
+    const tree = new Map(sourceTree(ROOT));
+    const init = tree.get('src/cli/init.mjs');
+    assert.equal(init.split("export const CONFIG = 'rigger.config.mjs';").length, 2, 'init.mjs exports CONFIG other than once, as this test expects');
+    tree.set('src/cli/init.mjs', init.replace("export const CONFIG = 'rigger.config.mjs';", `export const CONFIG = ${JSON.stringify(name)};`));
+    assert.ok(importersOf(tree, VERB).includes('src/cli/doctor.mjs'), `doctor.mjs joining CONFIG ${JSON.stringify(name)} is not named`);
+  }
+  // The control: the declaration as it stands is admitted.
+  const tree = new Map(sourceTree(ROOT));
+  tree.set('src/cli/doctor.mjs', doctorDeclaring('  const path = join(target, CONFIG);\n'));
+  assert.ok(!importersOf(tree, VERB).includes('src/cli/doctor.mjs'));
 });
 
 /** The rule-5 violations `boundaryReport` finds in the tree with `file` holding `appended` after its source. */
