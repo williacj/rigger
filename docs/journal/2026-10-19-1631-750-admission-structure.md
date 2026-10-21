@@ -38,3 +38,11 @@ against another, and each left an order the guard did not cover. Taking the lock
 closes included, turns every interleaving into some order of writers acting one at a time. A check
 then only has to walk the record's five states (absent, `hold`, `owner`, `hold` with the owner
 added, unreadable) through each writer once.
+
+After five rounds, the owner ruled (U22) that admission's record becomes one immutable file per
+closer, with no lock and no replacing write. The rounds did not converge because of the shape the
+card fixed, not the guards. A single record that separate processes read, modify and write needs
+mutual exclusion, and a recoverable lock file cannot give it without leases. Giving each closer a
+name no other write reuses leaves every write a single `link`, `rename` or `unlink`, so the
+interleavings the judges found have nothing left to race on. When three guards in a row each open
+the next interleaving, question the data's shape before writing a fourth.

@@ -550,8 +550,7 @@ the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
-temporary file, which a write renames or links into place, belongs to its record, and so does the
-admission record's lock. Two more things
+temporary file, which a write renames or links into place, belongs to its record. Two more things
 outlive a restart outside it: a card's workspace, and the markers on its pull request, which
 the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
 a card's work from the beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
@@ -559,53 +558,41 @@ work, after a judge returns it to its maker, starts in a workspace at the head o
 work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
-Admission lives in `.rigger/admission.json`, and an absent record is the only open state. A closed
-record holds what closed it, `owner`, `hold`, or `hold` with the owner added, the reason, the time
-and the run id. A record that does not parse to all of those is unreadable. L3's
-`src/scheduling/admission.mjs` is the one module that reads, closes and opens it, and `pause` and
-`resume` are the CLI's thin callers of that module.
+Admission lives in the directory `.rigger/admission/`, which holds one file per closer. Admission is
+open where no closer file exists, and that is its only open state. Every file in it but a temporary
+file is a closer. A temporary file is named `.tmp-<process>`, and no reader reads it. A closer file
+names the reason, the time and the run id, and no closer file's content changes after it appears. A
+closer whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is
+the one module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers
+of that module.
 
-Opening removes the record. Closing writes a temporary file named for its own process, then
-hard-links it to the record's name. The link fails where a record exists, so the first closer wins
-without a read, and the later close is still recorded as an event. A write that must replace a
-record renames over it. Three writes do so:
+Every write is one `link`, `rename` or `unlink` of a name no other write reuses, so no write
+replaces another and no lock is needed. Each `pause` links its own `owner-<id>.json` from a
+temporary file, and each hold links its own `hold-<id>.json`. Each id is one no other closer has
+had, in this run or any earlier one, such as a random id. A `pause` while an owner closer exists
+still links its own, and a second card's hold is a second file, so no closer wins over another. Only
+`resume` removes the owner's closers. A `pause` adds its closer beside a hold's, and replaces
+nothing.
 
-- `pause` over an unreadable record;
-- `pause` over a record closed by `hold`, which adds the owner as a second closer;
-- the write that adds the status issue's number.
+An opening removes its closer by name. Where the status issue's close opens admission, L3 removes
+exactly that hold's closer and never the owner's, so closing the issue never lifts the owner's own
+`pause` (`R-SCHED-23`). An opening on the status issue's close removes a hold's closer only where L3
+read the issue's state after it listed that closer by name. `resume` reads the directory. Where any
+closer is unreadable, it names that closer and changes nothing. Otherwise it removes every closer it
+read, and removes a hold's closer under whatever name its id now carries, reading the directory
+again until no file carrying that id remains. No write recreates a closer that `resume` removed. A
+closer with an id `resume` did not read survives, and counts as coming after the `resume`. A
+`resume` that dies partway leaves admission closed, and running it again finishes the job.
 
-A record that names the owner reopens only by `resume`, so closing the status issue never lifts the
-owner's own `pause` (`R-SCHED-23`). No replacing write undoes a `resume` that ran after it read the
-record.
+`once` and `run` list the directory inside `take`'s synchronous claim, and a pull is admitted at
+that read. A `pause` whose link comes after that read finds the card already running, and claims
+already held finish (`R-SCHED-3`). `plan` and `doctor` read the directory through the module before
+they print. No reader counts an unreadable closer as open: L3 claims nothing and names it, as a
+start does for an unreadable record of process groups. `pause` adds its closer beside an unreadable
+closer and replaces nothing.
 
-Every write of the record takes the record's lock first, a close and an opening included, and holds
-it until that write is done. A writer takes it by hard-linking to `.rigger/admission.lock` a
-temporary file named for its own process, which names that process and its start. The link fails
-while another writer holds the lock. The writer then waits, up to a bound L3 sets, and past it names
-the lock and changes nothing. No write therefore falls between another's read and its write, and
-writers that overlap act one at a time, in some order. Holding the lock, each writer acts on the
-record as it reads it then:
-
-- a close links its record, and where the link fails, the close is an event;
-- a `pause` whose link fails over a record closed by `hold` adds the owner, under the same lock;
-- the write that adds the status issue's number writes it only where the record still holds the
-  hold that issue was opened for, and keeps every closer the record names;
-- the opening when the status issue closes removes the record only where it names `hold` alone and
-  that issue's number.
-
-The writer removes the lock once its write is done. Only a writer's death leaves a lock behind, and
-the next start removes a lock whose holder is gone before it reads admission. A hold whose close
-cannot take the lock is a hold where admission could not be closed.
-
-`once` and `run` read the record inside `take`'s synchronous claim. The next pull after a `pause`
-from another process therefore claims nothing, and claims already held finish. `plan` and `doctor`
-read it through the module before they print. No reader counts an unreadable record as open: L3
-claims nothing and names the record, as a start does for an unreadable record of process groups.
-`pause` replaces an unreadable record, since closing is the safe direction, and `resume` names it
-and changes nothing.
-
-L3's own event family records each change of admission. `pause` and `resume` append those events
-to the same stream from their own process, beside a running engine's.
+L3's own event family records each change of admission. `pause` and `resume` append those events to
+the same stream from their own process, beside a running engine's.
 
 The result of a command is its exit code and captured output. The direct child decides the exit
 code, and no process that outlives it changes that. A command ended by a signal has a non-zero
@@ -626,15 +613,18 @@ pulls for these reasons, and no others:
 | Case | Why |
 |---|---|
 | stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
-| answered `hold`, where admission could not be closed | the card is neither held nor remembered otherwise, so the next pull would attempt it at once; the verb reports the failure and exits non-zero |
 | judges L2 withheld for an environment failure | the memory is how L3 meets the row of `R-FAIL-5`'s table for a judge's directory not made |
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 
+Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
+claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
+a file-system error leaves a hold unsaved.
+
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
-admission. An escalated card needs none either, because every pull meets `R-ESCALATE-10` from the
-card's labels as the board shows them.
+admission. An escalated card needs none either, because L2 answers no action for a card carrying the
+escalation label.
 
 An attempt at a card runs in this order, under the card's one claim and slot:
 
