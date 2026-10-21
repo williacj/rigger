@@ -3,7 +3,7 @@
 const { isAbsolute, join } = require('node:path');
 const { testPath } = require('./suite-path.cjs');
 const { syncBuiltinESMExports } = require('node:module');
-const { realpathSync, readdirSync } = require('node:fs');
+const { realpathSync, readdirSync, statSync } = require('node:fs');
 const childProcess = require('node:child_process');
 
 const file = process.argv[1] && testPath(process.argv[1]);
@@ -50,6 +50,10 @@ if (!worker && process.env.RIGGER_SUITE_MODE) {
       } else {
         console.error(`${mode === 'host' ? 'test:host' : 'npm test'}: glob file argument ${argument} is not supported`);
       }
+      process.exit(1);
+    }
+    if (!statSync(argument, { throwIfNoEntry: false })?.isFile()) {
+      console.error(`${mode === 'host' ? 'test:host' : 'npm test'}: ${argument} is not a literal existing file path; ${mode === 'host' ? 'named test files must be on the host list' : 'host-listed tests require npm run test:host'}`);
       process.exit(1);
     }
     if (mode === 'host' && file.startsWith('test/') && file.endsWith('.test.mjs') && !hostFiles.has(file)) {

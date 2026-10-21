@@ -271,6 +271,7 @@ test('host mode with only reporter or pattern options runs only its host list', 
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
     assert.equal(existsSync(marker), false, `${option} ran a non-host file`);
+    assert.doesNotMatch(result.stdout, /test\/other\.test\.mjs/, `${option} reported an unlisted file`);
   }
 });
 
@@ -292,6 +293,7 @@ test('host mode with a separate import or coverage value runs no unlisted test',
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
     assert.equal(existsSync(marker), false, `${options[0]} ran an unlisted test`);
+    assert.doesNotMatch(result.stdout, /test\/other\.test\.mjs/, `${options[0]} reported an unlisted file`);
   }
 });
 
@@ -330,6 +332,32 @@ test('host mode refuses a glob naming an unlisted test before running it', () =>
   assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
   assert.equal(result.stdout, '', 'a test ran before the glob refusal');
 });
+
+test('deterministic mode refuses a brace operand naming a host file before running it', () => {
+  const argument = 'test/{package,agent-cli-refusal}.test.mjs';
+  const result = spawnSync('sh', ['test/suite.sh', argument], { encoding: 'utf8', timeout: 60_000 });
+  assert.notEqual(result.status, 0, `${argument} passed a host file`);
+  assert.ok(result.stderr.includes(argument), `refusal did not name ${argument}: ${result.stderr}`);
+  assert.match(result.stderr, /literal existing file path.*npm run test:host/);
+  assert.doesNotMatch(result.stdout, /^(?:✔|ok \d+ - |ℹ tests|# tests)/m, 'a test ran before the refusal');
+});
+
+for (const [title, command, args, argument, rule] of [
+  ['deterministic mode refuses a brace extension naming a host file', 'sh', ['test/suite.sh', 'test/package.test.{mjs,x}'], 'test/package.test.{mjs,x}', 'npm run test:host'],
+  ['deterministic mode refuses a plus extglob naming a host file', 'sh', ['test/suite.sh', 'test/+(package).test.mjs'], 'test/+(package).test.mjs', 'npm run test:host'],
+  ['npm test refuses an at extglob naming a host file', process.execPath, [process.env.npm_execpath, 'test', '--', 'test/@(package).test.mjs'], 'test/@(package).test.mjs', 'npm run test:host'],
+  ['host mode refuses a brace extension naming an unlisted file', 'sh', ['test/suite.sh', '--host', 'test/agent-cli-refusal.test.{mjs,x}'], 'test/agent-cli-refusal.test.{mjs,x}', 'host list'],
+  ['npm run test:host refuses an at extglob naming an unlisted file', process.execPath, [process.env.npm_execpath, 'run', 'test:host', '--', 'test/agent-cli-refusal.test.@(mjs)'], 'test/agent-cli-refusal.test.@(mjs)', 'host list'],
+]) {
+  test(title, () => {
+    const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, env: process.env });
+    assert.notEqual(result.status, 0, `${argument} passed without running the file`);
+    assert.ok(result.stderr.includes(argument), `refusal did not name ${argument}: ${result.stderr}`);
+    assert.match(result.stderr, /literal existing file path/);
+    assert.ok(result.stderr.includes(rule), `refusal did not name ${rule}: ${result.stderr}`);
+    assert.doesNotMatch(result.stdout, /^(?:✔|ok \d+ - |ℹ tests|# tests)/m, `${argument} ran a test before refusal`);
+  });
+}
 
 test('host mode refuses a case-varied name for an unlisted test', () => {
   const result = spawnSync('sh', ['test/suite.sh', '--host', 'TEST/agent-cli-refusal.test.mjs'], { encoding: 'utf8', timeout: 60_000 });
