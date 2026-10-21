@@ -506,8 +506,9 @@ shape alone: one label added to one issue, or one issue opened or closed. It nev
 label, and L2 alone chooses it, an opened issue's title and body, and which issue it comments on or
 closes. L2 answers no action, in every column, for an item carrying any of Rigger's fixed labels,
 before it asks which kind selects it. The status label is the second. The one exception is the
-escalation label's: L2 answers a card whose pull request the forge holds as merged as `R-WORK-33`
-and its table require. No code of Rigger's removes the label:
+escalation label's, and it never reaches an item carrying the status label, whatever other label it
+carries: L2 answers a card whose pull request the forge holds as merged as `R-WORK-33` and its table
+require. No code of Rigger's removes the label:
 the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
@@ -610,42 +611,71 @@ L3's own event family records each change of admission. `pause` and `resume` app
 the same stream from their own process, beside a running engine's.
 
 A hold's closer also carries, once L3 attaches it, the number of the status issue, in its file name.
-On a hold, L3 links the hold's closer first, because closing is the safe direction. It then calls
-L2's notice function, handing it the issue numbers the other hold closers name. L2 asks L0's read
-side for the repository's open issues carrying the status label, by label and not through the
-search index. It reuses one it finds, preferring the one an existing hold's closer names where that
-issue is open. It comments on that issue as `R-SCHED-25` requires, and places it on the board in
-Owner where the board does not hold it there. Otherwise it opens one and places it.
+A hold runs in this order:
 
-L3 then has `admission.mjs` attach the issue's number by renaming the hold's own closer,
-`hold-<id>.json`, to `hold-<id>-issue-<n>.json`. A rename needs no temporary file. Where `resume`
-already removed that file, the rename fails, so the hold does not come back. Where the issue a
-hold's closer names is deleted or transferred, L2's notice finds or opens another, `<m>`. L3 then
-has `admission.mjs` rename `hold-<id>-issue-<n>.json` to `hold-<id>-issue-<m>.json`. Every name a
-rename gives carries the hold's id, so no other write reuses it. No write touches another closer's
-file. A crash between the open and the placing leaves an open, labelled issue, which the next hold's
-read finds and reuses.
+1. L3 links the hold's closer, because closing is the safe direction.
+2. L3 calls L2's notice function, handing it the issue numbers the other hold closers name.
+3. L2 asks L0's read side for the repository's open issues carrying the status label, by label and
+   not through the search index. It reuses one it finds, preferring the one an existing hold's
+   closer names where that issue is open. Otherwise it opens one.
+4. L2 comments on a reused issue as `R-SCHED-25` requires. It places the issue on the board in Owner
+   where the board does not hold it there.
+5. L3 has `admission.mjs` attach the issue's number by renaming the hold's own closer,
+   `hold-<id>.json`, to `hold-<id>-issue-<n>.json`.
+
+A rename needs no temporary file. Where `resume` already removed that file, the rename fails, so the
+hold does not come back. Where the issue a hold's closer names is deleted or transferred, or is
+otherwise no longer that hold's notice, L2's notice finds or opens another, `<m>`. L3 then has
+`admission.mjs` rename `hold-<id>-issue-<n>.json` to `hold-<id>-issue-<m>.json`. Every name a rename
+gives carries the hold's id, so no other write reuses it. No write touches another closer's file. A
+crash between the open and the placing leaves an open, labelled issue, which the next hold's read
+finds and reuses.
 
 The issue's body links the failing card, the two attempts' class and step, their dispatch ids, the
 run id and the path of `.rigger/admission/`. The owner's `pause` opens no issue. A hold while the
 owner's `pause` holds admission still opens the notice and attaches its number, so the failure
 reaches the owner.
 
-`rigger resume` reads each hold closer's issue number from its file name, because a person may have
-removed the label from that issue. It has `admission.mjs` remove the closers it read. It then calls
-L2's notice function to close that issue and every other open issue carrying the status label.
-Where `resume` changes nothing, it closes no issue. The CLI never reaches a write side itself.
+`rigger resume` runs in this order:
+
+1. It reads each hold closer's issue number from its file name, because a person may have removed
+   the label from that issue.
+2. It has `admission.mjs` remove the closers it read.
+3. It calls L2's notice function to close that issue and every other open issue carrying the status
+   label. Before each close, L2 comments on the issue, naming the ids of the closers `resume`
+   removed.
+
+Where `resume` changes nothing, it closes no issue. The CLI never reaches a write side itself. One
+module under `src/workflow/` composes that comment and parses it back, as `escalation.mjs` does for
+notes. L2 reads only such comments written by an account with write access to the repository.
 
 The closers in `.rigger/admission/` govern, and the status issue is a notice the owner can act on.
 While a hold's closer names an issue, L3 reads that issue's state by its number, once per trigger
 and never per claim. It reads through L0's read side, which gains an issue's state. L3 never reads
 a label. A read that fails or times out counts as unreadable: admission stays closed, and the next
-trigger reads again. At each trigger, after it lists the directory, L3 calls L2's notice function
-for each hold's closer that names no issue. L2 finds or opens the issue and places it as above, and
-L3 then has `admission.mjs` rename that closer to name it. While a hold's closer names an issue L3
-reads as open, L3 hands L2's notice function that number at each trigger. L2 then places the issue
-on the board in Owner where the board does not hold it there. Any close of the issue reopens an
-admission the hold alone closed, whoever closed it. The closers and the issue can disagree:
+trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
+
+- For a hold's closer that names no issue, L3 calls L2's notice function for it. L2 finds or opens
+  the issue and places it as above, and L3 then has `admission.mjs` rename that closer to name it.
+- For a hold's closer naming an issue whose state L3 read, L3 hands L2's notice function the hold's
+  id and that number. L2 answers whether the issue is still that hold's notice.
+- Where it is not, L2 finds or opens another, and L3 has `admission.mjs` rename the closer to name it.
+- Where it is, and L3 read it as open, L2 places it on the board in Owner where the board does not
+  hold it there.
+- Where it is, and L3 read it as closed, L3 removes that hold's closer.
+
+L2 answers from the issue's labels and its timeline of comments, label changes, closes and reopens,
+which L0's read side also gains. Where L2 cannot read them, the issue counts as unreadable, as
+above. An issue is no longer a hold's notice in any of these cases:
+
+- it is deleted, or transferred;
+- it is open and carries no status label;
+- it is closed, and carried no status label when it last closed;
+- its last close directly follows a `resume` comment that does not name that hold's id, with no
+  close or reopen between them.
+
+Any other close of the issue reopens an admission the hold alone closed, whoever closed it. The
+closers and the issue can disagree:
 
 | Closers | Issue | Admission | What happens |
 |---|---|---|---|
@@ -653,6 +683,8 @@ admission the hold alone closed, whoever closed it. The closers and the issue ca
 | a hold's closer naming the issue | closed, by anyone | opens | L3 removes that hold's closer, and admission opens where no other closer remains; the event names the issue's close as what reopened it |
 | a hold's closer naming the issue | deleted, or transferred | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; deleting the issue never clears a hold |
 | a hold's closer naming the issue | unreadable, or its read timed out | closed | L3 claims nothing, names the issue, and reads again at the next trigger |
+| a hold's closer naming the issue | its status label removed by a person, then closed, or still open | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; the former notice's close reopens nothing |
+| a hold's closer `resume` did not read, naming the issue `resume` closed | closed, by `resume` | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; the closer survives `resume`, as one it did not read |
 | a hold's closer naming the issue | opened, and its placing on the board refused | closed | Rigger names the failure in its output and its event, and L2 places it again at the next trigger |
 | a hold's closer naming no issue | never opened, or its opening refused or timed out | closed | Rigger names the failure in its output and its event; at the next trigger L2's notice finds or opens the issue, and L3 has `admission.mjs` rename the closer to name it |
 | a hold's closer naming the issue, then the owner's `pause` | closed | closed | L3 removes the hold's closer; the owner's closer stays; `rigger resume` removes it |

@@ -17,3 +17,10 @@ shape needs every free part of it named as L2's.
 
 "It comments on that issue naming the card" restated `R-SCHED-25` and dropped half of it, the
 reason. A citation can't drift that way.
+
+Round 1's judge found two schedules the draft missed, and both came from one gap. The close of an
+issue was read as an event with no author and no history, so a close by `resume` on behalf of
+other holds, and a close of an issue that had stopped being the notice, both looked like the
+owner's. The fix has L2 judge each close against the issue's timeline. Walking every interleaving
+of `resume`'s three writes against a hold's five steps, as a table, found the one order a
+comment-after-close would have lost.
