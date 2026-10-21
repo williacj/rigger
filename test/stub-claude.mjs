@@ -96,7 +96,7 @@ const marker = (dir, what, card, role) => join(dir, `${what}-${card}-${role}`);
  * run of it still alive has been killed, so no call site of an existing world has to end it.
  */
 export function standInAgent(plan = {}) {
-  const dir = temporaryDirectory('rigger-stand-in-', { beforeRemoval: () => sweep(dir) });
+  const dir = temporaryDirectory('rigger-stand-in-', { beforeRemoval: () => recorded(plannedTrace(dir, 'test'), 'the stand-in directory\'s beforeRemoval', () => sweep(dir)) });
   return installStandInAgent(dir, plan);
 }
 
@@ -292,7 +292,7 @@ function written(path) {
       heard?.destroy();
       if (made) {
         try {
-          rmSync(fifo, { force: true });
+          recorded(tracing, 'the FIFO removal', () => rmSync(fifo, { force: true }), { path: fifo });
         } catch (failure) {
           process.stderr.write(`the stand-in left ${fifo} behind, closed: ${failure.message}\n`);
         }
@@ -301,8 +301,9 @@ function written(path) {
     };
     // Removes the FIFO, then ends the run on the signal as it would have ended without this listener.
     function cancelled() {
+      tracing?.('SIGTERM listener entered');
       close();
-      process.kill(process.pid, 'SIGTERM');
+      recorded(tracing, 'the signal to itself', () => process.kill(process.pid, 'SIGTERM'));
     }
     const settle = () => { close(); resolve(); };
     const fail = (failure) => { close(); reject(failure); };
@@ -310,16 +311,23 @@ function written(path) {
     try {
       execFileSync('/usr/bin/mkfifo', [fifo], { stdio: ['ignore', 'ignore', 'pipe'] });
       made = true;
+      tracing?.('FIFO made', { path: fifo });
       // Opened for writing too, so the FIFO never reads as ended once a writer has closed it.
       heard = new Socket({ fd: openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK), readable: true, writable: false });
+      tracing?.('FIFO opened', { path: fifo });
     } catch (failure) {
       fail(new Error(`the wait for ${path} could not open ${fifo} to be told of it`, { cause: failure }));
       return;
     }
+    if (tracing !== undefined) {
+      heard.on('data', (said) => tracing('FIFO data', { path: fifo, said: String(said) }));
+      heard.on('end', () => tracing('FIFO end', { path: fifo }));
+      heard.on('error', (failure) => tracing('FIFO error', { path: fifo, error: failed(failure) }));
+    }
     heard.on('data', (said) => (/^w+$/.test(String(said)) ? settle() : fail(new Error(`${fifo} carried ${JSON.stringify(String(said))}, not the word that ${path} is written`))));
     heard.on('error', (failure) => fail(new Error(`the wait for ${path} lost ${fifo}`, { cause: failure })));
     heard.on('end', () => fail(new Error(`${fifo} ended before ${path} was written`)));
-    if (existsSync(path)) settle();
+    if (recorded(tracing, 'the first read', () => existsSync(path), { path })) settle();
   });
 }
 
@@ -335,17 +343,78 @@ const awaited = (path) => `${path}.awaited`;
 function announce(path) {
   let fd;
   try {
-    fd = openSync(awaited(path), constants.O_WRONLY | constants.O_NONBLOCK);
+    fd = recorded(tracing, 'the announce\'s open', () => openSync(awaited(path), constants.O_WRONLY | constants.O_NONBLOCK), { path: awaited(path) });
   } catch (failure) {
     if (failure.code === 'ENOENT' || failure.code === 'ENXIO') return;
     throw failure;
   }
   try {
-    writeSync(fd, 'w');
+    recorded(tracing, 'the announce\'s write', () => writeSync(fd, 'w'), { path: awaited(path) });
   } finally {
     closeSync(fd);
   }
 }
+
+/**
+ * The trace of one test that asks for it (test/stand-in-agent.test.mjs): each process the test
+ * runs appends its events, one JSON object a line, to `<source>.jsonl` in `directory`, a directory
+ * outside the stand-in's own. Every write is synchronous, so the test process's trace makes no
+ * request of libuv's threadpool, and each event carries the time it was written, in milliseconds
+ * since the epoch, so the events of different processes order against each other.
+ */
+export function traceTo(directory, source) {
+  const file = join(directory, `${source}.jsonl`);
+  return (event, fields = {}) => appendFileSync(file, `${JSON.stringify({ at: performance.timeOrigin + performance.now(), source, pid: process.pid, event, ...fields })}\n`);
+}
+
+/** `failure` as a trace records it: its code, message, path and system call, where it has them. */
+const failed = (failure) => ({ code: failure?.code ?? null, message: String(failure?.message ?? failure), path: failure?.path ?? null, syscall: failure?.syscall ?? null });
+
+/**
+ * What `call` gives back, with its start and its return or its throw recorded by `record` under
+ * `label`, where `record` is a trace; a promise is recorded when it settles. With no trace, it
+ * only calls `call`, so a run no test asked to trace does exactly what it did.
+ */
+export function recorded(record, label, call, fields = {}) {
+  if (record === undefined) return call();
+  record('call start', { label, ...fields });
+  let result;
+  try {
+    result = call();
+  } catch (failure) {
+    record('call throw', { label, ...fields, error: failed(failure) });
+    throw failure;
+  }
+  if (typeof result?.then !== 'function') {
+    record('call return', { label, ...fields, result: typeof result === 'object' ? null : result ?? null });
+    return result;
+  }
+  return result.then(
+    (value) => { record('call return', { label, ...fields }); return value; },
+    (failure) => { record('call throw', { label, ...fields, error: failed(failure) }); throw failure; },
+  );
+}
+
+/**
+ * The trace the plan in `dir` asks for, written as `source`, or undefined where no act in it names
+ * one, or the plan cannot be read. Only a test that plans a `trace` into an act is traced.
+ */
+function plannedTrace(dir, source) {
+  let plan;
+  try {
+    plan = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const directory = Object.values(plan).flatMap((roles) => Object.values(roles ?? {})).find((act) => act?.trace !== undefined)?.trace;
+  return directory === undefined ? undefined : traceTo(directory, source);
+}
+
+/** Where a module loaded into a stand-in run finds the run's trace, as `standInMain` sets it. */
+export const TRACE = Symbol.for('rigger.stand-in.trace');
+
+/** This run's trace, where its act asks for one; `standInMain` sets it. */
+let tracing;
 
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
 export async function standInMain() {
@@ -358,14 +427,19 @@ export async function standInMain() {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(RECORDED)));
   appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
   const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
+  if (act.trace !== undefined) {
+    tracing = traceTo(act.trace, `${role}-${process.pid}`);
+    globalThis[TRACE] = tracing;
+    tracing('entry', { card, role, dir });
+  }
   if (act.orphanIn !== undefined) orphanIn(dir, card, role, act.orphanIn);
   if (act.hold) {
     await holding(marker(dir, 'held', card, role));
   }
   if (act.print !== undefined) process.stdout.write(act.print);
-  if (act.write) writeFileSync(marker(dir, 'wrote', card, role), '');
+  if (act.write) recorded(tracing, 'the file write', () => writeFileSync(marker(dir, 'wrote', card, role), ''), { path: marker(dir, 'wrote', card, role) });
   if (act.write) announce(marker(dir, 'wrote', card, role));
-  if (act.await !== undefined) await written(marker(dir, 'wrote', card, act.await));
+  if (act.await !== undefined) await recorded(tracing, 'the wait', () => written(marker(dir, 'wrote', card, act.await)));
   if ((act.pr || act.push) && inWorktree()) {
     const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
     ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
