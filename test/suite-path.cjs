@@ -1,13 +1,12 @@
-// ABOUTME: Gives the suite shell and worker the same repository-relative identity for a named file.
+// ABOUTME: Gives the suite guard a repository-relative identity for an existing file or pattern.
 
 const { relative, resolve } = require('node:path');
+const { realpathSync } = require('node:fs');
 
 function testPath(name) {
-  return relative(process.cwd(), resolve(name));
-}
-
-if (require.main === module) {
-  process.stdout.write(`${testPath(process.argv[2])}\n`);
+  let path = resolve(name);
+  try { path = realpathSync.native(path); } catch { /* A glob or missing path has no real path. */ }
+  return relative(process.cwd(), path);
 }
 
 module.exports = { testPath };

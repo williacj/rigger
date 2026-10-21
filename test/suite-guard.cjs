@@ -3,7 +3,7 @@
 const { isAbsolute, join } = require('node:path');
 const { testPath } = require('./suite-path.cjs');
 const { syncBuiltinESMExports } = require('node:module');
-const { realpathSync } = require('node:fs');
+const { realpathSync, readdirSync } = require('node:fs');
 const childProcess = require('node:child_process');
 
 const file = process.argv[1] && testPath(process.argv[1]);
@@ -13,12 +13,67 @@ const awaitingFiles = normalized(process.env.RIGGER_SUITE_AWAITING_FILES);
 const convertingFiles = normalized(process.env.RIGGER_SUITE_CONVERTING_FILES);
 const worker = process.env.NODE_TEST_CONTEXT === 'child-v8';
 
+function globPattern(pattern) {
+  let expression = '^';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === '*') {
+      expression += pattern[index + 1] === '*' ? '.*' : '[^/]*';
+      if (pattern[index + 1] === '*') index += 1;
+    } else if (character === '?') {
+      expression += '[^/]';
+    } else if (character === '[' && pattern.indexOf(']', index + 1) > index + 1) {
+      const end = pattern.indexOf(']', index + 1);
+      const members = pattern.slice(index + 1, end).replace(/^!/, '^');
+      expression += `[${members}]`;
+      index = end;
+    } else {
+      expression += character.replace(/[\\^$+?.()|{}\[\]]/g, '\\$&');
+    }
+  }
+  return new RegExp(`${expression}$`, process.platform === 'darwin' ? 'i' : '');
+}
+
+// Node has already separated options from file operands when this preload runs in the parent.
+if (!worker && process.env.RIGGER_SUITE_MODE) {
+  const mode = process.env.RIGGER_SUITE_MODE;
+  for (const argument of process.argv.slice(1)) {
+    const file = testPath(argument);
+    if (/[*?[\]]/.test(argument)) {
+      const matches = globPattern(file);
+      const candidates = readdirSync('test').filter((name) => name.endsWith('.test.mjs')).map((name) => `test/${name}`);
+      const target = candidates.find((entry) => matches.test(entry) && (mode === 'host' ? !hostFiles.has(entry) : hostFiles.has(entry)));
+      if (target) {
+        console.error(mode === 'host'
+          ? `test:host: ${target} is not on the host list`
+          : `npm test: ${target} is on the host list; run npm run test:host`);
+      } else {
+        console.error(`${mode === 'host' ? 'test:host' : 'npm test'}: glob file argument ${argument} is not supported`);
+      }
+      process.exit(1);
+    }
+    if (mode === 'host' && file.startsWith('test/') && file.endsWith('.test.mjs') && !hostFiles.has(file)) {
+      console.error(`test:host: ${file} is not on the host list`);
+      process.exit(1);
+    }
+    if (mode === 'deterministic' && hostFiles.has(file)) {
+      console.error(`npm test: ${file} is on the host list; run npm run test:host`);
+      process.exit(1);
+    }
+  }
+  if (mode === 'host' && process.argv.length === 1) process.argv.push(...hostFiles);
+  if (mode === 'host' && process.env.RIGGER_SUITE_HOST_KEY) console.log(process.env.RIGGER_SUITE_HOST_KEY);
+}
+
 if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && hostFiles.has(file)) {
+  process.exit(0);
+}
+if (worker && process.env.RIGGER_SUITE_MODE === 'host' && file?.startsWith('test/') && !hostFiles.has(file)) {
   process.exit(0);
 }
 
 let registerHostHooks = () => {};
-if (worker && process.env.RIGGER_SUITE_MODE === 'host' && hostFiles.has(file) && !awaitingFiles.has(file)) {
+if (worker && process.env.RIGGER_SUITE_MODE === 'host' && !awaitingFiles.has(file)) {
   let starts = 0;
   for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork', 'exec', 'execSync']) {
     const original = childProcess[name];
@@ -109,7 +164,7 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && file?.endsWit
 
 // A test that starts its own node --test run gets a fresh tier decision from that run's script.
 if (worker) {
-  for (const name of ['RIGGER_SUITE_MODE', 'RIGGER_SUITE_HOST_FILES', 'RIGGER_SUITE_AWAITING_FILES', 'RIGGER_SUITE_CONVERTING_FILES', 'RIGGER_SUITE_ALLOWED_PATH']) {
+  for (const name of ['RIGGER_SUITE_MODE', 'RIGGER_SUITE_HOST_FILES', 'RIGGER_SUITE_AWAITING_FILES', 'RIGGER_SUITE_CONVERTING_FILES', 'RIGGER_SUITE_ALLOWED_PATH', 'RIGGER_SUITE_HOST_KEY']) {
     delete process.env[name];
   }
 }

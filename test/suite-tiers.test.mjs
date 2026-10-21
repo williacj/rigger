@@ -241,7 +241,7 @@ test('host mode forwards node test options to a named fixture outside test', (t)
   assert.equal(reportsPassedTest(result.stdout, 'excluded host fixture'), false, result.stdout);
 });
 
-test('host mode with only reporter or pattern options runs only its host list', (t) => {
+function isolatedHostTree(t) {
   const directory = temporaryDirectory('rigger-host-default-', { context: t });
   const tests = join(directory, 'test');
   mkdirSync(tests);
@@ -259,6 +259,11 @@ test('host mode with only reporter or pattern options runs only its host list', 
   const suite = join(tests, 'suite.sh');
   writeFileSync(suite, source);
   const { NODE_TEST_CONTEXT, ...environment } = process.env;
+  return { directory, marker, environment };
+}
+
+test('host mode with only reporter or pattern options runs only its host list', (t) => {
+  const { directory, marker, environment } = isolatedHostTree(t);
   for (const option of ['--test-reporter=tap', '--test-name-pattern=selected host fixture']) {
     const result = spawnSync('sh', ['test/suite.sh', '--host', option], {
       cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
@@ -267,6 +272,70 @@ test('host mode with only reporter or pattern options runs only its host list', 
     assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
     assert.equal(existsSync(marker), false, `${option} ran a non-host file`);
   }
+});
+
+test('host mode with a separate import or coverage value runs no unlisted test', (t) => {
+  const { directory, marker, environment } = isolatedHostTree(t);
+  writeFileSync(join(directory, 'setup.mjs'), '');
+  const cases = [
+    ['--import', './setup.mjs'],
+    ['--test-name-pattern', 'selected.*fixture'],
+    ['--test-name-pattern=selected host fixture', '--import', './setup.mjs'],
+  ];
+  if (process.allowedNodeEnvironmentFlags.has('--test-coverage-include')) {
+    cases.push(['--test-coverage-include', 'test/host.test.mjs']);
+  }
+  for (const options of cases) {
+    const result = spawnSync('sh', ['test/suite.sh', '--host', ...options], {
+      cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
+    assert.equal(existsSync(marker), false, `${options[0]} ran an unlisted test`);
+  }
+});
+
+test('host worker excludes an unlisted test when Node discovers files itself', (t) => {
+  const { directory, marker, environment } = isolatedHostTree(t);
+  const runner = join(directory, 'worker-runner.cjs');
+  writeFileSync(runner, `if (process.env.NODE_TEST_CONTEXT === 'child-v8') process.env.RIGGER_SUITE_MODE = 'host';\nrequire(${JSON.stringify(resolve('test/suite-guard.cjs'))});\n`);
+  const result = spawnSync(process.execPath, ['--require', runner, '--test'], {
+    cwd: directory, encoding: 'utf8', timeout: 60_000,
+    env: { ...environment, RIGGER_SUITE_HOST_FILES: 'test/host.test.mjs', RIGGER_SUITE_AWAITING_FILES: 'test/host.test.mjs' },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
+  assert.equal(existsSync(marker), false, 'an unlisted test loaded in a host worker');
+});
+
+test('deterministic mode refuses a glob naming a host file before running it', () => {
+  for (const pattern of ['test/package.test.m?s', 'test/package.test.m[j]s']) {
+    const result = spawnSync('sh', ['test/suite.sh', pattern], { encoding: 'utf8', timeout: 60_000 });
+    assert.notEqual(result.status, 0, `${pattern} passed a host file`);
+    assert.match(result.stderr, /test\/package\.test\.mjs.*npm run test:host/);
+    assert.equal(result.stdout, '', `${pattern} ran the host file before refusal`);
+  }
+});
+
+test('deterministic mode refuses a glob that includes host and deterministic files', () => {
+  const result = spawnSync('sh', ['test/suite.sh', 'test/forge-*.test.mjs'], { encoding: 'utf8', timeout: 60_000 });
+  assert.notEqual(result.status, 0, 'the forge glob crossed tiers');
+  assert.match(result.stderr, /test\/forge-(runners|spawn)\.test\.mjs.*npm run test:host/);
+  assert.equal(result.stdout, '', 'a forge test ran before refusal');
+});
+
+test('host mode refuses a glob naming an unlisted test before running it', () => {
+  const result = spawnSync('sh', ['test/suite.sh', '--host', 'test/agent-cli-refusal.test.m?s'], { encoding: 'utf8', timeout: 60_000 });
+  assert.notEqual(result.status, 0, 'the unlisted test passed through a glob');
+  assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  assert.equal(result.stdout, '', 'a test ran before the glob refusal');
+});
+
+test('host mode refuses a case-varied name for an unlisted test', () => {
+  const result = spawnSync('sh', ['test/suite.sh', '--host', 'TEST/agent-cli-refusal.test.mjs'], { encoding: 'utf8', timeout: 60_000 });
+  assert.notEqual(result.status, 0, 'the case-varied unlisted test ran');
+  assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  assert.equal(result.stdout, '', 'a test ran before the case-varied refusal');
 });
 
 test('the deterministic runner exits a host file before its test loads', (t) => {
