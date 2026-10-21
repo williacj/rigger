@@ -107,7 +107,7 @@ const TMPDIR_NAME = '.claude-tmp';
 
 /**
  * The one folder Claude Code keeps for `directory` outside the dispatch. #629 measured on Claude
- * Code 2.1.303 that every character outside ASCII letters and digits becomes `-`. A name longer
+ * Code 2.1.303, 2.1.304 and 2.1.306 that every character outside ASCII letters and digits becomes `-`. A name longer
  * than 200 characters keeps its first 200, then `-` and the absolute value of the real path's
  * signed 32-bit Java string hash in base 36. The live relation test measured this with `_`, a
  * space and a real path longer than 200 characters. A later version may name them differently.

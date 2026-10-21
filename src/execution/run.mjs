@@ -2,7 +2,7 @@
 // L0 settles, and kills groups a dead engine left in its record.
 
 import { realpathSync } from 'node:fs';
-import { sep } from 'node:path';
+import { isAbsolute, join, sep } from 'node:path';
 
 import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
 import { listCliFolder, sweepCliFolder } from './workspace.mjs';
@@ -164,7 +164,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
         if (ended) return;
         ended = true;
         const fields = { ...ending, ms: Math.round(clock() - began) };
-        if (folder !== undefined) fields.folderLeft = [{ path: folderListing?.path, reason: 'Rigger exited before the CLI folder sweep' }];
+        if (folder !== undefined) fields.folderLeft = [unsweptFolder(folder, folderListing, 'Rigger exited before the CLI folder sweep')];
         try {
           removeGroup(directory, group);
         } catch (cause) {
@@ -220,14 +220,24 @@ export async function dispatch({ id, card, directory, sink, command, args, input
   // One end for every start L1 recorded, carrying the exit code where the command ran, or why it
   // did not start (the architect's ruling 2, §4, on #332).
   const ms = Math.round(clock() - began);
-  const folderLeft = folderListing === undefined ? [] : result === undefined
-    ? [{ path: folderListing.path, reason: `the command did not start or settle, so its CLI folder was not swept: ${failure.message}` }]
+  const folderLeft = folder === undefined ? [] : folderListing === undefined
+    ? [unsweptFolder(folder, folderListing, `L1 did not list or sweep its CLI folder: ${failure.message}`)]
+    : result === undefined
+    ? [unsweptFolder(folder, folderListing, `the command did not start or settle, so its CLI folder was not swept: ${failure.message}`)]
     : sweepCliFolder(folderListing);
   const folderFields = folderLeft.length === 0 ? {} : { folderLeft };
   record('dispatch.end', result === undefined ? { reason: failure.message, ms, ...folderFields } : { exit: result.exit, ms, ...folderFields });
   if (unrecorded.length > 0) failure = alongside(failure, refused(id, card, unrecorded, result));
   if (failure !== undefined) throw failure;
   return result;
+}
+
+/** The safe folder path, where one can be named, and why L1 left it without a sweep. */
+function unsweptFolder(folder, listing, reason) {
+  const { home, name } = folder;
+  const path = listing?.path ?? (typeof home === 'string' && isAbsolute(home) && typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !name.includes(sep)
+    ? join(home, 'projects', name) : undefined);
+  return { ...(path === undefined ? {} : { path }), reason };
 }
 
 /**

@@ -1256,6 +1256,25 @@ function cliFolderWorld(t) {
 }
 
 // proves R-WORK-31
+test('a role refused before listing its CLI folder names why no sweep ran', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'kept.txt'), 'kept\n');
+  const { adapter } = standIn('/usr/bin/true');
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+  rmSync(handed.scratch, { recursive: true });
+
+  await assert.rejects(
+    dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed }),
+    (error) => error.code === NOT_STARTED && /scratch directory/.test(error.message),
+  );
+
+  const end = eventsIn(state).find((event) => event.event === 'dispatch.end');
+  assert.ok(end.folderLeft.some(({ path, reason }) => path === folder && /scratch directory/.test(reason)));
+  assert.equal(readFileSync(join(folder, 'kept.txt'), 'utf8'), 'kept\n');
+});
+
+// proves R-WORK-31
 test('a role dispatch removes the saved result and its new Claude folder before recording its end', SETTLES_WITHIN, async (t) => {
   const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
   const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(path.join(process.argv[1],'session','tool-results'),{recursive:true});fs.writeFileSync(path.join(process.argv[1],'session','tool-results','result.txt'),'HERON-saved-629');console.log('HERON-output-629');";

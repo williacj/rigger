@@ -35,6 +35,14 @@ run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
 run=$(cd "$run" && pwd -P) || exit 1
 TMPDIR=$run
 export TMPDIR
+if [ "${RIGGER_LIVE_CLAUDE:-}" != 1 ]; then
+  CLAUDE_CONFIG_DIR="$run/claude-home"
+  mkdir "$CLAUDE_CONFIG_DIR" || exit 1
+  RIGGER_TEST_TEMP_ROOT=$run
+  RIGGER_TEST_CLAUDE_HOME_RECORD="$run/unsafe-claude-homes"
+  : > "$RIGGER_TEST_CLAUDE_HOME_RECORD"
+  export CLAUDE_CONFIG_DIR RIGGER_TEST_TEMP_ROOT RIGGER_TEST_CLAUDE_HOME_RECORD
+fi
 dir="$run/rigger-refusing-gh"
 mkdir "$dir" || exit 1
 trap 'rm -rf "$run"' EXIT
@@ -118,6 +126,12 @@ if [ -s "$agents/calls" ]; then
   while IFS= read -r call; do
     printf '  %s\n' "$call" >&2
   done < "$agents/calls"
+  status=1
+fi
+
+if [ -s "${RIGGER_TEST_CLAUDE_HOME_RECORD:-/dev/null}" ]; then
+  printf '%s\n' 'npm test: these dispatches named a Claude home outside the suite temporary directory:' >&2
+  cat "$RIGGER_TEST_CLAUDE_HOME_RECORD" >&2
   status=1
 fi
 

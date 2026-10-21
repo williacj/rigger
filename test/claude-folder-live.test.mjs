@@ -29,10 +29,17 @@ function sourceIn(base, files = {}) {
 }
 
 /** Runs `answer` through the same L1 handoff and dispatch as a maker. */
-async function runRole({ answer, cwd, directory, scratchBase, repository, sink, state, id = 'd-629-live', reach = [] }) {
+async function runRole(t, { answer, cwd, directory, scratchBase, repository, sink, state, id = 'd-629-live', reach = [] }) {
   const env = { ...process.env, PATH: pastRefusing() };
+  const home = Object.hasOwn(env, 'CLAUDE_CONFIG_DIR') ? env.CLAUDE_CONFIG_DIR : join(env.HOME, '.claude');
+  const projects = join(home, 'projects');
+  const beforeProjects = existsSync(projects) ? readdirSync(projects).sort() : [];
   const handed = await roleDispatch({ answer, cwd, directory, scratch: scratchBase, repository, env, sink, id, card: 629, reach });
   const result = await dispatch({ id, card: 629, directory: state, sink, ...handed });
+  assert.ok(readEvents(state).some((event) => event.event === 'dispatch.end' && event.dispatch === id), `${id} has no recorded end`);
+  const afterProjects = existsSync(projects) ? readdirSync(projects).sort() : [];
+  t.diagnostic(`${id} projects before: ${JSON.stringify(beforeProjects)}; after: ${JSON.stringify(afterProjects)}`);
+  assert.deepEqual(afterProjects, beforeProjects, `${id} left a new projects entry after its recorded end`);
   return { handed, result };
 }
 
@@ -104,7 +111,7 @@ test('an over-limit Bash maker under a long linked path leaves no Claude folder 
   const beforeTemporary = pathsUnder(temporary);
   const command = `node -e "process.stdout.write('X'.repeat(360000) + 'HERON-output-629')"`;
   const answer = { role: 'live', agent: '.claude/agents/live.md', provider: 'claude', tier: 'standard', timeout: 300_000, instruction: `Call Bash exactly once with this command: ${command}\nAfter it returns, say DONE. Use no other tool.\n`, evidence: '', facts: undefined, digest: undefined };
-  const { handed, result } = await runRole({ answer, cwd, directory: cwd, scratchBase: made.scratch, repository, sink, state });
+  const { handed, result } = await runRole(t, { answer, cwd, directory: cwd, scratchBase: made.scratch, repository, sink, state });
   const events = eventsOf(result.stdout);
   t.diagnostic(`Claude Code version: ${events.find((event) => event.type === 'system' && event.subtype === 'init')?.claude_code_version}; real path: ${realpathSync.native(cwd)}; adapter folder: ${handed.folder?.name ?? 'none'}`);
   t.diagnostic(`exit ${result.exit}; stderr: ${result.stderr.toString('utf8')}`);
@@ -144,11 +151,11 @@ test('an inline Bash maker and an over-limit Bash judge leave no CLI or old temp
   const beforeMaker = pathsUnder(makerTmp);
   const beforeJudge = pathsUnder(judgeTmp);
 
-  const inline = await runRole({ answer: answer(small), cwd: maker.path, directory: maker.path, scratchBase: maker.scratch, repository, sink, state, id: 'd-629-inline' });
+  const inline = await runRole(t, { answer: answer(small), cwd: maker.path, directory: maker.path, scratchBase: maker.scratch, repository, sink, state, id: 'd-629-inline' });
   const inlineResult = measuredCall(t, inline, maker.path, 'Bash');
   assert.equal(inlineResult.saved, undefined);
   assert.match(textOf(inlineResult.call.result), /HERON-inline-629/);
-  const over = await runRole({ answer: answer(large), cwd: judge.main, directory: judge.path, scratchBase: judge.scratch, repository, sink, state, id: 'd-629-judge', reach: [judge.head] });
+  const over = await runRole(t, { answer: answer(large), cwd: judge.main, directory: judge.path, scratchBase: judge.scratch, repository, sink, state, id: 'd-629-judge', reach: [judge.head] });
   assert.ok(measuredCall(t, over, judge.main, 'Bash').saved, 'the judge Bash result named no saved file');
   assert.deepEqual(pathsUnder(makerTmp), beforeMaker);
   assert.deepEqual(pathsUnder(judgeTmp), beforeJudge);
@@ -172,7 +179,7 @@ test('large Read results in maker and judge sessions leave no CLI or old tempora
   ]) {
     const temporary = oldTemporary(cwd);
     const before = pathsUnder(temporary);
-    const run = await runRole({ answer: answer(join(cwd, 'large.txt')), cwd, directory, scratchBase, repository, sink, state, id, reach });
+    const run = await runRole(t, { answer: answer(join(cwd, 'large.txt')), cwd, directory, scratchBase, repository, sink, state, id, reach });
     const observed = measuredCall(t, run, cwd, 'Read');
     t.diagnostic(`${id} saved file: ${observed.saved ?? 'none'}`);
     assert.deepEqual(pathsUnder(temporary), before);
@@ -200,7 +207,7 @@ test('over-limit directory MCP results in maker and judge sessions leave no CLI 
     put(cwd, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['mcp__c629live__echo'] } }));
     const temporary = oldTemporary(cwd);
     const before = pathsUnder(temporary);
-    const run = await runRole({ answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
+    const run = await runRole(t, { answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
     assert.ok(measuredCall(t, run, cwd, 'mcp__c629live__echo').saved, `${id} named no saved file`);
     assert.deepEqual(pathsUnder(temporary), before);
   }
@@ -225,7 +232,7 @@ test('Monitor output stays in each maker and judge dispatch temporary directory'
     put(cwd, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Monitor'] }, env: { ENABLE_TOOL_SEARCH: 'false' } }));
     const temporary = oldTemporary(cwd);
     const before = pathsUnder(temporary);
-    const run = await runRole({ answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
+    const run = await runRole(t, { answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
     const call = measuredCall(t, run, cwd, 'Monitor').call;
     assert.equal(call.input.command, 'echo HERON-monitor-629');
     const inDispatch = run.handed.env.CLAUDE_CODE_TMPDIR;
@@ -250,14 +257,12 @@ test('a maker and judge leave every earlier configuration-home path and classify
   const judge = await makeJudgeDirectory({ root, topic: 'rigger-{number}', card: 629, role: 'reviewer', head, repository, sink });
   const home = join(process.env.HOME, '.claude');
   const before = homeEntries(home);
-  const ownFolders = new Set();
   const answer = { role: 'live', agent: '.claude/agents/live.md', provider: 'claude', tier: 'standard', timeout: 300_000, instruction: 'Call Bash exactly once with this command: echo HERON-home-629. After it returns, say DONE. Use no other tool.\n', evidence: '' };
   for (const [id, cwd, directory, scratchBase, reach] of [
     ['d-629-maker-home', maker.path, maker.path, maker.scratch, []],
     ['d-629-judge-home', judge.main, judge.path, judge.scratch, [judge.head]],
   ]) {
-    const run = await runRole({ answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
-    ownFolders.add(run.handed.folder.name);
+    const run = await runRole(t, { answer, cwd, directory, scratchBase, repository, sink, state, id, reach });
     assert.match(textOf(measuredCall(t, run, cwd, 'Bash').call.result), /HERON-home-629/);
   }
   const after = homeEntries(home);
@@ -266,7 +271,5 @@ test('a maker and judge leave every earlier configuration-home path and classify
   t.diagnostic(`home removed: ${JSON.stringify(removed)}; added or changed: ${JSON.stringify(changed)}`);
   const rotatedBackup = /^backups\/\.claude\.json\.backup\.[0-9]+$/;
   assert.deepEqual(removed.filter((path) => !rotatedBackup.test(path)), []);
-  const otherProjects = changed.filter((path) => path.startsWith('projects/') && !ownFolders.has(path.split('/')[1]));
-  t.diagnostic(`other Claude project paths and session ids: ${JSON.stringify(otherProjects)}`);
-  assert.deepEqual(changed.filter((path) => !path.startsWith('session-env/') && !rotatedBackup.test(path) && !otherProjects.includes(path)), []);
+  assert.deepEqual(changed.filter((path) => !path.startsWith('session-env/') && !rotatedBackup.test(path)), []);
 });
