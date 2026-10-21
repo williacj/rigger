@@ -11,6 +11,7 @@ import { accessSync, constants as files, realpathSync, statSync } from 'node:fs'
 import { constants } from 'node:os';
 import { setTimeout as pause } from 'node:timers/promises';
 import { inspect } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import { writeWhole } from './standard-error.mjs';
 
@@ -18,7 +19,7 @@ import { writeWhole } from './standard-error.mjs';
  * The process-table tool, by absolute path, so it is found whatever `PATH` the caller runs under:
  * the installed engine runs under one holding only node, git and `gh` (`test/package.test.mjs`).
  */
-export const PS = '/bin/ps';
+export const PS = process.platform === 'linux' ? fileURLToPath(new URL('./process-table.sh', import.meta.url)) : '/bin/ps';
 
 /**
  * The whole environment `ps` runs under: a UTF-8 locale, so text outside ASCII reads unchanged,
@@ -111,7 +112,10 @@ export const EVENT_REFUSED = 'EVENT_REFUSED';
  * decide which those are, and `test/exit-cleanup.test.mjs` asks both, for every signal Node names
  * (`D16` rule 2).
  */
-export const HANDLED = ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTRAP', 'SIGABRT', 'SIGUSR2', 'SIGALRM', 'SIGTERM', 'SIGXCPU', 'SIGVTALRM', 'SIGSYS'];
+const namedSignal = (name) => Object.hasOwn(constants.signals, name);
+// Linux ends a process on SIGIO by default; macOS leaves it running. The signal probes ask both.
+const ioTerminates = process.platform === 'linux';
+export const HANDLED = ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTRAP', 'SIGABRT', 'SIGUSR2', 'SIGALRM', 'SIGTERM', 'SIGXCPU', 'SIGVTALRM', 'SIGSYS', 'SIGPWR', 'SIGSTKFLT', ...(ioTerminates ? ['SIGIO'] : [])].filter(namedSignal);
 
 /**
  * Every other signal Node names, by why the cleanup leaves it out. An ending by one of the first
@@ -131,9 +135,9 @@ export const LEFT_OUT = {
   inspector: ['SIGUSR1'],
   // Its default action, or Node's own disposition, does not end a Node process: it ignores the
   // signal, or stops the process.
-  harmless: ['SIGPIPE', 'SIGCHLD', 'SIGCONT', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGXFSZ', 'SIGWINCH', 'SIGIO', 'SIGINFO'],
-  // `SIGABRT` under another name, which is handled.
-  alias: ['SIGIOT'],
+  harmless: ['SIGPIPE', 'SIGCHLD', 'SIGCONT', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGXFSZ', 'SIGWINCH', 'SIGINFO', ...(ioTerminates ? [] : ['SIGIO'])].filter(namedSignal),
+  // Other names for handled signals: SIGABRT, and on Linux SIGIO.
+  alias: ['SIGIOT', 'SIGPOLL'].filter(namedSignal),
 };
 
 /**
@@ -1287,7 +1291,7 @@ function unconfirmed(directory, identity) {
  * The census of working directories' tool, by absolute path, for the same reason as `PS`. It runs
  * under `PS_ENV` too, whose UTF-8 locale it needs to print `ü` as itself (`listing`).
  */
-export const LSOF = '/usr/sbin/lsof';
+export const LSOF = process.platform === 'linux' ? '/usr/bin/lsof' : '/usr/sbin/lsof';
 
 /**
  * The real path of `directory`, which the census of working directories compares with, or why it

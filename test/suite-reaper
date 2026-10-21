@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { removeTemporaryDirectory } from './temporary-directory.mjs';
 import { SWEEPS } from './process-fixtures.mjs';
+import { LSOF } from '../src/substrate/process.mjs';
 
 const [directory, pipe] = process.argv.slice(2);
 const run = realpathSync.native(directory);
@@ -59,7 +60,7 @@ function processes() {
     } while (grew);
   }
   let pid;
-  for (const line of read('/usr/sbin/lsof', ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn']).split('\n')) {
+  for (const line of read(LSOF, ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn']).split('\n')) {
     if (line.startsWith('p')) pid = Number(line.slice(1));
     if (line.startsWith('n') && inside(line.slice(1)) && pid !== process.pid && rows.has(pid)) targets.add(pid);
   }

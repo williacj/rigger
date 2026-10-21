@@ -12,9 +12,10 @@ import { join } from 'node:path';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
-import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
+import { EVENT_REFUSED, LSOF, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
 import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
+import { shellQuote } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
 
@@ -100,6 +101,7 @@ test('while a dispatch runs, its record entry carries the dispatch\'s directory'
   await settled;
 
   assert.deepEqual(entries.map((entry) => entry.workspace), [realpathSync.native(directory)]);
+  assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the recorded dispatch directory is alive after settlement');
 });
 
 // proves R-STATE-17
@@ -278,7 +280,7 @@ test('given a sink that refuses every append, every process the census found is 
 test('given a census tool that lists every process as another user\'s, the census leaves alive a process working under the dispatch\'s directory', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   // `lsof` itself, asked as the census asks it, with every user id it prints made root's.
-  const lsof = fixture(directory, 'lsof', ': > "$here/lsof-asked"\n/usr/sbin/lsof "$@" | /usr/bin/sed \'s/^u[0-9]*$/u0/\'');
+  const lsof = fixture(directory, 'lsof', `: > "$here/lsof-asked"\n${shellQuote(LSOF)} "$@" | /usr/bin/sed 's/^u[0-9]*$/u0/'`);
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: leavingInSub(directory), lsof });
 
@@ -383,13 +385,13 @@ const hopping = ['/bin/mkdir -p "$here/sub"', `/usr/bin/perl -e '${HOPPER}' "$he
  */
 const listingOnce = (directory) => fixture(directory, 'lsof', [
   'if [ ! -f "$here/listed" ]; then',
-  '  /usr/sbin/lsof "$@" > "$here/first-listing"; status=$?',
+  `  ${shellQuote(LSOF)} "$@" > "$here/first-listing"; status=$?`,
   '  : > "$here/listed"; : > "$here/go"',
   '  p=$(/bin/cat "$here/p.pid")',
   '  while kill -0 "$p" 2>/dev/null; do :; done',
   '  /bin/cat "$here/first-listing"; exit $status',
   'fi',
-  'exec /usr/sbin/lsof "$@"',
+  `exec ${shellQuote(LSOF)} "$@"`,
 ].join('\n'));
 
 /**
@@ -492,6 +494,7 @@ test('while a dispatch runs, its record entry carries the device and inode of it
   await settled;
 
   assert.deepEqual(entries.map(({ device, inode }) => ({ device, inode })), [{ device: String(dev), inode: String(ino) }]);
+  assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the recorded directory identity is alive after settlement');
 });
 
 // proves R-STATE-17, R-STATE-7

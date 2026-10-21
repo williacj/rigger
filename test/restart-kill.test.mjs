@@ -10,13 +10,14 @@ import { closeSync, constants as files, existsSync, mkdirSync, openSync, readFil
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PS } from '../src/substrate/process.mjs';
 import template from '../templates/rigger.config.mjs';
 import { once as onceVerb } from '../src/cli/once.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
-import { TAIL, alive, ended, fixture, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
+import { TAIL, alive, ended, fixture, shellQuote, holding, leave, read, running, startGroup, turn, until, withoutLeader } from './process-fixtures.mjs';
 import { leaveWorking } from './process-fixtures.mjs';
 import { assertUntouched, tailIn } from './process-fixtures.mjs';
 import { chmodSync, rmSync, statSync } from 'node:fs';
@@ -487,7 +488,7 @@ function heldStartRead(directory) {
     '  : > "$here/reading"',
     '  read line < "$here/release" ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 }
 

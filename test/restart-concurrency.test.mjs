@@ -2,6 +2,7 @@
 // after it was killed outright while makers that never exit ran, each leaving a grandchild outside
 // its group: the restart ends all of them before it reads the board, and the default N is three.
 
+import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -81,7 +82,7 @@ function groupOf(pid) {
  * a census by working directory.
  */
 function workingDirectories() {
-  const printed = spawnSync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn'], { encoding: 'utf8' }).stdout;
+  const printed = spawnSync(LSOF, ['-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn'], { env: process.env, encoding: 'utf8' }).stdout;
   const directories = new Map();
   let pid;
   for (const line of printed.split('\n')) {

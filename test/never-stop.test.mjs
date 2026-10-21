@@ -14,15 +14,15 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
-import { KILL_BOUND, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, fixture, holding, leave, processState, read, startGroup, tailIn, until } from './process-fixtures.mjs';
+import { KILL_BOUND, LSOF, PS, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
+import { TAIL, alive, fixture, holding, leave, processState, read, shellQuote, startGroup, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
 import { gone } from './process-fixtures.mjs';
 import { warmed } from './process-fixtures.mjs';
 import { signalStandIn } from './signal-stand-in.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
-import { listingOf } from './listing-stand-in.mjs';
+import { listingFields, listingOf } from './listing-stand-in.mjs';
 import { sightingPs } from './census-sightings.mjs';
 import { prepareSighting } from './census-sightings.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -89,7 +89,7 @@ const holdingTwo = (directory) => fixture(directory, 'command', [
 const holdingNone = (directory) => fixture(directory, 'command', ': > "$here/up"\nwhile [ ! -f "$here/release" ]; do :; done');
 
 /** The line of a `ps` stand-in that answers a read as `ps` does, with the process `$here/two.pid` names cut out. */
-const CUT_TWO = '/bin/ps "$@" | /usr/bin/grep -v "^ *$(/bin/cat "$here/two.pid") "';
+const CUT_TWO = ("" + shellQuote(PS) + " \"$@\" | /usr/bin/grep -v \"^ *$(/bin/cat \"$here/two.pid\") \"");
 
 /**
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read of the census,
@@ -100,11 +100,11 @@ const cuttingTwo = (directory) => fixture(directory, 'ps', [
   `  ${CUT_TWO}`,
   '  exit 0 ;;',
   'esac',
-  'exec /bin/ps "$@"',
+  ("exec " + shellQuote(PS) + " \"$@\""),
 ].join('\n'));
 
 /** A `ps` stand-in that fails every read as `ps` fails given what it cannot read, but a read of a start time. */
-const failing = (directory) => fixture(directory, 'ps', 'case "$*" in *lstart=*) exec /bin/ps "$@" ;; esac\necho "ps: failing on purpose" >&2\nexit 2');
+const failing = (directory) => fixture(directory, 'ps', ("case \"$*\" in *lstart=*) exec " + shellQuote(PS) + " \"$@\" ;; esac\necho \"ps: failing on purpose\" >&2\nexit 2"));
 
 /**
  * A signal call for a test in `directory`: `signalStandIn`'s, with the pid `$here/<refused>.pid`
@@ -419,7 +419,7 @@ function finalizedSightingIdentities(observation) {
   return identities.map(({ source, pid }) => {
     if (!Number.isSafeInteger(pid) || pid <= 0) return { source, pid, disposition: 'unconfirmed' };
     const args = ['-p', String(pid), '-o', 'pid=,stat='];
-    const answer = spawnSync('/bin/ps', args, { timeout: 500, maxBuffer: 1024 * 1024 });
+    const answer = spawnSync(PS, args, { env: process.env, timeout: 500, maxBuffer: 1024 * 1024 });
     const stdout = answer.stdout ?? Buffer.alloc(0);
     const stderr = answer.stderr ?? Buffer.alloc(0);
     const base = `finalizer-reads/${source}`;
@@ -427,7 +427,7 @@ function finalizedSightingIdentities(observation) {
     writeFileSync(join(observation.target, `${base}.stderr`), stderr, { flag: 'wx', mode: 0o600 });
     const original = `${base}.json`;
     const record = {
-      tool: '/bin/ps', args, status: answer.status, signal: answer.signal,
+      tool: PS, args, status: answer.status, signal: answer.signal,
       error: answer.error ? { code: answer.error.code ?? answer.error.name, message: answer.error.message } : null,
       stdout: { file: `${base}.stdout`, bytes: stdout.length, sha256: createHash('sha256').update(stdout).digest('hex'), produced: answer.stdout !== null },
       stderr: { file: `${base}.stderr`, bytes: stderr.length, sha256: createHash('sha256').update(stderr).digest('hex'), produced: answer.stderr !== null },
@@ -558,7 +558,7 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
  * marks that L0 has sent its group the kill, and answers every read as `ps` does from then on.
  */
 const hidingTwoUntilKilled = (directory) => fixture(directory, 'ps', [
-  '[ -f "$here/hang" ] && exec /bin/ps "$@"',
+  ("[ -f \"$here/hang\" ] && exec " + shellQuote(PS) + " \"$@\""),
   CUT_TWO,
   'exit 0',
 ].join('\n'));
@@ -1472,7 +1472,7 @@ function assertSighting(trace, two, cell) {
   assert.ok(expected, `unknown census cell ${cell}`);
   assert.deepEqual(states.slice(0, expected.states.length).map(has), expected.states, `wrong state-read positions for ${cell}: ${trace}`);
   assert.deepEqual(commands.slice(0, expected.commands.length).map(has), expected.commands, `wrong command-read positions for ${cell}: ${trace}`);
-  const name = reads.find(({ args }) => args === `-p ${two} -o ucomm=`);
+  const name = reads.find(({ args, rows }) => args === `-p ${two} -o ucomm=` && !rows.includes('PHASE after-kill'));
   if (expected.name === true) assert.ok(name?.rows.some((row) => row.startsWith('ROW ') && row !== 'ROW '), `no name read for ${cell}: ${trace}`);
   if (expected.name === false) assert.deepEqual(name?.rows, ['FAIL 1 empty'], `the name read did not omit the member: ${trace}`);
   if (expected.name === undefined) assert.equal(name, undefined, `the census named a member no before-state read showed: ${trace}`);
@@ -1504,7 +1504,7 @@ test('G3: an unseen group round without accepted members reaches a cut and an un
     '  if [ "$count" -eq 2 ]; then : > "$here/group-clock-cut"; exit 1; fi',
     '  ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   try {
@@ -1551,11 +1551,11 @@ test('G3: a retained group round survives an unseen round and the next read cut'
     '  count=$((count + 1))',
     '  printf "%s" "$count" > "$here/census-state-count"',
     '  case "$count" in',
-    '    1) /bin/ps "$@" | /usr/bin/awk \'NR == 1 { $2 = "?" } { print }\'; exit 0 ;;',
+    ("    1) " + shellQuote(PS) + " \"$@\" | /usr/bin/awk 'NR == 1 { $2 = \"?\" } { print }'; exit 0 ;;"),
     '    4) : > "$here/group-clock-cut"; exit 1 ;;',
     '  esac ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, stderr, events } = await cleanedUpBy(GROUP_LATE_CALLER, directory, { ps: 'ps' });
@@ -1779,12 +1779,12 @@ function assertPreparedCache(retained, cell) {
     const id = String(index + 1).padStart(3, '0');
     const start = JSON.parse(readFileSync(join(prepared, `${id}.start.json`), 'utf8'));
     const end = JSON.parse(readFileSync(join(prepared, `${id}.json`), 'utf8'));
-    assert.equal(start.source, 'real-/bin/ps', `preparation read ${id} was not the real tool`);
-    assert.equal(end.source, 'real-/bin/ps', `preparation return ${id} was not the real tool`);
+    assert.equal(start.source, ('real-' + PS), `preparation read ${id} was not the real tool`);
+    assert.equal(end.source, ('real-' + PS), `preparation return ${id} was not the real tool`);
     assert.equal(start.clockSource, 'real-monotonic-clock', `preparation read ${id} used a synthetic clock`);
     assert.equal(end.clockSource, 'real-monotonic-clock', `preparation return ${id} used a synthetic clock`);
-    assert.equal(start.tool, '/bin/ps', `preparation read ${id} did not identify its tool`);
-    assert.equal(end.tool, '/bin/ps', `preparation return ${id} did not identify its tool`);
+    assert.equal(start.tool, PS, `preparation read ${id} did not identify its tool`);
+    assert.equal(end.tool, PS, `preparation return ${id} did not identify its tool`);
     assert.deepEqual(start.args, argv, `preparation read ${id} used different argv`);
     assert.deepEqual(end.args, argv, `preparation return ${id} used different argv`);
     assert.equal(end.status, 0, `preparation read ${id} failed`);
@@ -1947,7 +1947,7 @@ test('C615 fixture-preparation-refusal denies a missing fixture state row', SETT
   assert.throws(() => prepareSighting(directory, { reader }),
     /controlled group snapshot differed from its three fixture PIDs/);
   assert.equal(calls.length, 4, 'the missing-row return was not reached');
-  assert.deepEqual(calls.map(({ tool }) => tool), Array(4).fill('/bin/ps'));
+  assert.deepEqual(calls.map(({ tool }) => tool), Array(4).fill(PS));
   assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false, 'an invalid preparation became ready');
   const prepared = join(directory, 'sighting-prepared');
   for (let index = 1; index <= 4; index++) {
@@ -1992,7 +1992,7 @@ test('C615 fixture-preparation-refusal denies invalid rows and start text', SETT
     const expected = answer.with(variant.index, variant.value);
     let calls = 0;
     const reader = (tool, args) => {
-      assert.equal(tool, '/bin/ps', `${variant.name}: unexpected tool`);
+      assert.equal(tool, PS, `${variant.name}: unexpected tool`);
       assert.deepEqual(args, argv[calls], `${variant.name}: unexpected read ${calls + 1}`);
       return { status: 0, signal: null, error: undefined, stdout: expected[calls++], stderr: '' };
     };
@@ -2010,7 +2010,7 @@ test('C615 fixture-preparation-refusal denies invalid rows and start text', SETT
       const end = JSON.parse(readFileSync(join(prepared, `${id}.json`), 'utf8'));
       assert.equal(start.source, 'synthetic-controlled-return');
       assert.equal(end.source, 'synthetic-controlled-return');
-      assert.equal(start.tool, '/bin/ps');
+      assert.equal(start.tool, PS);
       assert.deepEqual(start.args, argv[index]);
       assert.deepEqual(end.args, argv[index]);
       assert.equal(readFileSync(join(prepared, `${id}.stdout.utf8`), 'utf8'), expected[index]);
@@ -2031,7 +2031,7 @@ test('C615 fixture-read-refusal retains synthetic failed and incomplete returns'
     const directory = syntheticPreparationDirectory(`read-${variant.name}`);
     let calls = 0;
     const reader = (tool, args) => {
-      assert.equal(tool, '/bin/ps');
+      assert.equal(tool, PS);
       assert.deepEqual(args, ['-p', '42001', '-o', 'lstart=']);
       calls++;
       if (variant.thrown) throw variant.thrown;
@@ -2047,7 +2047,7 @@ test('C615 fixture-read-refusal retains synthetic failed and incomplete returns'
     const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
     assert.equal(start.source, 'synthetic-controlled-return');
     assert.equal(end.source, 'synthetic-controlled-return');
-    assert.equal(start.tool, '/bin/ps');
+    assert.equal(start.tool, PS);
     assert.deepEqual(start.args, ['-p', '42001', '-o', 'lstart=']);
     for (const stream of ['stdout', 'stderr']) {
       const expected = variant.result?.[stream];
@@ -2070,7 +2070,7 @@ test('C615 fixture-read-refusal denies a synthetic deadline overrun after return
   const clock = () => ticks.shift() ?? 7_000_000_000n;
   let calls = 0;
   const reader = (tool, argv) => {
-    assert.equal(tool, '/bin/ps');
+    assert.equal(tool, PS);
     assert.deepEqual(argv, ['-p', '42001', '-o', 'lstart=']);
     calls++;
     return { status: 0, signal: null, error: undefined,
@@ -2128,9 +2128,9 @@ test('C615 fixture-read-refusal retains a real ps omitted row after recorded fix
     const prepared = join(directory, 'sighting-prepared');
     const start = JSON.parse(readFileSync(join(prepared, '001.start.json'), 'utf8'));
     const end = JSON.parse(readFileSync(join(prepared, '001.json'), 'utf8'));
-    assert.equal(start.source, 'real-/bin/ps');
-    assert.equal(end.source, 'real-/bin/ps');
-    assert.equal(start.tool, '/bin/ps');
+    assert.equal(start.source, ('real-' + PS));
+    assert.equal(end.source, ('real-' + PS));
+    assert.equal(start.tool, PS);
     assert.deepEqual(start.args, ['-p', String(children[0].child.pid), '-o', 'lstart=']);
     assert.equal(end.status, 1, 'the omitted row was not an actual no-row answer');
     assert.equal(end.error, null);
@@ -2999,7 +2999,7 @@ for (const [cell, run] of [
  * one of those started, that has not ended, a zombie excepted, and the listing's own `ps` aside.
  */
 function liveDescendants() {
-  const rows = spawnSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,command='], { encoding: 'utf8' }).stdout.split('\n')
+  const rows = spawnSync(PS, ['-axo', 'pid=,ppid=,stat=,command='], { env: process.env, encoding: 'utf8' }).stdout.split('\n')
     .map((line) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)).filter(Boolean)
     .map(([, pid, ppid, stat, command]) => ({ pid: Number(pid), ppid: Number(ppid), stat, command }));
   const ours = new Set([process.pid]);
@@ -3024,7 +3024,7 @@ if (process.env.EXIT_LEAK_HARNESS === 'exit') {
   test('leak abandoned exit caller', { timeout: 1 }, (t) => {
     // The callers running under this run's own temporary directory as the bound ends the test.
     t.signal.addEventListener('abort', () => {
-      const callers = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR) && line.includes('caller.mjs'));
+      const callers = spawnSync(PS, ['-axww', '-o', 'pid=,command='], { env: process.env, encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR) && line.includes('caller.mjs'));
       process.stderr.write(`leak callers at abort: ${callers.length}\n`);
     });
     return censusExit(t, 'U1');
@@ -3036,7 +3036,7 @@ if (process.env.EXIT_LEAK_HARNESS === 'forced') {
   test('leak abandoned X0 exit A3 failure', { timeout: 1 }, (t) => {
     // The processes under this run's own temporary directory as the bound ends the test.
     t.signal.addEventListener('abort', () => {
-      const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+      const left = spawnSync(PS, ['-axww', '-o', 'pid=,command='], { env: process.env, encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
       process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
     });
     return forcedExit(t, 'X0', forcing, { ...expect, fails: typeof expect.fails === 'function' ? expect.fails('X0') : expect.fails });
@@ -3048,7 +3048,7 @@ if (process.env.EXIT_LEAK_HARNESS === 'forced') {
     pending.catch(() => {});
     const reached = () => readdirSync(process.env.TMPDIR).some((name) => name.startsWith('rigger-process-') && existsSync(join(process.env.TMPDIR, name, 'forced')) && readFileSync(join(process.env.TMPDIR, name, 'forced'), 'utf8').includes('confirm 1 answer-then-fail'));
     await until(reached, { signal: t.signal });
-    const left = spawnSync('/bin/ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
+    const left = spawnSync(PS, ['-axww', '-o', 'pid=,command='], { env: process.env, encoding: 'utf8' }).stdout.split('\n').filter((line) => line.includes(process.env.TMPDIR));
     process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
     throw new Error('abandoned after its forced read');
   });
@@ -3127,7 +3127,7 @@ test('a cut name read for an unshown member after the group kill cannot name it 
     'case "$*" in *"-o ucomm=")',
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const signals = standIn(directory, { refused: 'two' });
@@ -3146,13 +3146,13 @@ test('a cut state read after the group kill records that the read timed out', SE
   const directory = holding(t);
   const cut = heldOutput(t, directory, 'printf "123"');
   const ps = fixture(directory, 'ps', [
-    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/hang\" ] || exec " + shellQuote(PS) + " \"$@\""),
     'case "$*" in "-g "*" -o pid=,stat=")',
     '  if /bin/mkdir "$here/first" 2>/dev/null; then',
     cut.body,
     '  fi ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const signals = standIn(directory, { refused: 'one' });
 
@@ -3191,6 +3191,11 @@ test('on the exit cleanup, a member no read before the kill found, which a read 
   assert.equal(status, 0);
   assert.deepEqual(events.filter(({ pid }) => pid === one || pid === two).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }]);
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed').length, 1);
+  if (process.platform === 'linux') {
+    // A killed orphan can remain a zombie until its adopting parent reaps it.
+    for (const pid of [one, two]) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
+    await until(() => [one, two].every((pid) => !alive(pid)), t);
+  }
   assert.deepEqual([one, two].map(alive), [false, false]);
 });
 
@@ -3364,13 +3369,13 @@ function assertUnended(directory, events, event, reason) {
 /** A post-kill state read that fails on standard error, then answers with a zombie row. */
 function failingReaped(directory, outside, ready, earlierAnswer = false) {
   return fixture(directory, 'ps', [
-    `[ -f "$here/${ready}" ] || exec /bin/ps "$@"`,
+    `[ -f "$here/${ready}" ] || exec ${shellQuote(PS)} "$@"`,
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
     ...(earlierAnswer ? [`  if /bin/mkdir "$here/answered" 2>/dev/null; then printf "%s S\\n" "${outside}"; exit 0; fi`] : []),
     '  if /bin/mkdir "$here/failed" 2>/dev/null; then echo "ps: reaped failure" >&2; exit 2; fi',
     `  printf "%s Z\\n" "${outside}"; exit 0 ;;`,
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 }
 
@@ -3447,7 +3452,7 @@ test('a cut name read while describing a refused directory process does not supp
     `case "$*" in "-p ${outside} -o ucomm=")`,
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
@@ -3474,7 +3479,7 @@ test('a cut name read while describing a killed unnamed directory process does n
     '  if /bin/mkdir "$here/first" 2>/dev/null; then echo "ps: unread" >&2; exit 2; fi',
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const signals = standIn(directory, { unkept: 'outside' });
@@ -3498,12 +3503,12 @@ test('after an answered directory kill wait, a cut state read at its deadline ke
   const cut = heldOutput(t, directory, `printf '${outside}'`);
   const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   const ps = fixture(directory, 'ps', [
-    '[ -f "$here/outside-killed" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/outside-killed\" ] || exec " + shellQuote(PS) + " \"$@\""),
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
-    '  if /bin/mkdir "$here/answered" 2>/dev/null; then exec /bin/ps "$@"; fi',
+    ("  if /bin/mkdir \"$here/answered\" 2>/dev/null; then exec " + shellQuote(PS) + " \"$@\"; fi"),
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const signals = standIn(directory, { unkept: 'outside' });
@@ -3527,11 +3532,11 @@ test('without an answered directory kill wait, a timed-out state read records th
   const outside = pidIn(directory, 'outside');
   const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   const ps = fixture(directory, 'ps', [
-    '[ -f "$here/outside-killed" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/outside-killed\" ] || exec " + shellQuote(PS) + " \"$@\""),
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
     '  : > "$here/timed-out"',
     '  exec /usr/bin/tail -f "$here/hold" ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
   const signals = standIn(directory, { unkept: 'outside' });
@@ -3618,7 +3623,7 @@ test('D9: a padding-only name answer leaves an EPERM directory survivor unnamed 
     '  exit 0',
     'fi',
     'if [ "$*" = "-ww -p $pid -o pid=,command=" ]; then : > "$here/command-read"; fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, events, pairs } = await cleanedUp(directory, { directory: work, ps: 'ps', lsof: 'lsof', refused: 'outside' });
@@ -3700,13 +3705,13 @@ test('after an answered read, a timed-out read of a killed directory process rec
   holdingNone(directory);
   fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   fixture(directory, 'ps', [
-    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/hang\" ] || exec " + shellQuote(PS) + " \"$@\""),
     'case "$*" in *"-o pid=,stat="*)',
-    '  if /bin/mkdir "$here/answered" 2>/dev/null; then exec /bin/ps "$@"; fi',
+    ("  if /bin/mkdir \"$here/answered\" 2>/dev/null; then exec " + shellQuote(PS) + " \"$@\"; fi"),
     '  : > "$here/timed-out"',
     '  exec /usr/bin/tail -f "$here/hold" ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, events } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000 });
@@ -3726,7 +3731,7 @@ test('an exit-cleanup read whose child exits 0 with its output open is reported 
     'case "$*" in "-ww -g "*)',
     cut.body,
     '  ;;',
-    '  *) exec /bin/ps "$@" ;;',
+    ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
     'esac',
   ].join('\n'));
 
@@ -3738,6 +3743,8 @@ test('an exit-cleanup read whose child exits 0 with its output open is reported 
   const unread = events.find(({ event }) => event === 'group.killed');
   assert.ok(unread, `the cleanup took the cut table as a complete read: ${JSON.stringify(events)}`);
   assert.match(unread.census, /process-table read timed out after 1000 ms/);
+  assert.ok(Number.isSafeInteger(unread.group) && unread.group > 0, 'the unread result did not identify its command group');
+  assert.match(processState(unread.group), /^(?:Z|$)/, 'the command still runs after its exit-cleanup read timed out');
 });
 
 // proves R-STATE-19, R-STATE-9
@@ -3749,12 +3756,12 @@ test('without an answered read, a timed-out read of a killed directory process r
   holdingNone(directory);
   fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
   fixture(directory, 'ps', [
-    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/hang\" ] || exec " + shellQuote(PS) + " \"$@\""),
     'case "$*" in *"-o pid=,stat="*)',
     '  : > "$here/timed-out"',
     '  exec /usr/bin/tail -f "$here/hold" ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, events } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000 });
@@ -3796,14 +3803,14 @@ async function lateAsyncWait(t) {
     return signals.kill(target, name);
   };
   const ps = fixture(directory, 'ps', [
-    '[ -f "$here/outside-killed" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/outside-killed\" ] || exec " + shellQuote(PS) + " \"$@\""),
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
     '  if /bin/mkdir "$here/answered" 2>/dev/null; then',
     `    printf '%s S\\n' '${outside}'; : > "$here/clock-cut"; exit 0`,
     '  fi',
     '  : > "$here/unexpected-read"; exit 2 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
 
@@ -3841,7 +3848,7 @@ async function failedSynchronousWait(t, earlierAnswer) {
  */
 const holdingName = (directory) => fixture(directory, 'ps', [
   'if [ ! -f "$here/hang" ] && [ "$*" = "-p $(/bin/cat "$here/outside.pid") -o ucomm=" ]; then : > "$here/held"; exec /usr/bin/tail -f "$here/hold"; fi',
-  'exec /bin/ps "$@"',
+  ("exec " + shellQuote(PS) + " \"$@\""),
 ].join('\n'));
 
 // proves R-STATE-19, R-STATE-9
@@ -3873,7 +3880,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
     if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'killed'), '');
     return signals.kill(target, name);
   };
-  const ps = fixture(directory, 'ps', '[ -f "$here/killed" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
+  const ps = fixture(directory, 'ps', ("[ -f \"$here/killed\" ] && { echo \"ps: failing on purpose\" >&2; exit 2; }\nexec " + shellQuote(PS) + " \"$@\""));
 
   const { events } = await called(directory, { command: '/usr/bin/true', directory: work, kill, ps });
 
@@ -3886,7 +3893,7 @@ test('given a dispatch\'s directory holding a process the kill does not end, and
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on never answers. */
-const hanging = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exec /usr/bin/tail -f "$here/hold"\nexec /bin/ps "$@"');
+const hanging = (directory) => fixture(directory, 'ps', ("[ -f \"$here/hang\" ] && exec /usr/bin/tail -f \"$here/hold\"\nexec " + shellQuote(PS) + " \"$@\""));
 
 // proves R-STATE-19, R-STATE-9
 test('given a process table that stops answering once the exit cleanup has sent its first kill of a group, the caller ends within the cleanup\'s own bound of that kill, and the group\'s members are not alive', SETTLES_WITHIN, async (t) => {
@@ -3967,7 +3974,7 @@ test('given a leader the kill does not end, and a process table that stops answe
  * A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on
  * answers each as `ps` does where no process matches: it exits 1 and prints nothing.
  */
-const emptyAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && exit 1\nexec /bin/ps "$@"');
+const emptyAfterKill = (directory) => fixture(directory, 'ps', ("[ -f \"$here/hang\" ] && exit 1\nexec " + shellQuote(PS) + " \"$@\""));
 
 /** The leader must end within `gone`'s bound; report its last state if it does not. */
 async function assertLeaderGone(group, within) {
@@ -4080,7 +4087,7 @@ const MAC_RETURNED_OBSERVER = [
   'readMkdir(returnedHere, { mode: 0o700 });',
   'let readSequence = 0;',
   'const pendingReads = new Set();',
-  "const watched = (tool) => tool === '/usr/sbin/lsof' || tool === '/bin/ps';",
+  ("const watched = (tool) => tool === " + JSON.stringify(LSOF) + " || tool === " + JSON.stringify(PS) + ";"),
   "const recordRead = (entry) => traceAppend(traceJoin(returnedHere, 'manifest.jsonl'), JSON.stringify(entry) + '\\n', { mode: 0o600 });",
   "const beginRead = (mode, tool, args, options) => { const id = 'r' + String(++readSequence).padStart(6, '0'); const at = process.hrtime.bigint().toString(); trace('read-start', { readId: id, mode, tool, args, remaining: options?.timeout, markers: markers() }); const traceStart = traceSequence; recordRead({ kind: 'start', id, mode, tool, args, options: { timeout: options?.timeout, encoding: options?.encoding }, at, traceStart }); pendingReads.add(id); return { id, mode, tool, args, at, traceStart }; };",
   "const keepStream = (id, name, present, value) => { const type = !present ? 'absent' : value === null ? 'null' : typeof value; if (type !== 'string') return { present, type }; const file = id + '.' + name + '.utf8'; const bytes = Buffer.from(value, 'utf8'); readWrite(traceJoin(returnedHere, file), bytes, { flag: 'wx', mode: 0o600 }); return { present, type, file, bytes: bytes.length, sha256: readHash('sha256').update(bytes).digest('hex') }; };",
@@ -4114,7 +4121,7 @@ function assertReturnedToolOriginals(directory, trace) {
   const ends = manifest.filter(({ kind }) => kind === 'end');
   const traceStarts = trace.filter(({ kind }) => kind === 'read-start');
   const traceEnds = trace.filter(({ kind }) => kind === 'read-end');
-  const actual = (row) => row.tool === '/usr/sbin/lsof' || row.tool === '/bin/ps';
+  const actual = (row) => row.tool === LSOF || row.tool === PS;
   assert.ok(manifest.length > 0 && manifest.every(({ kind }) => kind === 'start' || kind === 'end'), 'the private read manifest has an unknown or missing operation');
   assert.ok(traceStarts.every(actual) && traceEnds.every(actual), 'the caller trace includes an unaccounted tool read');
   assert.ok(starts.length === traceStarts.length && ends.length === traceEnds.length && starts.length === ends.length, 'an actual tool read is absent or unresolved in the private manifest');
@@ -4216,7 +4223,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
       result.caller = !caller ? 'never-started' : callerReaped && !callerError && ended(caller) ? 'reaped' : 'unresolved';
       const command = directory && pidIn(directory, 'group');
       const commandEnded = !caller || (command !== undefined && await waitFor(() => {
-        const read = spawnSync('/bin/ps', ['-p', String(command), '-o', 'pid=,stat='], { encoding: 'utf8' });
+        const read = spawnSync(PS, ['-p', String(command), '-o', 'pid=,stat='], { env: process.env, encoding: 'utf8' });
         assert.ok(!read.error && (read.status === 0 || (read.status === 1 && read.stdout === '' && read.stderr === '')), 'the command finalizer could not read the process table');
         return read.status === 1;
       }, 3_000));
@@ -4302,7 +4309,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   bodyStage = 'tail-started';
   tail.on('error', (error) => { tailError = error; });
   assert.ok(Number.isSafeInteger(tail.pid) && tail.pid > 0, 'the direct tail fixture did not start');
-  await until(() => processState(tail.pid) !== '' && spawnSync('/bin/ps', ['-o', 'ucomm=', '-p', String(tail.pid)], { encoding: 'utf8' }).stdout.trim() === 'tail', t);
+  await until(() => processState(tail.pid) !== '' && spawnSync(PS, ['-o', 'ucomm=', '-p', String(tail.pid)], { env: process.env, encoding: 'utf8' }).stdout.trim() === 'tail', t);
   const tailBirth = { pid: tail.pid, started: startOf(tail.pid) };
   writeFileSync(join(directory, 'tail-birth.json'), JSON.stringify(tailBirth));
 
@@ -4344,16 +4351,16 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
     return first >= 0 && fields.includes(`u${process.getuid()}`) && fields.includes(`n${realpathSync.native(work)}`);
   };
   const listingArgs = ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-F', 'pun'];
-  const [first] = answers('/usr/sbin/lsof', listingArgs);
-  const listed = trace.find(({ kind, tool, args: given }) => (kind === 'read-end' || kind === 'read-threw') && tool === '/usr/sbin/lsof' && JSON.stringify(given) === JSON.stringify(listingArgs));
+  const [first] = answers(LSOF, listingArgs);
+  const listed = trace.find(({ kind, tool, args: given }) => (kind === 'read-end' || kind === 'read-threw') && tool === LSOF && JSON.stringify(given) === JSON.stringify(listingArgs));
   const listedSummary = JSON.stringify(listed ? { kind: listed.kind, status: listed.status, signal: listed.signal, error: listed.error ?? listed.code ?? null, stderr: listed.stderr, stdout: typeof listed.stdout === 'string' ? `${Buffer.byteLength(listed.stdout)} bytes` : listed.stdoutType ?? null } : 'no full listing read was traced');
   assert.ok(first && listsTail(first.stdout), `the actual full lsof listing did not answer with the recorded tail cwd; the first full listing read: ${listedSummary}`);
-  const [state] = answers('/bin/ps', ['-p', String(tailBirth.pid), '-o', 'pid=,stat=']);
+  const [state] = answers(PS, ['-p', String(tailBirth.pid), '-o', 'pid=,stat=']);
   assert.ok(state && state.sequence > first.sequence && new RegExp(`^\\s*${tailBirth.pid}\\s+T`, 'm').test(state.stdout), 'the actual intervening ps read did not answer with the stopped tail');
-  const [perPid] = answers('/usr/sbin/lsof', [...listingArgs.slice(0, -2), '-p', String(tailBirth.pid), '-F', 'pun']);
+  const [perPid] = answers(LSOF, [...listingArgs.slice(0, -2), '-p', String(tailBirth.pid), '-F', 'pun']);
   assert.ok(perPid && perPid.sequence > state.sequence && listsTail(perPid.stdout), 'the actual per-PID lsof read did not answer with the recorded tail cwd');
-  const [name] = answers('/bin/ps', ['-p', String(tailBirth.pid), '-o', 'ucomm=']);
-  const [commandRead] = answers('/bin/ps', ['-ww', '-p', String(tailBirth.pid), '-o', 'pid=,command=']);
+  const [name] = answers(PS, ['-p', String(tailBirth.pid), '-o', 'ucomm=']);
+  const [commandRead] = answers(PS, ['-ww', '-p', String(tailBirth.pid), '-o', 'pid=,command=']);
   assert.ok(name && name.sequence > perPid.sequence && name.stdout.trim() === 'tail', 'the actual name read did not answer for the recorded tail');
   assert.ok(commandRead && commandRead.sequence > name.sequence && commandRead.stdout.includes(`/usr/bin/tail -f ${join(directory, 'hold')}`), 'the actual command read did not answer for the recorded tail');
   assert.ok(trace.some(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === tailBirth.pid && signal === 'SIGSTOP' && answer === true), 'the tail was not stopped after the answered listing');
@@ -4361,8 +4368,8 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   const allEvents = linesOf(directory, 'events');
   const events = allEvents.filter(({ pid }) => pid === tailBirth.pid);
   assert.ok(events.length === 1 && events[0].event === 'survivor.killed' && events[0].name === 'tail' && events[0].cmd === `/usr/bin/tail -f ${join(directory, 'hold')}` && events[0].reason === undefined, 'the reached directory result did not name the killed tail truthfully');
-  const [groupName] = answers('/bin/ps', ['-p', String(command), '-o', 'ucomm=']);
-  const groupCommands = answers('/bin/ps', ['-ww', '-g', String(command), '-o', 'pid=,command=']);
+  const [groupName] = answers(PS, ['-p', String(command), '-o', 'ucomm=']);
+  const groupCommands = answers(PS, ['-ww', '-g', String(command), '-o', 'pid=,command=']);
   const groupCommandRead = groupCommands.find(({ stdout }) => new RegExp(`^\\s*${command}\\s+(.+)$`, 'm').test(stdout));
   const observedCommand = groupCommandRead && new RegExp(`^\\s*${command}\\s+(.+)$`, 'm').exec(groupCommandRead.stdout)?.[1];
   const groupKill = trace.find(({ kind, target, name: signal, answer }) => kind === 'signal-answer' && target === -command && signal === 'SIGKILL' && answer === true);
@@ -4440,7 +4447,7 @@ if (tracePath && !globalThis.c757Observer) {
       else if (!alive(caller)) { mark('hold-abandoned', { why: 'the caller ended before the hold began' }); process.exit(0); }
       else await turn();
     }
-    while (!realSpawnSync('/bin/ps', ['-o', 'stat=', '-p', String(heldPid)], { encoding: 'utf8' }).stdout.trim().startsWith('T')) {
+    while (!realSpawnSync(${JSON.stringify(PS)}, ['-o', 'stat=', '-p', String(heldPid)], { encoding: 'utf8' }).stdout.trim().startsWith('T')) {
       if (!alive(heldPid)) { mark('hold-abandoned', { why: 'the held read ended before it stopped', heldPid }); process.exit(0); }
       await turn();
     }
@@ -4503,7 +4510,7 @@ if (tracePath && !globalThis.c757Observer) {
     childProcess.spawnSync = function (tool, args) {
       const result = realSpawnSync.apply(this, arguments);
       const command = targetDir && groupOf(targetDir);
-      if (tool === '/bin/ps' && Array.isArray(args) && args.length === 4 && args[0] === '-p' && args[2] === '-o' && args[3] === 'pid=,stat=' && command !== undefined && args[1] === String(command)) {
+      if (tool === ${JSON.stringify(PS)} && Array.isArray(args) && args.length === 4 && args[0] === '-p' && args[2] === '-o' && args[3] === 'pid=,stat=' && command !== undefined && args[1] === String(command)) {
         mark('command-read', { command, status: result.status, error: errorOf(result.error), stdout: result.stdout, stderr: result.stderr });
         if (stoppedCommand === command) {
           process.kill(command, 'SIGCONT');
@@ -4582,20 +4589,20 @@ if (tracePath && !globalThis.c757Observer) {
     };
     const independently = (ordinal) => {
       if (tailPid === undefined) return mark('tail-state', { ordinal, cwd: 'unproved', why: 'no tail was recorded' });
-      const cwd = realSpawnSync('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-p', String(tailPid), '-d', 'cwd', '-F', 'n'], { encoding: 'utf8', cwd: '/' });
-      const state = realSpawnSync('/bin/ps', ['-o', 'stat=', '-p', String(tailPid)], { encoding: 'utf8' });
+      const cwd = realSpawnSync(${JSON.stringify(LSOF)}, ['-w', '-n', '-P', '-a', '-p', String(tailPid), '-d', 'cwd', '-F', 'n'], { encoding: 'utf8', cwd: '/' });
+      const state = realSpawnSync(${JSON.stringify(PS)}, ['-o', 'stat=', '-p', String(tailPid)], { encoding: 'utf8' });
       const named = cwd.status === 0 && !cwd.error ? cwd.stdout.split('\n').find((row) => row.startsWith('n'))?.slice(1) : undefined;
       mark('tail-state', { ordinal, tailPid, cwd: named === undefined ? 'unproved' : named === work ? 'work' : 'different', named: named ?? null, cwdStatus: cwd.status, state: state.status === 0 ? state.stdout.trim() : state.status === 1 ? 'absent' : 'unproved' });
     };
-    const shell = (body, label, args, options) => realSpawnSync('/bin/sh', ['-c', body + '; exec /usr/sbin/lsof "$@"', directory + '/' + label, ...args], options);
+    const shell = (body, label, args, options) => realSpawnSync('/bin/sh', ['-c', body + ${JSON.stringify('; exec ' + shellQuote(LSOF) + ' "$@"')}, directory + '/' + label, ...args], options);
     const held = (args, options) => {
       const controller = realSpawn(process.execPath, [fileURLToPath(import.meta.url), 'c757-hold-controller', directory + '/c757-held', String(process.pid)], { cwd: '/', env: { PATH: process.env.PATH, C757_TRACE: tracePath, C757_MODE: mode }, stdio: 'ignore' });
       mark('hold-controller', { controller: controller.pid ?? null });
       return shell('echo $$ > "$0.pid"; kill -STOP $$', 'c757-held', args, options);
     };
     childProcess.spawnSync = function (tool, args, options) {
-      if (tool !== '/usr/sbin/lsof' && tool !== '/bin/ps') return realSpawnSync.apply(this, arguments);
-      const full = tool === '/usr/sbin/lsof' && args.includes('-u') && !args.includes('-p');
+      if (tool !== ${JSON.stringify(LSOF)} && tool !== ${JSON.stringify(PS)}) return realSpawnSync.apply(this, arguments);
+      const full = tool === ${JSON.stringify(LSOF)} && args.includes('-u') && !args.includes('-p');
       const ordinal = full ? ++fullListings : undefined;
       const first = ordinal === 1;
       mark('read-start', { tool, args, full, ordinal, remaining: options?.timeout ?? null });
@@ -4816,9 +4823,9 @@ test('C615 directory listing LEC: a real first full listing returned with an err
   const first = firstListing(run);
   assert.ok(first.status === 0 && first.error?.code === null && first.l0 === 'error-rejected' && first.selected && first.parse.cell === 'D0', 'the first full listing was not a real answer carrying an error with no code');
   const manifest = linesOf(join(run.root, 'fixture', 'returned-tool-reads'), 'manifest.jsonl');
-  const ended = manifest.find(({ kind, tool, args }) => kind === 'end' && tool === '/usr/sbin/lsof' && args.includes('-u'));
+  const ended = manifest.find(({ kind, tool, args }) => kind === 'end' && tool === LSOF && args.includes('-u'));
   assert.ok(ended && ended.error?.name === 'Error' && ended.error.code === undefined && ended.status === 0 && ended.stdout.type === 'string', 'the private manifest did not keep the error object with its returned listing');
-  const traced = linesOf(join(run.root, 'fixture'), 'control.trace.jsonl').find(({ kind, tool, args }) => kind === 'read-end' && tool === '/usr/sbin/lsof' && args.includes('-u'));
+  const traced = linesOf(join(run.root, 'fixture'), 'control.trace.jsonl').find(({ kind, tool, args }) => kind === 'read-end' && tool === LSOF && args.includes('-u'));
   assert.ok(traced && traced.error === null && traced.status === 0, 'the control trace did not record the codeless error as null');
   assert.ok(run.events.some(({ event, census }) => event === 'directory.unread' && census.includes('c757 forced error with no code')), 'L0 did not refuse the listing for its error');
 });
@@ -4969,7 +4976,7 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
       const recorded = birth ?? (directory && existsSync(join(directory, 'group-birth.json')) ? JSON.parse(readFileSync(join(directory, 'group-birth.json'), 'utf8')) : undefined);
       if (recorded) {
         const settled = await waitFor(() => {
-          const read = spawnSync('/bin/ps', ['-ww', '-p', String(recorded.group), '-o', 'pid=,stat=,command='], { encoding: 'utf8' });
+          const read = spawnSync(PS, ['-ww', '-p', String(recorded.group), '-o', 'pid=,stat=,command='], { env: process.env, encoding: 'utf8' });
           assert.ok(!read.error && (read.status === 0 || (read.status === 1 && read.stdout === '' && read.stderr === '')), 'the group finalizer could not read the process table');
           if (read.status === 1) { result.group = 'absent'; return true; }
           const row = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(read.stdout.trimEnd());
@@ -5112,16 +5119,16 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
   assert.ok(!callerError && caller.exitCode === 0, 'the group caller did not finish exit cleanup; inspect its private stderr');
 
   const trace = linesOf(directory, 'control.trace.jsonl');
-  const reads = trace.filter(({ kind, tool, status, error }) => kind === 'read-end' && tool === '/bin/ps' && status === 0 && !error);
+  const reads = trace.filter(({ kind, tool, status, error }) => kind === 'read-end' && tool === PS && status === 0 && !error);
   const matching = (args) => reads.filter(({ args: given }) => given?.length === args.length && given.every((value, index) => value === args[index]));
   const group = birth.group;
   const states = ['-ww', '-g', String(group), '-o', 'pid=,stat='];
   const commands = ['-ww', '-g', String(group), '-o', 'pid=,command='];
   const names = ['-p', String(group), '-o', 'ucomm='];
   const ordered = trace.filter(({ kind }) => kind === 'read-end');
-  const first = ordered.findIndex(({ tool, args }) => tool === '/bin/ps' && JSON.stringify(args) === JSON.stringify(states));
+  const first = ordered.findIndex(({ tool, args }) => tool === PS && JSON.stringify(args) === JSON.stringify(states));
   const round = ordered.slice(first, first + 5);
-  assert.ok(first >= 0 && round.length === 5 && [states, commands, names, commands, states].every((args, index) => round[index].tool === '/bin/ps' && JSON.stringify(round[index].args) === JSON.stringify(args) && round[index].status === 0 && !round[index].error), 'the actual real ps group census did not complete C1–C5');
+  assert.ok(first >= 0 && round.length === 5 && [states, commands, names, commands, states].every((args, index) => round[index].tool === PS && JSON.stringify(round[index].args) === JSON.stringify(args) && round[index].status === 0 && !round[index].error), 'the actual real ps group census did not complete C1–C5');
   assert.ok(round[0].stdout.split('\n').some((line) => new RegExp(`^\\s*${group}\\s+[^Z?]`).test(line)) && round[4].stdout.split('\n').some((line) => new RegExp(`^\\s*${group}\\s+[^Z?]`).test(line)), 'the real group state reads did not show the recorded live fixture');
   assert.ok(round[1].stdout.includes(fixturePath) && round[1].stdout.includes(nonce) && round[3].stdout.includes(fixturePath) && round[3].stdout.includes(nonce), 'the actual command reads did not identify the direct Node fixture');
   const observedName = round[2].stdout.replace(/ *\n$/, '');
@@ -5293,7 +5300,7 @@ const C615_PUBLICATION_OBSERVER = [
   "  if (role === 'caller') {",
   "    const spawnSync = childProcess.spawnSync;",
   "    childProcess.spawnSync = function (command, args, ...rest) {",
-  "      if (command !== '/bin/ps') return spawnSync.call(this, command, args, ...rest);",
+  ("      if (command !== " + JSON.stringify(PS) + ") return spawnSync.call(this, command, args, ...rest);"),
   "      mark('tool-start', { tool: command, args });",
   "      const answer = spawnSync.call(this, command, args, ...rest);",
   "      mark('tool-returned', { tool: command, status: answer.status, error: answer.error?.code ?? null });",
@@ -5572,12 +5579,12 @@ test('G3 C2 bound: an accepted round survives a rejected round and names the kil
     '  count=$((count + 1))',
     '  printf "%s" "$count" > "$here/census-state-count"',
     '  case "$count" in',
-    '    1) /bin/ps "$@" | /usr/bin/awk \'NR == 1 { $2 = "?" } { print }\'; exit 0 ;;',
+    ("    1) " + shellQuote(PS) + " \"$@\" | /usr/bin/awk 'NR == 1 { $2 = \"?\" } { print }'; exit 0 ;;"),
     '    4) exit 1 ;;',
     '    5) : > "$here/group-clock-cut" ;;',
     '  esac ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, stderr, events } = await cleanedUpBy(GROUP_BOUND_CALLER, directory, { ps: 'ps', groupBoundTrace: true, hangAfter: 'group' });
@@ -5628,7 +5635,7 @@ async function lateSynchronousWait(t, earlierAnswer) {
     listingOf('outside', realpathSync.native(join(work, 'sub'))),
   ].join('\n'));
   fixture(directory, 'ps', [
-    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
+    ("[ -f \"$here/hang\" ] || exec " + shellQuote(PS) + " \"$@\""),
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
     ...(earlierAnswer ? [
       '  if /bin/mkdir "$here/answered" 2>/dev/null; then',
@@ -5638,7 +5645,7 @@ async function lateSynchronousWait(t, earlierAnswer) {
     '  [ -f "$here/clock-cut" ] || { echo "ps: optional state read unavailable" >&2; exit 2; }',
     '  : > "$here/unexpected-read"; exit 2 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
 
   const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', readTimeout: 2_000, clockCut: 20_000 });
@@ -5672,7 +5679,7 @@ function failingFirstConfirmation(directory, mode) {
     '      exec /usr/bin/tail -f "$here/hold"',
     '    fi ;;',
     'esac',
-    'answer=$(/bin/ps "$@")',
+    ("answer=$(" + shellQuote(PS) + " \"$@\")"),
     'printf "READ %s\n" "$args" >> "$here/first-ps.log"',
     'printf "%s\n" "$answer" | /usr/bin/sed "s/^/ROW /" >> "$here/first-ps.log"',
     'printf "%s\n" "$answer"',
@@ -5769,9 +5776,9 @@ test('given a leader that answers signal 0 with EPERM until the next kill reache
 function answeringAtOnce(directory) {
   const pid = read(directory, 'outside.pid');
   const tool = (path, args) => spawnSync(path, args, { env: {}, encoding: 'utf8' }).stdout;
-  writeFileSync(join(directory, 'listed'), tool('/usr/sbin/lsof', ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-p', pid, '-F', 'pun']));
-  writeFileSync(join(directory, 'ucomm'), tool('/bin/ps', ['-p', pid, '-o', 'ucomm=']));
-  writeFileSync(join(directory, 'cmdline'), tool('/bin/ps', ['-ww', '-p', pid, '-o', 'pid=,command=']));
+  writeFileSync(join(directory, 'listed'), tool(LSOF, ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-p', pid, '-F', 'pun']));
+  writeFileSync(join(directory, 'ucomm'), tool(PS, ['-p', pid, '-o', 'ucomm=']));
+  writeFileSync(join(directory, 'cmdline'), tool(PS, ['-ww', '-p', pid, '-o', 'pid=,command=']));
   fixture(directory, 'lsof', '[ -f "$here/hang" ] && { : > "$here/post-kill-listing"; exec /usr/bin/tail -f "$here/hold"; }\nexec /bin/cat "$here/listed"');
   fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
@@ -5827,7 +5834,7 @@ test('given a census of a dispatch\'s directory whose listing after its kill tak
 /** Counts state reads under one lock and exposes only a complete published value. */
 const stateCounter = [
   '  if [ -f "$here/first-inside" ]; then : > "$here/second-attempt"; fi',
-  `  count=$(/usr/bin/lockf -k "$here/state-count.lock" /bin/sh -c 'count=$(/bin/cat "$1/state-count" 2>/dev/null || printf 0); count=$((count + 1)); if [ -f "$1/hold-first" ] && [ "$count" -eq 1 ]; then : > "$1/first-inside"; while [ ! -f "$1/release-first" ]; do :; done; fi; if [ -f "$1/counter-cut-request" ] && [ "$count" -eq 3 ]; then : > "$1/state-count.next"; : > "$1/counter-cut"; exec /usr/bin/tail -f "$1/hold"; fi; printf "%s\\n" "$count" > "$1/state-count.next" && /bin/mv -f "$1/state-count.next" "$1/state-count" || exit 1; printf "%s" "$count"' sh "$here") || exit 79`,
+  `  count=$(${process.platform === 'linux' ? '/usr/bin/flock -E 75' : '/usr/bin/lockf -k'} "$here/state-count.lock" /bin/sh -c 'count=$(/bin/cat "$1/state-count" 2>/dev/null || printf 0); count=$((count + 1)); if [ -f "$1/hold-first" ] && [ "$count" -eq 1 ]; then : > "$1/first-inside"; while [ ! -f "$1/release-first" ]; do :; done; fi; if [ -f "$1/counter-cut-request" ] && [ "$count" -eq 3 ]; then : > "$1/state-count.next"; : > "$1/counter-cut"; exec /usr/bin/tail -f "$1/hold"; fi; printf "%s\\n" "$count" > "$1/state-count.next" && /bin/mv -f "$1/state-count.next" "$1/state-count" || exit 1; printf "%s" "$count"' sh "$here") || exit 79`,
 ];
 
 /** Drives one named outside PID through a chosen post-kill listing and two state-read answers. */
@@ -5872,7 +5879,7 @@ async function directoryReadCell(t, { listing, first, second, third, caller, clo
     ...(third ? [`  if [ "$count" -eq 2 ]; then ${answerFor(second)}; fi`] : []),
     `  ${answerFor(third ?? second, clockCutAt === 'second' || clockCutAt === 'reaped' || clockCutAt === 'failed' || clockCutAt === 'thirdFailed')}`,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const options = { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', ...(clockCutAt ? { clockCut: 20_000, clockAtListing: clockCutAt === 'listing', clockAtReaped: ['reaped', 'failed', 'thirdFailed'].includes(clockCutAt), clockBranch: clockCutAt === 'reaped' ? 'answered-live' : 'plain-failure', clockAtKill: clockCutAt === 'kill' } : {}) };
   try {
@@ -5949,7 +5956,7 @@ async function postKillReadCell(t, { listing, first, second, postKillCut = false
     `  if [ "$count" -eq 1 ]; then [ -f "$here/post-kill-listing" ] || : > "$here/state-before-listing"; [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":1,"result":"${first}"}\\n' >> "$here/post-kill-trace"; ${answer(first)}; fi`,
     `  [ -f "$here/post-kill-trace" ] && printf '{"operation":"ps-end","count":%s,"result":"${second}"}\\n' "$count" >> "$here/post-kill-trace"; ${postKillCut ? ': > "$here/clock-cut"; ' : ''}${answer(second)}`,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const result = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', postKillCut, postKillTrace });
   if (postKillTrace) t.diagnostic(JSON.stringify({ runId: process.env.RIGGER_689_RUN_ID, trace: [...linesOf(directory, 'post-kill-trace'), { at: result.ended, operation: 'caller-end', status: result.status }], pairs: result.pairs, events: result.events, stateReads: existsSync(join(directory, 'state-count')) ? read(directory, 'state-count') : 'not reached', clockJumps: existsSync(join(directory, 'clock-jumps')), notReached: existsSync(join(directory, 'clock-jumps')) ? ['next ps: the read boundary reported LATE after the chosen later answer'] : [] }));
@@ -5996,7 +6003,9 @@ test('two concurrent state counter calls hold one lock and preserve both increme
     const second = spawn(counter, [], { stdio: 'ignore', env: {} });
     secondExit = once(second, 'close');
     await until(() => existsSync(join(directory, 'second-attempt')), t);
-    const probe = spawnSync('/usr/bin/lockf', ['-s', '-t', '0', '-k', join(directory, 'state-count.lock'), '/usr/bin/true'], { env: {} });
+    const lock = process.platform === 'linux' ? '/usr/bin/flock' : '/usr/bin/lockf';
+    const flags = process.platform === 'linux' ? ['-E', '75', '-n'] : ['-s', '-t', '0', '-k'];
+    const probe = spawnSync(lock, [...flags, join(directory, 'state-count.lock'), '/usr/bin/true'], { env: {} });
     assert.equal(probe.error, undefined, 'the lock probe could not run');
     assert.equal(probe.status, 75, 'the first increment did not hold the lock after the second call started');
   } finally {
@@ -6058,7 +6067,7 @@ test('after a named directory kill, a late listing records the unread directory 
     '  : > "$here/clock-cut"',
     `  printf '%s T\\n' '${outside}'; exit 0`,
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const { status, stderr, events } = await cleanedUpBy(CLOCKED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', clockCut: 20_000 });
   const pairs = linesOf(directory, 'pairs');
@@ -6129,7 +6138,7 @@ async function plainFailureBoundaryCell(t, { retainedLive, terminal }) {
     `  if [ "$count" -eq ${beforeTerminal} ]; then ${terminal === 'late' ? ': > "$here/clock-cut"; ' : ''}${failed}; fi`,
     '  : > "$here/state-timeout"; exec /usr/bin/tail -f "$here/hold"',
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const result = { ...await cleanedUpBy(TRACED_CALLER, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', ...(terminal === 'late' ? { clockCut: 20_000 } : {}) }), pairs: linesOf(directory, 'pairs'), ended: Date.now() };
   const trace = linesOf(directory, 'control.trace.jsonl');
@@ -6189,7 +6198,7 @@ async function postKillBoundaryCell(t, mode) {
     ...(mode === 'timeout' ? [] : ['  [ -f "$here/post-kill-trace" ] && printf \'{"operation":"ps-end","result":"live"}\\n\' >> "$here/post-kill-trace"']),
     ...(mode === 'timeout' ? ['  : > "$here/timed-out-state"; exec /usr/bin/tail -f "$here/hold"'] : [`  ${mode === 'terminal-live' ? ': > "$here/clock-cut"; ' : ''}printf '%s T\\n' '${outside}'; exit 0`]),
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const { status, stderr, events, pairs, ended } = await cleanedUp(directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside', postKillCut: mode === 'before-later', postKillTerminal: mode === 'terminal-live' || mode === 'timeout', postKillTrace: true });
   t.diagnostic(JSON.stringify({ runId: process.env.RIGGER_689_RUN_ID, mode, trace: [...linesOf(directory, 'post-kill-trace'), { at: ended, operation: 'caller-end', status }], pairs, events, outsideState: processState(outside), outsideAnswersSignal0: alive(outside), terminalClockSeen: existsSync(join(directory, 'clock-terminal')), notReached: [!existsSync(join(directory, 'later-state')) && !existsSync(join(directory, 'unexpected-state')) ? 'later ps: deadline before read' : undefined, mode === 'timeout' ? 'later ps answer: command timed out' : undefined].filter(Boolean) }));
@@ -6417,7 +6426,7 @@ async function firstLiveReadCell(t, { steps, cutAfter, boundBranch, observe }) {
     '    *) echo "unexpected named state read $count" >&2; exit 2 ;;',
     '  esac',
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const options = { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside',
     ...(cutAfter ? { clockCut: 20_000, clockAtReaped: Boolean(boundBranch), clockBranch: boundBranch } : {}) };
@@ -6603,7 +6612,7 @@ async function groupReadCell(t, mode) {
     ...(mode === 'failed' ? ['    echo "ps: forced group failure" >&2; exit 2'] : ['    : > "$here/group-clock-cut"']),
     '  fi ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const caller = mode === 'late' ? GROUP_LATE_CALLER : CALLER;
   const { status, stderr, events } = await cleanedUpBy(caller, directory, { ps: 'ps', lsof: 'lsof', directory: work, hangAfter: 'outside', unkept: 'outside' });
@@ -6657,6 +6666,12 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
   assert.ok(pairs.filter(([target, name]) => target === group && name === 0).length > 0, 'the cleanup never asked signal 0 of the leader, so the test proves nothing');
   assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
   assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
+  if (process.platform === 'linux') {
+    const children = ['one', 'two'].map((name) => pidIn(directory, name));
+    // Signal 0 still reaches an exited orphan until its adopting parent reaps it.
+    for (const pid of children) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
+    await until(() => children.every((pid) => !alive(pid)), t);
+  }
   assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
 });
 
@@ -6679,6 +6694,11 @@ async function assertLeaderUnended(t, kept, why) {
   assert.match(ending.unread ?? '', /could not end the command/, JSON.stringify(ending));
   assert.match(ending.unread, why, JSON.stringify(ending));
   assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event }) => event), ['survivor.unended']);
+  for (const name of ['one', 'two']) {
+    const pid = pidIn(directory, name);
+    assert.ok(Number.isSafeInteger(pid) && pid > 0, `the ${name} fixture did not record its PID`);
+    assert.match(processState(pid), /^(?:Z|$)/, `killable child ${pid} still runs after cleanup of its unended leader`);
+  }
 }
 
 // proves R-STATE-9, R-STATE-19
@@ -6771,7 +6791,7 @@ test('on the exit cleanup, a member no read before the kill listed, which the ki
 });
 
 /** A `ps` stand-in that answers every read as `ps` does until `$here/hang` exists, and from then on fails each as `ps` fails. */
-const failingAfterKill = (directory) => fixture(directory, 'ps', '[ -f "$here/hang" ] && { echo "ps: failing on purpose" >&2; exit 2; }\nexec /bin/ps "$@"');
+const failingAfterKill = (directory) => fixture(directory, 'ps', ("[ -f \"$here/hang\" ] && { echo \"ps: failing on purpose\" >&2; exit 2; }\nexec " + shellQuote(PS) + " \"$@\""));
 
 /** Asserts `events` record the kill of the group in place of what reads after the kill could not list. */
 function assertUnreadAfterKill(events) {
@@ -6853,7 +6873,7 @@ test('on the exit cleanup, a member no read before the kill listed, which outliv
 const hidingTwoUnnamed = (directory) => fixture(directory, 'ps', [
   `[ -f "$here/hang" ] || { ${CUT_TWO}; exit 0; }`,
   'case "$*" in *"-o ucomm="*) echo "ps: failing on purpose" >&2; exit 2 ;; esac',
-  'exec /bin/ps "$@"',
+  ("exec " + shellQuote(PS) + " \"$@\""),
 ].join('\n'));
 
 // proves R-STATE-19, R-STATE-9
@@ -6945,7 +6965,7 @@ const failingOnceAfterKill = (directory) => fixture(directory, 'ps', [
   'case "$*" in *stat=*)',
   '  if [ -f "$here/hang" ] && [ ! -f "$here/failed" ]; then : > "$here/failed"; echo "ps: failing once on purpose" >&2; exit 2; fi ;;',
   'esac',
-  'exec /bin/ps "$@"',
+  ("exec " + shellQuote(PS) + " \"$@\""),
 ].join('\n'));
 
 /** Asserts that `events` record `two`, a member the kill left a zombie that later reads listed, as `killed` and as nothing else. */
@@ -6993,9 +7013,9 @@ function answeringOnceAfterKill(directory, name, shown) {
   }[shown];
   return fixture(directory, 'ps', [
     '[ -f "$here/answered" ] && { : > "$here/failed"; echo "ps: failing on purpose" >&2; exit 2; }',
-    '[ -f "$here/hang" ] || exec /bin/ps "$@"',
-    'case "$*" in *stat=*) ;; *) exec /bin/ps "$@" ;; esac',
-    'rows=$(/bin/ps "$@") || exit $?',
+    ("[ -f \"$here/hang\" ] || exec " + shellQuote(PS) + " \"$@\""),
+    ("case \"$*\" in *stat=*) ;; *) exec " + shellQuote(PS) + " \"$@\" ;; esac"),
+    ("rows=$(" + shellQuote(PS) + " \"$@\") || exit $?"),
     'printf "%s\\n" "$rows"',
     `printf "%s\\n" "$rows" | /usr/bin/awk -v pid="$(/bin/cat "$here/${name}.pid")" '${lists}' && printf "%s\\n" "$rows" > "$here/answered"`,
     'exit 0',
@@ -7132,13 +7152,13 @@ async function d2CloseWithin(closed) {
 async function d2CommandGone({ pid, started }) {
   const deadline = Date.now() + 5_000;
   const present = () => {
-    const state = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    const state = spawnSync(PS, ['-o', 'stat=', '-p', String(pid)], { env: process.env, encoding: 'utf8' });
     if (state.error) throw state.error;
     if (state.status === 1 && !state.stdout && !state.stderr) return false;
     if (state.status !== 0 || !state.stdout.trim() || state.stderr) throw new Error('the command identity read did not answer cleanly');
     try { return startOf(pid) === started; }
     catch {
-      const after = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+      const after = spawnSync(PS, ['-o', 'stat=', '-p', String(pid)], { env: process.env, encoding: 'utf8' });
       if (after.status === 1 && !after.stdout && !after.stderr && !after.error) return false;
       throw new Error('the command identity changed during its read');
     }
@@ -7390,14 +7410,14 @@ async function firstDirectoryListing(t, answer) {
     ].join('\n')
     : ': > "$here/first-listing-entered"\n' + listingOf('outside', realpathSync.native(sub)) + (coListedRefusal ? '\n' + listingOf('refused', realpathSync.native(refusedSub)) : '');
   fixture(directory, 'lsof', lsofBody);
-  if (answer === 'A') fixture(directory, 'ps', 'exec /bin/ps "$@"');
+  if (answer === 'A') fixture(directory, 'ps', ("exec " + shellQuote(PS) + " \"$@\""));
   if (answer === 'D9NT' || answer === 'D9NU' || groupC2Timeout || answer === 'D9CT') writeFileSync(join(directory, 'hold'), '');
   if (answer === 'D9NU' || groupC1Failure || groupC2Read) fixture(directory, 'ps', [
     'group=$(/bin/cat "$here/group.pid")',
     groupC1Failure ? 'if [ "$*" = "-ww -g $group -o pid=,stat=" ] && [ ! -f "$here/d9-prior-entered" ]; then' : 'if [ "$*" = "-ww -g $group -o pid=,stat=" ]; then',
     ...(groupC2Read ? [
       '  : > "$here/group-c1-answered"',
-      '  exec /bin/ps "$@"',
+      ("  exec " + shellQuote(PS) + " \"$@\""),
     ] : groupC1Failure ? [
       '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
       '  : > "$here/d9-prior-entered"',
@@ -7412,7 +7432,7 @@ async function firstDirectoryListing(t, answer) {
       groupC2Failure ? 'if [ "$*" = "-ww -g $group -o pid=,command=" ] && [ ! -f "$here/d9-prior-entered" ]; then' : 'if [ "$*" = "-ww -g $group -o pid=,command=" ]; then',
       groupC3Failure ? '  : > "$here/group-c2-answered"' : '  printf "%s\\n" "$@" > "$here/d9-prior-argv"',
       ...(!groupC3Failure ? ['  : > "$here/d9-prior-entered"'] : []),
-      groupC3Failure ? '  exec /bin/ps "$@"' : groupC2Timeout ? '  exec /usr/bin/tail -f "$here/hold"' : '  echo "ps: forced group command failure" >&2; exit 2',
+      groupC3Failure ? ("  exec " + shellQuote(PS) + " \"$@\"") : groupC2Timeout ? '  exec /usr/bin/tail -f "$here/hold"' : '  echo "ps: forced group command failure" >&2; exit 2',
       'fi',
     ] : []),
     ...(groupC3Failure ? [
@@ -7422,7 +7442,7 @@ async function firstDirectoryListing(t, answer) {
       '  echo "ps: forced group name failure" >&2; exit 2',
       'fi',
     ] : []),
-    groupC1Failure || groupC2Failure || groupC3Failure ? 'exec /bin/ps "$@"' : 'echo "ps: an unexpected read spawned after the cached refusal" >&2; exit 3',
+    groupC1Failure || groupC2Failure || groupC3Failure ? ("exec " + shellQuote(PS) + " \"$@\"") : 'echo "ps: an unexpected read spawned after the cached refusal" >&2; exit 3',
   ].join('\n'));
   else if (d9Read) fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
@@ -7436,7 +7456,7 @@ async function firstDirectoryListing(t, answer) {
     ...(answer === 'D9EC' ? ['  printf "%s returned-command\\n" "$pid"'] : answer === 'D9CF' ? ['  echo "ps: forced command failure" >&2; exit 2'] : answer === 'D9CT' ? ['  exec /usr/bin/tail -f "$here/hold"'] : []),
     '  exit 0',
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   if (heldZombie) fixture(directory, 'ps', [
     'pid=$(/bin/cat "$here/outside.pid")',
@@ -7450,7 +7470,7 @@ async function firstDirectoryListing(t, answer) {
     '  : > "$here/held-zombie-after-entered"',
     '  printf "%s S\\n" "$pid"; exit 0',
     'fi',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   else if (heldRead) {
     if (answer === 'ST' || answer === 'LT' || answer === 'PT' || answer === 'EHT' || answer === 'EHST' || answer === 'EHPT') writeFileSync(join(directory, 'hold'), '');
@@ -7460,9 +7480,9 @@ async function firstDirectoryListing(t, answer) {
       '  printf "%s\\n" "$@" > "$here/held-state-argv"',
       '  /bin/ps -p "$pid" -o stat= > "$here/held-state-status"',
       '  : > "$here/held-state-entered"',
-      heldListing || heldOmitted ? '  printf "%s S\\n" "$pid"; exit 0' : heldPerPid ? '  exec /bin/ps "$@"' : answer === 'SF' || answer === 'EHSF' ? '  echo "ps: forced held-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"',
+      heldListing || heldOmitted ? '  printf "%s S\\n" "$pid"; exit 0' : heldPerPid ? ("  exec " + shellQuote(PS) + " \"$@\"") : answer === 'SF' || answer === 'EHSF' ? '  echo "ps: forced held-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"',
       'fi',
-      'exec /bin/ps "$@"',
+      ("exec " + shellQuote(PS) + " \"$@\""),
     ].join('\n'));
   }
   if (ownedRead) {
@@ -7483,7 +7503,7 @@ async function firstDirectoryListing(t, answer) {
         '  printf "%s\\n" "$@" > "$here/owned-next-state-argv"',
         '  /bin/ps -p "$pid" -o stat= > "$here/owned-next-state-actual"',
         '  : > "$here/owned-next-state-entered"',
-        ownedLive || ownedZombie ? `  printf "%s ${ownedZombie ? 'Z' : 'S'}\\n" "$pid"; exit 0` : ownedState ? answer === 'OSF' || answer === 'EOSF' ? '  echo "ps: forced owned-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"' : '  exec /bin/ps "$@"',
+        ownedLive || ownedZombie ? `  printf "%s ${ownedZombie ? 'Z' : 'S'}\\n" "$pid"; exit 0` : ownedState ? answer === 'OSF' || answer === 'EOSF' ? '  echo "ps: forced owned-state failure" >&2; exit 2' : '  exec /usr/bin/tail -f "$here/hold"' : ("  exec " + shellQuote(PS) + " \"$@\""),
         'fi',
       ] : []),
       ...(ownedZombie ? [
@@ -7492,7 +7512,7 @@ async function firstDirectoryListing(t, answer) {
         '  printf "%s S\\n" "$pid"; exit 0',
         'fi',
       ] : []),
-      'exec /bin/ps "$@"',
+      ("exec " + shellQuote(PS) + " \"$@\""),
     ].join('\n'));
   }
   const callerPath = join(directory, 'caller.mjs');
@@ -7602,7 +7622,7 @@ async function firstDirectoryListing(t, answer) {
     const event = trace.find(({ kind, event: type, pid: target, sequence }) => kind === 'event' && type === 'survivor.unended' && target === pid && sequence > refusal?.sequence);
     assert.ok(groupKill && firstStart && first && refusal && event, 'the timeout, group kill, answered directory listing, EPERM and PID result did not occur in order');
     assert.equal(first.status, 0, 'the directory listing did not answer after the group timeout');
-    assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the directory listing did not return the refused fixture');
+    assert.equal(first.stdout, listingFields(pid, realpathSync.native(sub)), 'the directory listing did not return the refused fixture');
     assert.ok(first.error === undefined && first.stderr === '', 'the directory listing reported a failure instead of an answer');
     assert.ok(event.at >= firstStart.at && event.at - firstStart.at < CLEANUP_BOUND, 'the directory description could have been cut by its own deadline rather than the prior cache');
     assert.deepEqual(trace.filter(({ kind, tool }) => kind === 'read-start' && tool === ps).map(({ args }) => args), groupC2Read ? [firstGroupArgs, priorArgs] : [priorArgs], 'another ps spawned after the failed census read instead of retaining its error');
@@ -7621,8 +7641,8 @@ async function firstDirectoryListing(t, answer) {
   if (heldRead) {
     const trace = linesOf(directory, 'control.trace.jsonl');
     const pid = outsideBirth.pid;
-    const firstListing = `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
-    const refusedListing = coListedRefusal ? `p${refusedBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(refusedSub)}\n` : '';
+    const firstListing = listingFields(pid, realpathSync.native(sub));
+    const refusedListing = coListedRefusal ? listingFields(refusedBirth.pid, realpathSync.native(refusedSub)) : '';
     const firstStart = trace.find(({ kind, tool, args }) => kind === 'read-start' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs));
     const first = trace.find(({ kind, tool, args, status, stdout, error }) => kind === 'read-end' && tool === join(directory, 'lsof') && JSON.stringify(args) === JSON.stringify(firstArgs) && status === 0 && !error && stdout === firstListing + refusedListing);
     if (coListedRefusal) assert.ok(firstStart && first && first.sequence === firstStart.sequence + 1, 'the two-PID full listing did not start and return its exact answer in order');
@@ -7778,8 +7798,8 @@ async function firstDirectoryListing(t, answer) {
     const priorCommand = read(ps, ['-ww', '-p', String(pid), '-o', 'pid=,command='], priorName?.sequence);
     const after = read(ps, stateArgs, priorCommand?.sequence);
     assert.ok(first && stop && before && second && priorName && priorCommand && after, 'the first round did not reach a twice-listed, stopped PID before the owned-state answer');
-    const outsideListing = `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
-    const refusedListing = coListedRefusal ? `p${refusedBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(refusedSub)}\n` : '';
+    const outsideListing = listingFields(pid, realpathSync.native(sub));
+    const refusedListing = coListedRefusal ? listingFields(refusedBirth.pid, realpathSync.native(refusedSub)) : '';
     assert.equal(first.stdout, outsideListing + refusedListing, 'the first full listing did not name the recorded fixtures');
     if (coListedRefusal) {
       const forbidden = trace.find(({ kind, target, name, error, sequence }) => kind === 'signal-answer' && target === refusedBirth.pid && name === 'SIGSTOP' && error === 'EPERM' && sequence > stop.sequence);
@@ -7994,7 +8014,7 @@ async function firstDirectoryListing(t, answer) {
     assert.ok(firstStart && first && refusal && nameStart && name && event && (failedName || (commandStart && command)), 'the EPERM name-first description was not reached in order');
     assert.equal(first.readId, firstStart.readId, 'the initial full listing did not close its started read');
     assert.equal(first.status, 0, 'the initial listing did not answer');
-    assert.equal(first.stdout, `p${pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`, 'the initial listing did not return the owned fixture');
+    assert.equal(first.stdout, listingFields(pid, realpathSync.native(sub)), 'the initial listing did not return the owned fixture');
     assert.equal(name.readId, nameStart.readId, 'the name read did not close its started read');
     assert.deepEqual(readFileSync(join(directory, 'd9-name-argv'), 'utf8').trimEnd().split('\n'), nameArgs, 'the name read used the wrong argv');
     if (failedName) {
@@ -8061,7 +8081,7 @@ async function firstDirectoryListing(t, answer) {
     const lsof = join(directory, 'lsof');
     const ps = join(directory, 'ps');
     const first = read(lsof, firstArgs);
-    const expectedListing = `p${outsideBirth.pid}\nu${process.getuid()}\nfcwd\nn${realpathSync.native(sub)}\n`;
+    const expectedListing = listingFields(outsideBirth.pid, realpathSync.native(sub));
     assert.ok(first && first.stdout === expectedListing, 'the first full lsof did not answer with the directly owned PID and cwd');
     const stop = trace.find(({ kind, target, name, answer: result, sequence }) => kind === 'signal-answer' && target === outsideBirth.pid && name === 'SIGSTOP' && result === true && sequence > first.sequence);
     assert.ok(stop, 'the answered first listing did not successfully stop the recorded PID');
@@ -8368,7 +8388,7 @@ async function groupPhaseCut(t, phase, accepted) {
     '  "-ww -g "*" -o pid=,stat=")',
     '    count=0; [ ! -f "$here/census-state-count" ] || count=$(< "$here/census-state-count")',
     '    count=$((count + 1)); printf "%s" "$count" > "$here/census-state-count"',
-    ...(accepted ? ['    if [ "$count" -eq 1 ]; then /bin/ps "$@" | /usr/bin/awk \'NR == 1 { $2 = "?" } { print }\'; exit 0; fi'] : []),
+    ...(accepted ? [("    if [ \"$count\" -eq 1 ]; then " + shellQuote(PS) + " \"$@\" | /usr/bin/awk 'NR == 1 { $2 = \"?\" } { print }'; exit 0; fi")] : []),
     `    if [ "$count" -eq ${rejectedState} ]; then exit 1; fi`,
     ...(phase === 'C2' ? [`    if [ "$count" -eq ${targetState} ]; then ${mark}; fi`] : []),
     '    ;;',
@@ -8383,7 +8403,7 @@ async function groupPhaseCut(t, phase, accepted) {
     ...(phase === 'C3-later' || phase === 'C4' ? [`    if [ "$count" -eq ${priorNames + (phase === 'C4' ? 3 : 1)} ]; then ${mark}; fi`] : []),
     '    ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const anchor = "phase: 'C2'";
   assert.equal(GROUP_BOUND_CALLER.split(anchor).length, 2, 'the traced clock phase anchor moved');
@@ -8463,7 +8483,7 @@ test('C615 preparation streams distinguish absent undefined null and empty retur
       let calls = 0;
       const reader = (tool, argv) => {
         calls++;
-        assert.equal(tool, '/bin/ps');
+        assert.equal(tool, PS);
         assert.deepEqual(argv, ['-p', '42001', '-o', 'lstart=']);
         return result;
       };
@@ -8504,7 +8524,7 @@ test('C615 preparation refuses a returned read past its configured deadline', SE
   let now = 0n;
   let calls = 0;
   const reader = (tool, argv, settings) => {
-    assert.equal(tool, '/bin/ps');
+    assert.equal(tool, PS);
     assert.equal(settings.timeout, 500);
     if (calls === 0) now = 501_000_000n;
     return { status: 0, signal: null, error: undefined, stdout: answers[calls++], stderr: '' };

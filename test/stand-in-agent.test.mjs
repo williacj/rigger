@@ -11,7 +11,7 @@ import { until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { chmodSync, closeSync, constants, existsSync, lstatSync, openSync, readdirSync, writeFileSync, writeSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -34,6 +34,15 @@ const { 60_000: SETTLES_WITHIN } = BOUNDS;
  * it in 2 of 40 runs at a load of 23, so forty at once makes that moment many times over.
  */
 const RUNS = 40;
+
+test('run observations publish a record only after its terminating newline arrives', () => {
+  const agent = standInAgent();
+  const log = join(agent.dir, 'runs.jsonl');
+  writeFileSync(log, '{"card":1}\n{"card":');
+  assert.deepEqual(agent.runs(), [{ card: 1 }]);
+  appendFileSync(log, '2}\n');
+  assert.deepEqual(agent.runs(), [{ card: 1 }, { card: 2 }]);
+});
 
 /**
  * How long the runs have, once released, to wake. A judgment, a bound and never a wait: each run
@@ -79,7 +88,8 @@ test('a stand-in planned to exec a command under every card replaces itself with
   const agent = standInAgent();
   const pidFile = join(agent.dir, 'exec.pid');
   mkdirSync(join(agent.dir, 'exec'));
-  const installed = installStandInAgent(join(agent.dir, 'exec'), { '*': { engineer: { exec: ['/bin/sh', '-c', `echo $$ > '${pidFile}'`] } } });
+  // Read the input this test sends before exiting, so its pipe cannot close under the write.
+  const installed = installStandInAgent(join(agent.dir, 'exec'), { '*': { engineer: { exec: ['/bin/sh', '-c', `/bin/cat > /dev/null; echo $$ > '${pidFile}'`] } } });
   const child = spawn(join(installed.dir, 'claude'), ['--append-system-prompt-file', '/nowhere/.claude/agents/engineer.md'], { env: { ...process.env, NODE_OPTIONS: WITHOUT_EXECVE }, stdio: ['pipe', 'ignore', 'pipe'] });
   let said = '';
   child.stderr.on('data', (chunk) => { said += chunk; });

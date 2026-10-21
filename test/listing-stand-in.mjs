@@ -1,6 +1,9 @@
 // ABOUTME: A stand-in for `lsof` that answers L0's census of working directories on cue, naming the
 // one process a test's pid file holds, so no test's census waits on a real listing.
 
+/** The fields returned by the host's lsof for one working directory with -F pun. */
+export const listingFields = (pid, cwd) => `p${pid}\nu${process.getuid()}\n${process.platform === 'linux' ? '' : 'fcwd\n'}n${cwd}\n`;
+
 /**
  * Shell lines for a `fixture` body that answer the census's `lsof -F pun` as `lsof` answers it of
  * one process: the pid `$here/<name>.pid` holds, of this user, working in `cwd`, a real path. It
@@ -18,6 +21,6 @@ export function listingOf(name, cwd) {
     'while [ $# -gt 0 ]; do [ "$1" = -p ] && asked=",$2,"; shift; done',
     'case "$asked" in "" | *",$pid,"*) ;; *) exit 1 ;; esac',
     'kill -0 "$pid" 2>/dev/null || exit 1',
-    `printf 'p%s\\nu${process.getuid()}\\nfcwd\\nn%s\\n' "$pid" '${cwd}'`,
+    `printf '${listingFields('%s', '%s').replaceAll('\n', '\\n')}' "$pid" '${cwd}'`,
   ].join('\n');
 }
