@@ -289,7 +289,11 @@ function tracing(t, agent, gate) {
   let closed = false;
   let teardown = false;
   let held = false;
-  const emit = () => {
+  // Runs after the test's own teardown, by which the stand-in directory's sweep and `started`'s
+  // hooks have killed every child still running, so each child's `close` comes: it waits on those
+  // events, so the trace holds each child's exit and its whole standard error before it closes.
+  const emit = async () => {
+    await Promise.all([...children.values()].map(({ ended }) => ended));
     for (const [role, { child, err }] of children) record('final reading', { role, child: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, stderr: err() });
     closed = true;
     t.diagnostic(`stand-in trace: ${directory}${kept === undefined ? ', which is removed with the test, so its events follow' : ''}`);
@@ -314,10 +318,10 @@ function tracing(t, agent, gate) {
   traces.set(t, {
     record,
     started: (role, child, err) => {
-      children.set(role, { child, err, at: Date.now() });
       record('spawn', { role, child: child.pid });
       child.once('exit', (code, signal) => record('exit', { role, child: child.pid, code, signal }));
-      child.once('close', () => record('close', { role, child: child.pid, stderr: err() }));
+      const ended = new Promise((resolve) => child.once('close', () => { record('close', { role, child: child.pid, stderr: err() }); resolve(); }));
+      children.set(role, { child, err, at: Date.now(), ended });
     },
   });
 }
