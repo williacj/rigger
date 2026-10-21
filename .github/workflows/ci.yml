@@ -33,6 +33,15 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm ci
       - run: npm test
+      - name: Verify Mac containment proof claims
+        run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-${{ matrix.node }}"
+      - name: Keep Mac containment proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: containment-proof-${{ matrix.node }}
+          path: ${{ runner.temp }}/containment-proof-${{ matrix.node }}
+          if-no-files-found: ignore
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style

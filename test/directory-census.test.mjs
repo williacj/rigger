@@ -101,6 +101,7 @@ test('while a dispatch runs, its record entry carries the dispatch\'s directory'
   await settled;
 
   assert.deepEqual(entries.map((entry) => entry.workspace), [realpathSync.native(directory)]);
+  assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the recorded dispatch directory is alive after settlement');
 });
 
 // proves R-STATE-17
@@ -493,6 +494,7 @@ test('while a dispatch runs, its record entry carries the device and inode of it
   await settled;
 
   assert.deepEqual(entries.map(({ device, inode }) => ({ device, inode })), [{ device: String(dev), inode: String(ino) }]);
+  assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the recorded directory identity is alive after settlement');
 });
 
 // proves R-STATE-17, R-STATE-7

@@ -176,7 +176,6 @@ test('whole rows and the whole answer are timed out when their output closes aft
   }
 });
 
-// proves R-STATE-12
 test('startOf refuses an exit-0 read whose output stays open past the synchronous deadline', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const readTimeout = 300;
