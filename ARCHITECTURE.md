@@ -513,15 +513,20 @@ role, which may change the acceptance, and the card's judges then rule again.
 
 L2 answers each escalation's destination from one function in `src/workflow/escalation.mjs`. It
 reads the category, the raiser, the configured destination, the card's kind's maker and judges,
-and L2's routing comment on the card's issue. An escalation the loop raises goes to the owner,
-whatever its configured destination. So does one for a card that already carries L2's routing
-comment, and one whose role is the card's maker or one of its kind's judges. When L2 sends a card
-to a role, it posts the routing comment on the card's issue first. The comment's first line is
-one `escalation.mjs` fixes, and L2 finds the comment by that line. L3 dispatches the role only
-after that comment is posted, so a crash between the two sends the card to the owner at its next
-note. Where the forge refuses the routing comment, L3 dispatches no role. The card is then an
-escalation whose write the forge refused, a case L3 keeps out of later pulls. No code of
-Rigger's removes the routing comment. A person who deletes it lets the card go to a role again.
+and L2's routing comment on the card's issue. An escalation goes to the owner, whatever its
+configured destination, where any of these holds:
+
+- the loop raised it;
+- the card already carries L2's routing comment;
+- its configured destination is the card's maker or one of its kind's judges.
+
+When L2 sends a card to a role, it posts the routing comment on the card's issue first. The
+comment's first line is one `escalation.mjs` fixes, and L2 finds the comment by that line. L3
+dispatches the role only after that comment is posted, so a crash between the two sends the card
+to the owner at its next note. Where the forge refuses the routing comment, L3 dispatches no role.
+The card is then an escalation whose write the forge refused, a case L3 keeps out of later pulls.
+No code of Rigger's removes the routing comment. A person who deletes it lets the card go to a
+role again.
 
 ## Failure model
 
@@ -666,15 +671,25 @@ one function that answers every role's. `src/workflow/escalation.mjs` composes i
 from the card's number, title and acceptance, the maker's note, and the pull request and its head,
 where they exist. The instruction also says that only the card's author changes an acceptance. It
 hands the role no marker, so the role can change the bar as the author, but never rules on a
-verdict. A role that exits 0 with no note under its dispatch id has handled the card. With an open
-pull request, the card then moves to Review, and its judges rule against the revised acceptance.
-With none, the card stays in Coding. The maker's next attempt then starts from the beginning where
-the forge holds nothing of the line of work. Where the maker pushed its line of work without a
-pull request, `R-WORK-19` refuses that start, and `R-ESCALATE-12` sends the card to the owner.
-While the role works, the card keeps its column and carries no escalation label (`R-ESCALATE-23`).
-A note under the role's dispatch id (`R-ESCALATE-24`), or a non-zero exit (`R-ESCALATE-25`),
-escalates the card to the owner. L2 answers both with raiser `loop`, keeping the note's category,
-or `ambiguous` for an exit, so `R-ESCALATE-15` sends them to the owner.
+verdict. While the role works, the card keeps its column and carries no escalation label
+(`R-ESCALATE-23`).
+
+A role that exits 0 with no note under its dispatch id has handled the card. What follows turns on
+the pull request and on what the forge holds of the card's line of work:
+
+- **An open pull request.** The card moves to Review, and its judges rule against the revised
+  acceptance.
+- **No pull request, and nothing of the line of work on the forge.** The card stays in Coding, and
+  the maker's next attempt starts from the beginning.
+- **No pull request, but the maker pushed its line of work.** The card stays in Coding.
+  `R-WORK-19` refuses the next attempt's start from the beginning, and `R-ESCALATE-12` sends the
+  card to the owner.
+
+Two other ends of the role's dispatch escalate the card. L2 answers each with raiser `loop`, so
+`R-ESCALATE-15` sends it to the owner:
+
+- **A note under the role's dispatch id** (`R-ESCALATE-24`). L2 keeps the note's category.
+- **A non-zero exit** (`R-ESCALATE-25`). L2 answers it as `ambiguous`.
 
 While L2 reads a continuing attempt's pull request at a head other than the tip L1 read, L3 has L2
 read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
@@ -743,16 +758,16 @@ before L3 dispatches that judge. The role an escalation goes to runs in an escal
 of its own, `escalations/<topic>/<role>` under the worktree root. L1 makes it fresh before L3
 dispatches that role, under `R-WORK-32`'s replace rule. Each role's dispatch also has a scratch
 directory, `scratch/<topic>/<role>` under the worktree root and outside every worktree, which L1
-makes fresh before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that belongs in
-no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's own user
-whose working directory is the dispatch's directory, or its scratch directory where it has one, or
-lies under either. L0 records each as it records a survivor. Where such a process is one L0 may not
-signal, or outlives that kill for the longer bound above, L0 records it by name and command line as
-a process it could not end, and waits on it no further. Where L0 cannot read which processes work in
-one of them, it records that directory and why in their place, and waits on them no further. L1
-hands L0 each of them and records it in the dispatch's entry. A later start does the same for each
-only where the directory at its path is still the one recorded. Where it is not, or L0 cannot tell,
-the start sweeps nothing there and records why. A command that is not a dispatch has no such
+makes fresh before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that
+belongs in no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's
+own user whose working directory is the dispatch's directory, or its scratch directory where it has
+one, or lies under either. L0 records each as it records a survivor. Where such a process is one L0
+may not signal, or outlives that kill for the longer bound above, L0 records it by name and command
+line as a process it could not end, and waits on it no further. Where L0 cannot read which processes
+work in one of them, it records that directory and why in their place, and waits on them no further.
+L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
+each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
+tell, the start sweeps nothing there and records why. A command that is not a dispatch has no such
 directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as

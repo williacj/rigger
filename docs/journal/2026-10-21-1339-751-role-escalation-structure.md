@@ -21,3 +21,12 @@ the architect's ruling without changing the requirements register.
 The extension row names destinations before the published config shape changes. M6-19 owns that
 shape beside its validator, whose test holds the two together. Until M6-19 merges, the row and
 the published example describe different stages of the planned configuration change.
+
+At round 2 the proposal passed from a Codex maker to a Claude architect, because the gate fixes
+this kind's reviewer on Codex (K46 on #740). The review input found two rules carried in prose
+that spec-style rule 4 wants as lists. The owner-override's three conditions are now a list
+under the test they share. The role's dispatch outcomes are now two lists: what a clean exit
+leads to, keyed by what the forge holds, and the two ends that escalate. Each keeps the draft's
+meaning, and the pull request lists both as departures. A list makes each condition a separate
+line that M6-19, M6-20a and M6-20b can each test against, where the prose chain left a reader to
+work out which clause governed which outcome.
