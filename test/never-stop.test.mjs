@@ -6666,6 +6666,12 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
   assert.ok(pairs.filter(([target, name]) => target === group && name === 0).length > 0, 'the cleanup never asked signal 0 of the leader, so the test proves nothing');
   assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
   assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
+  if (process.platform === 'linux') {
+    const children = ['one', 'two'].map((name) => pidIn(directory, name));
+    // Signal 0 still reaches an exited orphan until its adopting parent reaps it.
+    for (const pid of children) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
+    await until(() => children.every((pid) => !alive(pid)), t);
+  }
   assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
 });
 
