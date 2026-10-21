@@ -106,6 +106,26 @@ const TMPDIR_KEY = 'CLAUDE_CODE_TMPDIR';
 const TMPDIR_NAME = '.claude-tmp';
 
 /**
+ * The one folder Claude Code keeps for `directory` outside the dispatch. #629 measured on Claude
+ * Code 2.1.303, 2.1.304 and 2.1.306 that every character outside ASCII letters and digits becomes `-`. A name longer
+ * than 200 characters keeps its first 200, then `-` and the absolute value of the real path's
+ * signed 32-bit Java string hash in base 36. The live relation test measured this with `_`, a
+ * space and a real path longer than 200 characters. A later version may name them differently.
+ * The home is the one the session's environment selects (U8.2), left as given so L1
+ * can refuse an invalid value without choosing another home.
+ */
+export function cliFolder(directory, environment) {
+  const home = Object.hasOwn(environment, 'CLAUDE_CONFIG_DIR')
+    ? environment.CLAUDE_CONFIG_DIR
+    : (typeof environment.HOME === 'string' ? join(environment.HOME, '.claude') : undefined);
+  const plain = directory.replace(/[^A-Za-z0-9]/g, '-');
+  if (plain.length <= 200) return { home, name: plain };
+  let hash = 0;
+  for (let index = 0; index < directory.length; index += 1) hash = ((hash << 5) - hash + directory.charCodeAt(index)) | 0;
+  return { home, name: `${plain.slice(0, 200)}-${Math.abs(hash).toString(36)}` };
+}
+
+/**
  * The worktree tools, which #473's report found offered under both flags and withheld by
  * `--disallowedTools` (c36). They are withheld from every session.
  */
@@ -345,7 +365,7 @@ function above(directory) {
  * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path, one
  * whose real path holds a character outside `PLAIN`, or a declared Bash rule for a compound line.
  */
-export async function invocation({ agent, tier, prompt, directory, reach = [], emitter }) {
+export async function invocation({ agent, tier, prompt, directory, reach = [], emitter, environment = process.env }) {
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Claude Code adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
@@ -384,5 +404,6 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
     input: Buffer.from(prompt, 'utf8'),
     unset: [...UNSET],
     env: { [TMPDIR_KEY]: join(real, TMPDIR_NAME) },
+    folder: cliFolder(real, environment),
   };
 }

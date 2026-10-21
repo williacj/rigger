@@ -320,5 +320,6 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
     input: Buffer.from(prompt, 'utf8'),
     unset: [],
     env: { CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') },
+    folder: undefined,
   };
 }

@@ -117,7 +117,7 @@ function makerWorld({
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles, provisioning, outcomes, sink, ...attempt });
   const workspaces = join(directory, 'workspaces');
-  const environment = { ...process.env, PATH: agent.first(), RIGGER_STAND_IN_MARK: MARK };
+  const environment = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: agent.first(), RIGGER_STAND_IN_MARK: MARK };
   const built = loop({
     config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment,
   });
@@ -412,7 +412,7 @@ function psWorld({ steps = [], provisioning = {}, ...handed } = {}) {
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: settings.roles, provisioning, outcomes, sink, ...attempt });
   const built = loop({
-    config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(oneOpenFromEveryLine) }), sink, kill: async () => {}, workspace: makingWorkspaces(join(directory, 'workspaces')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() }, ...handed,
+    config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(oneOpenFromEveryLine) }), sink, kill: async () => {}, workspace: makingWorkspaces(join(directory, 'workspaces')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: agent.first() }, ...handed,
   });
   return { loop: built, agent };
 }

@@ -1,11 +1,11 @@
-// ABOUTME: L1's dispatching function: it records a dispatch's start, runs its command through L0's
-// process adapter while recording the command's process group, and records the dispatch's end.
-// And L1's kill of recorded groups, which on a start ends what a dead engine's dispatches left.
+// ABOUTME: L1 records each dispatch around L0's process adapter, sweeps its provider folder after
+// L0 settles, and kills groups a dead engine left in its record.
 
 import { realpathSync } from 'node:fs';
-import { sep } from 'node:path';
+import { isAbsolute, join, sep } from 'node:path';
 
 import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePartial, writeGroups } from './groups.mjs';
+import { listCliFolder, sweepCliFolder } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from '../substrate/process.mjs';
 
@@ -45,6 +45,10 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * For a role's dispatch, `roleDispatch` also hands `facts`, the facts L2 attached to identify the
  * work, and `digest`, a digest of the evidence L2 composed, and `dispatch.start` carries each it is
  * given as given (`ARCHITECTURE.md`, "Telemetry").
+ * It may also hand `folder`, the adapter's `{ home, name }` for a CLI session folder under
+ * `<home>/projects/`. L1 lists it before L0 starts the command and removes only paths absent from
+ * that listing once L0 settles. `dispatch.end` names paths or a reason in `folderLeft` only where
+ * a sweep left something or could not safely run.
  *
  * The order is fixed (the architect's ruling 2, §4, on #332): L1 appends `dispatch.start`; shows
  * the record writable; has L0 spawn the command, and writes the entry; L0 runs the command, kills
@@ -80,7 +84,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, scratch, env, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
@@ -96,6 +100,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
     throw refused(id, card, [{ event: 'dispatch.start', ...start, cause }]);
   }
   let recorded;
+  let folderListing;
   let result;
   let failure;
   // Whether L1 has recorded the dispatch's end, or is about to in the step it is taking.
@@ -116,6 +121,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
     // L0's census of it compares (the architect's ruling 20 on #467).
     const { unread, held } = scratch === undefined ? {} : scratchHeld(scratch);
     if (unread !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED });
+    if (folder !== undefined) folderListing = listCliFolder(folder);
     result = await runCommand({
       command,
       args,
@@ -158,6 +164,7 @@ export async function dispatch({ id, card, directory, sink, command, args, input
         if (ended) return;
         ended = true;
         const fields = { ...ending, ms: Math.round(clock() - began) };
+        if (folder !== undefined) fields.folderLeft = [unsweptFolder(folder, folderListing, 'Rigger exited before the CLI folder sweep')];
         try {
           removeGroup(directory, group);
         } catch (cause) {
@@ -213,10 +220,24 @@ export async function dispatch({ id, card, directory, sink, command, args, input
   // One end for every start L1 recorded, carrying the exit code where the command ran, or why it
   // did not start (the architect's ruling 2, §4, on #332).
   const ms = Math.round(clock() - began);
-  record('dispatch.end', result === undefined ? { reason: failure.message, ms } : { exit: result.exit, ms });
+  const folderLeft = folder === undefined ? [] : folderListing === undefined
+    ? [unsweptFolder(folder, folderListing, `L1 did not list or sweep its CLI folder: ${failure.message}`)]
+    : result === undefined
+    ? [unsweptFolder(folder, folderListing, `the command did not start or settle, so its CLI folder was not swept: ${failure.message}`)]
+    : sweepCliFolder(folderListing);
+  const folderFields = folderLeft.length === 0 ? {} : { folderLeft };
+  record('dispatch.end', result === undefined ? { reason: failure.message, ms, ...folderFields } : { exit: result.exit, ms, ...folderFields });
   if (unrecorded.length > 0) failure = alongside(failure, refused(id, card, unrecorded, result));
   if (failure !== undefined) throw failure;
   return result;
+}
+
+/** The safe folder path, where one can be named, and why L1 left it without a sweep. */
+function unsweptFolder(folder, listing, reason) {
+  const { home, name } = folder;
+  const path = listing?.path ?? (typeof home === 'string' && isAbsolute(home) && typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !name.includes(sep)
+    ? join(home, 'projects', name) : undefined);
+  return { ...(path === undefined ? {} : { path }), reason };
 }
 
 /**

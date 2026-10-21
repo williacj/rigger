@@ -2,6 +2,7 @@
 // test's refusing agent CLIs, and for the runs that start a session, its stand-ins and its record.
 
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -37,6 +38,15 @@ export function pastRefusing() {
   const path = process.env.PATH ?? '';
   if (refusing === undefined) return path;
   return path.split(delimiter).filter((entry) => resolve(entry || '.') !== resolve(refusing)).join(delimiter);
+}
+
+/** Gives a gated live session the owner's configuration home instead of npm test's home. */
+export function ownerClaudeEnvironment(env) {
+  if (!process.env.TMPDIR || env.CLAUDE_CONFIG_DIR !== join(process.env.TMPDIR, 'claude-home')) return env;
+  const saved = join(process.env.TMPDIR, 'owner-claude-config-dir');
+  if (existsSync(saved)) env.CLAUDE_CONFIG_DIR = readFileSync(saved, 'utf8');
+  else delete env.CLAUDE_CONFIG_DIR;
+  return env;
 }
 
 /** A scratch directory under `TMPDIR`, by its real path, removed when the test ends. */
@@ -158,6 +168,7 @@ export async function session({ invocation, runCommand }, request) {
   const emitter = { emit: (event, fields) => killed.push({ event, ...fields }) };
   const { command, args, input, unset, env: set } = await invocation({ ...request, emitter });
   const env = { ...process.env, PATH: pastRefusing() };
+  ownerClaudeEnvironment(env);
   for (const variable of unset) delete env[variable];
   Object.assign(env, set);
   const result = await runCommand({ command, args, input, cwd: request.directory, env, timeout: SESSION, emitter });
