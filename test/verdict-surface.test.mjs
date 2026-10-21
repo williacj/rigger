@@ -189,6 +189,24 @@ function loadsOnlyNamed(node, ancestors, program, file, tree, target) {
 }
 
 /**
+ * The builtins a module may import without counting: those src/ imports today, each of which
+ * runs no code it is handed, from a string or a path. `child_process` starts another process,
+ * whose module graph is its own, so it imports nothing into the module that spawns it; and rule 7
+ * of `test/layer-boundaries.mjs` lets only L0's process adapter import it. Every other builtin
+ * counts, `module`, `vm`, `worker_threads`, `inspector`, `repl`, `test`, `sqlite`, `wasi` and
+ * `sea` among them, and so does any builtin Node adds.
+ */
+const INERT_BUILTINS = ['crypto', 'events', 'fs', 'os', 'path', 'readline', 'timers/promises', 'url', 'util', 'child_process'];
+
+/**
+ * The rules of `boundaryReport` that refuse a route to code besides `import`: a loader such as
+ * `createRequire` or `process.getBuiltinModule`, code built at run time by `eval`, `Function` or a
+ * function's `constructor`, a native addon, a worker, an internal binding, and an import the rules
+ * cannot resolve. A module breaking one may load the verb by that route, so it counts.
+ */
+const LOADING_RULES = ['the dynamic-import rule', 'the code-generation rule', 'the unresolved-import rule', 'rule 7'];
+
+/**
  * Whether module `file` of `tree` imports `target`, or may. An import counts unless the check can
  * prove it loads another module:
  * - a specifier the source fixes, resolved as Node resolves it, that is a `file:` URL whose real
@@ -209,21 +227,21 @@ function imports(file, tree, target) {
       if (specifier === undefined) return node.type !== 'ImportExpression' || !loadsOnlyNamed(node, ancestors, program, file, tree, target);
       const found = resolved(specifier, parent);
       if (found?.protocol === 'file:') return sameFile(found, url);
-      if (found === undefined && isBuiltin(specifier)) return false;
-      if (found?.protocol === 'node:' && isBuiltin(specifier)) return false;
+      if ((found === undefined || found.protocol === 'node:') && isBuiltin(specifier)) return !INERT_BUILTINS.includes(specifier.replace(/^node:/, ''));
       return true;
     });
 }
 
 /**
  * Every module of `tree`, a map of repository path to source, that imports `target`, or may, as
- * `imports` reads each. `target` is read too, since the verb's module importing itself is a
+ * `imports` reads each, or that reaches code by a route `LOADING_RULES` names. `target` is read too, since the verb's module importing itself is a
  * module under src/ importing it.
  */
 export function importersOf(tree, target) {
+  const loading = new Set(boundaryReport(tree).violations.filter((violation) => LOADING_RULES.includes(violation.rule)).map((violation) => violation.file));
   return [...tree.keys()]
     .filter((file) => /\.(?:m|c)?js$/.test(file))
-    .filter((file) => imports(file, tree, target))
+    .filter((file) => loading.has(file) || imports(file, tree, target))
     .sort();
 }
 
@@ -324,14 +342,16 @@ test('a module under src/ importing the verdict verb by any spelling Node resolv
 });
 
 // proves R-VERDICT-11
-test('a module under src/ importing the verdict verb through a symbolic link to it is named by the check above, and one naming another host is not', (t) => {
+test('a module under src/ importing the verdict verb through a symbolic link to it is named by the check above, and so is one naming another host, which the rules cannot resolve', (t) => {
   const tree = new Map(sourceTree(ROOT));
   const linked = join(temporaryDirectory('rigger-verdict-link-', { context: t }), 'owner.mjs');
   symlinkSync(join(ROOT, VERB), linked);
   tree.set('src/workflow/through-a-link.mjs', `export const later = () => import(${JSON.stringify(pathToFileURL(linked).href)});\n`);
   tree.set('src/scheduling/elsewhere.mjs', `export const later = () => import(${JSON.stringify(`file://elsewhere.example${pathToFileURL(join(ROOT, VERB)).pathname}`)});\n`);
 
-  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), ['src/cli/verbs.mjs', 'src/workflow/through-a-link.mjs']);
+  // Node refuses a `file:` URL naming another host, but the layer-boundary rules cannot resolve it,
+  // and an import they cannot resolve counts.
+  assert.deepEqual(importersOf(tree, VERB).filter((file) => file.startsWith('src/')), ['src/cli/verbs.mjs', 'src/scheduling/elsewhere.mjs', 'src/workflow/through-a-link.mjs']);
 });
 
 // proves R-VERDICT-11
@@ -442,6 +462,47 @@ test('every route by which a judge made a module under src/ import the verb past
     const loadsVerb = aliased === undefined || isVerbFile(aliased);
     assert.equal(importersOf(tree, VERB).includes(file), loadsVerb, `round ${round}, ${route}: ${file} is ${loadsVerb ? 'not ' : ''}named`);
   }
+});
+
+/**
+ * Each route Node 26 gives a module to have code it names run in this process, besides `import`:
+ * a loader, a module that compiles or evaluates code, a native addon, and a global that turns a
+ * string into code. Each is written as the module would use it to reach the verb.
+ */
+const LOADER_ROUTES = {
+  'module.createRequire, the judge\'s round-7 route': "import { createRequire } from 'node:module';\nexport const escape = () => createRequire(import.meta.url)('./verdict.mjs');",
+  'module.register, a module hook': "import { register } from 'module';\nexport const escape = () => register('./verdict.mjs', import.meta.url);",
+  'module.registerHooks': "import * as modules from 'node:module';\nexport const escape = () => modules.registerHooks({});",
+  'process.getBuiltinModule': "export const escape = () => process.getBuiltinModule('node:module').createRequire(import.meta.url)('./verdict.mjs');",
+  'process.mainModule': "export const escape = () => process.mainModule?.require('./verdict.mjs');",
+  'node:vm': "import vm from 'node:vm';\nexport const escape = () => vm.runInThisContext(\"import('./verdict.mjs')\");",
+  'eval': "export const escape = () => eval(\"import('./verdict.mjs')\");",
+  'the Function constructor': "export const escape = () => new Function(\"return import('./verdict.mjs')\")();",
+  'a function\'s constructor': "export const escape = () => (async () => {}).constructor(\"return import('./verdict.mjs')\")();",
+  'node:worker_threads': "import { Worker } from 'node:worker_threads';\nexport const escape = () => new Worker(new URL('./verdict.mjs', import.meta.url));",
+  'node:inspector': "import { Session } from 'node:inspector';\nexport const escape = () => new Session();",
+  'node:inspector/promises': "import { Session } from 'node:inspector/promises';\nexport const escape = () => new Session();",
+  'node:repl': "import repl from 'node:repl';\nexport const escape = () => repl.start();",
+  'node:test\'s mock.module': "import { mock } from 'node:test';\nexport const escape = () => mock.module('./verdict.mjs');",
+  'node:sqlite\'s extensions': "import { DatabaseSync } from 'node:sqlite';\nexport const escape = () => new DatabaseSync(':memory:', { allowExtension: true });",
+  'node:wasi': "import { WASI } from 'node:wasi';\nexport const escape = () => new WASI({ version: 'preview1' });",
+  'node:sea': "import { getAsset } from 'node:sea';\nexport const escape = getAsset;",
+  'process.dlopen, a native addon': "export const escape = () => process.dlopen({ exports: {} }, './verdict.node');",
+  'process.binding': "export const escape = () => process.binding('contextify');",
+};
+
+// proves R-VERDICT-11
+test('a module under src/ using any route Node 26 gives it to run code it names, besides import, is named by the check above', () => {
+  for (const [route, line] of Object.entries(LOADER_ROUTES)) {
+    const tree = new Map(sourceTree(ROOT));
+    tree.set('src/cli/once.mjs', `${tree.get('src/cli/once.mjs')}\n${line}\n`);
+    assert.ok(importersOf(tree, VERB).includes('src/cli/once.mjs'), `src/cli/once.mjs using ${route} is not named`);
+  }
+  // The control: every builtin src/ imports today, by either spelling, names no module.
+  const tree = new Map(sourceTree(ROOT));
+  tree.set('src/config/builtins-used.mjs', ['node:crypto', 'node:events', 'node:fs', 'node:os', 'node:path', 'node:readline', 'node:timers/promises', 'node:url', 'node:util', 'fs', 'path']
+    .map((specifier, at) => `import * as used${at} from ${JSON.stringify(specifier)};\nexport { used${at} };`).join('\n'));
+  assert.ok(!importersOf(tree, VERB).includes('src/config/builtins-used.mjs'));
 });
 
 /** The rule-5 violations `boundaryReport` finds in the tree with `file` holding `appended` after its source. */
