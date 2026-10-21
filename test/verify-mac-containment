@@ -1,0 +1,121 @@
+// ABOUTME: Verifies three Mac containment proof claims with guarded mutations in disposable copies.
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+assert.equal(process.platform, 'darwin', 'these proof checks require real macOS tools');
+assert.ok(process.argv[2], 'supply an external evidence directory');
+const source = realpathSync.native(fileURLToPath(new URL('../', import.meta.url)));
+const output = resolve(process.argv[2]);
+assert.ok(output !== source && !output.startsWith(`${source}/`), 'evidence must be outside the source checkout');
+mkdirSync(output, { recursive: true, mode: 0o700 });
+const root = join(realpathSync.native(output), `proof-${randomUUID()}`);
+assert.ok(root !== source && !root.startsWith(`${source}/`), 'resolved evidence must be external');
+mkdirSync(root, { mode: 0o700 });
+const command = (tool, args, cwd = source) => spawnSync(tool, args, { cwd, encoding: 'utf8', maxBuffer: Infinity });
+const head = command('git', ['rev-parse', 'HEAD']);
+assert.equal(head.status, 0, head.stderr);
+const production = 'src/substrate/process.mjs';
+const original = readFileSync(join(source, production));
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const directoryTitle = 'C615 Mac directory full tool exit census';
+const groupTitle = 'C615 Mac group full tool exit census';
+const phantom = 2147483647;
+const recordAnchor = "return [...ends, ...(left === undefined ? [] : [['group.killed', { group, census: left }]]), ...notEnded];";
+const recordMutation = `return [...ends, [killed, { pid: ${phantom}, name: 'unobserved-proof-process', cmd: 'unobserved-proof-command' }], ...(left === undefined ? [] : [['group.killed', { group, census: left }]]), ...notEnded];`;
+const cases = [
+  { id: 'directory-ending', requirement: 'R-STATE-9', title: directoryTitle, branch: 'directory', anchor: "if (!sent(pid, 'SIGKILL', kill)) continue;", replacement: 'if (!sent(pid, 0, kill)) continue;', assertion: 'the tail kill was not reached' },
+  { id: 'directory-record', requirement: 'R-STATE-26', title: directoryTitle, branch: 'directory', anchor: recordAnchor, replacement: recordMutation, assertion: 'the answered group and directory reads did not justify another forced-end event' },
+  { id: 'group-record', requirement: 'R-STATE-26', title: groupTitle, branch: 'group', anchor: recordAnchor, replacement: recordMutation, assertion: 'the answered group reads did not justify another forced-end event' },
+];
+const summary = (text, name) => {
+  const found = new RegExp(`^# ${name} (\\d+)\\s*$`, 'm').exec(text);
+  assert.ok(found, `missing ${name} summary`);
+  return Number(found[1]);
+};
+const readLines = (path) => readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+
+for (const cell of cases) {
+  const at = join(root, cell.id);
+  const checkout = join(at, 'checkout');
+  mkdirSync(checkout, { recursive: true, mode: 0o700 });
+  for (const path of ['src', 'test', 'package.json']) cpSync(join(source, path), join(checkout, path), { recursive: true });
+  const mutable = join(checkout, production);
+  assert.ok(readFileSync(mutable).equals(original), 'disposable source differs before mutation');
+  const record = { head: head.stdout.trim(), platform: process.platform, node: process.version, sourceSha256: digest(original), requirement: cell.requirement, title: cell.title };
+  const run = (phase, expected) => {
+    const evidence = join(at, phase);
+    const tmp = join(evidence, 'tmp');
+    const controls = join(evidence, 'controls');
+    mkdirSync(tmp, { recursive: true, mode: 0o700 });
+    mkdirSync(controls, { mode: 0o700 });
+    const args = ['test', '--', '--test-reporter=tap', `--test-name-pattern=^${cell.title}$`, 'test/never-stop.test.mjs'];
+    const env = { ...process.env, TMPDIR: tmp, C615_EVIDENCE_ROOT: controls };
+    // A focused invocation owns its admission contract; an outer runner's contract must not leak in.
+    for (const name of ['NODE_TEST_CONTEXT', 'C615_WORK_DEADLINE_NS', 'C615_STOP_MARKER', 'C615_SIGHTING_EVIDENCE_ROOT']) delete env[name];
+    const result = spawnSync('npm', args, { cwd: checkout, env, encoding: 'utf8', maxBuffer: Infinity });
+    const text = result.stdout + result.stderr;
+    writeFileSync(join(evidence, 'output.tap'), text);
+    assert.equal(result.error, undefined, 'test runner failed to start');
+    assert.equal(result.status, expected, `unexpected ${phase} runner exit; see ${evidence}`);
+    const verdicts = text.split('\n').filter((line) => new RegExp(`^(?:not )?ok \\d+ - ${cell.title}(?:$| #)`).test(line));
+    assert.equal(verdicts.length, 1, 'the named test did not reach exactly one verdict');
+    assert.ok(!verdicts[0].includes('# SKIP'), 'the named test was skipped');
+    assert.equal(summary(text, 'cancelled'), 0, 'cancellation is not assertion evidence');
+    assert.equal(summary(text, 'fail'), expected);
+    assert.equal(summary(text, 'pass'), expected === 0 ? 1 : 0);
+    if (expected === 1) {
+      assert.ok(verdicts[0].startsWith('not ok '), 'the named test did not fail');
+      assert.ok(text.includes(cell.assertion), 'the mutation failed at the wrong assertion');
+      assert.ok(text.includes("code: 'ERR_ASSERTION'"), 'no named assertion failure');
+    }
+    record[phase] = { command: ['npm', ...args], status: result.status, verdict: verdicts[0] };
+    return join(controls, cell.branch, 'fixture');
+  };
+  try {
+    run('control', 0);
+    const text = original.toString('utf8');
+    assert.equal(text.split(cell.anchor).length, 2, 'mutation anchor must occur exactly once');
+    const changed = text.replace(cell.anchor, cell.replacement);
+    writeFileSync(mutable, changed);
+    assert.equal(readFileSync(mutable, 'utf8'), changed, 'mutation readback differs');
+    const diff = command('git', ['diff', '--no-index', '--', join(source, production), mutable]);
+    assert.equal(diff.status, 1, 'mutation must produce a diff');
+    assert.ok(diff.stdout.split('\n').some((line) => line.startsWith('+') && line.includes(cell.replacement)), 'mutation absent from diff');
+    writeFileSync(join(at, 'mutation.diff'), diff.stdout);
+    const fixture = run('mutant', 1);
+    const trace = readLines(join(fixture, 'control.trace.jsonl'));
+    const events = readLines(join(fixture, 'events'));
+    if (cell.id === 'directory-ending') {
+      const { pid } = JSON.parse(readFileSync(join(fixture, 'tail-birth.json'), 'utf8'));
+      assert.ok(Number.isSafeInteger(pid) && pid > 0, 'no real tail identity');
+      assert.ok(trace.some((row) => row.kind === 'signal-answer' && row.target === pid && row.name === 0 && row.answer === true), 'the replacement did not reach the real tail');
+      assert.ok(!trace.some((row) => row.kind === 'signal-answer' && row.target === pid && row.name === 'SIGKILL'), 'the mutant still killed the tail');
+      const state = trace.find((row) => row.kind === 'read-end' && row.tool === '/bin/ps' && row.args?.at(-1) === 'pid=,stat=' && new RegExp(`^\\s*${pid}\\s+T`, 'm').test(row.stdout ?? ''));
+      assert.ok(state, 'real ps did not observe the spared tail stopped');
+      assert.ok(events.some((row) => row.event === 'survivor.unended' && row.pid === pid), 'the actual spared process was not observed unended');
+      record.effect = { pid, state: state.stdout, result: 'tail remains stopped instead of ended' };
+    } else {
+      assert.ok(events.some((row) => row.event === 'survivor.killed' && row.pid === phantom), 'the phantom record was not emitted');
+      assert.ok(!trace.some((row) => row.kind === 'read-end' && new RegExp(`^\\s*${phantom}(?:\\s|$)`, 'm').test(row.stdout ?? '')), 'a process-table answer named the phantom');
+      record.effect = { pid: phantom, result: 'forced-end record includes a PID absent from all process-table answers' };
+    }
+    record.mutatedSha256 = digest(readFileSync(mutable));
+  } catch (error) {
+    record.failure = error.stack;
+    throw error;
+  } finally {
+    writeFileSync(mutable, original);
+    assert.ok(readFileSync(mutable).equals(original), 'disposable source not restored byte-exact');
+    assert.ok(readFileSync(join(source, production)).equals(original), 'original checkout was changed');
+    assert.equal(command('git', ['diff', '--no-index', '--', join(source, production), mutable]).status, 0, 'restoration leaves a production diff');
+    record.restored = true;
+    writeFileSync(join(at, 'record.json'), JSON.stringify(record, null, 2));
+    // Only this invocation's disposable checkout is removed; evidence remains outside it.
+    rmSync(checkout, { recursive: true });
+  }
+  console.log(`${cell.id}: ${cell.requirement} has a named assertion witness; originals restored (${at})`);
+}

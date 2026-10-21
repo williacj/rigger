@@ -1091,7 +1091,6 @@ test('after a whole census round, a first state read reporting mid-exec skips re
   assert.equal(commands.length, 2, 'a later round read command lines despite a first state answer that could not agree');
 });
 
-// proves R-STATE-12
 test('a disagreeing census round leaves time for an agreeing round as long as the first', (t) => {
   let now = 0;
   const trace = [];
@@ -1154,17 +1153,14 @@ function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3
   return { trace, calls: call, firstCalls: first.length };
 }
 
-// proves R-STATE-12
 test('one survivor is named after a disagreeing census round and an agreeing second round', (t) => {
   controlledCensus(t, 1);
 });
 
-// proves R-STATE-12
 test('twenty-five survivors are named after a disagreeing census round and an agreeing second round', (t) => {
   controlledCensus(t, 25);
 });
 
-// proves R-STATE-12
 test('one hundred survivors are named after a disagreeing first state read and an agreeing second round', (t) => {
   const { firstCalls } = controlledCensus(t, 100);
   assert.equal(firstCalls, 104);

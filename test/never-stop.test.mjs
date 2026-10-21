@@ -3743,6 +3743,8 @@ test('an exit-cleanup read whose child exits 0 with its output open is reported 
   const unread = events.find(({ event }) => event === 'group.killed');
   assert.ok(unread, `the cleanup took the cut table as a complete read: ${JSON.stringify(events)}`);
   assert.match(unread.census, /process-table read timed out after 1000 ms/);
+  assert.ok(Number.isSafeInteger(unread.group) && unread.group > 0, 'the unread result did not identify its command group');
+  assert.match(processState(unread.group), /^(?:Z|$)/, 'the command still runs after its exit-cleanup read timed out');
 });
 
 // proves R-STATE-19, R-STATE-9
@@ -6686,6 +6688,11 @@ async function assertLeaderUnended(t, kept, why) {
   assert.match(ending.unread ?? '', /could not end the command/, JSON.stringify(ending));
   assert.match(ending.unread, why, JSON.stringify(ending));
   assert.deepEqual(events.filter(({ pid }) => pid === group).map(({ event }) => event), ['survivor.unended']);
+  for (const name of ['one', 'two']) {
+    const pid = pidIn(directory, name);
+    assert.ok(Number.isSafeInteger(pid) && pid > 0, `the ${name} fixture did not record its PID`);
+    assert.match(processState(pid), /^(?:Z|$)/, `killable child ${pid} still runs after cleanup of its unended leader`);
+  }
 }
 
 // proves R-STATE-9, R-STATE-19
