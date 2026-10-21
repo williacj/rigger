@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { readFileSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isBuiltin } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -66,13 +66,24 @@ function resolved(specifier, parent) {
 }
 
 /**
- * Whether two `file:` URLs load one module. Node loads a module by its real path, so a path
- * reaching the file through a symbolic link loads it too. A path that does not exist, or a
- * `file:` URL naming a host other than this one, loads nothing, so names no file.
+ * Whether the paths `one` and `other` are one file, as the filesystem identifies it: the same
+ * device and inode. A file is never told apart by how its path is spelled. A filesystem that folds
+ * case or normalises Unicode, as macOS's does, reaches one file by several spellings, and a
+ * symbolic or hard link reaches it by another path. A path that names nothing is no file.
  */
+function oneFile(one, other) {
+  try {
+    const [held, wanted] = [statSync(one), statSync(other)];
+    return held.dev === wanted.dev && held.ino === wanted.ino;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether two `file:` URLs load one file. A `file:` URL naming a host other than this one loads nothing. */
 function sameFile(url, target) {
   try {
-    return realpathSync(fileURLToPath(url)) === realpathSync(fileURLToPath(target));
+    return oneFile(fileURLToPath(url), fileURLToPath(target));
   } catch {
     return false;
   }
@@ -143,7 +154,7 @@ function exportedString(module, name) {
  * `import(pathToFileURL(path))`, `path` being the one binding of its name in the function the
  * import is in, a top-level `const path = join(…, NAME)` there, with `pathToFileURL` from
  * `node:url`, `join` from `node:path` and `NAME` imported from a module of `tree` exporting it as
- * a const string that is a plain file name. Each of those names is bound once in its module, so
+ * a const string that is a plain file name that is not the verb's file. Each of those names is bound once in its module, so
  * no shadow stands in for it. `path.join` ends its answer in its last argument where that is a
  * plain name, so the import loads a file of that name, whatever the directory.
  */
@@ -172,7 +183,9 @@ function loadsOnlyNamed(node, ancestors, program, file, tree, target) {
   const module = exporter?.protocol === 'file:' ? tree.get(fileURLToPath(exporter).slice(ROOT.length + 1)) : undefined;
   if (module === undefined) return false;
   const name = exportedString(parse(module, { ecmaVersion: 'latest', sourceType: 'module' }), imported.imported.name ?? imported.imported.value);
-  return typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name) && name !== target.split('/').at(-1);
+  // A plain name loads the verb only from the verb's own directory, and there only where the
+  // filesystem makes that name the verb's file, so it is asked rather than the names compared.
+  return typeof name === 'string' && name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name) && !oneFile(join(ROOT, dirname(target), name), join(ROOT, target));
 }
 
 /**
@@ -381,6 +394,53 @@ test('doctor\'s config load is admitted only while it can load nothing but a fil
   const tree = new Map(sourceTree(ROOT));
   tree.set('src/cli/doctor.mjs', doctorDeclaring('  const path = join(target, CONFIG);\n'));
   assert.ok(!importersOf(tree, VERB).includes('src/cli/doctor.mjs'));
+});
+
+/** Whether the filesystem makes `spelled`, a path, the verb's own file: the same device and inode. */
+const isVerbFile = (spelled) => {
+  try {
+    const [one, other] = [statSync(spelled), statSync(join(ROOT, VERB))];
+    return one.dev === other.dev && one.ino === other.ino;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Every route by which a judge made a module under src/ import the verb past this check, rounds
+ * 1 to 6 on #810, each as the module it changes and the source it gives that module. A route
+ * through a spelling the filesystem may or may not alias is named only where it does.
+ */
+function judgedEscapes() {
+  const tree = sourceTree(ROOT);
+  const url = pathToFileURL(join(ROOT, VERB)).href;
+  const appended = (file, line) => `${tree.get(file)}\n${line}\n`;
+  const doctor = tree.get('src/cli/doctor.mjs');
+  const init = tree.get('src/cli/init.mjs');
+  return [
+    { round: 1, route: 'a specifier built by +', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export const escape = () => import('./' + 'verdict.mjs');") },
+    { round: 2, route: 'the verb importing itself', file: VERB, source: appended(VERB, "export const escape = () => import('./verdict.mjs');") },
+    { round: 3, route: 'a query on the specifier', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export { verdict as escape } from './verdict.mjs?judge';") },
+    { round: 4, route: 'an uppercase FILE: scheme', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', `export const escape = () => import(${JSON.stringify(url.replace(/^file:/, 'FILE:'))});`) },
+    { round: 5, route: 'an uppercase ;BASE64 data: URL', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', `export const escape = () => import(${JSON.stringify(`data:text/javascript;BASE64,${Buffer.from(`export * from ${JSON.stringify(url)};`).toString('base64')}`)});`) },
+    { round: 5, route: 'doctor\'s config path chosen by the target', file: 'src/cli/doctor.mjs', source: doctor.replace('  const path = join(target, CONFIG);\n', "  const path = target.endsWith('/judge-verdict') ? join(dirname(fileURLToPath(import.meta.url)), 'verdict.mjs') : join(target, CONFIG);\n") },
+    { round: 6, route: 'a dynamic import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export const escape = () => import('./Verdict.mjs');"), aliased: join(ROOT, 'src/cli/Verdict.mjs') },
+    { round: 6, route: 'a static import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export * from './VERDICT.mjs';"), aliased: join(ROOT, 'src/cli/VERDICT.mjs') },
+    { round: 6, route: 'doctor joining CONFIG spelled as the verb\'s name in another case', file: 'src/cli/doctor.mjs', changes: 'src/cli/init.mjs', source: init.replace("export const CONFIG = 'rigger.config.mjs';", "export const CONFIG = 'Verdict.mjs';"), aliased: join(ROOT, 'src/cli/Verdict.mjs') },
+  ];
+}
+
+// proves R-VERDICT-11
+test('every route by which a judge made a module under src/ import the verb past the check, rounds 1 to 6, is named by the check above', () => {
+  for (const { round, route, file, changes = file, source, aliased } of judgedEscapes()) {
+    const tree = new Map(sourceTree(ROOT));
+    assert.notEqual(source, tree.get(changes), `round ${round}, ${route}: the fixture changed nothing`);
+    tree.set(changes, source);
+    // A spelling in another case loads the verb only where the filesystem folds case, as macOS's
+    // default does; the check names it exactly where the filesystem makes it the verb's file.
+    const loadsVerb = aliased === undefined || isVerbFile(aliased);
+    assert.equal(importersOf(tree, VERB).includes(file), loadsVerb, `round ${round}, ${route}: ${file} is ${loadsVerb ? 'not ' : ''}named`);
+  }
 });
 
 /** The rule-5 violations `boundaryReport` finds in the tree with `file` holding `appended` after its source. */
