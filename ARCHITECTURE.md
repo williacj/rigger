@@ -47,7 +47,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started. L2 gives L3 next actions. A next action that dispatches a role carries what that
+   started, or that a directory was refused. L2 gives L3 next actions. A next action that dispatches a role carries what that
    dispatch is handed, which L2 composes. L1 delivers it unread, through L0's provider adapter. L3
    gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
@@ -410,9 +410,9 @@ mapping and config read from that tree. It reads the lists at the default-branch
 the config at, and reaches the forge through L0's read side alone.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
-required context is pinned to the App's id. A context pinned to GitHub Actions' integration, 15368,
-would not do: any Actions run's `GITHUB_TOKEN` satisfies it, a workflow on another branch included
-(#643, Q-a).
+of those two contexts is pinned to the App's id. Pinned to GitHub Actions' integration, 15368,
+neither would do: any Actions run's `GITHUB_TOKEN` satisfies such a pin, a workflow on another
+branch included (#643, Q-a).
 
 Correctness never relies on cancellation, because a run GitHub marked cancelled still posted (#701,
 finding 6). Each posting job instead runs in a concurrency group keyed on the card, with
@@ -433,13 +433,16 @@ ruleset is (`D23`):
 - the `gate` environment, with a deployment-branch policy admitting only the default branch, and
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
-- the required contexts, each pinned to the App's id.
+- the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
+  the App's id; and, in this repository, `check (20)` and `check (24)`, each pinned to GitHub
+  Actions' integration, 15368.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
 `doctor` reads each of those settings through L0's read side but the App and its installation,
-which a user's token cannot read (#659). For them it reads each required context's pin against
-the variable `GATE_APP_ID`. No verb writes one.
+which a user's token cannot read (#659). Of the required contexts it checks only `rigger/gate`:
+that the rules require it, and, in the App's place, that its pin matches the variable
+`GATE_APP_ID`. No verb writes any of them.
 
 ### The engine's merge decision
 
@@ -549,13 +552,53 @@ pull again in one invocation, set out below, after the rule that an environment 
 the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
-its dispatch and card, whether admission is open and why it closed, and L5's event stream. Two more
-things outlive a restart outside it: a card's workspace, and the markers on its pull request, which
+its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
+temporary file, which a write renames or links into place, belongs to its record. Two more things
+outlive a restart outside it: a card's workspace, and the markers on its pull request, which
 the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
 a card's work from the beginning replaces it, as `R-WORK-10` and `R-WORK-13` require. An attempt that continues a card's
 work, after a judge returns it to its maker, starts in a workspace at the head of the card's line of
 work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
+
+Admission lives in the directory `.rigger/admission/`, which holds one file per closer. Admission is
+open where no closer file exists, and that is its only open state. Every file in it but a temporary
+file is a closer. A temporary file is named `.tmp-<id>`, and no reader reads it. A closer file names
+the reason, the time and the run id, and no closer file's content changes after it appears. A closer
+whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is the one
+module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers of that
+module.
+
+Every write is one `link`, `rename` or `unlink` of a name no other write reuses, so no write
+replaces another and no lock is needed. Each `pause` links its own `owner-<id>.json`, and each hold
+links its own `hold-<id>.json`, each from a temporary file of its own. Each id is one no other
+closer has had, in this run or any earlier one, such as a random id. A temporary file's id is one no
+other file in the directory has had, in this run or any earlier one, so no two writes share a
+temporary file. `admission.mjs` writes a closer's content to its temporary file before the link, and
+removes that temporary file after it, so the closer is then the file's only name. A temporary file
+left by a write that died is never reused. A `pause` while an owner closer exists still links its
+own, and a second card's hold is a second file, so no closer wins over another. Only `resume`
+removes the owner's closers. A `pause` adds its closer beside a hold's, and replaces nothing.
+
+An opening removes its closer by name. Where the status issue's close opens admission, L3 removes
+exactly that hold's closer and never the owner's, so closing the issue never lifts the owner's own
+`pause` (`R-SCHED-23`). An opening on the status issue's close removes a hold's closer only where L3
+read the issue's state after it listed that closer by name. `resume` reads the directory. Where any
+closer is unreadable, it names that closer and changes nothing. Otherwise it removes every closer it
+read, and removes a hold's closer under whatever name its id now carries, reading the directory
+again until no file carrying that id remains. No write recreates a closer that `resume` removed. A
+closer with an id `resume` did not read survives, and counts as coming after the `resume`. A
+`resume` that dies partway leaves admission closed, and running it again finishes the job.
+
+`once` and `run` list the directory inside `take`'s synchronous claim, and a pull is admitted at
+that read. A `pause` whose link comes after that read finds the card already running, and claims
+already held finish (`R-SCHED-3`). `plan` and `doctor` read the directory through the module before
+they print. No reader counts an unreadable closer as open: L3 claims nothing and names it, as a
+start does for an unreadable record of process groups. `pause` adds its closer beside an unreadable
+closer and replaces nothing.
+
+L3's own event family records each change of admission. `pause` and `resume` append those events to
+the same stream from their own process, beside a running engine's.
 
 The result of a command is its exit code and captured output. The direct child decides the exit
 code, and no process that outlives it changes that. A command ended by a signal has a non-zero
@@ -564,14 +607,30 @@ captured output is everything that reached the command's standard output and sta
 stopped reading them. L0 stops once they close after it has killed what was left of the group. A
 command that never started has no result: L1 reports to its caller that it did not start, naming
 what was missing. L2 classifies a failure as the work's or as its environment's. An environment
-failure retries the card once; a second of the same kind, with no success between, has L3 close
-admission.
+failure retries the card once. Where the second attempt fails the same way as the first, as
+`R-FAIL-5`'s table counts it, L2 answers `hold` in place of `stop`, and L3 closes admission. L3
+hands L2 the first attempt's failure unread, as it hands the attempt number, so the count needs no
+memory and is never persisted.
 
-Until the hold that closes admission exists, L3 does not pull a card again in the invocation that
-stopped it after its second attempt. Nor does L3 pull a card again for its judges in the invocation
-in which L2 withheld them for an environment failure. L3 keeps those cards in memory for that
-invocation alone, so the next invocation pulls them as it would any other. M6's hold
-(`docs/v0-build-plan.md`, M6) replaces this memory.
+L3 keeps one memory, for one invocation alone: the cards it does not pull again in that
+invocation. The next invocation pulls them as it would any other. L3 keeps a card out of later
+pulls for these reasons, and no others:
+
+| Case | Why |
+|---|---|
+| stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
+| judges L2 withheld for an environment failure | the memory is how L3 meets the row of `R-FAIL-5`'s table for a judge's directory not made |
+| a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
+| a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
+| a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
+
+Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
+claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
+a file-system error leaves a hold unsaved.
+
+A card stopped after two attempts that failed the same way needs no memory, because the hold closes
+admission. An escalated card needs none either, because L2 answers no action for a card carrying the
+escalation label.
 
 An attempt at a card runs in this order, under the card's one claim and slot:
 
@@ -600,9 +659,13 @@ dispatch, so L1 records its group as it records any dispatch's. L2 classifies fo
 the environment's:
 
 - a workspace L1 could not make;
-- a step that never started;
+- a required step that never started;
 - a required step that failed;
 - a maker whose dispatch never started.
+
+A directory L1 refused under `R-WORK-13`, `R-WORK-20` or `R-WORK-26`, and a continuing workspace
+`R-WORK-25` refuses for a failure `R-FAIL-5`'s table classes card-local, is never one of them. L1
+reports it as a refusal, and L2 escalates the card, never answering `again` or `hold`.
 
 L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 
@@ -774,10 +837,10 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L1 | 1,500 |
 | L2 | 1,600 |
 | The gate | 400 |
-| L3 | 1,000 |
+| L3 | 800 |
 | L5 | 1,500 |
 | L6 | 1,200 |
-| CLI and config | 1,800 |
+| CLI and config | 2,000 |
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
