@@ -383,7 +383,8 @@ test('doctor\'s config load is admitted only while it can load nothing but a fil
     assert.ok(importersOf(tree, VERB).includes('src/cli/doctor.mjs'), `doctor.mjs with ${route} is not named`);
   }
   // The name doctor joins last, `CONFIG` from init.mjs, made the verb's name, or a path to it.
-  for (const name of ['verdict.mjs', '../cli/verdict.mjs', '..']) {
+  // `cli/verdict.mjs` names no file beside the verb, but joined to the package's `src` directory it is the verb.
+  for (const name of ['verdict.mjs', '../cli/verdict.mjs', '..', 'cli/verdict.mjs']) {
     const tree = new Map(sourceTree(ROOT));
     const init = tree.get('src/cli/init.mjs');
     assert.equal(init.split("export const CONFIG = 'rigger.config.mjs';").length, 2, 'init.mjs exports CONFIG other than once, as this test expects');
