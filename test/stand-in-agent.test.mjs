@@ -16,6 +16,7 @@ import { chmodSync, closeSync, constants, existsSync, lstatSync, openSync, readd
 import { writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { chmodTraces } from './temporary-directory.mjs';
 import { recorded, TRACE, traceTo } from './stub-claude.mjs';
 import { dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -294,6 +295,7 @@ function tracing(t, agent, gate) {
   // events, so the trace holds each child's exit and its whole standard error before it closes.
   const emit = async () => {
     await Promise.all([...children.values()].map(({ ended }) => ended));
+    chmodTraces.delete(agent.dir);
     for (const [role, { child, err }] of children) record('final reading', { role, child: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, stderr: err() });
     closed = true;
     t.diagnostic(`stand-in trace: ${directory}${kept === undefined ? ', which is removed with the test, so its events follow' : ''}`);
@@ -315,6 +317,7 @@ function tracing(t, agent, gate) {
     record('snapshot', snapshot(children, gate, join(agent.dir, FIFO)));
   }, { once: true });
   for (const role of ['architect', 'reviewer']) agent.plan(CARD, role, { ...agent.act(CARD, role), trace: directory });
+  chmodTraces.set(agent.dir, (call) => recorded(record, 'the removal\'s chmod of the stand-in\'s directory', call, { path: agent.dir }));
   traces.set(t, {
     record,
     started: (role, child, err) => {
