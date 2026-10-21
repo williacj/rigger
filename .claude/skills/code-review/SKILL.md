@@ -26,11 +26,15 @@ do not go looking for either — independence is the point (`D6`).
 **1. Read the acceptance before the diff.** It is the bar, and reading the diff first makes you
 review the change the maker chose to write rather than the card it was supposed to close.
 
-**2. Read the work.** Read the complete change, then the unchanged code you need in order to
-understand it. Trace changed behaviour out through its callers, its callees, its tests, its
-configuration, and any externally visible interface it touches. On a second or later round, read
-both the complete current change and the delta since the round before (`R-EVIDENCE-3`): the delta
-shows what moved, but it is the complete change that receives your verdict (`R-GATE-7`).
+**2. Read the work.** Read the complete change and trace its behaviour through relevant
+unchanged code, callers, callees, tests, configuration and external interfaces. On later rounds,
+also read the delta since the prior round (`R-EVIDENCE-3`); the complete current change receives
+your verdict (`R-GATE-7`).
+
+At first handoff, count added `// proves` declarations and named requirement claims from the
+diff; plan reviewer-owned behavior-deletion checks per claim before the final round. An early
+bounded source review is preliminary and head-bound; name outstanding proof. It implies no
+final verdict.
 
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
 that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's CLI
@@ -39,12 +43,14 @@ That order is the argument, and taking it out of order costs you. While v0 is st
 `docs/v0-build-plan.md` carries the milestone this work belongs to and its exit conditions; read
 those too.
 
-**4. Run the verification yourself.** Begin with the command `AGENTS.md`'s "Before you start"
-names, then the targeted tests and whatever build, lint, type-check or generated-file checks bear
-on the surfaces this change touched; `npm run` lists what the repository has. Record the exact
-commands and what they returned. A maker's report that a command passed is context, not your
-evidence. And a green suite is evidence, never a substitute for reading the acceptance or the
-implementation.
+**4. Verify yourself.** Run the command named by `AGENTS.md`, "Before you start", then
+relevant targeted, build, lint, type and generated checks (`npm run` lists scripts). Record exact
+commands/results. Maker reports are context, not evidence; a green suite never replaces reading
+acceptance or implementation.
+
+Record exact denials of required commands or mutations. Unrun work earns zero proof credit,
+even under an exception. Only an owner exception for this head and acceptance permits a verdict
+with required reviewer work outstanding (`AGENTS.md`, "Rule #1 — no self-granted exceptions").
 
 **5. Sweep the lenses** for every requirement group the change touches.
 

@@ -16,6 +16,13 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   title, and not your reading of it. Work every item.
 - **Work in the worktree you were given**, on its branch.
 - **Deliver the work as a pull request**, so a judge can read and rule on it before it lands.
+- Before first push, check branch against `rigger.config.mjs`'s topic rule.
+- Before reviewer dispatch, derive maker/judge providers from kind, labels and that config.
+  Record branch and route in PR handoff.
+- Refresh PR description after head/acceptance changes; keep refs, evidence claims and unresolved
+  attempts current.
+- For retained originals, ledger each attempt's planned result/originals, outcome, missing
+  originals/denied gate; preserve failed, missing-original and ungated status across later attempts.
 - **Dispatched by Rigger, you stop at a Self-hosting path.** Work that would change a path
   `AGENTS.md`'s "Self-hosting" lists stops there: exit non-zero, naming it.
 - **Batch test-line grants.** Read affected tests and fixtures first. If a needed existing
