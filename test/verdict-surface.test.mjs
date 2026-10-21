@@ -361,6 +361,7 @@ test('doctor\'s config load is admitted only while it can load nothing but a fil
     'a path joined past the config': "  const path = join(target, CONFIG, '..', 'src', 'cli', 'verdict.mjs');\n",
     'a path joined to another name': "  const path = join(target, 'verdict.mjs');\n",
     'a path that can be reassigned': "  let path = join(target, CONFIG);\n  if (target.endsWith('/judge-verdict')) path = fileURLToPath(new URL('./verdict.mjs', import.meta.url));\n",
+    'a path made by another call that ends in CONFIG': "  const path = String(new URL('./verdict.mjs', import.meta.url).pathname, CONFIG);\n",
     'a path shadowed where it is loaded': "  const path = join(target, CONFIG);\n  { const path = fileURLToPath(new URL('./verdict.mjs', import.meta.url)); void path; }\n",
   };
   for (const [route, declared] of Object.entries(routes)) {
