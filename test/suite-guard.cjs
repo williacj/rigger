@@ -1,15 +1,16 @@
 // ABOUTME: Applies the suite's file placements and process bounds inside each Node test worker.
 
-const { isAbsolute, join, relative, resolve } = require('node:path');
+const { isAbsolute, join } = require('node:path');
+const { testPath } = require('./suite-path.cjs');
 const { syncBuiltinESMExports } = require('node:module');
 const { realpathSync } = require('node:fs');
 const childProcess = require('node:child_process');
 
-const file = process.argv[1] && relative(process.cwd(), resolve(process.argv[1]));
-const normalized = (entries) => new Set((entries || '').split(/\s+/).filter(Boolean).map((entry) => relative(process.cwd(), resolve(entry))));
+const file = process.argv[1] && testPath(process.argv[1]);
+const normalized = (entries) => new Set((entries || '').split(/\s+/).filter(Boolean).map(testPath));
 const hostFiles = normalized(process.env.RIGGER_SUITE_HOST_FILES);
 const awaitingFiles = normalized(process.env.RIGGER_SUITE_AWAITING_FILES);
-const convertingFiles = new Set((process.env.RIGGER_SUITE_CONVERTING_FILES || '').split(/\s+/).filter(Boolean));
+const convertingFiles = normalized(process.env.RIGGER_SUITE_CONVERTING_FILES);
 const worker = process.env.NODE_TEST_CONTEXT === 'child-v8';
 
 if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && hostFiles.has(file)) {

@@ -185,33 +185,45 @@ if [ "${1-}" = --host ]; then
   suite_mode=host
   node_flags=--test-concurrency=1
   shift
-  if [ "$#" -eq 0 ]; then
-    set -- $host_tests
+fi
+named_files=0
+option_value=
+for argument do
+  if [ -n "$option_value" ]; then
+    option_value=
+    continue
   fi
-  for file do
+  case $argument in
+    --test-name-pattern|--test-skip-pattern|--test-reporter|--test-reporter-destination|--test-timeout|--test-concurrency|--test-isolation|--test-shard)
+      option_value=$argument
+      continue ;;
+    -*) continue ;;
+  esac
+  named_files=1
+  file=$(node test/suite-path.cjs "$argument") || exit 1
+  if [ "$suite_mode" = host ]; then
     case $file in
-      -*) continue ;;
-      test/*.test.mjs) ;;
-      *) continue ;;
+      test/*.test.mjs)
+        if ! on_host_list "$file"; then
+          printf '%s\n' "test:host: $file is not on the host list" >&2
+          exit 1
+        fi ;;
     esac
-    if ! on_host_list "$file"; then
-      printf '%s\n' "test:host: $file is not on the host list" >&2
-      exit 1
-    fi
-  done
+  elif on_host_list "$file"; then
+    printf '%s\n' "npm test: $file is on the host list; run npm run test:host" >&2
+    exit 1
+  fi
+done
+if [ "$suite_mode" = host ]; then
+  if [ "$named_files" -eq 0 ]; then
+    set -- "$@" $host_tests
+  fi
   major=$(node -p 'process.versions.node.split(".")[0]') || exit 1
   if [ "${GITHUB_ACTIONS-}" = true ]; then
     printf '%s\n' "${ImageOS}-${ImageVersion}-${RUNNER_ARCH}-node$major"
   else
     printf 'macos-%s-%s-node%s\n' "$(sw_vers -productVersion)" "$(uname -m)" "$major"
   fi
-else
-  for file do
-    if on_host_list "$file"; then
-      printf '%s\n' "npm test: $file is on the host list; run npm run test:host" >&2
-      exit 1
-    fi
-  done
 fi
 RIGGER_SUITE_MODE=$suite_mode
 RIGGER_SUITE_HOST_FILES=$host_tests

@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -44,7 +44,7 @@ function hostProbe(t, source, { awaiting = false, env = {} } = {}) {
     timeout: 60_000,
     env: { ...environment, ...env },
   });
-  return { directory, file, result };
+  return { directory, file, suite: copy, result };
 }
 
 function reportsPassedTest(output, title) {
@@ -53,11 +53,18 @@ function reportsPassedTest(output, title) {
     (/^ok [0-9]+ - /.test(line) && line.replace(/^ok [0-9]+ - /, '') === title));
 }
 
-test('pass reports accept spec and TAP while excluding a TAP skip', () => {
-  spawnSync('/usr/bin/true', []);
-  assert.equal(reportsPassedTest('✔ selected (1ms)\n', 'selected'), true);
-  assert.equal(reportsPassedTest('ok 1 - selected\n', 'selected'), true);
-  assert.equal(reportsPassedTest('ok 1 - selected # SKIP filtered\n', 'selected'), false);
+test('pass reports accept spec and TAP while excluding a TAP skip', (t) => {
+  const source = "import { spawnSync } from 'node:child_process';\ntest('selected', () => { spawnSync('git', ['--version']); });\ntest('excluded', () => { spawnSync('git', ['--version']); });";
+  const { file, suite, result: spec } = hostProbe(t, source);
+  assert.equal(spec.status, 0, spec.stdout + spec.stderr);
+  assert.equal(reportsPassedTest(spec.stdout, 'selected'), true, spec.stdout);
+  const { NODE_TEST_CONTEXT, ...environment } = process.env;
+  const tap = spawnSync('sh', [suite, '--host', '--test-reporter=tap', '--test-name-pattern=selected', file], {
+    encoding: 'utf8', env: environment, timeout: 60_000,
+  });
+  assert.equal(tap.status, 0, tap.stdout + tap.stderr);
+  assert.equal(reportsPassedTest(tap.stdout, 'selected'), true, tap.stdout);
+  assert.equal(reportsPassedTest(tap.stdout, 'excluded'), false, tap.stdout);
 });
 
 const originalHost = [
@@ -192,11 +199,28 @@ test('npm test refuses a named host file and directs it to test:host', () => {
   assert.match(result.stderr, /npm run test:host/);
 });
 
+test('npm test refuses relative and absolute names of a host file before it runs', () => {
+  for (const file of ['./test/package.test.mjs', resolve('test/package.test.mjs')]) {
+    const result = spawnSync('sh', ['test/suite.sh', file], { encoding: 'utf8', timeout: 60_000 });
+    assert.notEqual(result.status, 0, `${file} ran in the deterministic tier`);
+    assert.match(result.stderr, /test\/package\.test\.mjs.*npm run test:host/);
+    assert.equal(result.stdout, '', `${file} ran tests before its refusal`);
+  }
+});
+
 test('host mode refuses a named file outside the host list', () => {
   const file = 'test/agent-cli-refusal.test.mjs';
   const result = spawnSync('sh', ['test/suite.sh', '--host', file], { encoding: 'utf8' });
   assert.notEqual(result.status, 0, 'a deterministic file ran in the host tier');
   assert.match(result.stderr, new RegExp(file));
+});
+
+test('host mode refuses a relative name outside the host list before it runs', () => {
+  const file = './test/agent-cli-refusal.test.mjs';
+  const result = spawnSync('sh', ['test/suite.sh', '--host', file], { encoding: 'utf8', timeout: 60_000 });
+  assert.notEqual(result.status, 0, `${file} ran in the host tier`);
+  assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  assert.equal(result.stdout, '', `${file} ran tests before its refusal`);
 });
 
 test('host mode forwards node test options to a named fixture outside test', (t) => {
@@ -217,12 +241,32 @@ test('host mode forwards node test options to a named fixture outside test', (t)
   assert.equal(reportsPassedTest(result.stdout, 'excluded host fixture'), false, result.stdout);
 });
 
-test('both suite modes reach the one reaper launch', () => {
-  const source = readFileSync('test/suite.sh', 'utf8');
-  assert.equal(source.split("node test/suite-reaper ").length - 1, 1);
-  assert.ok(source.indexOf('node test/suite-reaper ') > source.indexOf('suite_mode=deterministic'));
-  const result = spawnSync('sh', ['test/suite.sh', '--list', 'host'], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+test('host mode with only reporter or pattern options runs only its host list', (t) => {
+  const directory = temporaryDirectory('rigger-host-default-', { context: t });
+  const tests = join(directory, 'test');
+  mkdirSync(tests);
+  for (const name of ['suite-guard.cjs', 'suite-path.cjs', 'suite-reaper']) {
+    symlinkSync(resolve('test', name), join(tests, name));
+  }
+  const host = 'test/host.test.mjs';
+  const marker = join(directory, 'non-host-ran');
+  writeFileSync(join(directory, host), "import { test } from 'node:test';\ntest('selected host fixture', () => {});\n");
+  writeFileSync(join(tests, 'other.test.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  const source = readFileSync('test/suite.sh', 'utf8')
+    .replace(/host_tests='[\s\S]*?'/, `host_tests='\n${host}\n'`)
+    .replace(/awaiting_tests='[\s\S]*?'/, `awaiting_tests='\n${host}\n'`)
+    .replace(/converting_tests='[\s\S]*?'/, "converting_tests='' ");
+  const suite = join(tests, 'suite.sh');
+  writeFileSync(suite, source);
+  const { NODE_TEST_CONTEXT, ...environment } = process.env;
+  for (const option of ['--test-reporter=tap', '--test-name-pattern=selected host fixture']) {
+    const result = spawnSync('sh', ['test/suite.sh', '--host', option], {
+      cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(reportsPassedTest(result.stdout, 'selected host fixture'), result.stdout);
+    assert.equal(existsSync(marker), false, `${option} ran a non-host file`);
+  }
 });
 
 test('the deterministic runner exits a host file before its test loads', (t) => {
@@ -373,6 +417,25 @@ for (const scope of ['global', 'system']) {
     assert.equal(existsSync(marker), false, `${scope} alias wrote its marker`);
   });
 }
+
+test('admitted git ignores an alias in HOME gitconfig without a GIT_CONFIG override', (t) => {
+  const directory = temporaryDirectory('rigger-git-home-', { context: t });
+  const marker = join(directory, 'marker');
+  writeFileSync(join(directory, '.gitconfig'), '[alias]\n  tierprobe = !printf marked > "$MARKER"\n');
+  const { GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM, ...base } = gitEnvironment();
+  const env = { ...base, HOME: directory, MARKER: marker };
+  const control = spawnSync('git', ['tierprobe'], { env, encoding: 'utf8' });
+  assert.equal(control.status, 0, control.stderr);
+  assert.equal(readFileSync(marker, 'utf8'), 'marked', 'the control did not read HOME gitconfig');
+  rmSync(marker);
+  const source = `import assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\ntest('ignores HOME gitconfig', () => {
+    const result = spawnSync('git', ['tierprobe'], { env: { ...process.env, HOME: ${JSON.stringify(directory)}, MARKER: ${JSON.stringify(marker)} }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0, 'the HOME alias ran');
+  });`;
+  const { result } = runProbe(t, source);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(existsSync(marker), false, 'HOME gitconfig alias wrote its marker');
+});
 
 for (const scope of ['global', 'system']) {
   test('admitted git ignores ' + scope + ' filters; its unguarded control runs the filter', (t) => {
