@@ -199,6 +199,10 @@ evidence that would bring it back.
   [What the owner provisions](ARCHITECTURE.md#what-the-owner-provisions). Run `rigger doctor` to
   check that setup.
 
+For repository development and testing, see the [macOS guide](docs/testing-macos.md) or the
+[experimental Windows/WSL guide](docs/testing-windows.md). Windows uses Ubuntu on WSL 2 for
+the ordinary test suite; engine installation and supported engine hosts are separate.
+
 ## Install and usage
 
 > Nothing is published yet. The commands below are the target interface. They become true as the
