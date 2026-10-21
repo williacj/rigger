@@ -1,7 +1,7 @@
 // ABOUTME: L1 makes and removes card directories, reads a maker's line tip, and lists and sweeps
 // the provider's session folder after a dispatch settles.
 
-import { appendFileSync, chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { within as underOrAt } from './run.mjs';
@@ -359,14 +359,6 @@ export function listCliFolder({ home, name }) {
     return { reason: `the adapter named no single folder segment: ${JSON.stringify(name)}` };
   }
   const path = join(home, 'projects', name);
-  if (process.env.RIGGER_TEST_TEMP_ROOT !== undefined) {
-    let real;
-    try { real = realpathSync.native(home); } catch { real = home; }
-    if (!underOrAt(real, process.env.RIGGER_TEST_TEMP_ROOT)) {
-      appendFileSync(process.env.RIGGER_TEST_CLAUDE_HOME_RECORD, `${home}\n`);
-      return { path, reason: `the CLI home ${home} lies outside the test suite's temporary directory` };
-    }
-  }
   try {
     const held = lstatOrAbsent(path);
     if (held !== undefined) {

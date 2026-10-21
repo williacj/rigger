@@ -13,7 +13,7 @@ import { dispatch } from '../src/execution/run.mjs';
 import { makeJudgeDirectory, makeWorkspace } from '../src/execution/workspace.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { gitIn, repositoryAt, withOrigin, cloneInto } from './git-repository.mjs';
-import { SERVER, pastRefusing, put, scratch, skip, eventsOf, callsOf, textOf } from './claude-live.mjs';
+import { SERVER, ownerClaudeEnvironment, pastRefusing, put, scratch, skip, eventsOf, callsOf, textOf } from './claude-live.mjs';
 
 /** A local repository whose main line declares one live role and one Bash permission. */
 function sourceIn(base, files = {}) {
@@ -30,7 +30,7 @@ function sourceIn(base, files = {}) {
 
 /** Runs `answer` through the same L1 handoff and dispatch as a maker. */
 async function runRole(t, { answer, cwd, directory, scratchBase, repository, sink, state, id = 'd-629-live', reach = [] }) {
-  const env = { ...process.env, PATH: pastRefusing() };
+  const env = ownerClaudeEnvironment({ ...process.env, PATH: pastRefusing() });
   const home = Object.hasOwn(env, 'CLAUDE_CONFIG_DIR') ? env.CLAUDE_CONFIG_DIR : join(env.HOME, '.claude');
   const projects = join(home, 'projects');
   const beforeProjects = existsSync(projects) ? readdirSync(projects).sort() : [];
@@ -124,7 +124,7 @@ test('an over-limit Bash maker under a long linked path leaves no Claude folder 
   assert.ok(saved, `the Bash result named no saved file: ${textOf(bash[0].result).slice(0, 1000)}`);
   const madeName = saved.split('/projects/')[1]?.split('/')[0];
   t.diagnostic(`Claude Code folder: ${madeName}; saved result: ${saved}`);
-  const home = Object.hasOwn(process.env, 'CLAUDE_CONFIG_DIR') ? process.env.CLAUDE_CONFIG_DIR : join(process.env.HOME, '.claude');
+  const home = handed.folder.home;
   const madeFolder = join(home, 'projects', madeName);
   assert.equal(existsSync(madeFolder), false, 'the dispatch left its Claude folder after the end');
   assert.equal(handed.folder?.name, madeName, 'the adapter named a folder other than Claude Code made');
@@ -255,7 +255,7 @@ test('a maker and judge leave every earlier configuration-home path and classify
   const maker = await makeWorkspace({ root, topic: 'rigger-{number}', card: 629, repository, sink });
   const head = gitIn(repository, 'rev-parse', 'HEAD').trim();
   const judge = await makeJudgeDirectory({ root, topic: 'rigger-{number}', card: 629, role: 'reviewer', head, repository, sink });
-  const home = join(process.env.HOME, '.claude');
+  const home = ownerClaudeEnvironment({ ...process.env }).CLAUDE_CONFIG_DIR ?? join(process.env.HOME, '.claude');
   const before = homeEntries(home);
   const answer = { role: 'live', agent: '.claude/agents/live.md', provider: 'claude', tier: 'standard', timeout: 300_000, instruction: 'Call Bash exactly once with this command: echo HERON-home-629. After it returns, say DONE. Use no other tool.\n', evidence: '' };
   for (const [id, cwd, directory, scratchBase, reach] of [
