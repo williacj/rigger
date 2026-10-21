@@ -929,8 +929,8 @@ test('the repository comparison covers the full init plan except hooks and its l
 });
 
 test('one changed byte in a planned .claude asset is named as a divergence', async () => {
-  const copy = cloneInto(root, join(temporaryDirectory('rigger-comparison-'), 'rigger'));
   const files = await forThisRepository();
+  const copy = repositoryIn('rigger-comparison-', Object.fromEntries(files.map(({ path, content }) => [path, content])));
   assert.deepEqual(divergences(copy, files), []);
   const asset = '.claude/agents/engineer.md';
   assert.ok(files.some(({ path }) => path === asset), `${asset} is not in the comparison`);
