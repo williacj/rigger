@@ -8,9 +8,11 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { accessSync } from 'node:fs';
 import { statSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -82,7 +84,7 @@ export function sweep(text, find = running) {
   for (let round = 0; round < SWEEPS; round += 1) {
     if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'sweep.round', text, round })}\n`);
     if (find(text).length === 0) return;
-    spawnSync('/usr/bin/pkill', ['-KILL', '-f', literally(text)]);
+    spawnSync('/usr/bin/pkill', [...(process.platform === 'linux' ? ['-A'] : []), '-KILL', '-f', literally(text)]);
   }
   const left = find(text);
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'sweep.final-read', text, left })}\n`);
@@ -111,14 +113,17 @@ export function undrained(t, directory) {
 const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export { literally };
 
-/** The pid of every process whose command line holds `text`. */
-export const running = (text) => spawnSync('/usr/bin/pgrep', ['-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+/** The pid of every matching fixture process, excluding the observer and its ancestors. */
+export const running = (text) => spawnSync('/usr/bin/pgrep', [...(process.platform === 'linux' ? ['-A'] : []), '-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
 
 /**
  * The shell line a stand-in runs first, after its `#!` line, so that run with
  * `RIGGER_FIXTURE_WARMING` set it exits 0 before its body, and `warmed` leaves no trace of it.
  */
 export const EXIT_IF_WARMING = '[ -n "$RIGGER_FIXTURE_WARMING" ] && exit 0';
+
+/** One shell word, including paths with spaces or apostrophes. */
+export const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 /** Record shell readiness results without changing the generated command's normal path. */
 function tracedReadiness(body, name) {
@@ -167,7 +172,7 @@ function tracedCommands(body, name) {
 }
 
 /**
- * A shell script named `name` in `directory`, executable, whose body reads that directory as
+ * A Bash script named `name` in `directory`, executable, whose body reads that directory as
  * `$here`. Its path, and so the directory, is in the command line of the shell running it. Run
  * with `RIGGER_FIXTURE_WARMING` set, it exits 0 before its body (`warmed`).
  * It is run so once before this returns, so the system's hold on its first exec is paid here,
@@ -178,7 +183,7 @@ export function fixture(directory, name, body) {
   if (process.env.RIGGER_779_TRACE === '1' && existsSync(join(directory, '.rigger779-trace')) && (name === 'command' || name === 'joining')) body = tracedReadiness(body, name);
   if (process.env.RIGGER_779_TRACE === '1' && existsSync(join(directory, '.rigger779-trace')) && ['ps-join', 'ps-logged-join', 'ps-never'].includes(name)) body = tracedCommands(body, name);
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.start', path })}\n`);
-  writeFileSync(path, `#!/bin/sh\nhere=\${0%/*}\n${EXIT_IF_WARMING}\n${body}\n`, { mode: 0o755 });
+  writeFileSync(path, `#!${process.platform === 'linux' ? '/bin/bash' : '/bin/sh'}\nhere=\${0%/*}\n${EXIT_IF_WARMING}\n${body}\n`, { mode: 0o755 });
   if (process.env.RIGGER_779_TRACE === '1') process.stderr.write(`${JSON.stringify({ at: Date.now(), event: 'fixture.write.returned', path })}\n`);
   const batch = fixtureWarmBatches.get(directory);
   if (batch) {
@@ -412,7 +417,19 @@ export const UNKILLED = {
 export const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
 
 /** The git this host runs, by its absolute path, which a stand-in hands every call on to. */
-export const GIT = execFileSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).trim();
+export const GIT = (() => {
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    const candidate = join(directory || '.', 'git');
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, files.X_OK);
+      return candidate;
+    } catch {
+      // Continue through PATH when this entry has no executable git.
+    }
+  }
+  throw new Error('git is not executable on PATH');
+})();
 
 /**
  * A `git` stand-in in `directory` that answers as the real git does, then leaves a child alive,
@@ -478,8 +495,8 @@ export async function startGroup(t, directory, name, { observe, noMatchPolls = 0
       assert.fail(`FM-${phase}-C0(8) S8-F-bound: finite fixture work consumed the shared 20,000 ms deadline`);
     }
   };
-  const quotedPs = `'${psCommand.replaceAll("'", "'\\''")}'`;
-  const quotedGate = markerGate === undefined ? null : `'${markerGate.replaceAll("'", "'\\''")}'`;
+  const quotedPs = shellQuote(psCommand);
+  const quotedGate = markerGate === undefined ? null : shellQuote(markerGate);
   const now = '/usr/bin/perl -MTime::HiRes=time -e "print time"';
   if (!existsSync(join(directory, 'hold'))) writeFileSync(join(directory, 'hold'), '');
   const memberLine = noMatchPolls === 0

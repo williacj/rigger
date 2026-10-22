@@ -1,5 +1,6 @@
 // ABOUTME: Exercises the suite's cleanup after its shell dies while a test fixture still runs.
 
+import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -68,7 +69,7 @@ function processesIn(directory) {
     const row = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
     if (row && !row[2].startsWith('Z') && row[3].includes(directory)) found.set(Number(row[1]), `${row[1]} ${row[2]} ${row[3]}`);
   }
-  const lsof = spawnSync('/usr/sbin/lsof', ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn'], { encoding: 'utf8' });
+  const lsof = spawnSync(LSOF, ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn'], { env: process.env, encoding: 'utf8' });
   assert.ok(lsof.status === 0 || lsof.status === 1, lsof.stderr);
   let pid;
   for (const line of lsof.stdout.split('\n')) {
@@ -341,7 +342,7 @@ async function heldMember(t, tmp, source) {
   assert.equal(ps.status, 0);
   assert.equal(ps.stdout.includes(tmp), source !== 'lsof', `${source} ps source`);
   if (source === 'lsof') {
-    const lsof = spawnSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(child.pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+    const lsof = spawnSync(LSOF, ['-nP', '-a', '-p', String(child.pid), '-d', 'cwd', '-Fn'], { env: process.env, encoding: 'utf8' });
     assert.equal(lsof.status, 0);
     assert.ok(lsof.stdout.includes(`n${tmp}`), `${source} cwd source: ${lsof.stdout}`);
   }

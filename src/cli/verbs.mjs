@@ -8,6 +8,7 @@ import { plan } from './plan.mjs';
 import { report } from './report.mjs';
 import { run as runVerb } from './run.mjs';
 import { setupBoard } from './setup-board.mjs';
+import { verdict } from './verdict.mjs';
 
 /**
  * Every verb, in the order the README's "Install and usage" block lists them, each with the help
@@ -41,7 +42,7 @@ export const VERBS = [
  * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
  * the test would drift from this one the day a verb lands.
  */
-export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, report };
+export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, report, verdict };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
@@ -69,7 +70,8 @@ export async function run(argv) {
     const said = first === undefined ? 'rigger: a verb is required' : `rigger ${first}: no such verb`;
     return { text: `${said}\n\n${help()}`, code: 1 };
   }
-  if (Object.hasOwn(LANDED, first)) return LANDED[first]();
+  // A verb is handed the words after it; those that take none read nothing from them.
+  if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1) });
   // The rest gain their behaviour with their own milestone, and until then saying so and failing
   // is the honest answer: a zero exit would read to whoever called it as work that was done.
   return { text: `rigger ${first}: not yet implemented`, code: 1 };

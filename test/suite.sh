@@ -40,6 +40,7 @@ test/never-stop.test.mjs
 test/package.test.mjs
 test/process-adapter.test.mjs
 test/process-fixtures.test.mjs
+test/process-table.test.mjs
 test/provider-claude-installed-live.test.mjs
 test/provider-claude-live.test.mjs
 test/provider-claude-reach-live.test.mjs
@@ -145,6 +146,11 @@ test/transitions.test.mjs
 test/verb-facts.test.mjs
 test/verbs-judges.test.mjs
 test/verbs-provision.test.mjs
+test/verdict-forge.test.mjs
+test/verdict-input.test.mjs
+test/verdict-surface.test.mjs
+test/verdict-terminal.test.mjs
+test/verdict.test.mjs
 test/workspace.test.mjs
 test/worktree-root-inside.test.mjs
 '

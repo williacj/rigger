@@ -15,6 +15,7 @@ import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
 import { judgeDirectoryHandle } from '../src/execution/workspace.mjs';
 import { worktreeTopic } from '../src/config/validate.mjs';
+import { shellQuote } from './process-fixtures.mjs';
 
 /**
  * Fires one pull of L3's loop over the board the config in `repository` names, recording to that
@@ -32,7 +33,7 @@ export async function engine({ directory, repository, command }) {
   const reads = repositoryReads({ ...config.board, repo: config.repo }, { emitter: sink.emitter({ layer: 'L0' }) });
   const l2 = columnChanges({ config, sink });
   const kinds = Object.fromEntries(Object.entries(config.kinds).map(([name, kind]) => [name, { ...kind, provisioning: ['hold'] }]));
-  const provisioning = { hold: { run: command, required: true } };
+  const provisioning = { hold: { run: `exec ${shellQuote(command)}`, required: true } };
   const decide = (card, outcomes) => nextAction(card, kinds, config.epicLabel, { provisioning, outcomes, sink });
   const kill = () => killRecordedGroups({ directory: state, sink });
   await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: async () => ({ path: directory }), judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: process.env }).pull();

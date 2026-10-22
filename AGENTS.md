@@ -3,16 +3,13 @@ every session, so it holds only what is true in every session.
 
 # AGENTS.md
 
-Rules for **every** session in this repository.
-
 A dispatched session has a role, and its authority comes from that role's agent prompt; this
 file never assigns one. Where a role prompt is narrower than a rule here, the role prompt wins
 for that role.
 
 A session with no agent prompt has no role and no narrowing: every rule here applies as
 written. The operative difference is that the owner is present, so "ask the owner" means ask
-now and wait, where a dispatched session escalates, leaving the card with the reason and the
-work as it stands.
+now and wait, where a dispatched session escalates.
 
 **Rule #1 — no self-granted exceptions.** Bending any rule here needs the owner's explicit
 permission first.
@@ -35,12 +32,10 @@ permission first.
   you finish against that. A follow-up issue may only cover what falls outside it. Anything
   inside it that you left undone means the work is not done, and a defect you introduced is
   never a follow-up. Finishing includes deleting what is obsolete and updating the references
-  and the docs. If you cannot finish, say what is left and leave the card open. Where you are
-  making the thing, escalate it. Name which of three categories it is, because that is how the
-  engine routes it: `recorded-decision` for a change to a decision the owner recorded,
-  `critical` for a fault that must not merge, `ambiguous` for a question neither the maker nor its judges could resolve.
-  Where you are judging it, you return a verdict and never an escalation; the loop raises one
-  if your verdict calls for it.
+  and the docs. If you cannot finish, say what is left and leave the card open. Where you make
+  the thing, escalate it in one of the three categories `R-ESCALATE-19` defines, spelled in its
+  order as the engine routes them: `recorded-decision`, `critical` or `ambiguous`. Judging it,
+  you return a verdict and never an escalation (`R-ESCALATE-4`).
 - **Write the acceptance before the work.** A card states what done means before anything
   starts, and whoever files it writes that, loading the acceptance skill first. Only its author
   changes it afterwards — never the maker, who is judged against it. Work you find outside it
@@ -75,12 +70,10 @@ it established.
 | `docs/derived/test-matrix.md` | Which tests prove which requirement. Generated; never hand-edited | `R-GROUP-#` |
 | `AGENTS.md` | Rules for every session in this repository | section |
 
-Where a requirement and the architecture disagree, the requirement is right. This file states
-only what a session must do about any of them. Changing an authored document in the table above
-needs the owner's ratification under "Review and merge". The generated one is not edited at all —
-it regenerates, and a
-hand edit there is a lint failure rather than an argument (D8). A change to a recorded decision
-is written in the register; a change to the others is written where it lives. Two documents in
+Where a requirement and the architecture disagree, the requirement is right. Changing an
+authored document in the table above needs the owner's ratification under "Review and merge".
+The generated one regenerates, and a hand edit there is a lint failure (`D8`). A change to a
+recorded decision is written in the register; a change to the others is written where it lives. Two documents in
 conflict, or a gap neither resolves, goes to the owner — never to whoever noticed it.
 
 ## Documents own their facts
@@ -88,8 +81,8 @@ conflict, or a gap neither resolves, goes to the owner — never to whoever noti
 Every sentence takes one of three treatments: **own it** — intent, decisions, prohibitions;
 **refer to it** — a fact owned elsewhere, written as a reference and never retyped; or **do not
 say it** — neither owned nor referenceable. A binding document has no business asserting a line
-count or a grep result. An unresolvable reference reds the build wherever the resolver is set
-strict, exactly like a broken import.
+count or a grep result. `doc-references.json` names where an unresolvable reference reds the
+build.
 
 A citation is a claim about its source, so open the source where it lives as you write the
 citation down. A reference can resolve while the claim attached to it is invented, so the
@@ -147,13 +140,10 @@ without the owner's approval. `npm run` lists every script.
 
 ## When you write a decision or a requirement
 
-`D18` rule 1 has the architect propose every delta to `ARCHITECTURE.md`, and rule 7 has the PM
-propose a requirement. A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal** whoever
-wrote it: it goes to the owner, and you never ratify your own. A choice and what would reverse
-it is a decision; what must be true as a result is a requirement. Allocate its id as its own
-register says: neither reuses one, a retired id stays allocated, and a decision's row stays
-behind where a requirement's row leaves. A new requirement needs a test that claims it; a judge
-enforces this (`D17` rules 1 and 7). Load the `.claude/skills/spec-style/` skill before you
+A delta to `ARCHITECTURE.md` or to `docs/spec/` is a **proposal** whoever wrote it: it goes to
+the owner, and you never ratify your own. `D18` rules 1 and 7 say who proposes which. Allocate a
+decision's or requirement's id as its register's preamble says. A new requirement needs a test
+that claims it; a judge enforces this (`D17` rules 1 and 7). Load the `.claude/skills/spec-style/` skill before you
 write. Resolve the ambiguity inside the delta or escalate it, never leave it for the implementer
 to guess.
 
@@ -177,17 +167,12 @@ its author. Dispatch the reviewer once the branch is ready, not once it is perfe
 commit stales the verdict, and so does a revised acceptance (`R-GATE-7`), so every extra commit
 costs a round. Never work around a hook — if a gate stops you, review.
 
-An agent judge rules on every acceptance item and records each met or unmet, rules on whether the
-acceptance covered what the card asked, and returns the card to its author rather than
-rewriting it. Its verdict goes in a marker bound to the work it read. The gate reads those
-markers against the card's judge list, and admits nothing until the consumer's own checks have
-passed too.
+Every agent judge, whatever its role, loads `.claude/skills/code-review/` and rules by it.
 
 Once "rigger/gate" and "self-hosting" are green, anyone may merge: the engine's lane or a
-person. A pull request changing an authored document in "What binds", or a path
-"Self-hosting" lists, merges only with a sound owner marker at its head. Once that marker is there
-and both checks are green, anyone may merge it too. The owner's merge is no verdict; the owner's
-marker is. `D25` rules 5 and 7 record this.
+person. A pull request changing an authored document in "What binds", or a path "Self-hosting"
+lists, also needs a sound owner marker at its head (`D25` rules 5 and 7). The owner's merge is no
+verdict; the owner's marker is.
 
 ## Self-hosting
 
@@ -195,9 +180,8 @@ Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this
 (`R-SAFE-5`). The engine runs from a tarball installed outside the source tree, because an
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
 this, and the worktree root belongs outside both the checkout and the package. **The engine
-never dispatches a card that changes a path listed below.** Such a card merges only with a sound
-owner marker at its head, which the "self-hosting" check enforces. Once "rigger/gate" and
-"self-hosting" are green, the engine's lane may merge it (`D25` rules 5 and 7). The paths:
+never dispatches a card that changes a path listed below** (`D25` rule 5); "Review and merge"
+says how one merges. The paths:
 
 - The live gate: `.github/workflows/rigger-gate.yml` and
   `templates/github/workflows/rigger-gate.yml`; `.github/workflows/self-hosting.yml` and
@@ -211,25 +195,14 @@ owner marker at its head, which the "self-hosting" check enforces. Once "rigger/
 - The gate's code: `src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`,
   and `src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on.
 
-The gate's code is listed because it runs live twice. Moving the pin makes it the live gate (`D25`
-rule 6), and the "self-hosting" check runs it from the default branch's tree (`ARCHITECTURE.md`,
-"The gate").
+The gate's code is listed because it runs live (`D25` rule 6; `ARCHITECTURE.md`, "The gate").
 
 ## Version control
 
 Working by hand, create your own worktree; a dispatched session is already in one. The main
 checkout is not a workspace. Branch for every piece of work. Nothing reaches `main` except
-through the gate, the forge's required checks "rigger/gate" and "self-hosting". They refuse on
-missing or stale evidence whoever you are, and nobody can wave them through. Every pull request
-into `main` comes from its card's branch, named by the topic rule in `rigger.config.mjs`, and the
-gate refuses a pull request no card matches. Commit atomically and often, with messages that say
-why. `git status` before `git add -A`. Commit a journal entry with the work that produced it, as
-its own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
-
-## Pointers
-
-- What must be true of Rigger → `docs/spec/requirements.md`
-- What each layer decides, and may never decide → `ARCHITECTURE.md`
-- What was chosen, and what would reverse it → `docs/spec/decisions.md`
-- What is being built next, and its exit test → `docs/v0-build-plan.md`
-- What we learned, and what failed → `docs/journal/`
+through the gate, the forge's required checks, "rigger/gate" and "self-hosting" among them
+(`D25` rule 7). Every pull request into `main` comes from its card's branch, named by the topic
+rule in `rigger.config.mjs`. Commit atomically and often, with messages that say why.
+`git status` before `git add -A`. Commit a journal entry with the work that produced it, as its
+own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.

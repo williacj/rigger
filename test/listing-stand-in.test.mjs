@@ -11,13 +11,11 @@ import { join } from 'node:path';
 import { listingOf } from './listing-stand-in.mjs';
 import { alive, fixture, holding, tailIn, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
+import { LSOF } from '../src/substrate/process.mjs';
 
 // A bound on the test alone, so that a wait which never ends fails here rather than holding the
 // suite: nothing waits on it once the process has gone.
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
-
-/** The real `lsof`, which the stand-in answers in place of. */
-const LSOF = '/usr/sbin/lsof';
 
 /** What the census asks `lsof`, of every process of this user or of `pids`, as `listing` in `src/substrate/process.mjs` asks it. */
 const asked = (pids) => ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), ...(pids ? ['-p', pids.join(',')] : []), '-F', 'pun'];

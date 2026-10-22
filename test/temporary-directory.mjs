@@ -62,10 +62,20 @@ function removed(directory) {
 
 export { removed as removeTemporaryDirectory };
 
+/**
+ * How a test that traces a directory's teardown records each `chmod` this removal makes of it, by
+ * the directory's path (test/stand-in-agent.test.mjs): each takes the call, and gives back what the
+ * call gives. A directory not here is given its permission unrecorded.
+ */
+export const chmodTraces = new Map();
+
+/** What `call`, a `chmod` of `directory`, gives back, recorded where its test traces `directory`. */
+const chmodded = (directory, call) => (chmodTraces.get(directory) ?? ((given) => given()))(call);
+
 /** Gives the owner read, write and search permission on `directory` and every directory in it. */
 function writable(directory) {
   if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is no longer a directory, so its teardown removes nothing through it`);
-  chmodSync(directory, lstatSync(directory).mode | 0o700);
+  chmodded(directory, () => chmodSync(directory, lstatSync(directory).mode | 0o700));
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) writable(join(directory, entry.name));
   }

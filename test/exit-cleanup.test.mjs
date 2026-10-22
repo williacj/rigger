@@ -14,9 +14,9 @@ import { join } from 'node:path';
 
 import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
-import { HANDLED, LEFT_OUT } from '../src/substrate/process.mjs';
+import { HANDLED, LEFT_OUT, PS } from '../src/substrate/process.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
-import { alive, fixture, read, running, scratch, turn, undrained } from './process-fixtures.mjs';
+import { alive, fixture, read, running, scratch, shellQuote, turn, undrained } from './process-fixtures.mjs';
 import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
 import { warmed } from './process-fixtures.mjs';
 
@@ -226,7 +226,7 @@ function fixtures(directory, options = {}) {
   fixture(directory, 'leaving', `echo $$ > "$here/group.$1"\n${child}\nexit 0`);
   fixture(directory, 'ps-once', [
     'if [ ! -f "$here/ps-asked" ]; then : > "$here/ps-asked"; exec /usr/bin/tail -f "$here/ps-hold"; fi',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   fixture(directory, 'ps-never', 'exec /usr/bin/tail -f "$here/ps-hold"');
   // `exiting` is a command alone in its group, which exits 3 once the caller writes `release`. It
@@ -241,18 +241,18 @@ function fixtures(directory, options = {}) {
   // command's group's states and wait statuses the exit cleanup makes as its kill's last look,
   // which `ps-status-fails` fails and `ps-status-hangs` never answers. `ps-log` answers every read
   // as `ps` does and writes each one's arguments to `ps.log`.
-  const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) if [ "$2" = "$(/bin/cat "$here/group.1")" ]; then ${answer}; fi ;; esac\nexec /bin/ps "$@"`;
+  const statusRead = (answer) => `case " $* " in *" pid=,stat=,xstat= "*) if [ "$2" = "$(/bin/cat "$here/group.1")" ]; then ${answer}; fi ;; esac\nexec ${shellQuote(PS)} "$@"`;
   fixture(directory, 'ps-status-fails', statusRead('echo "ps: the test refuses this read" >&2; exit 2'));
   fixture(directory, 'ps-status-hangs', statusRead('exec /usr/bin/tail -f "$here/ps-hold"'));
   // `ps-status-exits` exits 2 at that read and writes nothing to either stream.
   fixture(directory, 'ps-status-exits', statusRead('exit 2'));
   // `ps-status-empty` answers that read as `ps` does where no process matches: it exits 1 and prints nothing.
   fixture(directory, 'ps-status-empty', statusRead('exit 1'));
-  fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec /bin/ps "$@"');
+  fixture(directory, 'ps-log', 'echo "$*" >> "$here/ps.log"\nexec ' + shellQuote(PS) + ' "$@"');
   // `ps-start-hangs` answers every read as `ps` does, but never the read of a leader's start time.
   // `unready` records its group and runs until killed, and never starts the child that would put
   // it up, so a caller never finds it up.
-  fixture(directory, 'ps-start-hangs', 'case " $* " in *" -o lstart= "*) exec /usr/bin/tail -f "$here/ps-hold" ;; esac\nexec /bin/ps "$@"');
+  fixture(directory, 'ps-start-hangs', 'case " $* " in *" -o lstart= "*) exec /usr/bin/tail -f "$here/ps-hold" ;; esac\nexec ' + shellQuote(PS) + ' "$@"');
   fixture(directory, 'unready', 'echo $$ > "$here/group.$1"\nexec /usr/bin/tail -f "$here/hold"');
   // `zombied` starts a process that leaves the group, holds the command's output open until
   // killed, and parents a child it never reaps, which joins the group and exits there. So the
@@ -334,23 +334,23 @@ function fixtures(directory, options = {}) {
     '  *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
     '    /bin/mkdir "$here/confirming" 2>/dev/null || { : > "$here/go-join"; while [ ! -f "$here/joined.pid" ]; do :; done; } ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   fixture(directory, 'ps-join-fails', [
     'case " $* " in *" -g $(/bin/cat "$here/group.1") -o pid=,stat=,xstat= "*)',
     '  /bin/mkdir "$here/failed" 2>/dev/null && { : > "$here/go-join"; while [ ! -f "$here/joined.pid" ]; do :; done; echo "ps: the test refuses this read" >&2; exit 2; } ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   fixture(directory, 'ps-late', [
     'if [ "$1 $2 $3 $4" = "-g $(/bin/cat "$here/group.1") -o pid=,stat=" ] && /bin/mkdir "$here/late" 2>/dev/null; then',
-    '  table=$(/bin/ps "$@")',
+    '  table=$(' + shellQuote(PS) + ' "$@")',
     '  : > "$here/go-join"',
     '  while [ ! -f "$here/joined.pid" ]; do :; done',
     '  printf "%s\\n" "$table"',
     '  exit 0',
     'fi',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   fixture(directory, 'joining-reaped', 'export RIGGER_REAP_MARK=joiner.reaped\nexec "$here/joining" "$@"');
   fixture(directory, 'ps-join-reaped', [
@@ -363,10 +363,10 @@ function fixtures(directory, options = {}) {
     '    exit 2',
     '  fi',
     '  while [ ! -f "$here/joiner.reaped" ]; do :; done',
-    '  /bin/ps "$@" | /usr/bin/tee -a "$here/ps-reaped.log"',
+    '  ' + shellQuote(PS) + ' "$@" | /usr/bin/tee -a "$here/ps-reaped.log"',
     '  exit 0 ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   // `ps-hides` answers every read of group 1's that the census and the kill make, those that
   // begin `-ww` or read parents, leaving out the row of group 1's child.
@@ -387,9 +387,9 @@ function fixtures(directory, options = {}) {
   }
   fixture(directory, 'ps-hides', [
     'case " $* " in *" -g $(/bin/cat "$here/group.1" 2>/dev/null) "*)',
-    '  case " $* " in *" -ww "*|*ppid=*) /bin/ps "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'; exit 0 ;; esac ;;',
+    '  case " $* " in *" -ww "*|*ppid=*) ' + shellQuote(PS) + ' "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'; exit 0 ;; esac ;;',
     'esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   // `quitting` is a command whose child exits 0 once the caller's directory holds `go`, and which
   // never reaps that child. It is perl, because in one run by hand with `/bin/sh` on macOS 27.0 on
@@ -412,12 +412,12 @@ function fixtures(directory, options = {}) {
   const census = (answer) => [
     'group=$(/bin/cat "$here/group.1" 2>/dev/null)',
     `case " $* " in *" -ww -g $group "*) ${answer} ;; esac`,
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n');
   fixture(directory, 'ps-quit', census([
     'case "$*" in *command=*) : > "$here/commanded" ;; esac',
     'case "$*" in *stat=*) [ -f "$here/commanded" ] && /bin/mkdir "$here/told" 2>/dev/null && {',
-    '  table=$(/bin/ps "$@")',
+    '  table=$(' + shellQuote(PS) + ' "$@")',
     '  child=$(/bin/cat "$here/child.1")',
     '  : > "$here/go"',
     '  kill -s CONT "$child"',
@@ -428,7 +428,7 @@ function fixtures(directory, options = {}) {
   ].join('\n')));
   fixture(directory, 'ps-partial', census([
     ': > "$here/hidden"',
-    '/bin/ps "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'',
+    shellQuote(PS) + ' "$@" | /usr/bin/awk -v child="$(/bin/cat "$here/child.1")" \'$1 != child\'',
     'exit 0',
   ].join('\n')));
   fixture(directory, 'ps-silent', census(': > "$here/silenced"; exit 1'));
@@ -436,7 +436,7 @@ function fixtures(directory, options = {}) {
   // process holds: it exits 1 and prints nothing.
   fixture(directory, 'ps-gone', [
     'case " $* " in *" -p $(/bin/cat "$here/child.1" 2>/dev/null) -o ucomm= "*) /bin/mkdir "$here/gone" 2>/dev/null && exit 1 ;; esac',
-    'exec /bin/ps "$@"',
+    'exec ' + shellQuote(PS) + ' "$@"',
   ].join('\n'));
   if (options.ps || options.commands) finishFixtureWarmBatch(directory);
 }
@@ -1000,8 +1000,10 @@ test('every signal left out as harmless, or for the inspector, leaves a Node pro
 
 test('a listener for the signal left out for the profiler changes how a profiled Node process ends', ENDS_WITHIN, async (t) => {
   const directory = scratch(t);
+  // An empty Linux program can exit before the first sample, especially during concurrent startup.
+  const work = process.platform === 'linux' ? "require('node:crypto').pbkdf2Sync('fixture', 'profile', 100000, 32, 'sha256');" : '';
   // Each run is ended and reaped at the bound, so a run that hangs fails the test and leaves nothing.
-  const profiled = (code) => spawnSync(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${directory}`, '-e', code], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
+  const profiled = (code) => spawnSync(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${directory}`, '-e', `${code}\n${work}`], { encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL' });
   const [name] = LEFT_OUT.profiler;
 
   const without = profiled('');

@@ -57,6 +57,12 @@ const UNMAINTAINED = { 'maintenance.auto': 'false', 'gc.auto': '0' };
 /** `UNMAINTAINED` as the `-c` options by which `git clone` writes it into the repository it makes. */
 const unmaintained = () => Object.entries(UNMAINTAINED).flatMap(([key, value]) => ['-c', `${key}=${value}`]);
 
+/** Gives a fixture repository its own commit identity, independently of host configuration. */
+function identify(root) {
+  gitIn(root, 'config', 'user.email', 'fixture@example.invalid');
+  gitIn(root, 'config', 'user.name', 'fixture');
+}
+
 /**
  * A repository at `root` holding `files`, each key a relative posix-spelled path, with an identity
  * of its own so that a commit needs none from the host.
@@ -73,8 +79,7 @@ export function repositoryAt(root, files = {}) {
     writeFileSync(join(root, path), content);
   }
   gitIn(root, 'init', '-q');
-  gitIn(root, 'config', 'user.email', 'fixture@example.invalid');
-  gitIn(root, 'config', 'user.name', 'fixture');
+  identify(root);
   for (const [key, value] of Object.entries(UNMAINTAINED)) gitIn(root, 'config', key, value);
   if (Object.keys(files).length > 0) {
     gitIn(root, 'add', '-A');
@@ -107,6 +112,7 @@ export function cloneInto(from, into) {
   } catch (refused) {
     throw new Error(`cloning ${from} into ${into} failed: ${refused.stderr ?? refused.message}`);
   }
+  identify(into);
   return into;
 }
 

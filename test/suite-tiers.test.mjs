@@ -162,6 +162,16 @@ const expectedLists = {
   awaiting: originalHost,
   converting: originalConverting,
 };
+expectedLists.host.push('test/process-table.test.mjs');
+expectedLists.host.sort();
+expectedLists.converting.push(
+  'test/verdict-forge.test.mjs',
+  'test/verdict-input.test.mjs',
+  'test/verdict-surface.test.mjs',
+  'test/verdict-terminal.test.mjs',
+  'test/verdict.test.mjs',
+);
+expectedLists.converting.sort();
 
 for (const [name, expected] of Object.entries(expectedLists)) {
   test(`suite --list ${name} names the Part 2 files as repository-relative paths`, () => {
@@ -377,6 +387,19 @@ test('the deterministic runner exits a host file before its test loads', (t) => 
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(marker), false, 'a host file loaded in the deterministic tier');
+});
+
+test('process fixtures load without starting a process and resolve the same git', (t) => {
+  const which = spawnSync('/usr/bin/which', ['git'], { encoding: 'utf8', env: process.env });
+  assert.equal(which.status, 0, which.stderr);
+  const source = `import assert from 'node:assert/strict';
+import { GIT } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)};
+test('resolves git without starting a process at load', () => {
+  assert.equal(GIT, ${JSON.stringify(which.stdout.trim())});
+});`;
+  const { result } = runProbe(t, source);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(reportsPassedTest(result.stdout, 'resolves git without starting a process at load'), true, result.stdout);
 });
 
 for (const api of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {

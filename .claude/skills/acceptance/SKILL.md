@@ -137,6 +137,15 @@ sends every judge back and spends one of the card's rounds (`R-LOOP-8`); a card 
 rounds escalates as ambiguous (`R-LOOP-9`); and the change stales every verdict already returned
 (`R-GATE-7`). Settle the bar with whoever will help you before you file.
 
+Before filing, remove items dependent on this card's verdict, marker, required check or
+merge; `AGENTS.md`'s "Review and merge" still applies.
+
+Classify cited prior attempts as offered proof, context, or unresolved/noncredit; later
+results grant no retroactive credit.
+
+For required retained originals, predeclare finite offered results before maker work: each
+result’s originals, private-safe access route or receipt, exact ref and behavior scope.
+
 **Name predictable test edits at filing.** An author may name bounded grant classes, each
 stating what it covers and the existing `test/` lines it can reach, checkable in `git diff`.
 Examples: assertion lines in a named test file may retarget the old result of this card's

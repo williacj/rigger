@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { fixture } from './process-fixtures.mjs';
+import { PS } from '../src/substrate/process.mjs';
+import { fixture, shellQuote } from './process-fixtures.mjs';
 
 /**
  * Lists `two.pid` in the first census state and identity reads, then omits it in later group
@@ -19,6 +20,22 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
     'target=$(/bin/cat "$here/two.pid" 2>/dev/null)',
     'args="$*"',
     'if [ -f "$here/hang" ]; then phase=after-kill; else phase=before-kill; fi',
+    // Linux can show a killed task in D before it becomes the zombie this fixture requires.
+    // The caller's existing read bound also bounds this condition wait.
+    ...(process.platform === 'linux' ? [
+      'if [ "$phase" = after-kill ] && [ "$afterKill" = zombie ]; then',
+      '  killed=yes',
+      '  if [ -f "$here/exit-trace.jsonl" ]; then',
+      '    group=$(< "$here/group.pid")',
+      `    /usr/bin/grep -Fq '"kind":"signal","target":-'"$group"',"name":"SIGKILL","ok":true' "$here/exit-trace.jsonl" || killed=no`,
+      '  fi',
+      '  if [ "$killed" = yes ]; then',
+      '    while state=$(/bin/ps -p "$target" -o stat= 2>/dev/null); do',
+      '      case "$state" in Z*) break ;; esac',
+      '    done',
+      '  fi',
+      'fi',
+    ] : []),
     'if [ "$cell" = U1 ] && [ "$1" = -p ] && [ "$2" = "$target" ]; then',
     '  printf "READ %s\\nFAIL 1 empty\\n" "$args" >> "$here/sighted-ps.log"',
     '  exit 1',
@@ -29,9 +46,9 @@ export function sightingPs(directory, { cell = 'B', afterKill = 'omit', prepared
     "    \"-ww -g \"*\" -o pid=,stat=\") answer=$(< \"$here/sighting-cache.state\") || exit 79 ;;",
     "    \"-ww -g \"*\" -o pid=,command=\") answer=$(< \"$here/sighting-cache.command\") || exit 79 ;;",
     "    \"-p \"*\" -o ucomm=\") answer=$(< \"$here/sighting-cache.name.$2\") || exit 79 ;;",
-    "    *) answer=$(/bin/ps \"$@\") ;;",
+    ("    *) answer=$(" + shellQuote(PS) + " \"$@\") ;;"),
     "  esac",
-    "else answer=$(/bin/ps \"$@\"); fi",
+    ("else answer=$(" + shellQuote(PS) + " \"$@\"); fi"),
     'cut=no',
     'case "$args" in',
     '  "-ww -g "*" -o pid=,stat=")',
@@ -84,7 +101,7 @@ export const shownBefore = (directory) => sightingPs(directory);
 /** Prepares controlled census answers while the exit caller still holds its group. */
 export function prepareSighting(directory, { reader = spawnSync, clock = process.hrtime.bigint } = {}) {
   if (!existsSync(join(directory, 'sighting-prepare'))) return;
-  const source = reader === spawnSync ? 'real-/bin/ps' : 'synthetic-controlled-return';
+  const source = reader === spawnSync ? ('real-' + PS) : 'synthetic-controlled-return';
   const clockSource = clock === process.hrtime.bigint ? 'real-monotonic-clock' : 'synthetic-clock';
   const deadline = clock() + 6_000_000_000n;
   const output = join(directory, 'sighting-prepared');
@@ -98,11 +115,11 @@ export function prepareSighting(directory, { reader = spawnSync, clock = process
     const timeout = Math.min(500, remainingMs);
     const id = String(++serial).padStart(3, '0');
     const startedNs = clock().toString();
-    writeFileSync(join(output, `${id}.start.json`), JSON.stringify({ source, clockSource, tool: '/bin/ps', args, timeout, startedNs }) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(output, `${id}.start.json`), JSON.stringify({ source, clockSource, tool: PS, args, timeout, startedNs }) + '\n', { flag: 'wx', mode: 0o600 });
     let result;
     let thrown;
     const settings = { encoding: 'utf8', env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, timeout, killSignal: 'SIGKILL' };
-    try { result = reader === spawnSync ? spawnSync('/bin/ps', args, settings) : reader('/bin/ps', args, settings); }
+    try { result = reader === spawnSync ? spawnSync(PS, args, { ...settings, env: settings.env }) : reader(PS, args, settings); }
     catch (error) { thrown = { code: error.code ?? null, name: error.name, message: error.message }; }
     const endedNs = clock().toString();
     const streams = {};
@@ -116,7 +133,7 @@ export function prepareSighting(directory, { reader = spawnSync, clock = process
         streams[name].file = file;
       }
     }
-    writeFileSync(join(output, `${id}.json`), JSON.stringify({ source, clockSource, tool: '/bin/ps', args, timeout, startedNs, endedNs, status: result?.status ?? null, signal: result?.signal ?? null, error: thrown ?? (result?.error ? { code: result.error.code ?? null, message: result.error.message } : null), streams }) + '\n', { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(output, `${id}.json`), JSON.stringify({ source, clockSource, tool: PS, args, timeout, startedNs, endedNs, status: result?.status ?? null, signal: result?.signal ?? null, error: thrown ?? (result?.error ? { code: result.error.code ?? null, message: result.error.message } : null), streams }) + '\n', { flag: 'wx', mode: 0o600 });
     if (thrown) throw new Error('a controlled sighting preparation read threw before returning');
     if (result.error || result.signal || typeof result.stdout !== 'string' || typeof result.stderr !== 'string' || result.stderr !== '' || (result.status !== 0 && !(result.status === 1 && result.stdout === ''))) throw new Error('a controlled sighting preparation read was not a product-equivalent answer');
     if (clock() > deadline) throw new Error('the controlled sighting preparation exceeded its 6000 ms total bound');
