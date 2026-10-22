@@ -159,37 +159,28 @@ With classes, word the test-line item as: `git diff` against the base changes no
 For a card acting on a system outside the repository where undo is not obvious, require the maker
 to state its intended action before acting, with inspectable evidence of what it said and when.
 
-Require proof on a fake for every behaviour a fake can prove. A real-system run cannot replace
-that proof. Make each requirement a separate acceptance item.
+Require controlled proof for algorithmic behaviour and real-host proof for external contracts.
+A real run cannot replace missing controlled proof; a fake or injected clock cannot establish
+real OS behaviour or a real deadline. Keep these obligations independently ruleable.
 
 ## Systems outside Rigger's code
 
-**Enumerate an outside system's states; never sample them.** Some items depend on how a system
-outside Rigger's code behaves. The OS process table and signals, the filesystem and its symbolic
-links, git, and an agent CLI's output are instances of that class, not the whole of it. For such
-an item, name each dimension its outcome depends on, and that dimension's values. Mark each
-combination in or out of scope, and say that each in-scope cell gets a test.
+**Map the finite contract states.** For an external boundary, name the outcomes that change the
+branch or result, including errors, absence and nonreturn where reachable. Mark in-scope cells
+and state the scope edge. Each item retains a concrete falsifier.
 
-**An absolute needs that table or a stated edge.** "Every", "never", "outside every" and "all"
-are instances of the class of absolutes, not a list of barred words. An item promises an absolute
-about such a system only where that table bounds it, or where the item states the edge past which
-the absolute does not hold.
+For each in-scope cell, name controlled algorithm proof, real-boundary proof, or both, according
+to its claim. Real OS behaviour, tool contracts and real deadlines retain real-host evidence;
+injected-clock and fake results alone earn no such credit.
 
-A sampled item leaves the cells it never named to its judges, who find them one round at a time.
-#586 asked that a member L0 could not end, on the call's containment and on a start's kill,
-never be recorded as killed. It named one sequence of reads after the kill: every read fails. The
-table it needed, with the exit cleanup out of scope:
+Justify excluded or equivalent states with evidence for independent review. Do not multiply
+unrelated axes or enumerate unbounded external-system states. A proposed equivalence is not
+established merely because the author labels it so. An absolute holds only within the stated
+map and scope edge.
 
-| Reads of the process table after the kill | Member the kill left alive | Member answering `EPERM` |
-|---|---|---|
-| Every read fails | in: #586 | in: #586 |
-| One read answers and lists the member alive, then every read fails | in: missed, became #599 | in: missed, became #599 |
-| One read answers and shows the member a zombie, then every read fails | out: #599, and the `D16` note beside `reachedUnread` | out: #599, and the `D16` note beside `reachedUnread` |
-| The first read fails, then every read answers | in: the sequence #589's `failingOnceAfterKill` forces | in: the sequence #589's `failingOnceAfterKill` forces |
-| Every read answers | in | in |
-
-All three of #589's judges found the missed row. Named before filing, it would have been one more
-test in #586.
+Observe fixture readiness before timing a behaviour that assumes readiness. Keep startup timed
+when startup belongs to the contract. The `tdd` skill gives the test procedure; "Have it attacked
+before dispatch" governs independent acceptance review.
 
 ## What is checked, and what is not
 
@@ -237,10 +228,10 @@ You revise the acceptance before any maker starts. This review is part of filing
 13. When splitting work, is each part mapped to an acceptance item?
 14. Are each dependency's card and required result named?
 15. Must a maker state an outside-system action before acting if undo is unclear?
-16. Must every fake-provable behaviour be proven on a fake?
-17. Where an item depends on a system outside Rigger's code, does it name the dimensions and
-    their values, mark each cell in or out of scope, and give each in-scope cell a test?
-18. Does every absolute about such a system carry that table or a stated edge?
+16. Does each algorithmic claim have controlled proof and each external contract retain host proof?
+17. Does each external boundary have a finite contract-state map naming each cell's proof and
+    evidence for exclusions or equivalences?
+18. Does every absolute stay within that map and its stated scope edge?
 19. Did the second agent chosen under "Have it attacked before dispatch" review for missing cells
     and unbounded absolutes, and did you revise before dispatch?
 20. Does "Lands in" name every file an item or cited placement ruling requires to change?

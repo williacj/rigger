@@ -18,12 +18,12 @@ import { panelOf } from '../src/workflow/next-action.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('this repository config assigns opposite-provider agent judges for all five kinds and no codex role', () => {
+test('this repository config assigns Codex change judges and opposite-provider judges for other kinds, with no codex role', () => {
   const opposite = (role) => ({ role, provider: { claude: 'codex', codex: 'claude' } });
   assert.deepEqual(rigger.roles.engineer.providerLabels, { 'maker:codex': 'codex' });
   assert.equal(Object.hasOwn(rigger.roles, 'codex'), false);
   assert.deepEqual(Object.fromEntries(Object.entries(rigger.kinds).map(([name, kind]) => [name, kind.judges])), {
-    change: [opposite('reviewer'), opposite('architect')],
+    change: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'codex' } }, { role: 'architect', provider: { claude: 'codex', codex: 'codex' } }],
     spec: [opposite('reviewer'), opposite('engineer'), opposite('architect'), 'owner'],
     structure: [opposite('reviewer'), 'owner'],
     intake: [opposite('reviewer'), 'owner'],
@@ -50,8 +50,8 @@ test('a change card without maker:codex requires codex of its reviewer and of it
   assert.deepEqual(livePanel('change'), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }]);
 });
 
-test('a change card with maker:codex requires claude of its reviewer and of its architect', () => {
-  assert.deepEqual(livePanel('change', ['maker:codex']), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'claude' }]);
+test('a change card with maker:codex requires codex of its reviewer and of its architect', () => {
+  assert.deepEqual(livePanel('change', ['maker:codex']), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }]);
 });
 
 test('a spec card with maker:codex requires claude of its reviewer, its engineer and its architect, then the owner', () => {
@@ -744,12 +744,12 @@ test('the labels a config selects are every label its kinds and provisioning ste
   assert.deepEqual(selectedLabels(config), ['type:change', 'area:cli', 'type:spec', 'area:demo']);
 });
 
-test('the labels a config declares are those its kinds and steps select, then its epic label, each once', () => {
-  // Written out by hand from this repository's config, which declares `type:epic`.
-  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'maker:codex']);
+test('the labels a config declares include its consumer labels and Rigger\'s fixed labels, each once', () => {
+  // Consumer labels are written out by hand from this config, followed by the fixed escalation label.
+  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'maker:codex', 'rigger:escalated']);
   const { epicLabel, ...unmarked } = rigger;
   assert.deepEqual(validate(unmarked), []);
-  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'maker:codex']);
+  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'maker:codex', 'rigger:escalated']);
 });
 
 test('a config with no provisioning selects the labels its kinds select', () => {
@@ -1078,7 +1078,7 @@ test("the labels a config declares include every label a role's labels names, ea
   };
   assert.deepEqual(validate(config), []);
   assert.deepEqual(declaredLabels(config), [
-    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard', 'maker:codex',
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard', 'maker:codex', 'rigger:escalated',
   ]);
 });
 
@@ -1271,7 +1271,7 @@ test('the labels a config declares include each role\'s providerLabels keys, eac
   const config = { ...rigger, roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, providerLabels: { 'maker:codex': other, 'tier:high': other } }, reviewer: { ...rigger.roles.reviewer, labels: { 'tier:high': 'high' } } } };
   assert.deepEqual(validate(config), []);
   assert.deepEqual(declaredLabels(config), [
-    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'maker:codex',
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'maker:codex', 'rigger:escalated',
   ]);
 });
 
@@ -1297,4 +1297,36 @@ test('every judge check in the validator reads an entry\'s role through judgeRol
   visit(tree, false);
   assert.ok(/judgeRole\(entry\)/.test(source), 'validate.mjs never calls judgeRole on an entry, so nothing was checked');
   assert.deepEqual(outside, [], `validate.mjs reads a role property outside judgeRole at lines ${outside.join(', ')}`);
+});
+
+// proves R-SCHED-19
+test('the escalation label is reserved in kind and epic selectors in every letter case', () => {
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED', 'Rigger:Escalated']) {
+    const kind = { ...rigger.kinds.change, select: { labels: [label] } };
+    const selected = validate({ ...rigger, kinds: { ...rigger.kinds, change: kind } });
+    assert.ok(selected.some((reason) => reason.includes('kinds.change.select.labels') && reason.includes(label)), JSON.stringify(selected));
+    const epic = validate({ ...rigger, epicLabel: label });
+    assert.ok(epic.some((reason) => reason.includes('epicLabel') && reason.includes(label)), JSON.stringify(epic));
+  }
+});
+
+test('declared labels include escalation once while role and step maps may name its case variants', () => {
+  assert.equal(declaredLabels(rigger).at(-1), 'rigger:escalated');
+  assert.equal(selectedLabels(rigger).includes('rigger:escalated'), false);
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED', 'Rigger:Escalated']) {
+    const config = {
+      ...rigger,
+      roles: {
+        ...rigger.roles,
+        engineer: { ...rigger.roles.engineer, labels: { [label]: 'high' }, providerLabels: { [label]: 'codex' } },
+      },
+      provisioning: { ...rigger.provisioning, escalate: { run: 'true', select: { labels: [label, 'area:extra'] } } },
+    };
+    assert.deepEqual(validate(config), [], label);
+    const declared = declaredLabels(config);
+    assert.equal(declared.filter((name) => name.toLowerCase() === 'rigger:escalated').length, 1, JSON.stringify(declared));
+    assert.ok(declared.includes(label), JSON.stringify(declared));
+    assert.ok(declared.includes('area:extra'), JSON.stringify(declared));
+    assert.ok(declared.includes('type:change') && declared.includes('type:epic'), JSON.stringify(declared));
+  }
 });
