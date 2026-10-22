@@ -1106,7 +1106,6 @@ test('once, given two Review cards each ready to merge, finishes one card: it me
   assert.doesNotMatch(ran.out, /#20/);
 });
 
-// proves R-ESCALATE-10
 test('once dispatches and writes nothing for labelled unmerged cards across active stages and selection conflicts', SETTLES_WITHIN, async () => {
   const cases = [
     { labels: ['type:change'], body: ADMITTED },

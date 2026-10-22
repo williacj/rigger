@@ -121,11 +121,54 @@ merge-write assertion remains under `.tmp/open-pull-proof/`. Mutations never tou
 author's production file; its bytes and the restored proof file agree, and the proof source's
 git status is clean. Fresh configured delivered reviews are still required at the final head.
 
+## Withdrawn unsupported proof declaration
+
+The [fresh configured reviewer](https://github.com/williacj/rigger/pull/863#issuecomment-6336166100)
+ran its own guarded deletion checks at `07e589b4912fbdcaa1f3735ed8857c041fa12705`.
+It ruled item17 unmet because the original broad labelled-unmerged CLI test still declared
+`R-ESCALATE-10` while passing after deletion of the waiting guard. The six dispatch/continuation
+controls and the three judge/merge/escalation controls detect that deletion, but cannot make
+another test's unsupported declaration true.
+
+This correction withdraws only the declaration added above that broad test by this card.
+The test, every assertion, its fixture and its deadline remain byte-identical. The matrix is
+regenerated, so that test no longer appears as proof of the waiting requirement. The nine
+discriminating CLI controls and their supported declarations remain. Production bytes and
+the prerequisite interface are unchanged. The configured judges must review the corrected
+head; the earlier verdict is not reused.
+
+Measured on Ubuntu WSL2 with Node26.12.0 on2026-10-22UTC, the retained broad test
+passed one test with zero failures, cancellations or skips (3181.016624ms). Before
+regeneration, matrix:check correctly failed because its entry was stale; after npm run matrix,
+matrix:check passed. The original dispatch-base test bytes remain unchanged outside the
+admitted G1/G2 grants. The ordinary complete-suite hook is still required for this correction.
+
+## Verification environment correction
+
+The first complete hook for the declaration-only correction exited1: 4,163 tests, 3,567
+passed, 543 failed, zero cancelled and53 skipped (171546.971405ms). Its custom evidence
+directory was mode0755, measured with stat; the suite requires a private mode0700 root.
+The first rejected-root fixture then left a deleted scratch path in TMPDIR, causing the
+following ENOENT failures. These are preserved failures, not successful verification.
+
+A distinct unchanged recorded-scratch fixture also failed with ext4 scratch: a non-mutating
+observer measured the removed and recreated role directory as the same device/inode
+(2096/451206). With ordinary tmpfs scratch the same test passed and the inode changed from
+8903625 to8903628. The runtime was not changed; this ext4 fixture assumption is outside this
+card. The follow-up belongs to its own card rather than a weaker assertion here.
+
+The retry restores ordinary TMPDIR=/tmp and moves only retained C615_EVIDENCE_ROOT originals
+to a fresh ext4 directory whose actual mode is checked as0700. Keeping those retained originals
+off tmpfs solves its inode capacity problem without changing the scratch filesystem. The
+failed full log, observed inode records and exact correction source remain preserved. A
+completed green ordinary full hook is still required before commit or push.
+
 ## Boundaries
 
 Existing test edits are confined to #858's G1 setup-board label fixtures/counts/descriptions and
 G2 declared-label expectations/descriptions. Other test changes are additions. The matrix is
-generator output. No existing assertion, deadline or proof declaration was deleted.
+generator output. No assertion, deadline or proof declaration present at the dispatch base was deleted.
+The unsupported declaration added by this card is withdrawn as recorded above.
 
 Status labels, owner-escalation writes and role routing remain unclaimed. This work neither
 changes supported engine hosts nor installs an engine. Independent review and exact-head CI
