@@ -97,3 +97,29 @@ push results belong to the proposed head's PR evidence.
 This work supplies the loop's owner operation only. Maker notes, destination
 or role routing, directory creation/removal, and additional refusal selection
 remain unclaimed. No owner marker or merge is part of this maker's work.
+
+## Independent review: Owner destination proof
+
+The ordinary full hook at `1a1295d925d0804fa6c6433b19dc9c4bb443381d`
+measured 4,224 tests, 4,165 passing, no failures or cancellations and 59 skips
+in 603,510.620074 ms, and its normal push passed. The independent reviewer's
+F1 then demonstrated that the new claim-span test did not assert the Owner
+destination required by its `R-ESCALATE-8` and `R-ESCALATE-15` declarations.
+
+In a disposable local clone of that head, a guarded single replacement of
+`escalated: { to: 'owner' }` with `escalated: { to: 'review' }` was read back
+and recorded as a diff. A probe in the named loop test measured card 96 in
+Review and transition `owner` to `review`, while the original test passed.
+The test now additionally asserts the actual configured Owner column and
+the recorded transition's `to: 'owner'`, keeping every prior assertion,
+deadline and proof declaration. Author production files are unchanged.
+
+The command was `npm test --
+--test-name-pattern=one.escalation.claim.spans.every.awaited.owner.write
+test/loop.test.mjs`. With the verified destination fault, its one named test
+failed on the new Owner assertion: actual Review, expected Owner. After
+byte-exact production restoration and clean source status, that same target
+passed its one test in 235.905441 ms, with no failures, cancellations or skips.
+The first scratch setup's restore guard stopped because its baseline file
+was staged as added rather than committed; the complete proof was repeated
+in the clean clone, and that earlier guard failure is preserved separately.
