@@ -30,16 +30,16 @@ export function markerComment({ card, pull, head, body, role = 'reviewer', provi
  * (https://docs.github.com/en/graphql/reference/objects#pullrequest). The read of a branch's pull
  * requests leaves out both, as it leaves them out on GitHub.
  */
-const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks', 'closed', 'headRepositoryDeleted'];
+const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks', 'closed', 'headRepositoryDeleted', 'labels'];
 
 /**
  * Everything the fake holds of one issue: its `number`, its `title`, `Card <number>` where none is
  * given, its `body`, empty where none is given, its
  * `labels` by name, in the order GitHub answers them, and `repository`, the `owner/name` the forge
  * answers it in, which is another repository's for an issue transferred out of this one and null
- * for this repository's own.
+ * for this repository's own. Its `comments` carry the comments appended to that issue.
  */
-const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository'];
+const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository', 'comments'];
 
 /** The SHA the fake's merge answers as the merge commit. */
 const MERGE_SHA = 'e'.repeat(40);
@@ -105,6 +105,7 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
   };
   /** Whether `named`, a repository an issue or pull request is in, is this one: null names it too. */
   const isOwn = (named) => named === null || (repo !== undefined && named.toLowerCase() === repo.toLowerCase());
+  const issue = (number) => held.issues.find((candidate) => candidate.number === number && isOwn(candidate.repository));
   const asAnswered = (candidate) => {
     const { number, sha, base } = current(candidate);
     return { number, head: sha, base };
@@ -174,17 +175,29 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     },
   };
   /**
-   * The forge adapter's comment write, beside the reads and never among them: posts `body` on pull
-   * request `number` as the engine's account, which holds write access, at the next minute after
+   * Appends `body` on a held issue or pull request as the engine's account, which holds write access, at the next minute after
    * its newest comment, and answers the comment as the forge does, with its id.
    */
-  const postComment = async (number, body) => {
-    const { comments } = known('postComment', number);
+  const appendComment = (target, number, body) => {
+    const comments = target.comments ??= [];
     const newest = comments.at(-1)?.createdAt;
     const createdAt = new Date((newest === undefined ? Date.parse('2026-10-01T12:00:00Z') : Date.parse(newest)) + 60_000).toISOString().replace('.000Z', 'Z');
     const id = `IC_${number}_${comments.length + 1}`;
     comments.push({ body, createdAt, id, author: { login: 'rigger-engine' } });
     return { id, body };
+  };
+  const postComment = async (number, body) => appendComment(known('postComment', number), number, body);
+  const postIssueComment = async (number, body) => {
+    const target = pull(number) ?? issue(number);
+    if (!target) throw new Error(`the fake repository holds no issue #${number}, so postIssueComment has nothing to write`);
+    return appendComment(target, number, body);
+  };
+  const addIssueLabel = async (number, label) => {
+    const target = pull(number) ?? issue(number);
+    if (!target) throw new Error(`the fake repository holds no issue #${number}, so addIssueLabel has nothing to write`);
+    const labels = target.labels ??= [];
+    if (!labels.includes(label)) labels.push(label);
+    return labels.map((name) => ({ name }));
   };
   // Every merge call L2 made, in order, and the answers a test scripted for the next ones.
   const merges = [];
@@ -219,6 +232,8 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
   return {
     operations,
     postComment,
+    postIssueComment,
+    addIssueLabel,
     mergePullRequest,
     /** Has the next merge call answer as `script` says, as `mergePullRequest` describes. */
     answerMerge: (script) => scripted.push(script),

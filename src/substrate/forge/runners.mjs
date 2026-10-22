@@ -437,24 +437,17 @@ export async function itemWriteRunner(args, { send = throughL0, emitter, timeout
   return send(FORGE, args, { emitter, timeout });
 }
 
-/** Sends only a head-guarded merge or a pull-request comment. */
+/** Sends only a head-guarded merge, an issue/PR comment, or one issue-label addition. */
 export async function repositoryWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const [api, path, method, verb, field, value, option, mergeMethod, ...extra] = args;
   const merge = api === 'api' && /^repos\/[^/]+\/[^/]+\/pulls\/[1-9]\d*\/merge$/.test(path ?? '')
     && method === '-X' && verb === 'PUT' && field === '-f' && /^sha=[0-9a-f]{40}$/.test(value ?? '')
     && option === '-f' && mergeMethod === 'merge_method=merge' && extra.length === 0;
-  const comment = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/comments$/.test(path ?? '')
-    && method === '-X' && verb === 'POST' && field === '-f' && value?.startsWith('body=')
-    && option === undefined && extra.length === 0;
-  if (!merge && !comment) refuse('repository-write', spelled(args));
-  if (comment) {
-    const pullPath = path.replace('/issues/', '/pulls/').replace(/\/comments$/, '');
-    const number = path.split('/').at(-2);
-    const said = await readRunner(['api', pullPath, '-X', 'GET'], { send, emitter, timeout });
-    if (said.status !== 0 || said.timedOut) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm: ${firstLine(said)}`);
-    let pull;
-    try { pull = JSON.parse(said.stdout); } catch { /* An unreadable response cannot confirm a PR. */ }
-    if (!pull?.head?.sha) refuse('repository-write', `a comment on pull request #${number} that the forge did not confirm`);
-  }
+  const post = api === 'api' && method === '-X' && verb === 'POST' && field === '-f' && args.length === 6;
+  const comment = post && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/comments$/.test(path ?? '')
+    && typeof value === 'string' && value.startsWith('body=');
+  const label = post && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/labels$/.test(path ?? '')
+    && typeof value === 'string' && value.startsWith('labels[]=');
+  if (!merge && !comment && !label) refuse('repository-write', spelled(args));
   return send(FORGE, args, { emitter, timeout });
 }

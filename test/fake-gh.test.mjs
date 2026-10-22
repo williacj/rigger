@@ -480,6 +480,34 @@ const sha = (n) => String(n).padStart(40, 'a');
 /** The repository reads, pointed at the board the fake `gh` holds, sent through its runner's own spawn. */
 const reads = () => repositoryReads(BOARD, { emitter: UNKILLED });
 
+test('the in-process fake appends card-issue comments and PR-backed issue comments while keeping writes off its read side', async () => {
+  const fake = createFakeRepository({
+    issues: [{ number: 214, comments: [{ body: 'Earlier issue comment' }] }],
+    pullRequests: [{ number: 301, head: 'topic', sha: sha(301), comments: [{ body: 'Earlier PR comment' }] }],
+  });
+  const body = 'Owner input\n$(printf remains-data)';
+
+  await fake.postIssueComment(214, body);
+  await fake.postIssueComment(301, body);
+
+  assert.deepEqual(fake.held().issues[0].comments.map((comment) => comment.body), ['Earlier issue comment', body]);
+  assert.deepEqual(fake.held().pullRequests[0].comments.map((comment) => comment.body), ['Earlier PR comment', body]);
+  assert.equal(Object.hasOwn(fake.operations, 'postIssueComment'), false);
+});
+
+test('the in-process fake adds one issue label without replacing or duplicating existing labels', async () => {
+  for (const labels of [[], ['existing'], ['existing', 'customer:publish']]) {
+    const fake = createFakeRepository({ issues: [{ number: 214, labels }] });
+    const expected = labels.includes('customer:publish') ? labels : [...labels, 'customer:publish'];
+
+    assert.deepEqual(await fake.addIssueLabel(214, 'customer:publish'), expected.map((name) => ({ name })));
+    assert.deepEqual(fake.held().issues[0].labels, expected);
+    assert.equal(Object.hasOwn(fake.operations, 'addIssueLabel'), false);
+  }
+  const fake = createFakeRepository({ pullRequests: [{ number: 301, head: 'topic', sha: sha(301), labels: ['existing'] }] });
+  assert.deepEqual(await fake.addIssueLabel(301, 'customer:publish'), [{ name: 'existing' }, { name: 'customer:publish' }]);
+});
+
 /** The cards a board holds for the repository tests below. */
 const CARDS = [
   { type: 'issue', repository: 'williacj/rigger', number: 214, title: 'One', column: 'Review' },

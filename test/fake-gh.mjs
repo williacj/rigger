@@ -37,7 +37,8 @@ export function commandOf(args) {
   const [subcommand, endpoint, flag, query, ...rest] = args;
   if (subcommand === 'api' && endpoint?.startsWith('repos/')) {
     const path = pathShapeOf(endpoint);
-    const fields = args.slice(2).map((word) => path.endsWith('/merge') && word.startsWith('sha=') ? 'sha=_' : path.endsWith('/comments') && word.startsWith('body=') ? 'body=_' : word);
+    const valuePrefix = path.endsWith('/merge') ? 'sha=' : path.endsWith('/comments') ? 'body=' : path.endsWith('/labels') ? 'labels[]=' : null;
+    const fields = args.slice(2).map((word) => valuePrefix !== null && word.startsWith(valuePrefix) ? `${valuePrefix}_` : word);
     return spelled(['api', path, ...fields]);
   }
   if (subcommand !== 'api' || endpoint !== 'graphql' || flag !== '-f' || !query?.startsWith('query=') || rest.length > 0) {
@@ -623,14 +624,27 @@ const COMMANDS = {
   },
   [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
-    const pull = state.repository?.pullRequests?.find((candidate) => candidate.number === number);
-    if (!pull) throw notFound('https://docs.github.com/rest/issues/comments#create-an-issue-comment');
+    const target = state.repository?.pullRequests?.find((candidate) => candidate.number === number)
+      ?? state.repository?.issues?.find((candidate) => candidate.number === number && (candidate.repository == null || candidate.repository.toLowerCase() === state.repo.toLowerCase()));
+    if (!target) throw notFound('https://docs.github.com/rest/issues/comments#create-an-issue-comment');
     const refused = state.repository?.commentReplies?.[number];
     if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
     const body = args[5].slice('body='.length);
-    pull.comments ??= [];
-    pull.comments.push({ body, createdAt: now() });
-    return JSON.stringify({ id: pull.comments.length, body });
+    target.comments ??= [];
+    target.comments.push({ body, createdAt: now() });
+    return JSON.stringify({ id: target.comments.length, body });
+  },
+  [commandOf(['api', 'repos/_/_/issues/_/labels', '-X', 'POST', '-f', 'labels[]=_'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const target = state.repository?.pullRequests?.find((candidate) => candidate.number === number)
+      ?? state.repository?.issues?.find((candidate) => candidate.number === number && (candidate.repository == null || candidate.repository.toLowerCase() === state.repo.toLowerCase()));
+    if (!target) throw notFound('https://docs.github.com/rest/issues/labels#add-labels-to-an-issue');
+    const refused = state.repository?.labelReplies?.[number];
+    if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
+    const label = args[5].slice('labels[]='.length);
+    target.labels ??= [];
+    if (!target.labels.includes(label)) target.labels.push(label);
+    return JSON.stringify(target.labels.map((name) => ({ name })));
   },
 };
 
