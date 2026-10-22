@@ -1152,10 +1152,7 @@ test('once reads the owner removing an escalation label before its next invocati
   const ran = once({ items: [card(151, 'Ready', { labels: ['type:change', 'RIGGER:ESCALATED'] })] });
   assert.equal(ran.code, 0, ran.err);
   assert.deepEqual(ran.agentRuns(), []);
-  const path = join(dirname(ran.fake.gh), 'board.json');
-  const held = JSON.parse(readFileSync(path, 'utf8'));
-  held.model.items[0].labels = ['type:change'];
-  writeFileSync(path, JSON.stringify(held));
+  setEscalationLabel(ran.fake);
 
   const resumed = ran.rerun();
 
@@ -1245,10 +1242,7 @@ async function withheldDispatch(column) {
       assert.deepEqual((await ran.model()).writes(), []);
       assert.deepEqual(await columnsOf(ran), { 181: column });
       assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
-      const state = join(dirname(ran.fake.gh), 'board.json');
-      const held = JSON.parse(readFileSync(state, 'utf8'));
-      held.model.items[0].labels = ['type:change'];
-      writeFileSync(state, JSON.stringify(held));
+      setEscalationLabel(ran.fake);
 
       const resumed = ran.rerun();
 
@@ -1268,7 +1262,6 @@ async function withheldContinuation(t, column) {
       const settings = owner ? { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } } : config();
       const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, column, { labels: ['type:change', label] })] },
         { settings, prepare: prepareContinuation({ ruling: owner ? 'owner' : 'reviewer', owner }) });
-      const state = join(dirname(fake.gh), 'board.json');
       const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8',
         env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
 
@@ -1280,9 +1273,7 @@ async function withheldContinuation(t, column) {
       assert.deepEqual((await fake.model()).writes(), []);
       assert.equal((await (await fake.model()).operations.readItems())[0].column, column);
       assert.deepEqual(eventsOf({ consumer }).filter(({ event }) => /dispatch|escalat|transition/.test(event)), []);
-      const unlabelled = JSON.parse(readFileSync(state, 'utf8'));
-      unlabelled.model.items[0].labels = ['type:change'];
-      writeFileSync(state, JSON.stringify(unlabelled));
+      setEscalationLabel(fake);
 
       const resumed = invoke();
 
@@ -1317,7 +1308,12 @@ test('once withholds an otherwise continuing labelled Owner card until its label
 function setEscalationLabel(fake, label) {
   const state = join(dirname(fake.gh), 'board.json');
   const held = JSON.parse(readFileSync(state, 'utf8'));
-  held.model.items[0].labels = ['type:change', ...(label === undefined ? [] : [label])];
+  const item = held.model.items[0];
+  item.labels = ['type:change', ...(label === undefined ? [] : [label])];
+  const repository = (item.repository ?? held.repo).toLowerCase();
+  const issue = held.repository?.issues?.find((candidate) => candidate.number === item.number
+    && (candidate.repository ?? held.repo).toLowerCase() === repository);
+  if (issue !== undefined) issue.labels = [...item.labels];
   writeFileSync(state, JSON.stringify(held));
 }
 
@@ -1399,3 +1395,36 @@ test('once withholds an otherwise admitted Owner merge on an open pull until its
 
 // proves R-ESCALATE-10, R-ESCALATE-11
 test('once withholds an otherwise critical Owner escalation on an open pull until its label is removed', SETTLES_WITHIN, () => withheldOpenPullAction('escalate'));
+
+
+test('the owner label control updates seeded issue facts by repository and issue identity', () => {
+  // #860's seedRepository/boardOf at bb41bb5 shares these actual issue facts with board reads.
+  const fake = installFakeGh(temporaryDirectory('rigger-owner-label-control-'), {
+    repo: REPO, project: PROJECT,
+    board: { columns: COLUMNS, items: [card(10, 'Owner', { labels: ['type:change', 'RIGGER:ESCALATED'] })] },
+  });
+  seedRepository(fake, { issues: [
+    { number: 10, repository: 'ACME/WIDGETS', labels: ['type:change', 'RIGGER:ESCALATED'], body: 'Keep the owner evidence.' },
+    { number: 10, repository: 'someone/widgets', labels: ['foreign', 'rigger:escalated'] },
+    { number: 11, repository: REPO, labels: ['other', 'rigger:escalated'] },
+  ] });
+  const state = join(dirname(fake.gh), 'board.json');
+  const before = JSON.parse(readFileSync(state, 'utf8'));
+
+  setEscalationLabel(fake);
+
+  const cleared = JSON.parse(readFileSync(state, 'utf8'));
+  assert.deepEqual(cleared.repository.issues, [
+    { ...before.repository.issues[0], labels: ['type:change'] },
+    before.repository.issues[1], before.repository.issues[2],
+  ]);
+  assert.deepEqual(cleared.model.items[0].labels, ['type:change']);
+  assert.deepEqual({ ...cleared, model: before.model, repository: before.repository }, before);
+
+  setEscalationLabel(fake, 'rigger:escalated');
+
+  const labelled = JSON.parse(readFileSync(state, 'utf8'));
+  assert.deepEqual(labelled.repository.issues[0], { ...before.repository.issues[0], labels: ['type:change', 'rigger:escalated'] });
+  assert.deepEqual(labelled.repository.issues.slice(1), before.repository.issues.slice(1));
+  assert.deepEqual(labelled.model.items[0].labels, ['type:change', 'rigger:escalated']);
+});

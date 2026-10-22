@@ -193,3 +193,55 @@ The unsupported declaration added by this card is withdrawn as recorded above.
 Status labels, owner-escalation writes and role routing remain unclaimed. This work neither
 changes supported engine hosts nor installs an engine. Independent review and exact-head CI
 remain required before merge.
+
+
+## Shared issue labels at the owner acknowledgement
+
+The #861 prerequisite integration exposed five fixture failures before feature implementation.
+Its actual tree combined #855 at `6ea199d09adc8a132f032a95caeb0d30e0a66449`, #860 at
+`bb41bb5cb61d4d57172e53149fd1a03bbc857591` and this card at
+`4d22219b12615572bff1b5b92137456ebb95f366`, over the main result from #859. The normal full
+hook on 2026-10-22 UTC measured 4248 tests, 4184 passed, 5 failed, 0 cancelled and 59 skipped,
+in 652034.579872 ms. It created no merge commit. Its first prerequisite merge had passed
+4237 tests, 4178 passed, 0 failed/cancelled and 59 skipped, in 649005.892929 ms.
+
+The failures were the three labelled continuation controls and the Owner merge/critical
+controls after their simulated acknowledgement. At the actual #860 head, `seedRepository`
+seeds board issues and `boardOf` overlays their labels by repository and issue identity in
+`test/fake-gh.mjs`. The acknowledgement controls changed only the board model, leaving the
+seeded issue labelled. The next read therefore restored that label. The production guard
+was reading the fixture's actual held label.
+
+A new fixture regression first reached its assertion and failed because the selected seeded
+issue still held `RIGGER:ESCALATED` (1 test, 0 passed, 1 failed; 110.614035 ms total). The
+minimal control update made it pass (1 passed, 0 failed/cancelled/skipped; 111.585976 ms total).
+The assertion independently checks the case-insensitive repository and exact issue identity,
+retains the other issue facts, and preserves another repository's issue of the same number.
+A first draft used an issue-comment field unsupported by this card's current fake; that
+fixture-construction failure was not counted as the intended red. Only that new fixture field
+was corrected to the existing body field before measuring the assertion failure.
+
+The card-added acknowledgement sites now reuse the one control. It updates both the board
+model and the matching seeded issue where that existing representation is held. All old
+assertions, deadlines, titles and proof declarations remain.
+
+The exact failed combined Git tree was copied into an independent proof worktree and its
+index hash compared with the original before any repair. The nine applicability controls
+reproduced 4 passed/5 failed (32829.638772 ms). Applying only this fixture repair made all
+11 selected controls pass, with 0 failed/cancelled/skipped (29452.404646 ms). The entire
+combined `test/once.test.mjs` then passed: 85 tests, 85 passed, 0 failed/cancelled/skipped,
+104653.251396 ms. The isolated repair's selected controls also passed 11/11 (27311.96714 ms).
+
+Acorn AST/source checking against published head `4d22219` measured 292 existing assertion
+expressions, 72 test titles/deadlines and 22 proof declarations preserved byte for byte.
+The base-test prefix and exact thirteen-file scope check passed. Every production byte is
+unchanged. The original published author and active review worktrees were left frozen; this
+repair was made in a separate worktree. Its normal full hook and fresh reviews of the eventual
+published head remain required; these focused checks supply neither a verdict nor a skipped gate.
+
+Raw logs are retained in the repair worktree's `.tmp/858-issue-label-control-*.log` and
+`.tmp/858-label-controls-isolated.log`, and the combined proof worktree's
+`.tmp/858-combined-label-control-{red,green}.log` and `.tmp/858-combined-once-file.log`.
+The original failed full hook is preserved separately in the #861 worktree. This is a
+test-control correction within #858's existing additive test scope; its 21 acceptance items
+and digest are unchanged.
