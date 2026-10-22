@@ -56,11 +56,11 @@ test -x /bin/ps && test -x /usr/sbin/lsof && test -x /usr/bin/lockf
 
 ## Clone and run
 
-To test the unmerged compatibility experiment, select its branch explicitly:
+Check out `main` to test the merged repository:
 
 ```bash
 mkdir -p "$HOME/src"
-git clone --branch rigger-832 https://github.com/williacj/rigger.git "$HOME/src/rigger"
+git clone --branch main https://github.com/williacj/rigger.git "$HOME/src/rigger"
 cd "$HOME/src/rigger"
 npm ci
 npm test
@@ -81,5 +81,6 @@ explicitly gated live tests can report skips with reasons.
 
 The setup installers above have not been executed on a Mac during this Windows-hosted work.
 The [verification journal](journal/2026-10-20-1646-832-linux-tests.md) records the local setup limits.
-The experiment's PR records macOS CI results for its exact head; a result from a different
-commit is not verification of this branch.
+The experiment's PR records historical macOS CI results for that PR's head. To verify the
+checkout you are testing, inspect CI results for its exact commit; a result from a different
+commit does not verify it.
