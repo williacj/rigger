@@ -195,6 +195,8 @@ test('codex-retry.sh waits CODEX_RETRY_WAIT seconds between attempts, and 300 wh
 
   assert.equal(readFileSync(join(zero.w.stub, 'sleeps'), 'utf8'), '0\n');
   assert.equal(readFileSync(join(unset.w.stub, 'sleeps'), 'utf8'), '300\n');
+  assert.match(zero.result.stderr, /^codex-retry: at capacity, retry 1 of 6 in 0 s$/m, 'the message names the wait it takes');
+  assert.match(unset.result.stderr, /^codex-retry: at capacity, retry 1 of 6 in 300 s$/m);
   assertToolingClean();
 });
 

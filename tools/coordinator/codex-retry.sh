@@ -29,7 +29,7 @@ while :; do
     echo "codex-retry: still at capacity after 6 retries, log $log"
     exit 75
   fi
-  echo "codex-retry: at capacity, retry $tries of 6 in 300 s" >&2
+  echo "codex-retry: at capacity, retry $tries of 6 in ${CODEX_RETRY_WAIT:-300} s" >&2
   sleep "${CODEX_RETRY_WAIT:-300}"
   # A maker whose session started resumes that session instead of starting over.
   case "$1" in
