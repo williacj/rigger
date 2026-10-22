@@ -440,6 +440,69 @@ test('a maker\'s entry whose pull request list fills the read\'s limit is kept, 
   assertToolingClean();
 });
 
+test('a maker\'s clone whose tracked edit is hidden by assume-unchanged or skip-worktree is kept and named', () => {
+  const s = setup('sweep-hidden-edit-');
+  const assumed = maker(s, 1);
+  gitIn(assumed, 'update-index', '--assume-unchanged', 'README');
+  writeFileSync(join(assumed, 'README'), 'edited where status cannot see\n');
+  const skipped = maker(s, 2);
+  gitIn(skipped, 'update-index', '--skip-worktree', 'README');
+  writeFileSync(join(skipped, 'README'), 'edited where status cannot see\n');
+  for (const work of [assumed, skipped]) assert.equal(gitIn(work, 'status', '--porcelain', '--untracked-files=all'), '', 'status hides the edit');
+  pull(s, 11, 'MERGED', 'rigger-1');
+  pull(s, 12, 'MERGED', 'rigger-2');
+  const r = sweep(s);
+
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(r.out, []);
+  assert.match(named(r, assumed), /kept.*assume-unchanged or skip-worktree/);
+  assert.match(named(r, skipped), /kept.*assume-unchanged or skip-worktree/);
+  assertToolingClean();
+});
+
+test('a maker\'s clone whose branch the forge has moved past, without the clone fetching it, is removed, and listing it writes nothing', () => {
+  const s = setup('sweep-forge-ahead-');
+  const work = maker(s, 7);
+  const other = cloneInto(s.bare, join(s.w.base, 'other'));
+  gitIn(other, 'checkout', '-q', 'rigger-7');
+  commit(s, other, 'later');
+  gitIn(other, 'push', '-q', 'origin', 'rigger-7');
+  const ahead = gitIn(other, 'rev-parse', 'HEAD').trim();
+  assert.throws(() => gitIn(work, 'cat-file', '-e', ahead), 'the clone never fetched the forge\'s tip');
+  pull(s, 20, 'CLOSED', 'rigger-7');
+  const before = tree(s.root);
+  const listed = sweep(s, ['--list']);
+
+  assert.deepEqual(tree(s.root), before, 'the read wrote nothing into the clone or the root');
+  assert.deepEqual(listed.out, [work], listed.stderr);
+  const r = sweep(s);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.out, [work]);
+  assertToolingClean();
+});
+
+test('a maker\'s clone is kept and named with the reason when the forge lists its refs but the fetch of a tip the clone lacks fails', () => {
+  const s = setup('sweep-fetch-fails-');
+  const work = maker(s, 7);
+  const other = cloneInto(s.bare, join(s.w.base, 'other'));
+  gitIn(other, 'checkout', '-q', 'rigger-7');
+  commit(s, other, 'later');
+  gitIn(other, 'push', '-q', 'origin', 'rigger-7');
+  // An ssh stand-in that serves the forge's ref listing once, then refuses every later connection.
+  const ssh = join(s.w.base, 'ssh-once');
+  const count = join(s.w.base, 'ssh-count');
+  writeFileSync(ssh, `#!/bin/sh\nfor a do last=$a; done\nif [ -e "${count}" ]; then echo "ssh: forge.invalid refused the connection" >&2; exit 255; fi\n: > "${count}"\nexec /bin/sh -c "$last"\n`, { mode: 0o755 });
+  gitIn(work, 'remote', 'set-url', 'origin', `ssh://forge.invalid${s.bare}`);
+  pull(s, 20, 'MERGED', 'rigger-7');
+  const r = sweep(s, [], { GIT_ALLOW_PROTOCOL: 'file:ssh', GIT_SSH_COMMAND: ssh, GIT_SSH_VARIANT: 'simple' });
+
+  assert.ok(existsSync(count), 'the ref listing was served');
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(r.out, []);
+  assert.match(named(r, work), /kept.*cannot read the forge's refs.*refused the connection/);
+  assertToolingClean();
+});
+
 /** A stub `rm` that records, before it removes anything, whether the sweep's standard output already names its operand. */
 function watchedRemoval(s) {
   const dir = join(s.w.base, 'rm-stub');

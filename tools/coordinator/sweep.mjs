@@ -27,7 +27,8 @@
 // not run at all.
 
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -150,6 +151,10 @@ class Sweep {
     const status = git('status', '--porcelain', '--untracked-files=all');
     if (status.status !== 0) return `cannot read its clone: ${status.stderr || status.error}`;
     if (status.stdout.trim()) return 'its clone holds uncommitted work';
+    // Status trusts these two index bits, so an edit to a file carrying one is invisible to it.
+    const flagged = git('ls-files', '-v');
+    if (flagged.status !== 0) return `cannot read its index: ${flagged.stderr || flagged.error}`;
+    if (flagged.stdout.split('\n').some((line) => /^[a-zS]/.test(line))) return 'its clone marks a tracked file assume-unchanged or skip-worktree, so status cannot vouch for it';
     const stash = git('stash', 'list');
     if (stash.status !== 0) return `cannot read its stash: ${stash.stderr || stash.error}`;
     if (stash.stdout.trim()) return 'its clone holds a stash entry';
@@ -161,14 +166,48 @@ class Sweep {
     const remote = call('git', ['-C', dir, 'ls-remote', 'origin'], { timeout: this.timeout });
     if (remote.silent) return `the read of the forge's refs did not answer within ${this.timeout / 1000} s`;
     if (remote.status !== 0) return `cannot read the forge's refs: ${remote.stderr || remote.error}`;
-    const advertised = [...new Set(remote.stdout.split('\n').map((line) => line.split('\t')[0]).filter(Boolean))];
+    const refs = remote.stdout.split('\n').filter(Boolean).map((line) => line.split('\t')).filter(([, ref]) => !ref.endsWith('^{}'));
+    const advertised = [...new Set(refs.map(([sha]) => sha))];
     const present = spawnSync('git', ['-C', dir, 'cat-file', '--batch-check=%(objectname) %(objecttype)'], { input: advertised.join('\n') + '\n', encoding: 'utf8' });
-    const held = present.stdout.split('\n').filter((line) => line.endsWith(' commit')).map((line) => `^${line.split(' ')[0]}`);
+    const local = new Set(present.stdout.split('\n').filter((line) => line.endsWith(' commit')).map((line) => line.split(' ')[0]));
     const heads = git('rev-parse', '--verify', '-q', 'HEAD').status === 0 ? ['HEAD'] : [];
-    const unheld = spawnSync('git', ['-C', dir, 'rev-list', '--branches', '--tags', ...heads, '--stdin'], { input: held.join('\n') + '\n', encoding: 'utf8' });
+    const unheld = spawnSync('git', ['-C', dir, 'rev-list', '--branches', '--tags', ...heads, '--stdin'], { input: [...local].map((sha) => `^${sha}`).join('\n') + '\n', encoding: 'utf8' });
     if (unheld.status !== 0) return `cannot list its commits: ${unheld.stderr.trim()}`;
-    if (unheld.stdout.trim()) return `its clone holds a commit the forge does not hold, ${unheld.stdout.split('\n')[0]}`;
-    return null;
+    const commits = unheld.stdout.split('\n').filter(Boolean);
+    if (commits.length === 0) return null;
+    // A tip the clone never fetched may still reach these commits, so ask the forge for those tips.
+    const missing = refs.filter(([sha]) => !local.has(sha)).map(([, ref]) => ref);
+    if (missing.length === 0) return `its clone holds a commit the forge does not hold, ${commits[0]}`;
+    return this.forgeReaches(dir, missing, commits);
+  }
+
+  /**
+   * Why `commits` in the clone at `dir` are not all held by the forge, or null when the forge's
+   * `missing` refs reach them all. The refs are fetched into a bare repository of the sweep's own,
+   * in a temporary directory, which borrows the clone's objects through an alternate, so nothing is
+   * written into the clone or the root. That repository is removed before this returns.
+   */
+  forgeReaches(dir, missing, commits) {
+    const url = call('git', ['-C', dir, 'remote', 'get-url', 'origin']);
+    const common = call('git', ['-C', dir, 'rev-parse', '--git-common-dir']);
+    if (url.status !== 0 || common.status !== 0) return `cannot read the forge's refs: ${url.stderr || common.stderr || url.error || common.error}`;
+    const scratch = mkdtempSync(join(tmpdir(), 'rigger-sweep-'));
+    try {
+      const bare = join(scratch, 'forge.git');
+      const made = call('git', ['init', '-q', '--bare', bare]);
+      if (made.status !== 0) return `cannot read the forge's refs: ${made.stderr || made.error}`;
+      writeFileSync(join(bare, 'objects', 'info', 'alternates'), `${resolve(dir, common.stdout.trim(), 'objects')}\n`);
+      const quiet = ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', bare];
+      const fetched = call('git', [...quiet, 'fetch', '--quiet', '--no-tags', '--no-write-fetch-head', url.stdout.trim(), ...missing.map((ref, i) => `+${ref}:refs/forge/${i}`)], { timeout: this.timeout });
+      if (fetched.silent) return `the read of the forge's refs did not answer within ${this.timeout / 1000} s`;
+      if (fetched.status !== 0) return `cannot read the forge's refs: ${fetched.stderr || fetched.error}`;
+      const unheld = call('git', [...quiet, 'rev-list', ...commits, '--not', '--all']);
+      if (unheld.status !== 0) return `cannot list its commits: ${unheld.stderr || unheld.error}`;
+      const left = unheld.stdout.split('\n').filter(Boolean);
+      return left.length ? `its clone holds a commit the forge does not hold, ${left[0]}` : null;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 
   /** Decides one matching entry, removing it unless listing; returns removed, KEPT_OPEN, KEPT or FAILED. */
