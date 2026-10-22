@@ -122,8 +122,9 @@ async function checkEnding(t, tmp, runName, output, { processes = processesIn, e
 }
 
 // Start time and command are the host's identity, not just a PID copied from a file.
-function readinessProcess(pid) {
-  const result = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8' });
+function readinessProcess(pid, within = 10_000, run = spawnSync) {
+  if (!(within > 0) || !Number.isFinite(within)) return { live: false };
+  const result = run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', timeout: Math.ceil(within), killSignal: 'SIGKILL' });
   if (result.error || result.status !== 0) return { live: false };
   const row = /^\s*(\S+)\s+(.{24})\s+(\d+)\s+(.*)$/.exec(result.stdout.trimEnd());
   if (!row) return { live: false };
@@ -133,8 +134,8 @@ function readinessProcess(pid) {
 async function waitForReadiness(t, {
   invocation, kind, directory, read, observe = readinessProcess, failure = () => undefined,
   now = performance.now.bind(performance), turn = () => new Promise((resolve) => setImmediate(resolve)),
+  deadline = now() + 10_000,
 }) {
-  const deadline = now() + 10_000;
   let stage = 'missing record';
   for (;;) {
     if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
@@ -142,6 +143,7 @@ async function waitForReadiness(t, {
     if (failed) throw new Error(`setup failed before readiness: ${failed}`);
     if (now() >= deadline) throw new Error(`setup never became ready by 10000ms: ${stage}`);
     const bytes = read();
+    if (now() >= deadline) throw new Error('setup never became ready by 10000ms: publication read exceeded deadline');
     let record;
     try { record = JSON.parse(bytes); } catch { /* An incomplete publication is not readiness. */ }
     if (record && Number.isSafeInteger(record.pid) && record.pid > 0) {
@@ -151,7 +153,9 @@ async function waitForReadiness(t, {
       if (pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && Array.isArray(record.processes)
           && pids.every((pid) => record.processes.some((entry) => entry.pid === pid && typeof entry.signature === 'string'))) {
         for (const pid of pids) {
-          const actual = observe(pid);
+          const actual = observe(pid, deadline - now());
+          if (now() >= deadline) throw new Error('setup never became ready by 10000ms: process observation exceeded deadline');
+          if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
           const recorded = record.processes.find((entry) => entry.pid === pid);
           if (!actual.live) throw new Error(`setup recorded pid ${pid} is not live`);
           if (actual.signature !== recorded.signature || !actual.command?.includes(directory)) throw new Error(`setup rejected reused or foreign pid ${pid}`);
@@ -166,6 +170,7 @@ async function waitForReadiness(t, {
 }
 
 async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetup = false, signal = t.signal, onPhase = () => {} } = {}) {
+  const context = { get signal() { return signal.aborted ? signal : t.signal; } };
   const directory = scratch(t);
   const invocation = randomUUID();
   const tmp = join(directory, 'tmp');
@@ -182,6 +187,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
     kind === 'F7' ? `import { runCommand } from ${JSON.stringify(processModule)};` : '',
     readinessProcess.toString(),
     `test('holds a ${kind} fixture', { timeout: 600_000 }, async (t) => {`,
+    '  const setupDeadline = performance.now() + 10_000;',
     ...(gateSetup ? [
       `  writeFileSync(${JSON.stringify(join(directory, 'setup-entered'))}, '');`,
       `  while (!existsSync(${JSON.stringify(join(directory, 'setup-release'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
@@ -228,7 +234,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       "  const fixturePid = Number(read(directory, 'group.pid'));",
       "  process.kill(fixturePid, 0);",
     ]),
-    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid) })) };`,
+    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid, setupDeadline - performance.now()) })) };`,
     `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, JSON.stringify(ready));`,
     `  while (!existsSync(${JSON.stringify(join(directory, 'ready-accepted'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
 
@@ -237,7 +243,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
     ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
-    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? "  await t.test('holds a ready fixture', { timeout: 1_000 }, async () => { await new Promise(() => {}); });" : '  await new Promise(() => {});',
+    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? `  await t.test('holds a ready fixture', { timeout: 1_000 }, async () => { writeFileSync(${JSON.stringify(join(directory, 'holding-entered'))}, ''); await new Promise(() => {}); });` : '  await new Promise(() => {});',
     '});',
   ].join('\n'));
   const output = join(directory, 'suite-output');
@@ -245,6 +251,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
   const { NODE_TEST_CONTEXT, ...env } = process.env;
   const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
+  const setupDeadline = performance.now() + 10_000;
   let spawnError;
   child.once('error', (error) => { spawnError = error; });
   const teardown = async () => {
@@ -256,8 +263,8 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
   onPhase(phase);
   try {
     let gateEntered;
-    const ready = await waitForReadiness({ signal }, {
-      invocation, kind, directory,
+    const ready = await waitForReadiness(context, {
+      invocation, kind, directory, deadline: setupDeadline,
       read: () => existsSync(join(directory, 'started')) ? readFileSync(join(directory, 'started'), 'utf8') : undefined,
       failure: () => spawnError?.message ?? (child.exitCode !== null || child.signalCode !== null ? `nested suite exited (${child.exitCode ?? child.signalCode}): ${readFileSync(output, 'utf8')}` : undefined),
       turn: async () => {
@@ -269,9 +276,18 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       },
     });
     phase = 'hold';
-    onPhase(phase);
-    if (signal.aborted) throw new Error('hold cancelled after readiness', { cause: signal.reason });
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
     writeFileSync(join(directory, 'ready-accepted'), '');
+    if (ending === 'E2') {
+      while (!existsSync(join(directory, 'holding-entered'))) {
+        if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+        if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: nested holding body did not enter');
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: holding entry exceeded deadline');
+    }
+    onPhase(phase, { holding: join(directory, 'holding-entered') });
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
 
     const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
     assert.ok(runName, `the suite made no run directory under ${tmp}`);
@@ -301,13 +317,14 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
         if (!existsSync(pidFile)) return false;
         filePid = Number(readFileSync(pidFile, 'utf8'));
         return Number.isSafeInteger(filePid) && filePid > 0;
-      }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
+      }, 10_000, context), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
       assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
       const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
       assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
       process.kill(filePid, 'SIGKILL');
     }
-    await checkEnding(t, tmp, runName, output);
+    await checkEnding(context, tmp, runName, output);
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
     if (ending === 'E2') {
       const report = readFileSync(output, 'utf8');
       assert.match(report, /holds a ready fixture/);
@@ -316,6 +333,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
   } catch (error) {
     try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
     onPhase('teardown');
+    if (context.signal.aborted && phase === 'hold') throw new Error('hold cancelled after readiness', { cause: error });
     throw error;
   }
 }
@@ -585,14 +603,21 @@ for (const phase of ['setup', 'hold']) {
   test(`parent abort during ${phase} tears down its recorded suite child`, { timeout: 30_000 }, async (t) => {
     const controller = new AbortController();
     const phases = [];
+    let entered;
     await assert.rejects(runEnding(t, 'E2', 'F1', {
       signal: controller.signal,
-      onPhase: (current) => {
+      onPhase: (current, detail) => {
         phases.push(current);
-        if (current === phase) controller.abort(new Error('controlled parent ending'));
+        if (phase === 'setup' && current === 'setup') controller.abort(new Error('controlled parent ending'));
+        if (phase === 'hold' && current === 'hold') entered = until(() => existsSync(detail.holding), 10_000, t).then((seen) => {
+          assert.equal(seen, true, 'the nested holding body must actually begin');
+          phases.push('holding-entered');
+          controller.abort(new Error('controlled parent ending'));
+        });
       },
     }), phase === 'setup' ? /setup cancelled before readiness/ : /hold cancelled after readiness/);
-    assert.deepEqual(phases, phase === 'setup' ? ['setup', 'teardown'] : ['setup', 'hold', 'teardown']);
+    await entered;
+    assert.deepEqual(phases, phase === 'setup' ? ['setup', 'teardown'] : ['setup', 'hold', 'holding-entered', 'teardown']);
   });
 }
 
@@ -605,4 +630,47 @@ test('readiness cannot accept a publication after the setup deadline', async (t)
     observe: () => ({ live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' }),
     now: () => clock, turn: async () => { clock = 10_001; },
   }), /setup never became ready by 10000ms/);
+});
+
+test('readiness rejects a process observation that crosses its setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => {
+      clock = 10_001;
+      return { live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' };
+    },
+    now: () => clock,
+  }), /setup never became ready by 10000ms/);
+});
+
+test('readiness shares its observation budget across the required leader and member', async (t) => {
+  let clock = 0;
+  const budgets = [];
+  const record = { invocation: 'one', kind: 'F4', leader: 456, pid: 123, processes: [
+    { pid: 456, signature: 'known-leader /fixture/leader' },
+    { pid: 123, signature: 'known-member /fixture/member' },
+  ] };
+  await waitForReadiness(t, {
+    invocation: 'one', kind: 'F4', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: (pid, remaining) => {
+      budgets.push(remaining);
+      clock += 2_500;
+      return { live: true, signature: pid === 456 ? 'known-leader /fixture/leader' : 'known-member /fixture/member', command: '/fixture/command' };
+    },
+    now: () => clock,
+  });
+  assert.deepEqual(budgets, [10_000, 7_500]);
+});
+
+test('the host readiness read bounds its ps invocation by the remaining budget', () => {
+  let timeout;
+  const result = readinessProcess(123, 17, (_command, _args, options) => {
+    timeout = options.timeout;
+    assert.equal(options.killSignal, 'SIGKILL');
+    return { error: Object.assign(new Error('spawnSync /bin/ps ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+  });
+  assert.equal(timeout, 17);
+  assert.deepEqual(result, { live: false });
 });

@@ -17,7 +17,7 @@ checkEnding cleanup boundary and existing outer test bounds retain their previou
 
 One local waiter serves both runEnding and controlled protocol tests. Missing and malformed
 publications wait only to the setup boundary. A stale invocation, foreign fixture, absent
-process or reused PID fails setup without entering cleanup proof. The waiter distinguishes
+process or reused PID fails setup without entering cleanup proof. The protocol distinguishes
 setup cancellation from a cancellation after accepted readiness. Failure teardown awaits the
 recorded suite shell and sweeps its fixture directory; cleanup errors remain failures.
 
@@ -57,3 +57,37 @@ The identity read requests untruncated command text, following the process adapt
 command reads, and fixes the observation locale and timezone for the host start-time field.
 Ordinary npm test passed 2,614 tests with zero failures or cancellations and nine skips.
 The required matrix and package-budget checks and the tracked-file header check passed.
+
+## Independent review corrections
+
+Independent review of 734db400d2679fd93dc1eb82055dc74d504ac400 found two gaps despite
+the green original tests. A host observation could cross the setup deadline and still be
+accepted. The original hold-abort control aborted before the generated holding body entered;
+an abort after actual entry was ignored by the ending wait.
+
+Both findings were reproduced before fixing them. The strengthened hold control waits for a
+marker written inside the actual nested holding body, then aborts its parent. Together with
+the controlled crossing-observation schedule it reported two assertion failures, both “Missing
+expected rejection”, and zero cancellations. Original: review-revisions-red.tap.
+
+Host observations now receive only the remaining shared setup budget and use a bounded ps
+invocation with immediate kill on timeout. The generated setup also shares a finite deadline
+across its required process observations. The caller rechecks its deadline after publication
+and process observations. No observation can earn readiness after the setup boundary.
+
+The caller observes actual E2 holding entry before offering the hold callback. Its ending
+waits honor both the supplied parent signal and the original test's signal. Cancellation
+still awaits failure teardown, with cleanup failure retained as failure.
+
+The two strengthened regressions, the actual delayed-setup E2 boundary, the shared leader/member
+budget control and the host-read timeout contract all passed: five tests, no failures or
+cancellations. Original: review-revisions-focused-green.tap. These measurements describe the
+revision worktree based on the reviewed head; they do not turn any historical incident into a
+causally established repair.
+
+Final revised complete-file measurement: npm run test:host -- test/suite-reaper.test.mjs
+passed 80 tests, zero failed, cancelled or skipped; 20,965.373055 ms on the same Ubuntu/Node
+host. Complete original: review-revision-full-host.log. The executed source is retained as
+review-revision-head.test.mjs, SHA-256 b79f802ea211788e062bb1081e67e106e08bb915d27edaf37321f9f73551b5ec,
+measured before commit from the unchanged executed file. The ordinary suite runs through the
+normal commit hook on this staged revision; its exact result and committed ref belong in the PR.
