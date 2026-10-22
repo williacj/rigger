@@ -2,6 +2,7 @@
 
 import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -120,21 +121,72 @@ async function checkEnding(t, tmp, runName, output, { processes = processesIn, e
   }
 }
 
-async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
+// Start time and command are the host's identity, not just a PID copied from a file.
+function readinessProcess(pid) {
+  const result = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8' });
+  if (result.error || result.status !== 0) return { live: false };
+  const row = /^\s*(\S+)\s+(.{24})\s+(\d+)\s+(.*)$/.exec(result.stdout.trimEnd());
+  if (!row) return { live: false };
+  return { live: !row[1].startsWith('Z'), signature: row.slice(2).join(' '), group: Number(row[3]), command: row[4] };
+}
+
+async function waitForReadiness(t, {
+  invocation, kind, directory, read, observe = readinessProcess, failure = () => undefined,
+  now = performance.now.bind(performance), turn = () => new Promise((resolve) => setImmediate(resolve)),
+}) {
+  const deadline = now() + 10_000;
+  let stage = 'missing record';
+  for (;;) {
+    if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
+    const failed = failure();
+    if (failed) throw new Error(`setup failed before readiness: ${failed}`);
+    if (now() >= deadline) throw new Error(`setup never became ready by 10000ms: ${stage}`);
+    const bytes = read();
+    let record;
+    try { record = JSON.parse(bytes); } catch { /* An incomplete publication is not readiness. */ }
+    if (record && Number.isSafeInteger(record.pid) && record.pid > 0) {
+      if (record.invocation !== invocation) throw new Error('setup rejected stale invocation identity');
+      if (record.kind !== kind) throw new Error('setup rejected wrong fixture identity');
+      const pids = kind === 'F4' ? [record.leader, record.pid] : [record.pid];
+      if (pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && Array.isArray(record.processes)
+          && pids.every((pid) => record.processes.some((entry) => entry.pid === pid && typeof entry.signature === 'string'))) {
+        for (const pid of pids) {
+          const actual = observe(pid);
+          const recorded = record.processes.find((entry) => entry.pid === pid);
+          if (!actual.live) throw new Error(`setup recorded pid ${pid} is not live`);
+          if (actual.signature !== recorded.signature || !actual.command?.includes(directory)) throw new Error(`setup rejected reused or foreign pid ${pid}`);
+          if (kind === 'F7' && (record.group !== record.pid || actual.group !== record.group)) throw new Error('setup rejected group identity');
+        }
+        return record;
+      }
+      stage = 'incomplete process identity';
+    } else stage = bytes == null ? 'missing record' : 'incomplete or malformed PID';
+    await turn();
+  }
+}
+
+async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetup = false, signal = t.signal, onPhase = () => {} } = {}) {
   const directory = scratch(t);
+  const invocation = randomUUID();
   const tmp = join(directory, 'tmp');
   mkdirSync(tmp);
   const file = join(directory, 'holding.test.mjs');
   writeFileSync(file, [
     "import { test } from 'node:test';",
-    "import { spawn } from 'node:child_process';",
+    "import { spawn, spawnSync } from 'node:child_process';",
     "import { once } from 'node:events';",
     "import { existsSync, writeFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
     `import { scratch, fixture, leave, leaveWorking, read, startGroup, tailIn, TAIL } from ${JSON.stringify(fixtureModule)};`,
     kind === 'F6' ? `import { installStandInAgent } from ${JSON.stringify(agentModule)};` : '',
     kind === 'F7' ? `import { runCommand } from ${JSON.stringify(processModule)};` : '',
-    `test('holds a ${kind} fixture', { timeout: ${ending === 'E2' ? '1_000' : '600_000'} }, async (t) => {`,
+    readinessProcess.toString(),
+    `test('holds a ${kind} fixture', { timeout: 600_000 }, async (t) => {`,
+    ...(gateSetup ? [
+      `  writeFileSync(${JSON.stringify(join(directory, 'setup-entered'))}, '');`,
+      `  while (!existsSync(${JSON.stringify(join(directory, 'setup-release'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+      '  t.signal.throwIfAborted();',
+    ] : []),
     '  const directory = scratch(t);',
     ...(kind === 'F1' ? [
       "  const child = spawn(fixture(directory, 'busy', ': > \"$here/alive\"; while [ ! -f \"$here/release\" ]; do :; done'), [], { stdio: 'ignore' });",
@@ -176,13 +228,16 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
       "  const fixturePid = Number(read(directory, 'group.pid'));",
       "  process.kill(fixturePid, 0);",
     ]),
-    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, String(fixturePid));`,
+    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid) })) };`,
+    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, JSON.stringify(ready));`,
+    `  while (!existsSync(${JSON.stringify(join(directory, 'ready-accepted'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+
     ...(holdPidPublication ? [
       `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, '');`,
       `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
     ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
-    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : '  await new Promise(() => {});',
+    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? "  await t.test('holds a ready fixture', { timeout: 1_000 }, async () => { await new Promise(() => {}); });" : '  await new Promise(() => {});',
     '});',
   ].join('\n'));
   const output = join(directory, 'suite-output');
@@ -190,46 +245,79 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
   const { NODE_TEST_CONTEXT, ...env } = process.env;
   const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
-  t.after(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  let spawnError;
+  child.once('error', (error) => { spawnError = error; });
+  const teardown = async () => {
+    await ended(child);
     sweep(directory);
-  });
-  assert.equal(await until(() => existsSync(join(directory, 'started')), 10_000, t), true, `the fixture never started:\n${readFileSync(output, 'utf8')}`);
-  const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
-  assert.ok(runName, `the suite made no run directory under ${tmp}`);
-  if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
-    activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: Number(readFileSync(join(directory, 'started'), 'utf8')), evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
-    trace({ event: 'start', reaper: reaperState(activeTrace.run) });
-    t.after(() => {
-      trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
-      activeTrace = undefined;
+  };
+  t.after(teardown);
+  let phase = 'setup';
+  onPhase(phase);
+  try {
+    let gateEntered;
+    const ready = await waitForReadiness({ signal }, {
+      invocation, kind, directory,
+      read: () => existsSync(join(directory, 'started')) ? readFileSync(join(directory, 'started'), 'utf8') : undefined,
+      failure: () => spawnError?.message ?? (child.exitCode !== null || child.signalCode !== null ? `nested suite exited (${child.exitCode ?? child.signalCode}): ${readFileSync(output, 'utf8')}` : undefined),
+      turn: async () => {
+        if (gateSetup && existsSync(join(directory, 'setup-entered'))) {
+          gateEntered ??= performance.now();
+          if (performance.now() - gateEntered >= 1_200) writeFileSync(join(directory, 'setup-release'), '');
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      },
     });
+    phase = 'hold';
+    onPhase(phase);
+    if (signal.aborted) throw new Error('hold cancelled after readiness', { cause: signal.reason });
+    writeFileSync(join(directory, 'ready-accepted'), '');
+
+    const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
+    assert.ok(runName, `the suite made no run directory under ${tmp}`);
+    if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
+      activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: ready.pid, evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
+      trace({ event: 'start', reaper: reaperState(activeTrace.run) });
+      t.after(() => {
+        trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
+        activeTrace = undefined;
+      });
+    }
+    if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
+    if (ending === 'E3' || ending === 'E7') {
+      const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
+      assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
+      assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
+      process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
+    }
+    if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
+    if (ending === 'E6') {
+      if (holdPidPublication) setImmediate(() => {
+        if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
+      });
+      const pidFile = join(directory, 'file-pid');
+      let filePid = 0;
+      assert.equal(await until(() => {
+        if (!existsSync(pidFile)) return false;
+        filePid = Number(readFileSync(pidFile, 'utf8'));
+        return Number.isSafeInteger(filePid) && filePid > 0;
+      }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
+      assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
+      const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
+      assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
+      process.kill(filePid, 'SIGKILL');
+    }
+    await checkEnding(t, tmp, runName, output);
+    if (ending === 'E2') {
+      const report = readFileSync(output, 'utf8');
+      assert.match(report, /holds a ready fixture/);
+      assert.match(report, /test timed out after 1000ms/);
+    }
+  } catch (error) {
+    try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
+    onPhase('teardown');
+    throw error;
   }
-  if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
-  if (ending === 'E3' || ending === 'E7') {
-    const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
-    assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
-    assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
-    process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
-  }
-  if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
-  if (ending === 'E6') {
-    if (holdPidPublication) setImmediate(() => {
-      if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
-    });
-    const pidFile = join(directory, 'file-pid');
-    let filePid = 0;
-    assert.equal(await until(() => {
-      if (!existsSync(pidFile)) return false;
-      filePid = Number(readFileSync(pidFile, 'utf8'));
-      return Number.isSafeInteger(filePid) && filePid > 0;
-    }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
-    assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
-    const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
-    assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
-    process.kill(filePid, 'SIGKILL');
-  }
-  await checkEnding(t, tmp, runName, output);
 }
 
 test('E6 waits for a complete positive file pid before signaling', { timeout: 30_000 }, (t) => runEnding(t, 'E6', 'F1', { holdPidPublication: true }));
@@ -438,4 +526,83 @@ test('trace refuses TMPDIR inside a pre-existing checkout', (t) => {
     else process.env.TMPDIR = previousTmp;
   });
   assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+});
+
+test('E2 holds its real one-second timer until delayed setup is ready', { timeout: 30_000 }, (t) => runEnding(t, 'E2', 'F1', { gateSetup: true }));
+
+test('readiness accepts an independently live fixture identity', async (t) => {
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }] };
+  const ready = await waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', group: 123, command: '/bin/bash /fixture/busy' }),
+  });
+  assert.equal(ready.pid, 123);
+});
+
+// Host observations below use literal identities; they never derive an expected answer with the waiter.
+for (const [label, bytes] of [
+  ['missing', undefined],
+  ['incomplete', '{"pid":'],
+  ['malformed', '{"pid":"123tail"}'],
+  ['nonpositive', '{"pid":0}'],
+]) {
+  test(`readiness rejects ${label} PID at the setup boundary`, async (t) => {
+    let clock = 0;
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => bytes,
+      observe: () => { assert.fail('an invalid PID must never reach the host observer'); },
+      now: () => clock, turn: async () => { clock = 10_000; },
+    }), /setup never became ready by 10000ms/);
+  });
+}
+
+for (const [label, change, actual, message] of [
+  ['stale invocation', { invocation: 'old' }, {}, /stale invocation/],
+  ['wrong fixture', { kind: 'F2' }, {}, /wrong fixture/],
+  ['absent process', {}, { live: false }, /not live/],
+  ['reused PID', {}, { signature: 'Fri Oct 23 10:00:00 2026 123 /fixture/busy' }, /reused or foreign/],
+]) {
+  test(`readiness rejects ${label} without cleanup credit`, async (t) => {
+    const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }], ...change };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', command: '/fixture/busy', ...actual }),
+    }), message);
+  });
+}
+
+for (const failure of ['spawn error: ENOENT', 'early exit: 1']) {
+  test(`readiness reports setup ${failure}`, async (t) => {
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => undefined,
+      failure: () => failure,
+    }), new RegExp(`setup failed before readiness: ${failure}`));
+  });
+}
+
+for (const phase of ['setup', 'hold']) {
+  test(`parent abort during ${phase} tears down its recorded suite child`, { timeout: 30_000 }, async (t) => {
+    const controller = new AbortController();
+    const phases = [];
+    await assert.rejects(runEnding(t, 'E2', 'F1', {
+      signal: controller.signal,
+      onPhase: (current) => {
+        phases.push(current);
+        if (current === phase) controller.abort(new Error('controlled parent ending'));
+      },
+    }), phase === 'setup' ? /setup cancelled before readiness/ : /hold cancelled after readiness/);
+    assert.deepEqual(phases, phase === 'setup' ? ['setup', 'teardown'] : ['setup', 'hold', 'teardown']);
+  });
+}
+
+test('readiness cannot accept a publication after the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => clock === 0 ? undefined : JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' }),
+    now: () => clock, turn: async () => { clock = 10_001; },
+  }), /setup never became ready by 10000ms/);
 });
