@@ -1449,6 +1449,7 @@ async function cellOrigin(t, cell, { exitBeforeKill } = {}) {
   const status = async (commandName, args, options) => {
     if (ps === undefined) return asked(commandName, args, options);
     const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, ps });
+    if (exitBeforeKill !== undefined) note('origin.raw', { exit: result.exit, timedOut: result.timedOut, stdoutBase64: result.stdout.toString('base64'), stderrBase64: result.stderr.toString('base64') });
     return { status: result.exit, timedOut: result.timedOut, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   };
   const originAsk = async (commandName, args, options) => {
@@ -1507,6 +1508,10 @@ async function cellOrigin(t, cell, { exitBeforeKill } = {}) {
   }
   if (exitBeforeKill !== undefined) {
     assert.deepEqual(observedExit, { code: exitBeforeKill, signal: null }, 'the controlled origin did not exit independently');
+    const raw = timeline.find(({ event }) => event === 'origin.raw');
+    assert.ok(raw, 'the copied origin did not retain its separate raw byte streams');
+    assert.equal(raw.stdoutBase64, '', 'the controlled empty origin stdout was not retained exactly');
+    assert.equal(raw.exit, exitBeforeKill, 'the raw result lost the independently observed exit code');
   }
   if (ending === 'C3' && exitBeforeContainment?.signal === null) {
     assert.deepEqual(observedExit, exitBeforeContainment, 'the independently observed exit changed after containment');

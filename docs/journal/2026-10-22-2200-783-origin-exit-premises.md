@@ -97,3 +97,25 @@ recorded in the pull request.
 Existing unchanged process-adapter witnesses for independent exits 0/3 and timeout-ended commands
 supply the real substrate boundary; controlled initFromAnswer tests supply reporting expectations.
 Neither a timer callback alone nor concatenated stream output establishes causal order.
+
+Independent source review at 9482bcb found an evidence-retention gap: the timeline
+omitted stdout and retained decoded stderr only. The copied D1 own-exit0 control
+then failed the added raw-retention assertion (one failure, zero cancellations,
+1,153.170370 ms; retention-red.tap), before capture was changed. The same control
+passed after actual runCommand buffers were encoded losslessly before decoding
+(one pass, zero failures/cancellations, 1,144.038582 ms; retention-green.tap).
+The timeline retains separate base64 fields and actual exit/timedOut metadata.
+The retained extraction script decodes and reopens distinct stdout/stderr files
+with byte counts and hashes; the initial corrected control has empty stdout and
+actual nonempty stderr, not an inferred empty result from shell redirection.
+Complete affected-file verification for this revision passed: 251 tests, zero
+failures, cancellations or skips, 95,405.752351 ms (retention-affected-host.tap).
+The extraction restored and reopened sixteen separate stream originals for all
+eight copied forcing runs, with result metadata, byte counts and hashes in
+final-origin-streams. The whole-timeline extractor first rejected TAP-escaped
+decoded shell diagnostics; extracting only the flat lossless base64 records
+preserves their bytes without interpreting that unrelated text. The original
+extractor is retained; no test rerun or normalization earns credit from it.
+Executed source SHA-256 is
+e0f91b6164cf35becd85a131fcc2d1c881c8210ac3f75d386549157efe12760b.
+The normal commit hook supplies final ordinary verification, recorded in the PR.
