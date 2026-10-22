@@ -4,14 +4,14 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, openSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import rigger from '../rigger.config.mjs';
 import { installFakeGh, seedRepository, WARMING } from './fake-gh.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
-import { warmed } from './process-fixtures.mjs';
+import { shellQuote, warmed } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -84,8 +84,8 @@ export function relay(fake, controlPath) {
 /**
  * A world for one test: a fake forge for `repo`, whose default branch `main` holds the config text
  * `main`, `null` for none, seeded with `issues`, `pullRequests` and `commentReplies` as the fake
- * repository takes them; a relay `gh` in front of it, alone on the PATH the verb is given besides
- * Node's, git's and the shell's directories; and a consumer repository, the directory the verb runs
+ * repository takes them; a relay `gh` in front of it, beside an isolated directory of named tools
+ * on the PATH the verb is given; and a consumer repository, the directory the verb runs
  * in, holding the config text `consumer`, `null` for none, `main`'s where it is not given.
  */
 export function world({ main = moduleOf(configWith()), consumer, repo = REPO, issues = [cardIssue()], pullRequests = [pullFrom()], commentReplies } = {}) {
@@ -134,11 +134,17 @@ export function world({ main = moduleOf(configWith()), consumer, repo = REPO, is
 }
 
 /**
- * The directories the verb's PATH holds: the relay's first, then Node's, git's and the shell's. A
- * real `gh` in any of the others is a route to the real GitHub, so `world` refuses to run where
- * `realGhOn` finds one there.
+ * The directories the verb's PATH holds: the relay's first, then executable links for only the
+ * tools the fixture needs. No host bin directory is exposed, even one holding Node beside `gh`.
+ * `world` still refuses a non-relay `gh` anywhere on the environment's actual PATH.
  */
-const verbPath = (path) => [path, dirname(process.execPath), '/usr/bin', '/bin'];
+function verbPath(path) {
+  const tools = temporaryDirectory('rigger-verdict-tools-');
+  for (const [name, executable] of Object.entries({ node: process.execPath, git: '/usr/bin/git', cat: '/bin/cat', stty: '/bin/stty' })) {
+    symlinkSync(executable, join(tools, name));
+  }
+  return [path, tools];
+}
 
 /**
  * The environment the verb is run under: that PATH, the scratch directory, and a home of its own
@@ -149,8 +155,8 @@ const verbPath = (path) => [path, dirname(process.execPath), '/usr/bin', '/bin']
  */
 const verbEnvironment = (path, home) => ({ PATH: verbPath(path).join(delimiter), HOME: home, TMPDIR: process.env.TMPDIR });
 
-/** Every directory on the verb's PATH, after the relay's, that holds an executable named `gh`. */
-export const realGhOn = (where) => verbPath(where.path).slice(1).filter((directory) => existsSync(join(directory, 'gh')));
+/** Every directory on the actual PATH, except the relay's, that holds a file named `gh`. */
+export const realGhOn = (where) => where.env.PATH.split(delimiter).filter((directory) => directory !== where.path && existsSync(join(directory, 'gh')));
 
 /**
  * The verb run as its own process with `args`, its standard input as `stdin` says: `{ text }`, a
@@ -185,10 +191,11 @@ export const ASKED = '[y/N] ';
  * ends before it asks, nothing is typed. It answers the exit status and everything the terminal
  * showed, the typed answer's echo included.
  *
- * `script`'s standard input must be a pipe and not a socket, which is what Node gives a child, so
- * bash's process substitution makes one, through `cat`. The test ends the pipe when `script`'s
- * output ends, so `cat` ends with it. Bash reads no startup file (`--norc`, `--noprofile`), since
- * one could put another `gh` ahead of the relay.
+ * macOS's BSD `script` needs a pipe rather than Node's socket stdin, so bash's process
+ * substitution makes one through `cat`. The test ends the pipe when `script`'s output ends, so
+ * `cat` ends with it. Bash reads no startup file (`--norc`, `--noprofile`), since one could put
+ * another `gh` ahead of the relay. Ubuntu's util-linux tool accepts Node's socket directly,
+ * takes a shell command with `-c`, and needs `-e` to return its status.
  */
 export function atTerminal(where, args, { answer = 'y', atPrompt = () => {}, command = [process.execPath, RIGGER, 'verdict', ...args] } = {}) {
   const raw = join(where.path, 'raw.sh');
@@ -196,7 +203,12 @@ export function atTerminal(where, args, { answer = 'y', atPrompt = () => {}, com
     writeFileSync(raw, '#!/bin/sh\nstty -onlcr\nexec "$@"\n');
     chmodSync(raw, 0o755);
   }
-  const child = spawn('/bin/bash', ['--norc', '--noprofile', '-c', 'exec /usr/bin/script -q /dev/null "$@" < <(exec cat)', 'bash', raw, ...command], {
+  const terminal = process.platform === 'linux'
+    ? ['/usr/bin/script', '-q', '-e', '-c', [raw, ...command].map(shellQuote).join(' '), '/dev/null']
+    : ['/usr/bin/script', '-q', '/dev/null', raw, ...command];
+  const launch = process.platform === 'linux' ? terminal
+    : ['/bin/bash', '--norc', '--noprofile', '-c', 'exec "$@" < <(exec cat)', 'bash', ...terminal];
+  const child = spawn(launch[0], launch.slice(1), {
     cwd: where.cwd,
     env: where.env,
     stdio: ['pipe', 'pipe', 'pipe'],
