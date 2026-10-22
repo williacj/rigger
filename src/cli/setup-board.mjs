@@ -34,7 +34,7 @@ async function survey(board, emitter) {
 }
 
 /**
- * The writes that add what `config` declares and `held` lacks, each as the schema-write
+ * The writes that add the declared and fixed labels and board fields `held` lacks, each as the schema-write
  * operation, its arguments and the line printed for it, or `{ refusal }` where the board holds
  * another repository's items or one it cannot read, or cannot take the config without changing
  * something it already holds. Nothing held is ever removed, renamed or changed: a priority

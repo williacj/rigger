@@ -241,3 +241,99 @@ for (const { action, column, ruling, expected } of [
     assert.equal(JSON.parse(view.stdout).comments.length, comments.length);
   });
 }
+
+// proves R-ESCALATE-10
+test('plan names labelled active-stage cards as escalated and counts only ordinary refusals', async () => {
+  const items = ['Ready', 'Coding', 'Review', 'Owner'].map((column, at) =>
+    card(at + 1, column, { body: '', labels: ['type:change', at % 2 ? 'RIGGER:ESCALATED' : 'rigger:escalated'] }));
+  const ran = plan({ items: [...items, card(5, 'Ready', { body: '' })] });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), []);
+  assert.match(ran.out, /and refuses 1 card\b/);
+  for (const item of items) {
+    assert.match(ran.out, new RegExp(`^\\s*escalated\\s+#${item.number}\\b`, 'm'));
+    assert.equal(refusalOf(ran.out, item.number), undefined, ran.out);
+  }
+  assert.match(refusalOf(ran.out, 5), /missing acceptance/);
+  assert.deepEqual((await ran.model()).writes(), []);
+});
+
+// proves R-ESCALATE-10
+test('plan reports escalated items outside active columns without reading their workflow facts', async () => {
+  const items = ['Done', null, 'Backlog', 'Elsewhere'].map((column, at) =>
+    card(71 + at, column, { labels: ['type:change', at % 2 ? 'RIGGER:ESCALATED' : 'rigger:escalated'] }));
+  const ran = verbOver('plan', { columns: [...COLUMNS, 'Elsewhere'], items }, {});
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), []);
+  assert.doesNotMatch(ran.out, /refus/);
+  for (const item of items) assert.match(ran.out, new RegExp(`^\\s*escalated\\s+#${item.number}\\b`, 'm'));
+  const sent = JSON.stringify(ran.fake.sent());
+  assert.doesNotMatch(sent, /rigger-(?:71|72|73|74)/, sent);
+  assert.doesNotMatch(sent, /\/pulls(?:\/|\?)/, sent);
+  assert.deepEqual((await ran.fake.model()).writes(), []);
+});
+
+// proves R-ESCALATE-10
+test('plan keeps merged escalation actions and names forge refusals without counting them as refused', async () => {
+  for (const branch of [false, true]) {
+    const items = ['Ready', 'Coding', 'Review', 'Owner'].map((column, at) =>
+      card(81 + at, column, { labels: ['type:change', at % 2 ? 'RIGGER:ESCALATED' : 'rigger:escalated'] }));
+    const ran = verbOver('plan', { items }, {
+      branches: branch ? items.map((item) => `rigger-${item.number}`) : [],
+      pullRequests: items.map((item) => ({ ...openFor(item.number), merged: true })),
+    });
+    assert.equal(ran.code, 0, ran.err);
+    assert.deepEqual(pulled(ran.out), [83, 84], ran.out);
+    assert.doesNotMatch(ran.out, /refus/);
+    for (const item of items) assert.match(ran.out, new RegExp(`^\\s*escalated\\s+#${item.number}\\b`, 'm'));
+    for (const number of [81, 82]) assert.match(ran.out, new RegExp(`escalated #${number}.*forge holds pull request #${100 + number}, merged`));
+    assert.deepEqual((await ran.fake.model()).writes(), []);
+  }
+});
+
+test('plan does not report an unlabelled card waiting for its owner judge as escalated', async () => {
+  const number = 191;
+  const comments = ['reviewer', 'engineer', 'architect'].map((role) =>
+    markerComment({ card: number, pull: 291, head: JUDGED_HEAD, body: ADMITTED, role }));
+  const ran = verbOver('plan', { items: [card(number, 'Owner', { labels: ['type:spec'] })] }, {
+    pullRequests: [{ ...openFor(number), comments }],
+  });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), [], ran.out);
+  assert.doesNotMatch(ran.out, /escalat|refus/);
+  assert.deepEqual((await ran.fake.model()).writes(), []);
+});
+
+test('plan preserves its named board-read failure for a labelled card', () => {
+  const ran = plan({ items: [card(192, 'Ready', { labels: ['type:change', 'rigger:escalated'] })] }, { project: PROJECT + 1 });
+  assert.notEqual(ran.code, 0);
+  assert.match(ran.err, /board 3 could not be read/);
+  assert.doesNotMatch(ran.out, /escalated #192/);
+});
+
+test('plan names a labelled card when its workflow facts cannot be read', async () => {
+  const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } };
+  const consumer = repositoryIn('rigger-plan-escalated-read-', { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` });
+  const fake = installFakeGh(temporaryDirectory('rigger-plan-escalated-gh-'), {
+    repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS,
+      items: [card(193, 'Ready', { labels: ['type:change', 'rigger:escalated'] })] },
+  });
+  const observed = [];
+  const send = (file, args) => {
+    assert.equal(file, 'gh');
+    observed.push(args);
+    if (args[1] === 'graphql' && args[3].includes('pullRequests(')) {
+      return { status: 1, stdout: '', stderr: 'workflow facts refused: HTTP 503' };
+    }
+    return spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+  };
+
+  const ran = await planVerb({ target: consumer, packageRoot: root, send });
+
+  assert.equal(ran.code, 1, ran.text);
+  assert.match(ran.text, /L2 could not read what the forge holds for card #193/);
+  assert.match(ran.text, /workflow facts refused: HTTP 503/);
+  assert.doesNotMatch(ran.text, /escalated #193/);
+  assert.equal(observed.filter((args) => args[1] === 'graphql' && args[3].includes('pullRequests(')).length, 1);
+  assert.deepEqual((await fake.model()).writes(), []);
+});
