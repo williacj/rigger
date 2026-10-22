@@ -24,3 +24,11 @@ other holds, and a close of an issue that had stopped being the notice, both loo
 owner's. The fix has L2 judge each close against the issue's timeline. Walking every interleaving
 of `resume`'s three writes against a hold's five steps, as a table, found the one order a
 comment-after-close would have lost.
+
+Round 2 showed that no structure could tell `resume`'s close from the owner's, because both go
+through one account. Each marker only moved the crash window. The owner settled it in U25 as a
+requirement instead: an issue whose label `resume` removed is no longer the status issue
+(`R-SCHED-27`). Once a design question turns on who made a write the forge shows the same either
+way, the next step is a question for the owner, not another marker. Round 2 also found two holds
+each opening a notice. One engine per repository (`D11`) let L3 run notice calls one at a time,
+and no lock was needed.
