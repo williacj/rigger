@@ -195,7 +195,22 @@ if [ "$suite_mode" = host ]; then
   if [ "${GITHUB_ACTIONS-}" = true ]; then
     RIGGER_SUITE_HOST_KEY="${ImageOS}-${ImageVersion}-${RUNNER_ARCH}-node$major"
   else
-    RIGGER_SUITE_HOST_KEY="macos-$(sw_vers -productVersion)-$(uname -m)-node$major"
+    # Local keys describe the metadata returned by this host's tools.
+    read_host_metadata() {
+      host_metadata_value=$("$@") && [ -n "$host_metadata_value" ] || {
+        printf 'npm test: could not read host metadata with %s\n' "$*" >&2
+        return 1
+      }
+      printf '%s' "$host_metadata_value"
+    }
+    host_os=$(read_host_metadata uname -s) || exit 1
+    case "$host_os" in
+      Darwin) host_name=macos; host_release=$(read_host_metadata sw_vers -productVersion) || exit 1 ;;
+      Linux) host_name=linux; host_release=$(read_host_metadata uname -r) || exit 1 ;;
+      *) printf 'npm test: unsupported local host %s\n' "$host_os" >&2; exit 1 ;;
+    esac
+    host_architecture=$(read_host_metadata uname -m) || exit 1
+    RIGGER_SUITE_HOST_KEY="$host_name-$host_release-$host_architecture-node$major"
   fi
   export RIGGER_SUITE_HOST_KEY
 fi
