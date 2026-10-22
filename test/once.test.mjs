@@ -1224,7 +1224,6 @@ test('once preserves a labelled merged Ready or Coding card workspace under its 
   }
 });
 
-// proves R-ESCALATE-10
 test('once leaves merged labelled epics and unselected cards unpulled in every active stage', async () => {
   const items = ['Ready', 'Coding', 'Review', 'Owner'].map((column, at) =>
     card(171 + at, column, { labels: [...(at % 2 ? ['type:change', 'type:epic'] : ['area:other']), 'rigger:escalated'] }));

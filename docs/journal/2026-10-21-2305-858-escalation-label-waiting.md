@@ -125,7 +125,7 @@ git status is clean. Fresh configured delivered reviews are still required at th
 
 The [fresh configured reviewer](https://github.com/williacj/rigger/pull/863#issuecomment-6336166100)
 ran its own guarded deletion checks at `07e589b4912fbdcaa1f3735ed8857c041fa12705`.
-It ruled item17 unmet because the original broad labelled-unmerged CLI test still declared
+It ruled item 17 unmet because the original broad labelled-unmerged CLI test still declared
 `R-ESCALATE-10` while passing after deletion of the waiting guard. The six dispatch/continuation
 controls and the three judge/merge/escalation controls detect that deletion, but cannot make
 another test's unsupported declaration true.
@@ -137,7 +137,7 @@ discriminating CLI controls and their supported declarations remain. Production 
 the prerequisite interface are unchanged. The configured judges must review the corrected
 head; the earlier verdict is not reused.
 
-Measured on Ubuntu WSL2 with Node26.12.0 on2026-10-22UTC, the retained broad test
+Measured on Ubuntu WSL2 with Node26.12.0 on 2026-10-22 UTC, the retained broad test
 passed one test with zero failures, cancellations or skips (3181.016624ms). Before
 regeneration, matrix:check correctly failed because its entry was stale; after npm run matrix,
 matrix:check passed. The original dispatch-base test bytes remain unchanged outside the
@@ -145,23 +145,43 @@ admitted G1/G2 grants. The ordinary complete-suite hook is still required for th
 
 ## Verification environment correction
 
-The first complete hook for the declaration-only correction exited1: 4,163 tests, 3,567
-passed, 543 failed, zero cancelled and53 skipped (171546.971405ms). Its custom evidence
-directory was mode0755, measured with stat; the suite requires a private mode0700 root.
+The first complete hook for the declaration-only correction exited 1: 4,163 tests, 3,567
+passed, 543 failed, zero cancelled and 53 skipped (171546.971405ms). Its custom evidence
+directory was mode 0755, measured with stat; the suite requires a private mode 0700 root.
 The first rejected-root fixture then left a deleted scratch path in TMPDIR, causing the
 following ENOENT failures. These are preserved failures, not successful verification.
 
 A distinct unchanged recorded-scratch fixture also failed with ext4 scratch: a non-mutating
 observer measured the removed and recreated role directory as the same device/inode
 (2096/451206). With ordinary tmpfs scratch the same test passed and the inode changed from
-8903625 to8903628. The runtime was not changed; this ext4 fixture assumption is outside this
+8903625 to 8903628. The runtime was not changed; this ext4 fixture assumption is outside this
 card. The follow-up belongs to its own card rather than a weaker assertion here.
 
 The retry restores ordinary TMPDIR=/tmp and moves only retained C615_EVIDENCE_ROOT originals
-to a fresh ext4 directory whose actual mode is checked as0700. Keeping those retained originals
+to a fresh ext4 directory whose actual mode is checked as 0700. Keeping those retained originals
 off tmpfs solves its inode capacity problem without changing the scratch filesystem. The
 failed full log, observed inode records and exact correction source remain preserved. A
 completed green ordinary full hook is still required before commit or push.
+
+## Withdrawn kind-boundary escalation declaration
+
+The [configured reviewer at 36d8c45](https://github.com/williacj/rigger/pull/863#issuecomment-6338081344)
+completed its own ordinary full suite and guarded behavior deletions. It met 20 acceptance
+items and returned item 17 unmet: the merged labelled epic/unselected control still carried
+an unsupported escalation-label declaration. Kind selection already keeps those items inert
+when the waiting guard, merged exception or label recognition is absent. Its useful boundary
+assertions therefore cannot claim that escalation-label behavior.
+
+This correction withdraws only that card-added declaration. Every other byte of the test file,
+including all fixtures, assertions and deadlines, is preserved. No production byte changes.
+The matrix is regenerated. The prior 36d8c45 ordinary hook completed with 4,163 tests, 4,110
+passed, zero failures/cancellations and 53 skipped (589120.104769 ms). That historical green
+run is not evidence for this correction; a fresh normal complete-suite hook remains required.
+
+Measured with npm test on this declaration-only working change over 36d8c45, the retained
+epic/unselected test passed once, with zero failures, cancellations or skips (470.428909 ms;
+552.576599 ms total). Matrix checking failed with exit 1 before regeneration and passed with
+exit 0 after npm run matrix. These focused checks do not replace the full hook.
 
 ## Boundaries
 
