@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
 
-import { until } from './process-fixtures.mjs';
+import { processState, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
@@ -117,7 +117,7 @@ function stopping(target, gate, at) {
     const { existsSync, watch, writeFileSync } = fs;
     let stopped = false;
     const traced = (event, said) => globalThis[Symbol.for(${JSON.stringify(TRACE.description)})]?.(event, { gate, said });
-    const stop = (said) => { stopped = true; fs.writeSync(1, said + '\\n'); traced('gate read starting', said); fs.readFileSync(gate); traced('gate read returned', said); };
+    const stop = (said) => { stopped = true; fs.writeSync(1, said + '\\n'); traced('gate read starting', said); fs.readFileSync(gate); fs.writeSync(1, 'gate returned\\n'); traced('gate read returned', said); };
     const ours = (path) => !stopped && String(path).endsWith('/' + target);
     fs.existsSync = (path) => {
       if (at === 'wrote' || !ours(path)) return existsSync(path);
@@ -370,12 +370,14 @@ test('a run awaiting a file written after its first read found it missing, with 
   const waiter = started(t, agent, 'architect', stopping(`wrote-${CARD}-reviewer`, gate, 'after'));
   await traced(t, 'the waiter says read false', () => waiter.said('read false'));
   const writer = started(t, agent, 'reviewer');
+  await traced(t, 'the writer writes its file', () => until(() => agent.wrote(CARD, 'reviewer'), t));
   await traced(t, 'the gate\'s open', () => open());
 
   const ended = await traced(t, 'the waiter\'s exit', () => waiter.exited);
   assert.equal(ended.code, 5, ended.err());
   assert.equal(writer.child.exitCode, null);
   assert.equal(writer.child.signalCode, null);
+  assert.match(processState(writer.child.pid), /^(?![ZX])\S/, 'the writer is a live process when the waiter settles');
   assert.ok(agent.wrote(CARD, 'reviewer'));
 });
 
@@ -398,6 +400,7 @@ for (const alive of [false, true]) {
   test(`a run awaiting a file written after it began and before its first read, by a writer ${alive ? 'still alive' : 'that has exited'}, settles`, SETTLES_WITHIN, async (t) => {
     const agent = awaiting(alive);
     const { gate, open } = gateIn();
+    tracing(t, agent, gate);
     const waiter = started(t, agent, 'architect', stopping(`wrote-${CARD}-reviewer`, gate, 'before'));
     await waiter.said('stopped before');
     const writer = started(t, agent, 'reviewer');
@@ -407,12 +410,17 @@ for (const alive of [false, true]) {
 
     const ended = await waiter.exited;
     assert.equal(ended.code, 5, ended.err());
+    if (alive) {
+      assert.equal(writer.child.exitCode, null);
+      assert.equal(writer.child.signalCode, null);
+      assert.match(processState(writer.child.pid), /^(?![ZX])\S/, 'the writer is a live process when the waiter settles');
+    }
   });
 }
 
 // Control for a write that fails: nothing is announced, the wait stays open, and a SIGTERM ends it
 // with its FIFO gone from the directory, which is still there.
-test('a run awaiting a file its writer fails to write does not settle, and ended by SIGTERM leaves no FIFO beside itself', { ...SETTLES_WITHIN, skip: 'U15: skipped until #813 fixes the writer timeout' }, async (t) => {
+test('a run awaiting a file its writer fails to write does not settle, and ended by SIGTERM leaves no FIFO beside itself', { ...SETTLES_WITHIN }, async (t) => {
   const agent = awaiting();
   const { gate, open } = gateIn();
   tracing(t, agent, gate);
@@ -427,6 +435,7 @@ test('a run awaiting a file its writer fails to write does not settle, and ended
   assert.match(failed.err(), /EACCES/);
   assert.equal(agent.wrote(CARD, 'reviewer'), false);
   await traced(t, 'the gate\'s open', () => open());
+  await traced(t, 'the waiter returns from its gate', () => waiter.said('gate returned'));
   // The wait still holds its FIFO open, so it has not settled: a settled wait closes it first.
   const probe = traced(t, 'the probe', () => openSync(join(agent.dir, FIFO), constants.O_WRONLY | constants.O_NONBLOCK));
   closeSync(probe);
@@ -458,6 +467,7 @@ test('a run awaiting a file that is already there, whose FIFO cannot be made, fa
 test('a run whose writer fails to announce a file after the wait\'s first read has settled on it exits as settled, and the writer fails saying why', SETTLES_WITHIN, async (t) => {
   const agent = awaiting();
   const { gate, open } = gateIn();
+  tracing(t, agent, gate);
   const writer = started(t, agent, 'reviewer', stopping(`wrote-${CARD}-reviewer`, gate, 'wrote'));
   await writer.said('wrote');
   const waiter = started(t, agent, 'architect');
@@ -577,7 +587,7 @@ test('a writer that fails to announce a file before the wait\'s first read fails
 
 // Producer-only publication failure after the wait's first read found nothing: the writer fails
 // saying why, and the wait, told nothing, does not settle until a SIGTERM ends it without its FIFO.
-test('a writer that fails to announce a file after the wait\'s first read found it missing fails saying why, and the wait does not settle', { ...SETTLES_WITHIN, skip: 'U19: skipped until #813 fixes the writer timeout' }, async (t) => {
+test('a writer that fails to announce a file after the wait\'s first read found it missing fails saying why, and the wait does not settle', { ...SETTLES_WITHIN }, async (t) => {
   const agent = awaiting();
   const { gate, open } = gateIn();
   tracing(t, agent, gate);
@@ -589,6 +599,7 @@ test('a writer that fails to announce a file after the wait\'s first read found 
   assert.match(failed.err(), /EMFILE/);
   assert.ok(agent.wrote(CARD, 'reviewer'));
   await traced(t, 'the gate\'s open', () => open());
+  await traced(t, 'the waiter returns from its gate', () => waiter.said('gate returned'));
   // The wait still holds its FIFO open, so it has not settled: a settled wait closes it first.
   closeSync(traced(t, 'the probe', () => openSync(join(agent.dir, FIFO), constants.O_WRONLY | constants.O_NONBLOCK)));
   traced(t, 'SIGTERM to the waiter', () => waiter.child.kill('SIGTERM'));
