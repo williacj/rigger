@@ -49,12 +49,199 @@ opens no PR is reported on stderr with exit 1, while an ordinary refusal with no
 command failed before copying the new test; its unchanged-file run earned no red/green credit.
 The corrected manifest copy preceded the named regression runs above.
 
+## Independent review's integration-proof gap
+
+On 2026-10-22 UTC the configured reviewer demonstrated that the broad labelled-unmerged CLI
+fixture still passed after deleting the waiting guard: its otherwise selectable cards were
+already refused by their seeded branch or stage. That historical test remains unchanged.
+
+Six additive CLI regressions now start from otherwise dispatchable Ready/Coding/Review cards
+or otherwise continuing Coding/Review/Owner cards. Each checks both label spellings, zero
+dispatches and writes while labelled, and the actual maker/continuation after a person clears
+the label. The continuation cases reuse the existing real-git `prepareContinuation` fixture.
+
+Measured with Node 26.12.0 on Ubuntu WSL 2, the final disposable-copy proof applied one checked
+deletion of the waiting guard. Its probe observed a labelled Coding card answered dispatch;
+all six regressions then failed on their named waiting assertions, with zero cancellations
+(13345.511319 ms). After byte-exact restoration, all six passed (36663.381458 ms). The source
+in the author worktree was never mutated. Anchors, applied diff, effect, PID/exit records and
+outputs are retained under `.tmp/pullable-label-proof-4/` in the Linux worktree.
+
+Earlier new-fixture attempts are retained under `pullable-label-proof` through
+`pullable-label-proof-3`. A direct edit of the fake's initial column was overwritten by its
+existing move history. Recording a later move exposed a second incorrect expectation: a
+Coding card with no governing revision is ordinarily refused, and an Owner card with an owed
+judge moves to Review. Neither is the proposed judge-dispatch control. The final tests use the
+existing governed continuation fixtures; no production edit or old assertion change was made
+to accommodate those failed new expectations.
+
+## Open-pull coverage repair
+
+The acceptance author clarified that an open pull with none merged was already inside this
+card's waiting outcome. The [author's coverage ruling](https://github.com/williacj/rigger/issues/858#issuecomment-6334084259)
+was published after [fresh independent dimension admission](https://github.com/williacj/rigger/issues/858#issuecomment-6334024516).
+The 21 assertions, file scope and existing-line grants remain unchanged. This planning
+admission is not a delivered-work verdict.
+
+Two additive L2 tests cross all active stages, branch presence, zero/one/several open pulls and
+both label spellings, and establish the applicable ordinary judge, merge, critical/spent-round
+escalation, return, continuation and column-move answers before adding the label. Three more
+real-bin controls withhold an owed Review judge, an admitted Owner merge and an Owner critical
+escalation. Clearing the label in the same fixture starts the actual judge, sends the merge
+API write or records the critical escalation. Labelled invocations preserve writes, columns
+and directories. No production code or existing test was changed for these controls.
+
+Measured on Ubuntu WSL 2 with Node 26.12.0 on 2026-10-22 UTC, the ordinary full-suite commit
+hook for the preceding six-control repair at `a51db334f6e79a35441d16c23476465a5e87e573`
+passed 4,105 of 4,158 tests, with 53 skips, zero failures and zero cancellations
+(596434.1755 ms). The five additional L2/CLI controls passed their focused runs before the
+bounded fault checks.
+
+The final fault check used a separate detached worktree containing that head plus the final
+additive test bytes, including the exact merge-write assertion. Each fault had one checked
+anchor, an applied/read-back diff, a syntax check and an effect probe that observed a labelled
+Review card incorrectly answered judge. The 11 targeted tests include all nine CLI controls
+and both new L2 controls. These are measurements of that candidate, not claims about an older
+published head's test coverage.
+
+| Candidate / single fault | Tests | Pass | Fail | Cancelled | Duration (ms) |
+|---|---:|---:|---:|---:|---:|
+| Original guard | 11 | 11 | 0 | 0 | 27006.571673 |
+| Guard deleted | 11 | 0 | 11 | 0 | 10072.212427 |
+| Guard restored exactly | 11 | 11 | 0 | 0 | 35198.628268 |
+| Exactly one open pull exempted | 11 | 3 | 8 | 0 | 23658.579915 |
+| Guard restored exactly | 11 | 11 | 0 | 0 | 61187.050127 |
+
+Both faults failed the named owed-judge, admitted-merge and critical-escalation waiting
+assertions. The exemption actually started the judge, merged the pull and recorded critical
+escalation while labelled; those were not fixture failures. The final raw outputs, applied
+diffs, effect probes, recorded PIDs and exact-restoration checks remain under
+`.tmp/open-pull-proof-final/` in the author worktree. The earlier proof before the explicit
+merge-write assertion remains under `.tmp/open-pull-proof/`. Mutations never touched the
+author's production file; its bytes and the restored proof file agree, and the proof source's
+git status is clean. Fresh configured delivered reviews are still required at the final head.
+
+## Withdrawn unsupported proof declaration
+
+The [fresh configured reviewer](https://github.com/williacj/rigger/pull/863#issuecomment-6336166100)
+ran its own guarded deletion checks at `07e589b4912fbdcaa1f3735ed8857c041fa12705`.
+It ruled item 17 unmet because the original broad labelled-unmerged CLI test still declared
+`R-ESCALATE-10` while passing after deletion of the waiting guard. The six dispatch/continuation
+controls and the three judge/merge/escalation controls detect that deletion, but cannot make
+another test's unsupported declaration true.
+
+This correction withdraws only the declaration added above that broad test by this card.
+The test, every assertion, its fixture and its deadline remain byte-identical. The matrix is
+regenerated, so that test no longer appears as proof of the waiting requirement. The nine
+discriminating CLI controls and their supported declarations remain. Production bytes and
+the prerequisite interface are unchanged. The configured judges must review the corrected
+head; the earlier verdict is not reused.
+
+Measured on Ubuntu WSL2 with Node26.12.0 on 2026-10-22 UTC, the retained broad test
+passed one test with zero failures, cancellations or skips (3181.016624ms). Before
+regeneration, matrix:check correctly failed because its entry was stale; after npm run matrix,
+matrix:check passed. The original dispatch-base test bytes remain unchanged outside the
+admitted G1/G2 grants. The ordinary complete-suite hook is still required for this correction.
+
+## Verification environment correction
+
+The first complete hook for the declaration-only correction exited 1: 4,163 tests, 3,567
+passed, 543 failed, zero cancelled and 53 skipped (171546.971405ms). Its custom evidence
+directory was mode 0755, measured with stat; the suite requires a private mode 0700 root.
+The first rejected-root fixture then left a deleted scratch path in TMPDIR, causing the
+following ENOENT failures. These are preserved failures, not successful verification.
+
+A distinct unchanged recorded-scratch fixture also failed with ext4 scratch: a non-mutating
+observer measured the removed and recreated role directory as the same device/inode
+(2096/451206). With ordinary tmpfs scratch the same test passed and the inode changed from
+8903625 to 8903628. The runtime was not changed; this ext4 fixture assumption is outside this
+card. The follow-up belongs to its own card rather than a weaker assertion here.
+
+The retry restores ordinary TMPDIR=/tmp and moves only retained C615_EVIDENCE_ROOT originals
+to a fresh ext4 directory whose actual mode is checked as 0700. Keeping those retained originals
+off tmpfs solves its inode capacity problem without changing the scratch filesystem. The
+failed full log, observed inode records and exact correction source remain preserved. A
+completed green ordinary full hook is still required before commit or push.
+
+## Withdrawn kind-boundary escalation declaration
+
+The [configured reviewer at 36d8c45](https://github.com/williacj/rigger/pull/863#issuecomment-6338081344)
+completed its own ordinary full suite and guarded behavior deletions. It met 20 acceptance
+items and returned item 17 unmet: the merged labelled epic/unselected control still carried
+an unsupported escalation-label declaration. Kind selection already keeps those items inert
+when the waiting guard, merged exception or label recognition is absent. Its useful boundary
+assertions therefore cannot claim that escalation-label behavior.
+
+This correction withdraws only that card-added declaration. Every other byte of the test file,
+including all fixtures, assertions and deadlines, is preserved. No production byte changes.
+The matrix is regenerated. The prior 36d8c45 ordinary hook completed with 4,163 tests, 4,110
+passed, zero failures/cancellations and 53 skipped (589120.104769 ms). That historical green
+run is not evidence for this correction; a fresh normal complete-suite hook remains required.
+
+Measured with npm test on this declaration-only working change over 36d8c45, the retained
+epic/unselected test passed once, with zero failures, cancellations or skips (470.428909 ms;
+552.576599 ms total). Matrix checking failed with exit 1 before regeneration and passed with
+exit 0 after npm run matrix. These focused checks do not replace the full hook.
+
 ## Boundaries
 
 Existing test edits are confined to #858's G1 setup-board label fixtures/counts/descriptions and
 G2 declared-label expectations/descriptions. Other test changes are additions. The matrix is
-generator output. No existing assertion, deadline or proof declaration was deleted.
+generator output. No assertion, deadline or proof declaration present at the dispatch base was deleted.
+The unsupported declaration added by this card is withdrawn as recorded above.
 
 Status labels, owner-escalation writes and role routing remain unclaimed. This work neither
 changes supported engine hosts nor installs an engine. Independent review and exact-head CI
 remain required before merge.
+
+
+## Shared issue labels at the owner acknowledgement
+
+The #861 prerequisite integration exposed five fixture failures before feature implementation.
+Its actual tree combined #855 at `6ea199d09adc8a132f032a95caeb0d30e0a66449`, #860 at
+`bb41bb5cb61d4d57172e53149fd1a03bbc857591` and this card at
+`4d22219b12615572bff1b5b92137456ebb95f366`, over the main result from #859. The normal full
+hook on 2026-10-22 UTC measured 4248 tests, 4184 passed, 5 failed, 0 cancelled and 59 skipped,
+in 652034.579872 ms. It created no merge commit. Its first prerequisite merge had passed
+4237 tests, 4178 passed, 0 failed/cancelled and 59 skipped, in 649005.892929 ms.
+
+The failures were the three labelled continuation controls and the Owner merge/critical
+controls after their simulated acknowledgement. At the actual #860 head, `seedRepository`
+seeds board issues and `boardOf` overlays their labels by repository and issue identity in
+`test/fake-gh.mjs`. The acknowledgement controls changed only the board model, leaving the
+seeded issue labelled. The next read therefore restored that label. The production guard
+was reading the fixture's actual held label.
+
+A new fixture regression first reached its assertion and failed because the selected seeded
+issue still held `RIGGER:ESCALATED` (1 test, 0 passed, 1 failed; 110.614035 ms total). The
+minimal control update made it pass (1 passed, 0 failed/cancelled/skipped; 111.585976 ms total).
+The assertion independently checks the case-insensitive repository and exact issue identity,
+retains the other issue facts, and preserves another repository's issue of the same number.
+A first draft used an issue-comment field unsupported by this card's current fake; that
+fixture-construction failure was not counted as the intended red. Only that new fixture field
+was corrected to the existing body field before measuring the assertion failure.
+
+The card-added acknowledgement sites now reuse the one control. It updates both the board
+model and the matching seeded issue where that existing representation is held. All old
+assertions, deadlines, titles and proof declarations remain.
+
+The exact failed combined Git tree was copied into an independent proof worktree and its
+index hash compared with the original before any repair. The nine applicability controls
+reproduced 4 passed/5 failed (32829.638772 ms). Applying only this fixture repair made all
+11 selected controls pass, with 0 failed/cancelled/skipped (29452.404646 ms). The entire
+combined `test/once.test.mjs` then passed: 85 tests, 85 passed, 0 failed/cancelled/skipped,
+104653.251396 ms. The isolated repair's selected controls also passed 11/11 (27311.96714 ms).
+
+Acorn AST/source checking against published head `4d22219` measured 292 existing assertion
+expressions, 72 test titles/deadlines and 22 proof declarations preserved byte for byte.
+The base-test prefix and exact thirteen-file scope check passed. Every production byte is
+unchanged. The original published author and active review worktrees were left frozen; this
+repair was made in a separate worktree. Its normal full hook and fresh reviews of the eventual
+published head remain required; these focused checks supply neither a verdict nor a skipped gate.
+
+Raw logs are retained in the repair worktree's `.tmp/858-issue-label-control-*.log` and
+`.tmp/858-label-controls-isolated.log`, and the combined proof worktree's
+`.tmp/858-combined-label-control-{red,green}.log` and `.tmp/858-combined-once-file.log`.
+The original failed full hook is preserved separately in the #861 worktree. This is a
+test-control correction within #858's existing additive test scope; its 21 acceptance items
+and digest are unchanged.
