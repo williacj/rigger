@@ -153,6 +153,7 @@ test/verdict-forge.test.mjs
 test/verdict-input.test.mjs
 test/verdict-surface.test.mjs
 test/verdict-terminal.test.mjs
+test/verdict-world.test.mjs
 test/verdict.test.mjs
 test/workspace.test.mjs
 test/worktree-root-inside.test.mjs

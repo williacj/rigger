@@ -173,6 +173,7 @@ expectedLists.converting.push(
   'test/verdict-input.test.mjs',
   'test/verdict-surface.test.mjs',
   'test/verdict-terminal.test.mjs',
+  'test/verdict-world.test.mjs',
   'test/verdict.test.mjs',
 );
 expectedLists.converting.sort();
