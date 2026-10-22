@@ -16,17 +16,25 @@ match the manifest's sha256.
 
 ## Choices the card left to the maker
 
-- **The differential test's source copy.** The four source launchers are embedded in
-  `test/coordinator-source.mjs`, each with the manifest's sha256. The test checks that sha256
-  before it runs anything, so the comparison also runs in CI. The source prompts are not embedded,
-  because their slot lines name a path in the coordinator's home. The moved prompts stand beside
-  both copies, and the comparison sets aside the header and the slot line, as the item allows.
+- **The differential test's source copy.** The four source launchers and both source prompts are
+  embedded in `test/coordinator-source.mjs`, each with the manifest's sha256. The test checks that
+  sha256 before it runs anything, so the comparison also runs in CI. The prompts' slot lines spell
+  the coordinator's home with a tilde, which no added line may name, so the fixture holds `$HOME`
+  there and puts the tilde back at run time. The sha256 check shows the restored text is the
+  manifest's. Round 1 found the first version fed the moved prompts to both copies, which could
+  not see a prompt drift.
 - **Which launcher a test runs.** Each launcher test, and each sweep test, reads its directory
   from `CODEX_TOOLS_DIR`, defaulting to `tools/coordinator/`. A judge can then rerun them
   against the rebuilt source copy.
 - **No network.** Every tooling test runs git with `GIT_ALLOW_PROTOCOL=file`. A copy of a
   launcher that still names the GitHub URL fails at once, and never clones from it.
 - **The sweep's exit statuses.** 0, 1 and 3 are its outcomes; 2 means it could not run at all.
+- **What round 1 on #888 changed in the sweep.** It reads status with
+  `--untracked-files=all`, because a clone's own config can hide untracked files. It keeps an
+  entry whose pull request list fills the read's limit of 1000, because an open one may lie past
+  it. It removes through `rm` on `PATH`, so a test can see each path printed before removal starts.
+- **`suite-slot.test.sh`** differs from the source only where it names the default slot
+  directory. The check of `RIGGER_WORKTREE_ROOT` lives in `test/coordinator-suite-slot.test.mjs`.
 - **The sweep's read timeout.** `SWEEP_READ_TIMEOUT`, default 60 seconds, bounds each read of the
   forge, `gh` and `git ls-remote` alike. A sweep test sets it to 1 second to reach the rows where
   a read does not answer. The sweep ends only the read it started and timed out.
