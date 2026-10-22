@@ -180,6 +180,11 @@ export function lockWorktreeAt(repository, path, reason) {
   gitIn(repository, 'worktree', 'lock', '--reason', reason, path);
 }
 
+/** Unlocks a fixture worktree through the shared git runner. */
+export function unlockWorktreeAt(repository, path) {
+  gitIn(repository, 'worktree', 'unlock', path);
+}
+
 /**
  * Makes `branch` the previous checkout in the repository at `repository`, holding a commit its
  * current branch does not, and checks the current branch out again, so `@{-1}` names `branch`.
