@@ -49,6 +49,32 @@ opens no PR is reported on stderr with exit 1, while an ordinary refusal with no
 command failed before copying the new test; its unchanged-file run earned no red/green credit.
 The corrected manifest copy preceded the named regression runs above.
 
+## Independent review's integration-proof gap
+
+On 2026-10-22 UTC the configured reviewer demonstrated that the broad labelled-unmerged CLI
+fixture still passed after deleting the waiting guard: its otherwise selectable cards were
+already refused by their seeded branch or stage. That historical test remains unchanged.
+
+Six additive CLI regressions now start from otherwise dispatchable Ready/Coding/Review cards
+or otherwise continuing Coding/Review/Owner cards. Each checks both label spellings, zero
+dispatches and writes while labelled, and the actual maker/continuation after a person clears
+the label. The continuation cases reuse the existing real-git `prepareContinuation` fixture.
+
+Measured with Node 26.12.0 on Ubuntu WSL 2, the final disposable-copy proof applied one checked
+deletion of the waiting guard. Its probe observed a labelled Coding card answered dispatch;
+all six regressions then failed on their named waiting assertions, with zero cancellations
+(13345.511319 ms). After byte-exact restoration, all six passed (36663.381458 ms). The source
+in the author worktree was never mutated. Anchors, applied diff, effect, PID/exit records and
+outputs are retained under `.tmp/pullable-label-proof-4/` in the Linux worktree.
+
+Earlier new-fixture attempts are retained under `pullable-label-proof` through
+`pullable-label-proof-3`. A direct edit of the fake's initial column was overwritten by its
+existing move history. Recording a later move exposed a second incorrect expectation: a
+Coding card with no governing revision is ordinarily refused, and an Owner card with an owed
+judge moves to Review. Neither is the proposed judge-dispatch control. The final tests use the
+existing governed continuation fixtures; no production edit or old assertion change was made
+to accommodate those failed new expectations.
+
 ## Boundaries
 
 Existing test edits are confined to #858's G1 setup-board label fixtures/counts/descriptions and

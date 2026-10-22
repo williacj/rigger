@@ -1236,3 +1236,80 @@ test('once leaves merged labelled epics and unselected cards unpulled in every a
   assert.deepEqual((await ran.model()).writes(), []);
   assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
 });
+
+/** Checks a labelled card against the fresh maker that starts once a person clears its label. */
+async function withheldDispatch(column) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      const ran = once({ items: [card(181, column, { labels: ['type:change', label] })] });
+      assert.equal(ran.code, 0, `${column}: ${ran.out}\n${ran.err}`);
+      assert.match(ran.out, /no card was pullable/);
+      assert.deepEqual(ran.agentRuns(), []);
+      assert.deepEqual((await ran.model()).writes(), []);
+      assert.deepEqual(await columnsOf(ran), { 181: column });
+      assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+      const state = join(dirname(ran.fake.gh), 'board.json');
+      const held = JSON.parse(readFileSync(state, 'utf8'));
+      held.model.items[0].labels = ['type:change'];
+      writeFileSync(state, JSON.stringify(held));
+
+      const resumed = ran.rerun();
+
+      assert.equal(resumed.code, 1, `${column}: ${resumed.out}\n${resumed.err}`);
+      assert.match(resumed.err, /claimed #181.*maker exited 0 and opened no pull request/);
+      assert.equal(resumed.agentRuns().length, 1);
+      assert.deepEqual(await columnsOf(resumed), { 181: 'Coding' });
+      assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-181')), true);
+    }
+}
+
+/** Checks a labelled card against a governed continuation that starts once its label is cleared. */
+async function withheldContinuation(t, column) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      const agent = standInAgent({ 10: { engineer: { push: true }, reviewer: { exit: 3 } } });
+      const owner = column === 'Owner';
+      const settings = owner ? { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } } : config();
+      const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, column, { labels: ['type:change', label] })] },
+        { settings, prepare: prepareContinuation({ ruling: owner ? 'owner' : 'reviewer', owner }) });
+      const state = join(dirname(fake.gh), 'board.json');
+      const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8',
+        env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+
+      const waiting = await ran;
+
+      assert.equal(waiting.code, 0, `${column}: ${waiting.out}\n${waiting.err}`);
+      assert.match(waiting.out, /no card was pullable/);
+      assert.deepEqual(agent.runs(), []);
+      assert.deepEqual((await fake.model()).writes(), []);
+      assert.equal((await (await fake.model()).operations.readItems())[0].column, column);
+      assert.deepEqual(eventsOf({ consumer }).filter(({ event }) => /dispatch|escalat|transition/.test(event)), []);
+      const unlabelled = JSON.parse(readFileSync(state, 'utf8'));
+      unlabelled.model.items[0].labels = ['type:change'];
+      writeFileSync(state, JSON.stringify(unlabelled));
+
+      const resumed = invoke();
+
+      assert.equal(resumed.status, 1, `${column}: ${resumed.stdout}\n${resumed.stderr}`);
+      assert.match(resumed.stderr, /continued #10 on pull request #11/);
+      assert.match(resumed.stderr, /judge `reviewer` exited 3/);
+      assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+      assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    }
+}
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Ready card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Ready'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Coding card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Coding'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Review card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Review'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Coding card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Coding'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Review card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Review'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Owner card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Owner'));
