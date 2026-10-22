@@ -394,14 +394,14 @@ test('the event stream holds an L2 event per failed attempt under the card, nami
 });
 
 // proves R-FAIL-2
-test('the event stream holds an L2 event under the card for each decision to attempt it again or stop it, naming the attempt number', SETTLES_WITHIN, async (t) => {
+test('the event stream holds an L2 event under the card for each decision to attempt it again or hold it, naming the attempt number', SETTLES_WITHIN, async (t) => {
   const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
 
   await assert.rejects(built.loop.pull());
 
   assert.deepEqual(named(built.events(), 'L2', 'attempt.decided').map(({ card, attempt, decision }) => ({ card, attempt, decision })), [
     { card: 1, attempt: 1, decision: 'again' },
-    { card: 1, attempt: 2, decision: 'stop' },
+    { card: 1, attempt: 2, decision: 'hold' },
   ]);
 });
 
