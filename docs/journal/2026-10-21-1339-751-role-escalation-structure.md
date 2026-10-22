@@ -30,3 +30,9 @@ leads to, keyed by what the forge holds, and the two ends that escalate. Each ke
 meaning, and the pull request lists both as departures. A list makes each condition a separate
 line that M6-19, M6-20a and M6-20b can each test against, where the prose chain left a reader to
 work out which clause governed which outcome.
+
+The round-2 judge found two more form defects. The validator's five refusals in the
+"Escalation destinations" row were one chain, so they now take a lead row and one continuation
+row each, as the requirements register does for `R-GATE-4`. The role paragraph retyped
+`R-ESCALATE-23`, so it now refers to that row for the card's column and label while the role
+works, rather than restating it.

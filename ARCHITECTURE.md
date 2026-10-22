@@ -144,7 +144,12 @@ workaround.
 | **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not. A maker raises one by an escalation note on the card's issue. L2's escalate answer carries which raised it, `maker` or `loop` | L2 | Fixed |
 | **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | The resolver ships under scripts/ in the package. The consumer's own checks invoke it with the consumer repository's root as an argument. No layer reads it | Yes |
 | **Provisioning steps** | A command line, which L1 runs under `/bin/sh` in the card's workspace. Optionally a working directory under that workspace, and the time the step may run. Whether the work requires it, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it. | L2 selects a card's steps and reads whether each is required. L3 dispatches each. L1 runs it. | Yes |
-| **Escalation destinations** | Where each of the fixed categories goes: the owner, or one of the consumer's roles. A category given no destination goes to the owner. A role may receive only an ambiguity a maker raised, never critical or a recorded-decision change | L2 routes; the config validator refuses a role for critical or a recorded-decision change, a destination naming no declared role, a destination that is not a string, a key that is no category, and `escalate` as a list | Yes, every category to the owner by default |
+| **Escalation destinations** | Where each of the fixed categories goes: the owner, or one of the consumer's roles. A category given no destination goes to the owner. A role may receive only an ambiguity a maker raised, never critical or a recorded-decision change | L2 routes. The config validator refuses `escalate` where any of these holds: | Yes, every category to the owner by default |
+| | | — it is a list; | |
+| | | — a key is no category; | |
+| | | — a destination is not a string; | |
+| | | — a destination names no declared role; | |
+| | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
@@ -671,8 +676,7 @@ one function that answers every role's. `src/workflow/escalation.mjs` composes i
 from the card's number, title and acceptance, the maker's note, and the pull request and its head,
 where they exist. The instruction also says that only the card's author changes an acceptance. It
 hands the role no marker, so the role can change the bar as the author, but never rules on a
-verdict. While the role works, the card keeps its column and carries no escalation label
-(`R-ESCALATE-23`).
+verdict. While the role works, `R-ESCALATE-23` sets the card's column and label.
 
 A role that exits 0 with no note under its dispatch id has handled the card. What follows turns on
 the pull request and on what the forge holds of the card's line of work:
