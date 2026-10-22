@@ -361,12 +361,14 @@ test('run records one L2 escalation and settles without pulling that Review card
     forge: { pullRequests: [{ ...pullFrom(number, pull), mergeable: 'mergeable', comments: [marker] }] },
   });
 
-  assert.deepEqual(await built.loop.run(), [{ card: number, action: 'escalate', category: 'critical' }]);
+  assert.deepEqual(await built.loop.run(), [{ card: number, action: 'escalate', category: 'critical', reason: 'reviewer (critical): Keep the user files.', pull, head: pullFrom(number, pull).sha }]);
   assert.deepEqual(pulledIn(built), [number]);
   assert.deepEqual(built.events().filter(({ event }) => event === 'review.escalate').map(({ layer, card, category }) => ({ layer, card, category })), [
     { layer: 'L2', card: number, category: 'critical' },
   ]);
-  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
+  assert.match(built.repository.held().issues[0].comments[0].body, /card #64.*\(critical\).*\n\nreviewer \(critical\): Keep the user files\./);
+  assert.deepEqual(built.repository.held().issues[0].labels, ['type:change', 'rigger:escalated']);
 });
 
 test('run leaves out a continuing maker that exits without returning its card to Review', async () => {

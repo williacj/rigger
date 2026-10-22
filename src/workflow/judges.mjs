@@ -238,7 +238,7 @@ function judgeOf(role, declared, tier, provider, pull, evidence, facts, items) {
  *
  * Each answer is one of `{ action: 'judge', kind, judges }`, `{ action: 'refuse', card, reason }`,
  * `{ action: 'move', to }`, `{ action: 'continue', pull, head, markers }`, `{ action: 'return',
- * pull, comment }`, `{ action: 'escalate', category }`, `{ action: 'merge', pull, head }` and
+ * pull, comment }`, `{ action: 'escalate', category, reason, pull, head }`, `{ action: 'merge', pull, head }` and
  * `{ action: 'ignore', reason }`, which L3 carries out.
  */
 export function reviewAnswer(card, kinds, epicLabel, options = {}) {
@@ -264,7 +264,11 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   for (const role of read.filter((each) => governing.has(each))) markerRead(options.sink, card, pull, round, role, governing.get(role));
   const states = agents.map((role) => stateOf(governing.get(role), required.get(role)));
   if (card.forge.stage === 'coding') return codingAnswer(card, pull, states, agents.map((role) => governing.get(role)), items);
-  if (states.includes('critical')) return { action: 'escalate', category: 'critical' };
+  if (states.includes('critical')) return {
+    action: 'escalate', category: 'critical', pull: pull.number, head: pull.head,
+    reason: agents.filter((role, at) => states[at] === 'critical')
+      .map((role) => markerReason(governing.get(role).marker, items)).join('\n'),
+  };
   if (card.forge.stage === 'owner') {
     if (!states.every((state) => state === 'sound')) return { action: 'move', to: 'review' };
     return ownerAnswer(card, panel, pull, comments, round, governing.get(OWNER), items);
@@ -273,7 +277,12 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const insufficient = agents.find((role, at) => states[at] === 'insufficient');
   if (insufficient !== undefined) return returned(card, pull, comments, governing.get(insufficient).marker);
   const revising = agents.filter((role, at) => states[at] === 'revision');
-  if (revising.length > 0 && roundsOf(comments, round, required) >= (declared.rounds ?? ROUNDS)) return { action: 'escalate', category: 'ambiguous' };
+  const spent = revising.length > 0 ? roundsOf(comments, round, required) : 0;
+  const bound = declared.rounds ?? ROUNDS;
+  if (revising.length > 0 && spent >= bound) return {
+    action: 'escalate', category: 'ambiguous', pull: pull.number, head: pull.head,
+    reason: [`${spent} of ${bound} rounds spent.`, ...revising.map((role) => markerReason(governing.get(role).marker, items))].join('\n'),
+  };
   if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
   if (declared.judges.map(judgeRole).includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
   return mergeAnswer(card, panel, pull, comments, round);
@@ -332,7 +341,10 @@ function ownerAnswer(card, panel, pull, comments, round, owner, items) {
     const why = owner.state === 'marker' ? 'edited' : `unreadable: ${owner.reason}`;
     return { action: 'ignore', reason: `the owner's marker ${at} is ${why}` };
   }
-  if (state === 'critical') return { action: 'escalate', category: 'critical' };
+  if (state === 'critical') return {
+    action: 'escalate', category: 'critical', pull: pull.number, head: pull.head,
+    reason: markerReason(owner.marker, items),
+  };
   if (state === 'insufficient') return returned(card, pull, comments, owner.marker);
   if (state === 'revision') return continued(pull, [owner.marker], items);
   return mergeAnswer(card, panel, pull, comments, round);
@@ -412,6 +424,12 @@ function continued(pull, markers, items) {
     ...(toSound === undefined ? {} : { toSound }),
   });
   return { action: 'continue', pull: pull.number, head: pull.head, markers: markers.map(handedOf) };
+}
+
+/** The actual reason and unmet acceptance text a governing marker contributes to an escalation. */
+function markerReason({ role, verdict, toSound, items: ruled }, items) {
+  const unmet = ruled.flatMap((ruling, at) => ruling === 'unmet' ? [`unmet item ${at + 1}: ${items[at]}`] : []);
+  return `${role} (${verdict}): ${[...(toSound === undefined ? [] : [toSound]), ...unmet].join('; ')}`;
 }
 
 /**

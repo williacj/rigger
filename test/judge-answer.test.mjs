@@ -647,15 +647,53 @@ const RULING = {
 /** Markers at the head and digest: `states` gives the reviewer's, engineer's and architect's in turn, `m1` sound, `missing` none. */
 const markersFor = (states, from = 1) => states.flatMap((state, at) => (state === 'missing' ? [] : [markerOf({ role: AGENTS[at], at: from + at, ...(RULING[state] ?? {}) })]));
 
+// proves R-ESCALATE-6, R-ESCALATE-7
+test('agent critical evidence carries each governing role and its actual reason in Review and Owner', () => {
+  const comments = [
+    markerOf({ role: 'reviewer', at: 1, verdict: 'critical', toSound: 'Superseded reviewer reason.' }),
+    markerOf({ role: 'reviewer', at: 2, verdict: 'critical', toSound: "Preserve the user's files; never run $(remove-all); keep `literal` text." }),
+    markerOf({ role: 'engineer', at: 3 }),
+    markerOf({ role: 'architect', at: 4, verdict: 'critical', toSound: 'Keep the layer boundary.' }),
+    markerOf({ role: 'reviewer', at: 5, head: EARLIER, verdict: 'critical', toSound: 'Stale head reason.' }),
+    markerOf({ role: 'engineer', at: 6, digest: OTHER_DIGEST, verdict: 'critical', toSound: 'Stale acceptance reason.' }),
+  ];
+  for (const written of comments) assert.equal(parseMarker(written.body, 2).state, 'marker', 'the evidence comes from a readable marker');
+  for (const stage of ['review', 'owner']) {
+    assert.deepEqual(loopAnswer(loopCard({ stage, comments })), {
+      action: 'escalate', category: 'critical', pull: 70, head: HEAD,
+      reason: "reviewer (critical): Preserve the user's files; never run $(remove-all); keep `literal` text.\narchitect (critical): Keep the layer boundary.",
+    }, stage);
+  }
+});
+
+// proves R-ESCALATE-6, R-ESCALATE-7
+test('critical evidence excludes edited unreadable wrong-provider and stale competing markers', () => {
+  const written = markerOf({ role: 'reviewer', verdict: 'critical', toSound: 'This reason does not qualify.', at: 5 });
+  const variants = [
+    { ...written, edited: true },
+    { ...written, body: written.body.replace('coverage: covered\n', '') },
+    markerOf({ role: 'reviewer', provider: 'codex', verdict: 'critical', toSound: 'This provider does not qualify.', at: 5 }),
+    markerOf({ role: 'reviewer', head: EARLIER, verdict: 'critical', toSound: 'This head does not qualify.', at: 5 }),
+  ];
+  assert.equal(parseMarker(variants[1].body, 2).state, 'unreadable');
+  for (const competing of variants) {
+    for (const stage of ['review', 'owner']) {
+      assert.deepEqual(loopAnswer(loopCard({ stage, comments: [competing, markerOf({ role: 'engineer', at: 6 }), markerOf({ role: 'architect', verdict: 'critical', toSound: 'Keep the qualifying boundary.', at: 7 })] })), {
+        action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: 'architect (critical): Keep the qualifying boundary.',
+      });
+    }
+  }
+});
+
 // proves R-ESCALATE-6
 test('given one agent judge\'s governing marker critical and the others sound, L2 answers an escalation in the category critical', () => {
-  assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m1', 'm10', 'm1']) })), { action: 'escalate', category: 'critical' });
+  assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m1', 'm10', 'm1']) })), { action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: "engineer (critical): Never delete the user's files." });
 });
 
 // proves R-ESCALATE-6
 test('given one agent judge critical beside one needing revision, one ruling coverage insufficient, or one with no marker, L2 answers an escalation in the category critical, a row each', () => {
   for (const other of ['m9', 'm8', 'missing']) {
-    assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m10', other, 'm1']) })), { action: 'escalate', category: 'critical' }, other);
+    assert.deepEqual(loopAnswer(loopCard({ comments: markersFor(['m10', other, 'm1']) })), { action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: "reviewer (critical): Never delete the user's files." }, other);
   }
 });
 
@@ -742,11 +780,32 @@ const movedTo = (written, { head = HEAD, digest = DIGEST, at }) => ({
 /** The current round's markers: the engineer needing revision, the others sound. */
 const revisingNow = () => markersFor(['m1', 'm9', 'm1']);
 
+// proves R-ESCALATE-7
+test('spent round evidence names actual counts and bounds with revision reasons and unmet item text', () => {
+  const earlier = [
+    movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 }),
+    movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: LATER, at: 2 }),
+    movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { digest: OTHER_DIGEST, at: 3 }),
+  ];
+  const now = markersFor(['m9', 'm6', 'm1'], 20);
+  const cells = [
+    { label: 'type:bounded', history: earlier.slice(0, 1), first: '2 of 2 rounds spent.' },
+    { label: 'type:change', history: earlier.slice(0, 2), first: '3 of 3 rounds spent.' },
+    { label: 'type:bounded', history: earlier, first: '4 of 2 rounds spent.' },
+  ];
+  for (const { label, history, first } of cells) {
+    assert.deepEqual(loopAnswer(loopCard({ label, comments: [...history, ...now] })), {
+      action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD,
+      reason: `${first}\nreviewer (needs revision): Print the help on stderr.\nengineer (sound): unmet item 2: The verb exits 0.`,
+    }, first);
+  }
+});
+
 // proves R-LOOP-9
 test('given the kind\'s bound of rounds reached with a governing needs revision, L2 answers an escalation in the category ambiguous', () => {
   const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 });
 
-  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
 // proves R-LOOP-9
@@ -755,7 +814,7 @@ test('given a kind with no rounds declared, the bound is three: two rounds with 
   const two = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: LATER, at: 2 });
 
   assert.equal(loopAnswer(loopCard({ comments: [one, ...revisingNow()] })).action, 'continue');
-  assert.deepEqual(loopAnswer(loopCard({ comments: [one, two, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+  assert.deepEqual(loopAnswer(loopCard({ comments: [one, two, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '3 of 3 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
 // proves R-LOOP-8
@@ -770,14 +829,14 @@ test('L2 counts rounds as distinct head and digest pairs: two markers at one ear
 test('a change of the acceptance digest at one head counts a second round', () => {
   const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { digest: OTHER_DIGEST, at: 1 });
 
-  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
 // proves R-LOOP-8
 test('a new head counts a new round, whether or not the pull request still holds the earlier head', () => {
   const earlier = movedTo(markerOf({ role: 'architect' }), { head: EARLIER, at: 1 });
 
-  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' });
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' });
 });
 
 // proves R-LOOP-8
@@ -797,7 +856,7 @@ test('under a bound of two rounds, an earlier pair holding only an unreadable ma
 test('given a governing critical marker with the bound of rounds reached, L2 escalates as critical, not ambiguous', () => {
   const earlier = movedTo(markerOf({ role: 'reviewer', ...RULING.m9 }), { head: EARLIER, at: 1 });
 
-  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...markersFor(['m1', 'm10', 'm9'])] })), { action: 'escalate', category: 'critical' });
+  assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...markersFor(['m1', 'm10', 'm9'])] })), { action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: "engineer (critical): Never delete the user's files." });
 });
 
 /** The answer L2 gives for the engineer's coverage ruled insufficient, the other judges as `others` gives them. */
@@ -917,7 +976,17 @@ test('given the owner\'s marker ruling coverage insufficient, L2 answers the com
 
 // proves R-ESCALATE-6
 test('given the owner\'s marker critical, L2 answers an escalation in the category critical for an Owner card', () => {
-  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m10)])), { action: 'escalate', category: 'critical' });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m10)])), { action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: "owner (critical): Never delete the user's files." });
+});
+
+// proves R-ESCALATE-6, R-ESCALATE-7
+test('owner critical evidence carries the governing owner reason and the current work', () => {
+  const older = ownerMarker({ verdict: 'critical', toSound: 'Superseded owner reason.', at: 8 });
+  const current = ownerMarker({ verdict: 'critical', toSound: "Keep the owner's $(literal) decision; do not replace it.", at: 9 });
+  assert.deepEqual(loopAnswer(ownerCard([older, current])), {
+    action: 'escalate', category: 'critical', pull: 70, head: HEAD,
+    reason: "owner (critical): Keep the owner's $(literal) decision; do not replace it.",
+  });
 });
 
 test('given every agent judge and the owner sound, L2 answers ignore for an Owner card where the mergeability is unknown or a required check failed, naming it', () => {
@@ -1098,10 +1167,10 @@ test('a marker valid against an earlier acceptance with an item fewer or an item
   const removed = earlierWith(['met', 'met', 'unmet'], OTHER_DIGEST, 1);
   for (const [what, earlier] of Object.entries({ 'an item added since': added, 'an item removed since': removed })) {
     assert.deepEqual(parseMarker(earlier.body, earlier.body.match(/^item \d+:/gm).length).state, 'marker', `${what}: the earlier marker is valid against its own acceptance, so the test proves something`);
-    assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, what);
+    assert.deepEqual(loopAnswer(loopCard({ label: 'type:bounded', comments: [earlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' }, what);
   }
   const twoEarlier = [earlierWith(['met'], OTHER_DIGEST, 1, EARLIER), earlierWith(['met', 'met', 'met'], 'e'.repeat(64), 2, LATER)];
-  assert.deepEqual(loopAnswer(loopCard({ comments: [...twoEarlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous' }, 'under the default bound of three');
+  assert.deepEqual(loopAnswer(loopCard({ comments: [...twoEarlier, ...revisingNow()] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '3 of 3 rounds spent.\nengineer (needs revision): Print the help on stderr.' }, 'under the default bound of three');
 });
 
 // proves R-LOOP-6
@@ -1163,14 +1232,14 @@ test('an earlier marker whose comment holds item-like prose after its closed blo
     assert.equal(parseMarker(written.body, 2).state, 'marker', 'the earlier marker is readable against its own acceptance, so the test proves something');
   }
   const bounded = (comments) => loopAnswer(loopCard({ label: 'type:bounded', comments: [...comments, ...revisingNow()] }));
-  const ambiguous = { action: 'escalate', category: 'ambiguous' };
+  const ambiguous = { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nengineer (needs revision): Print the help on stderr.' };
 
   assert.deepEqual(bounded([earlier(1, { digest: OTHER_DIGEST })]), ambiguous, 'at a changed digest');
   assert.deepEqual(bounded([earlier(1, { head: EARLIER })]), ambiguous, 'at a changed head');
   const pair = [earlier(1, { head: EARLIER }), prose(movedTo(markerOf({ role: 'engineer' }), { head: EARLIER, at: 2 }))];
   assert.deepEqual(bounded(pair), ambiguous, 'two at one earlier pair spend its round');
   assert.equal(loopAnswer(loopCard({ comments: [...pair, ...revisingNow()] })).action, 'continue', 'two at one earlier pair count one round, not two, under the default of three');
-  assert.deepEqual(loopAnswer(loopCard({ comments: [earlier(1, { head: EARLIER }), earlier(2, { head: LATER }), ...revisingNow()] })), ambiguous, 'under the default bound of three');
+  assert.deepEqual(loopAnswer(loopCard({ comments: [earlier(1, { head: EARLIER }), earlier(2, { head: LATER }), ...revisingNow()] })), { ...ambiguous, reason: '3 of 3 rounds spent.\nengineer (needs revision): Print the help on stderr.' }, 'under the default bound of three');
 });
 
 test('given a Review card whose kind names agent judges and then the owner, every agent judge sound, and a failed read of the mergeability, the check states or the effective rules, L2 answers no action naming the read rather than a move to Owner', () => {
@@ -1293,7 +1362,7 @@ test('a judge whose governing marker names no provider or another one is owed, s
   const none = [unnamed(markerOf({ role: 'reviewer', provider: 'codex', at: 1 })), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
   assert.deepEqual(providers(panelAnswer(labelled([], { comments: none }))), { reviewer: 'codex' });
   const right = [markerOf({ role: 'reviewer', provider: 'codex', at: 1, verdict: 'critical', toSound: 'Resolve the blocker.' }), markerOf({ role: 'architect', provider: 'claude', at: 2 })];
-  assert.deepEqual(panelAnswer(labelled([], { comments: right })), { action: 'escalate', category: 'critical' }, 'on the right provider it escalates, so the row proves something');
+  assert.deepEqual(panelAnswer(labelled([], { comments: right })), { action: 'escalate', category: 'critical', pull: 70, head: HEAD, reason: 'reviewer (critical): Resolve the blocker.' }, 'on the right provider it escalates, so the row proves something');
 });
 
 // proves R-GATE-9
@@ -1310,7 +1379,7 @@ test('under a bound of two rounds, an earlier pair holding only a marker on the 
   const wrong = movedTo(markerOf({ role: 'reviewer', provider: 'claude', ...RULING.m9 }), { head: EARLIER, at: 1 });
   assert.equal(panelAnswer(labelled([], { label: 'type:bounded', comments: [wrong, ...now] })).action, 'continue');
   const right = movedTo(markerOf({ role: 'reviewer', provider: 'codex', ...RULING.m9 }), { head: EARLIER, at: 1 });
-  assert.deepEqual(panelAnswer(labelled([], { label: 'type:bounded', comments: [right, ...now] })), { action: 'escalate', category: 'ambiguous' }, 'on the right provider it is a round, so the row proves something');
+  assert.deepEqual(panelAnswer(labelled([], { label: 'type:bounded', comments: [right, ...now] })), { action: 'escalate', category: 'ambiguous', pull: 70, head: HEAD, reason: '2 of 2 rounds spent.\nreviewer (needs revision): Print the help on stderr.' }, 'on the right provider it is a round, so the row proves something');
 });
 
 /** An Owner card of the `spec` panel kind, every agent judge sound on its provider, holding `owner` beside them. */
