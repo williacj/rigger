@@ -29,6 +29,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
+import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -1103,4 +1104,135 @@ test('once, given two Review cards each ready to merge, finishes one card: it me
   assert.deepEqual(await columnsOf(ran), { 10: 'Done', 20: 'Review' });
   assert.match(ran.out, /card #10 merged pull request #11\b/);
   assert.doesNotMatch(ran.out, /#20/);
+});
+
+// proves R-ESCALATE-10
+test('once dispatches and writes nothing for labelled unmerged cards across active stages and selection conflicts', SETTLES_WITHIN, async () => {
+  const cases = [
+    { labels: ['type:change'], body: ADMITTED },
+    { labels: ['type:change'], body: '' },
+    { labels: ['type:change'], title: 'Paint a widget', body: '## Acceptance\n\n- Paint a widget.\n' },
+    { labels: ['area:other'], body: ADMITTED },
+    { labels: ['type:change', 'type:spec'], body: ADMITTED },
+    { labels: ['type:change', 'type:epic'], body: ADMITTED },
+    { labels: ['type:change', 'tier:standard', 'tier:high'], body: ADMITTED },
+    { labels: ['type:change', 'provider:claude', 'provider:codex'], body: ADMITTED },
+  ];
+  const settings = config();
+  settings.roles = { ...settings.roles, engineer: { ...settings.roles.engineer,
+    labels: { 'tier:standard': 'standard', 'tier:high': 'high' },
+    providerLabels: { 'provider:claude': 'claude', 'provider:codex': 'codex' } } };
+  const items = [];
+  for (const column of ['Ready', 'Coding', 'Review', 'Owner']) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      for (const each of cases) items.push(card(items.length + 1, column, { ...each, labels: [...each.labels, label] }));
+    }
+  }
+  const ran = once({ items }, { settings,
+    seed: { branches: items.filter((item) => item.number % 2).map((item) => `rigger-${item.number}`) } });
+  assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+  assert.match(ran.out, /no card was pullable/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(await columnsOf(ran), Object.fromEntries(items.map((item) => [item.number, item.column])));
+  assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+  const events = existsSync(join(ran.consumer, '.rigger', 'events.jsonl')) ? eventsOf(ran) : [];
+  assert.deepEqual(events.filter(({ event }) => /dispatch|escalat|transition/.test(event)), []);
+  for (const args of ran.fake.sent()) {
+    assert.equal(args[0], 'api', JSON.stringify(args));
+    if (args[1] === 'graphql') {
+      assert.ok(parseDocument(args[3].slice('query='.length)).operations.every(({ type }) => type === 'query'), JSON.stringify(args));
+    } else {
+      assert.equal(args[args.indexOf('-X') + 1], 'GET', JSON.stringify(args));
+    }
+  }
+});
+
+// proves R-ESCALATE-11
+test('once reads the owner removing an escalation label before its next invocation and resumes ordinary work', async () => {
+  const ran = once({ items: [card(151, 'Ready', { labels: ['type:change', 'RIGGER:ESCALATED'] })] });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(ran.agentRuns(), []);
+  const path = join(dirname(ran.fake.gh), 'board.json');
+  const held = JSON.parse(readFileSync(path, 'utf8'));
+  held.model.items[0].labels = ['type:change'];
+  writeFileSync(path, JSON.stringify(held));
+
+  const resumed = ran.rerun();
+
+  assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
+  assert.match(resumed.err, /claimed #151.*maker exited 0 and opened no pull request/, resumed.err);
+  assert.equal(resumed.agentRuns().length, 1);
+  assert.deepEqual(await columnsOf(resumed), { 151: 'Coding' });
+  assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-151')), true);
+  const after = await (await resumed.model()).operations.readItems();
+  assert.deepEqual(after[0].labels, ['type:change']);
+});
+
+/** A labelled card with a merged PR and a real workspace holding an uncommitted marker. */
+function labelledMerge(column, branch, label) {
+  const worktrees = temporaryDirectory('rigger-once-escalated-merge-');
+  const path = join(worktrees, 'rigger-161');
+  const settings = { ...config(), worktrees: { root: worktrees } };
+  const ran = once({ items: [card(161, column, { labels: ['type:change', label] })] }, {
+    settings,
+    seed: { branches: branch ? ['rigger-161'] : [], pullRequests: [{ number: 162, head: 'rigger-161', sha: '6'.repeat(40), merged: true }] },
+    prepare: ({ consumer }) => {
+      worktreeAt(consumer, path, 'rigger-161');
+      writeFileSync(join(path, 'marker'), 'uncommitted fixture\n');
+    },
+  });
+  return { ran, path };
+}
+
+// proves R-ESCALATE-10
+test('once cleans a labelled merged Review or Owner card before moving it to Done', async () => {
+  for (const column of ['Review', 'Owner']) {
+    for (const branch of [false, true]) {
+      for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+        const { ran, path } = labelledMerge(column, branch, label);
+        assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+        assert.deepEqual(await columnsOf(ran), { 161: 'Done' });
+        assert.equal(existsSync(path), false, path);
+        assert.equal(worktreeList(ran.consumer).includes(path), false);
+        assert.deepEqual(ran.agentRuns(), []);
+        const events = eventsOf(ran);
+        const removed = events.findIndex(({ event, path: at }) => event === 'workspace.removed' && at === path);
+        const done = events.findIndex(({ event, to }) => event === 'transition' && to === 'done');
+        assert.ok(removed >= 0 && done > removed, JSON.stringify(events));
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-10
+test('once preserves a labelled merged Ready or Coding card workspace under its existing forge refusal', async () => {
+  for (const column of ['Ready', 'Coding']) {
+    for (const branch of [false, true]) {
+      for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+        const { ran, path } = labelledMerge(column, branch, label);
+        assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+        assert.match(`${ran.out}\n${ran.err}`, /forge holds pull request #162, merged/);
+        assert.equal(readFileSync(join(path, 'marker'), 'utf8'), 'uncommitted fixture\n');
+        assert.ok(worktreeList(ran.consumer).includes(path));
+        assert.deepEqual(await columnsOf(ran), { 161: column });
+        assert.deepEqual((await ran.model()).writes(), []);
+        assert.deepEqual(ran.agentRuns(), []);
+        const events = existsSync(join(ran.consumer, '.rigger', 'events.jsonl')) ? eventsOf(ran) : [];
+        assert.equal(events.some(({ event }) => event === 'workspace.removed'), false);
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-10
+test('once leaves merged labelled epics and unselected cards unpulled in every active stage', async () => {
+  const items = ['Ready', 'Coding', 'Review', 'Owner'].map((column, at) =>
+    card(171 + at, column, { labels: [...(at % 2 ? ['type:change', 'type:epic'] : ['area:other']), 'rigger:escalated'] }));
+  const ran = once({ items }, { seed: { pullRequests: items.map(({ number }) => ({ number: number + 100, head: `rigger-${number}`, sha: '6'.repeat(40), merged: true })) } });
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /no card was pullable/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
 });
