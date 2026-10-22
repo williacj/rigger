@@ -32,6 +32,7 @@ test('codex-maker.sh clones RIGGER_REPO_URL into codex-<card> under RIGGER_WORKT
   const { w, bare, root } = setup('coord-maker-');
   const result = run(w, launcher('codex-maker.sh'), ['7', 'rigger-7'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare } });
 
+  assert.ok(existsSync(join(root, 'coordinator-logs')), 'the log directory is RIGGER_WORKTREE_ROOT/coordinator-logs');
   assert.equal(result.status, 0, result.stderr);
   const work = join(root, 'codex-7');
   assert.equal(gitIn(work, 'remote', 'get-url', 'origin').trim(), bare);
@@ -68,6 +69,7 @@ test('codex-judge.sh clones RIGGER_REPO_URL into judge-<pr>-codex-r<round> under
   const { w, bare, sha, root } = setup('coord-judge-');
   const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare } });
 
+  assert.ok(existsSync(join(root, 'coordinator-logs')), 'the log directory is RIGGER_WORKTREE_ROOT/coordinator-logs');
   assert.equal(result.status, 0, result.stderr);
   const base = join(root, 'judge-12-codex-r1');
   const work = join(base, 'repo');
@@ -115,6 +117,7 @@ test('codex-resume.sh resumes in codex-<card> under RIGGER_WORKTREE_ROOT and app
   const message = resumable(w, bare, root);
   const result = run(w, launcher('codex-resume.sh'), ['7', 'thread-1', message], { env: { RIGGER_WORKTREE_ROOT: root } });
 
+  assert.ok(existsSync(join(root, 'coordinator-logs')), 'the log directory is RIGGER_WORKTREE_ROOT/coordinator-logs');
   assert.equal(result.status, 0, result.stderr);
   const [call] = codexCalls(w);
   assert.equal(call.cwd, join(root, 'codex-7'));
@@ -145,8 +148,12 @@ const AT_CAPACITY = '{"type":"thread.started","thread_id":"thread-9"}\n{"type":"
 const RESUMED = ['thread.started', 'turn.started', 'item.started', 'item.completed', 'turn.completed'].map((type) => `{"type":"${type}"}\n`).join('');
 
 /** Runs codex-retry.sh over codex-maker.sh, whose first session hits capacity and whose resume ends it. */
-function retryOverMaker(prefix, env, { stubSleep = true, logDir = false } = {}) {
+function retryOverMaker(prefix, env, { stubSleep = true, logDir = false, homeRoot = false } = {}) {
   const s = setup(prefix, { stubSleep });
+  // At the root the source hard-codes, with the clone made beforehand, the source copy reaches its
+  // continue message too, so this test can be pointed at either copy.
+  if (homeRoot) s.root = join(s.w.home, 'GitHub', 'rigger-worktrees');
+  if (homeRoot) cloneInto(s.bare, join(s.root, 'codex-7'));
   writeFileSync(join(s.w.stub, 'out-1'), AT_CAPACITY);
   writeFileSync(join(s.w.stub, 'out-2'), RESUMED);
   if (logDir) env = { ...env, CODEX_LOG_DIR: s.logs };
@@ -173,8 +180,9 @@ test('codex-retry.sh writes its continue message in CODEX_LOG_DIR where it is se
 });
 
 test('codex-retry.sh writes its continue message under RIGGER_WORKTREE_ROOT/coordinator-logs where CODEX_LOG_DIR is unset', () => {
-  const { w, result, root } = retryOverMaker('coord-retry-', { CODEX_RETRY_WAIT: '0' });
+  const { w, result, root } = retryOverMaker('coord-retry-', { CODEX_RETRY_WAIT: '0' }, { homeRoot: true });
 
+  assert.ok(existsSync(join(root, 'coordinator-logs', 'codex-7-continue.md')), 'the continue message is in RIGGER_WORKTREE_ROOT/coordinator-logs');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(readFileSync(join(root, 'coordinator-logs', 'codex-7-continue.md'), 'utf8'), CONTINUE);
   assert.equal(codexCalls(w).length, 2);

@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { TOOLS, answer, assertToolingClean, forge, ghCalls, run, tree, world } from './coordinator-fixtures.mjs';
 import { cloneInto, detachedWorktreeAt, gitIn, worktreeAt } from './git-repository.mjs';
 
-const SWEEP = join(TOOLS, 'sweep.mjs');
+// The sweep is read from `CODEX_TOOLS_DIR` where it is set, as the launchers' tests read theirs.
+const SWEEP = join(process.env.CODEX_TOOLS_DIR || TOOLS, 'sweep.mjs');
 
 /** A sweep test's world: a root, a fixture config naming the repository and topic rule, and a local forge. */
 function setup(prefix, { topic = 'rigger-{number}' } = {}) {
@@ -415,7 +416,7 @@ test('a removal that fails partway is named with the reason after its path is pr
   mkdirSync(locked);
   writeFileSync(join(locked, 'file'), 'file\n');
   chmodSync(locked, 0o500);
-  t.after(() => chmodSync(locked, 0o700));
+  t.after(() => { if (existsSync(locked)) chmodSync(locked, 0o700); });
   const next = judge(s, 'judge-13-codex-r1');
   const open = judge(s, 'judge-14-codex-r1');
   pull(s, 12, 'MERGED');
@@ -439,7 +440,7 @@ test('the exit status for a failed removal differs from the one for an entry kep
   mkdirSync(locked);
   writeFileSync(join(locked, 'file'), 'file\n');
   chmodSync(locked, 0o500);
-  t.after(() => chmodSync(locked, 0o700));
+  t.after(() => { if (existsSync(locked)) chmodSync(locked, 0o700); });
   maker(s, 7);
   pull(s, 12, 'MERGED');
   const failed = sweep(s);

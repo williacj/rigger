@@ -1,8 +1,8 @@
 #!/bin/bash
 # ABOUTME: Runs a command in the one host-wide test slot, once one-minute load is <= 24 (O46).
 # Usage: suite-slot.sh <label> -- <command> [args...]. Lock, log and the first-come-first-served
-# queue of waiters live in $SUITE_SLOT_DIR, by default suite-slot under $RIGGER_WORKTREE_ROOT, whose
-# own default is $HOME/GitHub/rigger-worktrees.
+# queue of waiters live in $SUITE_SLOT_DIR, by default $RIGGER_WORKTREE_ROOT/suite-slot.
+# RIGGER_WORKTREE_ROOT defaults to $HOME/GitHub/rigger-worktrees.
 # Exits with the command's status (128+N for signal N); 2 usage; 71 cannot record or take the
 # lock; 75 load average unreadable after retries; 128+N if the wrapper itself gets signal N.
 
