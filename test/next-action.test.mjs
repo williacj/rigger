@@ -184,9 +184,9 @@ function withFacts(number, column, stage, sound) {
     ? {
       stage, line: `rigger-${number}`, branch: true, open: [{ number: 10 * number, head, base: 'main' }], merged: [],
       pull: read({ number: 10 * number, base: 'c'.repeat(40), head }), diff: read(''), mergeable: read('unknown'), rules: read([]), checks: read({}),
-      comments: read([{ body: marker, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
+      comments: read([{ body: marker, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]), closed: [],
     }
-    : { stage, line: `rigger-${number}`, branch: false, open: [], merged: [] };
+    : { stage, line: `rigger-${number}`, branch: false, open: [], merged: [], closed: [] };
   return { ...cardInColumn(number, column), forge };
 }
 
@@ -231,7 +231,7 @@ test('nextAction no longer accepts an injected fresh: given { fresh: () => true 
       stage: 'review', line: 'rigger-25', branch: true, open: [{ number: 250, head: 'a'.repeat(40), base: 'main' }], merged: [],
       pull: { status: 'fulfilled', value: { number: 250, base: 'c'.repeat(40), head: 'a'.repeat(40) } },
       diff: { status: 'fulfilled', value: 'diff --git a/x b/x\n' },
-      comments: { status: 'fulfilled', value: [{ body: older, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }] },
+      comments: { status: 'fulfilled', value: [{ body: older, createdAt: '2026-10-01T11:00:00Z', id: 'IC_1', author: 'williacj', permission: 'write', edited: false }] }, closed: [],
     },
   };
 
@@ -372,7 +372,7 @@ test('an escalation label leaves every unmerged active-stage card waiting before
         for (const each of cases) {
           const given = {
             ...card(7, [...each.labels, label], each.body),
-            forge: { stage, line: 'rigger-7', branch, open: [], merged: [] },
+            forge: { stage, line: 'rigger-7', branch, open: [], merged: [], closed: [] },
           };
           assert.deepEqual(nextAction(given, KINDS, 'type:epic', { roles }),
             { action: 'ignore', escalated: true }, `${stage}/${label}/${branch}/${each.name}`);
@@ -388,7 +388,7 @@ test('a labelled merged card keeps its ordinary stage answer and an escalation d
     for (const label of ['rigger:escalated', 'Rigger:Escalated']) {
       for (const branch of [false, true]) {
         for (const labels of [['type:change'], ['area:other'], ['type:change', 'type:epic']]) {
-          const forge = { stage, line: 'rigger-7', branch, open: [], merged: [{ number: 71 }] };
+          const forge = { stage, line: 'rigger-7', branch, open: [], merged: [{ number: 71 }], closed: [] };
           const given = { ...card(7, labels), forge };
           const answer = nextAction({ ...given, labels: [...labels, label] }, KINDS, 'type:epic');
           assert.equal(answer.escalated, true, `${stage}/${label}/${branch}/${labels}`);
@@ -423,7 +423,7 @@ function openPullDecision(stage, { reviewer, owner, ownerPanel = false, rounds }
     given: { ...card(7, ['type:change']), forge: {
       stage, line: 'rigger-7', branch: true, open: [{ number: 71, head, base: 'main' }], merged: [],
       pull: read({ number: 71, base: '7'.repeat(40), head }), diff: read('diff --git a/x b/x\n'),
-      comments: read(comments), mergeable: read('mergeable'), rules: read([]), checks: read({}),
+      comments: read(comments), mergeable: read('mergeable'), rules: read([]), checks: read({}), closed: [],
     } },
     kinds: { change: { ...KINDS.change, judges: ownerPanel ? ['reviewer', 'owner'] : ['reviewer'], ...(rounds === undefined ? {} : { rounds }) } },
   };
@@ -437,7 +437,7 @@ test('the label guard crosses every active stage and zero, one or several open p
         for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
           const given = { ...card(7, ['type:change', label]), forge: {
             stage, line: 'rigger-7', branch, merged: [],
-            open: Array.from({ length: count }, (_, at) => ({ number: 71 + at, head: '6'.repeat(40), base: 'main' })),
+            open: Array.from({ length: count }, (_, at) => ({ number: 71 + at, head: '6'.repeat(40), base: 'main' })), closed: [],
           } };
           assert.deepEqual(nextAction(given, KINDS, undefined, { roles: PROVIDER_ROLES, sink: quiet }),
             { action: 'ignore', escalated: true }, `${stage}/${branch}/${count}/${label}`);
@@ -480,4 +480,108 @@ test('an open-pull label withholds each reachable ordinary judge, merge, escalat
       assert.deepEqual(nextAction(labelled, kinds, undefined, options), { action: 'ignore', escalated: true }, each.name);
     }
   }
+});
+
+
+/** An otherwise eligible selected card with closed history, using the read boundary's full facts. */
+function withClosedLine(stage, { branch = false, closed = [{ number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', base: 'main' }], ...facts } = {}) {
+  const given = withFacts(87, COLUMNS[stage], stage, false);
+  return { ...given, forge: { ...given.forge, branch, closed, ...facts } };
+}
+
+// proves R-WORK-37, R-WORK-38, R-WORK-39
+test('L2 selects closed removal only for unlabelled Review or Owner cards with closed history and no open or merged pull', () => {
+  for (const stage of ['review', 'owner']) for (const branch of [false, true]) {
+    for (const count of [1, 2]) {
+      const closed = Array.from({ length: count }, (_, at) => ({ number: 733 + at, head: String(at).repeat(40), base: 'main' }));
+      const given = withClosedLine(stage, { branch, closed });
+      const next = nextAction(given, KINDS, undefined, { sink: quiet });
+      assert.equal(next.action, 'remove', `${stage}/${branch}/${count}: ${JSON.stringify(next)}`);
+      if (stage === 'review' && !branch) {
+        assert.deepEqual(next.following, { action: 'dispatch', kind: 'change' });
+      } else {
+        assert.deepEqual(next.following, {
+          action: 'escalate', category: 'ambiguous', line: 'rigger-87',
+          reason: branch
+            ? stage === 'owner' ? 'the forge holds its line of work rigger-87 with no pull request from it' : 'the forge holds its line of work, rigger-87, so its work would not start from the beginning'
+            : 'the forge holds no pull request from its line of work rigger-87, open or merged',
+        });
+        assert.equal(Object.hasOwn(next.following, 'pull'), false, 'historical closed pulls supply no active pull');
+        assert.equal(Object.hasOwn(next.following, 'head'), false, 'historical closed heads supply no active head');
+      }
+      for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+        assert.deepEqual(nextAction({ ...given, labels: [...given.labels, label] }, KINDS, undefined, { sink: quiet }), { action: 'ignore', escalated: true });
+      }
+      const withoutHistory = nextAction(withClosedLine(stage, { branch, closed: [] }), KINDS, undefined, { sink: quiet });
+      assert.notEqual(withoutHistory.action, 'remove', `${stage}/${branch}: no closed history`);
+      for (const count of [1, 2]) {
+        const open = Array.from({ length: count }, (_, at) => ({ number: 870 + at, head: 'a'.repeat(40), base: 'main' }));
+        const reviewed = withFacts(87, COLUMNS[stage], stage, true).forge;
+        const opened = { ...given, forge: { ...given.forge, ...reviewed, branch, closed, open } };
+        assert.notEqual(nextAction(opened, KINDS, undefined, { sink: quiet }).action, 'remove', `${stage}/${branch}: ${count} open`);
+        const merged = Array.from({ length: count }, (_, at) => ({ number: 880 + at, head: 'b'.repeat(40), base: 'main' }));
+        assert.deepEqual(nextAction(withClosedLine(stage, { branch, closed, merged }), KINDS, undefined, { sink: quiet }), { action: 'move', to: 'done' });
+      }
+    }
+  }
+  for (const stage of ['ready', 'coding']) for (const branch of [false, true]) {
+    const next = nextAction(withClosedLine(stage, { branch }), KINDS, undefined, { sink: quiet });
+    assert.equal(next.action, branch ? 'refuse' : 'dispatch', `${stage}/${branch}`);
+  }
+});
+
+
+// proves R-ESCALATE-12
+test('closed removal preserves every nonforge refusal and converts only the forge refusal actually selected before bad form', () => {
+  const roles = { ...PROVIDER_ROLES, engineer: { ...PROVIDER_ROLES.engineer, labels: { 'work:low': 'low', 'work:high': 'high' } } };
+  const tier = 'carries labels selecting different tiers for its maker role `engineer`: work:low (low), work:high (high)';
+  const provider = 'carries labels selecting different providers for its maker role `engineer`: maker:codex (codex), maker:claude (claude)';
+  for (const stage of ['review', 'owner']) for (const branch of [false, true]) {
+    const original = withClosedLine(stage, { branch });
+    const held = branch
+      ? stage === 'owner' ? 'the forge holds its line of work rigger-87 with no pull request from it' : 'the forge holds its line of work, rigger-87, so its work would not start from the beginning'
+      : stage === 'owner' ? 'the forge holds no pull request from its line of work rigger-87, open or merged' : undefined;
+    for (const [labels, conflicts] of [
+      [['work:low', 'work:high'], [tier]],
+      [['maker:codex', 'maker:claude'], [provider]],
+      [['work:low', 'work:high', 'maker:codex', 'maker:claude'], [tier, provider]],
+    ]) for (const malformed of [false, true]) {
+      const given = { ...original, labels: [...original.labels, ...labels], body: malformed ? 'No acceptance.' : PASSING };
+      const next = nextAction(given, KINDS, undefined, { roles, sink: quiet });
+      assert.equal(next.action, 'remove');
+      assert.deepEqual(next.following, { action: 'refuse', card: 87, reason: [...conflicts, ...(held === undefined ? [] : [held]), ...(malformed ? ['missing acceptance'] : [])].join('; and ') });
+    }
+    const malformed = nextAction({ ...original, body: 'No acceptance.' }, KINDS, undefined, { roles, sink: quiet });
+    assert.equal(malformed.action, 'remove');
+    assert.deepEqual(malformed.following, held === undefined
+      ? { action: 'refuse', card: 87, reason: 'missing acceptance' }
+      : { action: 'escalate', category: 'ambiguous', reason: held, line: 'rigger-87' });
+    const multiple = nextAction({ ...original, labels: ['type:change', 'type:spec'], body: 'No acceptance.' }, KINDS, undefined, { roles, sink: quiet });
+    assert.deepEqual(multiple, { action: 'remove', following: { action: 'refuse', card: 87, reason: 'selected by more than one kind: change, spec' } });
+    for (const labels of [[], ['type:epic', 'type:change']]) {
+      assert.deepEqual(nextAction({ ...original, labels, body: 'No acceptance.' }, KINDS, 'type:epic', { roles, sink: quiet }), { action: 'ignore' });
+    }
+  }
+});
+
+
+import { WORKSPACE_NOT_MADE } from '../src/execution/workspace.mjs';
+
+test('closed history never wraps current attempt outcomes workspace failure maker settlement continuation or a later attempt in removal', () => {
+  const given = withClosedLine('review');
+  const workspace = { status: 'rejected', reason: Object.assign(new Error('workspace denied'), { code: WORKSPACE_NOT_MADE, path: '/workspaces/rigger-87' }) };
+  const rows = [
+    [{ provisioning: {}, attempt: 2 }, 'dispatch'],
+    [{ provisioning: { setup: { run: 'true' } }, outcomes: [{ status: 'fulfilled', value: { exit: 0 } }] }, 'dispatch', { ...KINDS, change: { ...KINDS.change, provisioning: ['setup'] } }],
+    [{ provisioning: {}, workspace }, 'again'],
+    [{ maker: { status: 'fulfilled', value: { exit: 1 } } }, 'settled'],
+    [{ forge: { ...given.forge } }, 'dispatch'],
+    [{ provisioning: {}, continuing: { action: 'continue', pull: 870, head: 'a'.repeat(40), markers: [] } }, 'dispatch'],
+  ];
+  for (const [options, expected, kinds = KINDS] of rows) {
+    const next = nextAction(given, kinds, undefined, { roles: PROVIDER_ROLES, sink: quiet, ...options });
+    assert.equal(next.action, expected, JSON.stringify(options));
+  }
+  const ignoredInputs = nextAction(given, KINDS, undefined, { roles: PROVIDER_ROLES, sink: quiet, attempt: 2, workspace, outcomes: [{ unrelated: true }] });
+  assert.deepEqual(ignoredInputs, { action: 'remove', following: { action: 'dispatch', kind: 'change' } }, 'without provisioning the unrelated attempt inputs retain their old ignored meaning');
 });

@@ -52,6 +52,11 @@ const selecting = (card, kinds) =>
  * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
  * both, the one refusal names each of those reasons too.
  *
+ * An eligible closed card is answered `{ action: 'remove', following }`, carrying its ordinary
+ * answer. Only an actually selected forge refusal becomes an ambiguous escalation; composed
+ * tier/provider conflicts and form or kind refusals remain refusals. This answer is selected
+ * between attempts, never while L3 is handing back the current attempt's outcomes.
+ *
  * Whether a verdict covers a Coding or Review card is read from its pull request's markers, never
  * injected: L2 takes no `fresh` input.
  *
@@ -79,8 +84,21 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   const escalation = escalationStatus(card);
   if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
+  const betweenAttempts = continuing === undefined && forge === undefined && maker === undefined
+    && !(provisioning !== undefined && (attempt !== 1 || workspace !== undefined || outcomes.length > 0));
+  /** Carries the ordinary answer through an eligible closed-card removal, preserving its origin. */
+  const removing = (ordinary, forgeRefusal = false) => {
+    const facts = card.forge;
+    if (!betweenAttempts || ordinary.action === 'ignore' || escalation !== undefined
+        || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
+        || facts.open.length > 0 || facts.merged.length > 0) return ordinary;
+    const following = forgeRefusal
+      ? { action: 'escalate', category: 'ambiguous', reason: ordinary.reason, line: facts.line }
+      : ordinary;
+    return { action: 'remove', following };
+  };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
-  if (answer !== undefined) return escalation === undefined ? answer : { ...answer, ...escalation };
+  if (answer !== undefined) return removing(escalation === undefined ? answer : { ...answer, ...escalation });
   if (continuing !== undefined) {
     const tier = roles === undefined ? undefined : tierOf(card, kinds[kind].maker, roles[kinds[kind].maker]);
     return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker, continuing });
@@ -100,9 +118,9 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
     ? [held?.reason ?? (form.admitted ? undefined : form.reason)]
     : [...conflicts, held?.reason, form.admitted ? undefined : form.reason];
   const named = reasons.filter((reason) => reason !== undefined);
-  if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and '), ...escalation };
-  if (provisioning === undefined && maker === undefined) return { action: 'dispatch', kind };
-  return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker });
+  if (named.length > 0) return removing({ action: 'refuse', card: card.number, reason: named.join('; and '), ...escalation }, conflicts.length === 0 && held?.action === 'refuse');
+  if (provisioning === undefined && maker === undefined) return removing({ action: 'dispatch', kind });
+  return removing(within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker }));
 }
 
 /**

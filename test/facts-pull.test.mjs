@@ -517,3 +517,61 @@ test('through L2\'s facts call, a Coding card\'s markers are read at the card\'s
   const older = await answeredFromTheForge(card, opened([atDigest(revising, OLD_DIGEST)]), REVIEWED);
   assert.equal(older.action, 'refuse', JSON.stringify(older));
 });
+
+
+// proves R-WORK-36
+test('closed history in Done null or Backlog causes neither workflow reads nor cleanup while an otherwise identical Owner card cleans', async () => {
+  for (const column of [COLUMNS.done, null, 'Backlog', COLUMNS.owner]) {
+    let removals = 0;
+    const built = world({ cards: [cardIn(96, column)], forge: { pullRequests: [{ ...pullFrom(96, 1096), closed: true }] }, removeDirectories: async () => { removals += 1; } });
+    const reads = [];
+    for (const operation of ['readBranches', 'readPullRequests']) {
+      const read = built.repository.operations[operation];
+      built.repository.operations[operation] = async (...args) => { reads.push(operation); return read(...args); };
+    }
+    const reached = await built.loop.pull();
+    if (column === COLUMNS.owner) {
+      assert.deepEqual(reads, ['readBranches', 'readPullRequests']);
+      assert.equal(removals, 1);
+      assert.equal(reached[0].action, 'escalate');
+    } else {
+      assert.deepEqual(reads, []);
+      assert.equal(removals, 0);
+      assert.deepEqual(reached, []);
+      assert.deepEqual(pulledIn(built), []);
+      assert.deepEqual(built.fake.writes(), []);
+    }
+  }
+});
+
+// proves R-WORK-36
+test('a failed branch or later closed-history pull read rejects the whole facts snapshot before any cleanup or claim', async () => {
+  for (const operation of ['readBranches', 'readPullRequests']) for (const message of ['gh: HTTP 502', 'gh: request timed out']) {
+    let removals = 0;
+    const built = world({ cards: [cardIn(97, COLUMNS.owner), cardIn(98, COLUMNS.owner)], concurrency: 2,
+      forge: { pullRequests: [{ ...pullFrom(97, 1097), closed: true }, { ...pullFrom(98, 1098), closed: true }] },
+      removeDirectories: async () => { removals += 1; },
+    });
+    const read = built.repository.operations[operation];
+    const failure = new Error(`${operation}: ${message}`);
+    const completed = [];
+    built.repository.operations[operation] = async (argument) => {
+      if (operation === 'readBranches' || argument === 'rigger-98') throw failure;
+      const answer = await read(argument);
+      completed.push(answer);
+      return answer;
+    };
+    await assert.rejects(built.loop.pull(), (error) => {
+      assert.equal(error.cause, failure);
+      assert.match(error.message, /card #/);
+      assert.ok(error.message.includes(operation));
+      assert.ok(error.message.includes(message));
+      return true;
+    });
+    if (operation === 'readPullRequests') assert.equal(completed[0].closed[0].number, 1097, 'the earlier genuinely eligible prefix was read but not acted on');
+    assert.equal(removals, 0);
+    assert.deepEqual(pulledIn(built), []);
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.fake.writes(), []);
+  }
+});

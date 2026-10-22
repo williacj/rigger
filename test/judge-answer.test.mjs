@@ -79,7 +79,7 @@ const card = ({ labels = [], comments = [], ...facts } = {}) => ({
     pull: read({ number: 70, base: BASE, head: HEAD }),
     diff: read(DIFF),
     comments: read(comments),
-    ...facts,
+    ...facts, closed: [],
   },
 });
 
@@ -538,7 +538,7 @@ const loopCard = ({ label = 'type:change', stage = 'review', comments = [], merg
     mergeable: read(mergeable),
     rules: read(rules),
     checks: read(checks),
-    ...facts,
+    ...facts, closed: [],
   },
 });
 
@@ -555,7 +555,7 @@ function loopAnswer(given, options = {}) {
 
 test('given a Review or Owner card whose pull request the forge holds as merged, L2 answers Done, whoever merged it', () => {
   for (const stage of ['review', 'owner']) {
-    const next = loopAnswer(loopCard({ stage, open: [], merged: [{ number: 70, head: HEAD, base: 'main' }] }));
+    const next = loopAnswer(loopCard({ stage, open: [], merged: [{ number: 70, head: HEAD, base: 'main' }], closed: [] }));
 
     assert.deepEqual(next, { action: 'move', to: 'done' }, stage);
   }

@@ -128,3 +128,18 @@ test('given a second card whose labels select two tiers for its maker role and w
   assert.equal(refusalOf(planned.text, 60), refusalOf(claimed.text, 60), 'plan and once refuse the card in the same words');
   assert.deepEqual(movesIn(claimed.model), []);
 });
+
+
+import { run } from '../src/cli/run.mjs';
+
+// proves R-WORK-36
+test('run cleans eligible closed history then reports the unchanged form refusal once and exits zero', async () => {
+  const result = await ran(run, [card(99, 'Review', { body: 'No acceptance.' })], {
+    pullRequests: [{ number: 1099, head: 'rigger-99', sha: 'a'.repeat(40), closed: true }],
+  });
+  assert.equal(result.code, 0, result.text);
+  assert.match(result.text, /rigger run: card #99 refused: .*missing acceptance/);
+  assert.equal(result.text.split('\n').filter((line) => line.includes('card #99 refused:')).length, 1);
+  assert.doesNotMatch(result.text, /undefined/);
+  assert.deepEqual(result.model.writes(), []);
+});
