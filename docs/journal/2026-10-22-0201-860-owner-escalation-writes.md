@@ -123,3 +123,54 @@ passed its one test in 235.905441 ms, with no failures, cancellations or skips.
 The first scratch setup's restore guard stopped because its baseline file
 was staged as added rather than committed; the complete proof was repeated
 in the clean clone, and that earlier guard failure is preserved separately.
+
+## Integration with the current test tiers and escalation contract
+
+The PM's [author integration record](https://github.com/williacj/rigger/issues/860#issuecomment-6345269937)
+names actual prerequisite-only comparison base `da71e6f9608daea87e2504a9e9055617112638d7`.
+Its [independent admission](https://github.com/williacj/rigger/issues/860#issuecomment-6345249636)
+preceded maker integration. The original dispatch and feature history remain above;
+this normal merge retains both parents. The inherited main and host-metadata
+repair are prerequisite content, separately accounted for in the author record.
+
+Measured on 2026-10-22 with the actual `npm test` runner after the normal merge
+and before the first added regression: 2,668 tests, 2,659 pass, zero failures
+or cancellations, nine skips, 140664.309429 ms, exit 0. This is the ordinary
+Linux/WSL tier, not a complete host-tier or actual Mac result.
+
+The [architect's API placement](https://github.com/williacj/rigger/issues/860#issuecomment-6345221971)
+adds only `raiser: 'loop'` to the three existing escalation answers and names
+that field in the same-file shape comment. Each producer was corrected in its
+own test-first slice. The three named `loop raiser on` regressions first failed
+strict equality because that literal field was absent, then each passed after
+its single producer fix. They cover five actual answer cells: agent-critical
+in Review and Owner, spent rounds at explicit and default bounds, and a
+governing owner-critical marker. Categories, reasons, work identifiers,
+selection rules and ordered owner writes are preserved.
+
+The complete `test/judge-answer.test.mjs` rerun measured 135 tests, all passing,
+zero failures, cancellations or skips, 272.033071 ms. Byte reversal against
+the original feature head verifies that the only existing expectation changes
+are 17 matching literal fields; all other original test bytes are preserved.
+The generated matrix is rebuilt from the added declarations. No C615 source,
+process handling, deadline, suite placement, hook or CI behavior is authored
+by this integration. The normal full ordinary commit hook and fresh delivered
+head reviews/CI remain separate evidence; no old verdict verifies this head.
+
+## Exact returned-payload expectation
+
+The first normal integration hook measured 2,671 tests, 2,661 passing, one
+failure, zero cancellations and nine skips in 135945.406237 ms. It refused the
+commit. The sole failed exact result was the existing facts-pull test named
+`run records one L2 escalation and settles without pulling that Review card again`:
+the unchanged L3 spread transported the new loop-raiser field, while that
+expected object omitted it. A focused rerun reproduced that same assertion.
+
+The PM published the finite G3 clarification on 2026-10-22 at 17:44:46 UTC,
+after its [independent scope admission](https://github.com/williacj/rigger/issues/860#issuecomment-6347325448).
+The 20 acceptance items and dimensions stayed unchanged. Only the matching
+literal was added to that single expected object. Reversing that addition
+restores the entire original feature test file byte for byte. The same named
+case then passed one test, zero failures or cancellations, in 352.063371 ms.
+All existing pull, event, Owner move, issue comment and label assertions remain.
+The following normal hook must still pass; the failed first log is retained.

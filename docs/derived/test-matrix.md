@@ -70,7 +70,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-18 | **gap** |
 | R-SCHED-19 | `test/config.test.mjs` the escalation label is reserved in kind and epic selectors in every letter case |
 | R-SCHED-20 | **gap** |
-| R-SCHED-21 | **gap** |
+| R-SCHED-27 | **gap** |
 | R-SCHED-22 | **gap** |
 | R-SCHED-23 | **gap** |
 | R-SCHED-24 | **gap** |
@@ -164,7 +164,7 @@ reports no gap of its own; the register carries the reason.
 | R-ESCALATE-12 | **gap** |
 | R-ESCALATE-13 | `test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
 | R-ESCALATE-14 | **gap** |
-| R-ESCALATE-15 | `test/loop.test.mjs` one escalation claim spans every awaited owner write and a fresh labelled pull starts nothing<br>`test/once.test.mjs` once completes an owner escalation on its issue and a new invocation neither dispatches nor escalates it again<br>`test/transitions.test.mjs` owner escalation preserves payload data and orders issue comment then actual Owner transition then fixed label |
+| R-ESCALATE-15 | `test/judge-answer.test.mjs` loop raiser on agent critical evidence in Review and Owner<br>`test/judge-answer.test.mjs` loop raiser on spent rounds at explicit and default bounds<br>`test/judge-answer.test.mjs` loop raiser on governing owner critical evidence<br>`test/loop.test.mjs` one escalation claim spans every awaited owner write and a fresh labelled pull starts nothing<br>`test/once.test.mjs` once completes an owner escalation on its issue and a new invocation neither dispatches nor escalates it again<br>`test/transitions.test.mjs` owner escalation preserves payload data and orders issue comment then actual Owner transition then fixed label |
 | R-ESCALATE-16 | **gap** |
 | R-ESCALATE-17 | **gap** |
 | R-ESCALATE-18 | **gap** |

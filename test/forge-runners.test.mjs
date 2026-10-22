@@ -405,7 +405,7 @@ async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
   const root = temporaryDirectory('rigger-gh-cell-', { context: t });
   const tools = join(root, 'tools');
   mkdirSync(tools);
-  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat']) {
+  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat', 'ln', 'rmdir', ...(process.platform === 'darwin' ? ['sw_vers'] : []), 'uname']) {
     const executable = name === 'node' ? process.execPath : executableOnPath(name);
     assert.ok(executable, `${name} is needed by npm test`);
     symlinkSync(executable, join(tools, name));
@@ -435,7 +435,7 @@ async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
   }
   const selection = allTests ? [] : [`--test-name-pattern=${LIVE_GH_PROBE}`];
   const result = await new Promise((done) => {
-    execFile(process.execPath, [process.env.npm_execpath, 'test', '--', '--test-reporter=tap', ...selection, 'test/forge-runners.test.mjs'],
+    execFile(process.execPath, [process.env.npm_execpath, 'run', 'test:host', '--', '--test-reporter=tap', ...selection, 'test/forge-runners.test.mjs'],
       { env, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => done({ error, output: stdout + stderr }));
   });
   if (process.env.C755_TRACE) process.stderr.write(result.output);

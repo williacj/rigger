@@ -33,6 +33,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm ci
       - run: npm test
+      - run: npm run test:host
       - name: Verify Mac containment proof claims
         run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-${{ matrix.node }}"
       - name: Keep Mac containment proof evidence
