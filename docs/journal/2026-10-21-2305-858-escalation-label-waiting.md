@@ -75,6 +75,52 @@ judge moves to Review. Neither is the proposed judge-dispatch control. The final
 existing governed continuation fixtures; no production edit or old assertion change was made
 to accommodate those failed new expectations.
 
+## Open-pull coverage repair
+
+The acceptance author clarified that an open pull with none merged was already inside this
+card's waiting outcome. The [author's coverage ruling](https://github.com/williacj/rigger/issues/858#issuecomment-6334084259)
+was published after [fresh independent dimension admission](https://github.com/williacj/rigger/issues/858#issuecomment-6334024516).
+The 21 assertions, file scope and existing-line grants remain unchanged. This planning
+admission is not a delivered-work verdict.
+
+Two additive L2 tests cross all active stages, branch presence, zero/one/several open pulls and
+both label spellings, and establish the applicable ordinary judge, merge, critical/spent-round
+escalation, return, continuation and column-move answers before adding the label. Three more
+real-bin controls withhold an owed Review judge, an admitted Owner merge and an Owner critical
+escalation. Clearing the label in the same fixture starts the actual judge, sends the merge
+API write or records the critical escalation. Labelled invocations preserve writes, columns
+and directories. No production code or existing test was changed for these controls.
+
+Measured on Ubuntu WSL 2 with Node 26.12.0 on 2026-10-22 UTC, the ordinary full-suite commit
+hook for the preceding six-control repair at `a51db334f6e79a35441d16c23476465a5e87e573`
+passed 4,105 of 4,158 tests, with 53 skips, zero failures and zero cancellations
+(596434.1755 ms). The five additional L2/CLI controls passed their focused runs before the
+bounded fault checks.
+
+The final fault check used a separate detached worktree containing that head plus the final
+additive test bytes, including the exact merge-write assertion. Each fault had one checked
+anchor, an applied/read-back diff, a syntax check and an effect probe that observed a labelled
+Review card incorrectly answered judge. The 11 targeted tests include all nine CLI controls
+and both new L2 controls. These are measurements of that candidate, not claims about an older
+published head's test coverage.
+
+| Candidate / single fault | Tests | Pass | Fail | Cancelled | Duration (ms) |
+|---|---:|---:|---:|---:|---:|
+| Original guard | 11 | 11 | 0 | 0 | 27006.571673 |
+| Guard deleted | 11 | 0 | 11 | 0 | 10072.212427 |
+| Guard restored exactly | 11 | 11 | 0 | 0 | 35198.628268 |
+| Exactly one open pull exempted | 11 | 3 | 8 | 0 | 23658.579915 |
+| Guard restored exactly | 11 | 11 | 0 | 0 | 61187.050127 |
+
+Both faults failed the named owed-judge, admitted-merge and critical-escalation waiting
+assertions. The exemption actually started the judge, merged the pull and recorded critical
+escalation while labelled; those were not fixture failures. The final raw outputs, applied
+diffs, effect probes, recorded PIDs and exact-restoration checks remain under
+`.tmp/open-pull-proof-final/` in the author worktree. The earlier proof before the explicit
+merge-write assertion remains under `.tmp/open-pull-proof/`. Mutations never touched the
+author's production file; its bytes and the restored proof file agree, and the proof source's
+git status is clean. Fresh configured delivered reviews are still required at the final head.
+
 ## Boundaries
 
 Existing test edits are confined to #858's G1 setup-board label fixtures/counts/descriptions and

@@ -1313,3 +1313,91 @@ test('once withholds an otherwise continuing labelled Review card until its labe
 
 // proves R-ESCALATE-10, R-ESCALATE-11
 test('once withholds an otherwise continuing labelled Owner card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Owner'));
+
+
+/** Changes only the label whose removal is the owner's acknowledgement. */
+function setEscalationLabel(fake, label) {
+  const state = join(dirname(fake.gh), 'board.json');
+  const held = JSON.parse(readFileSync(state, 'utf8'));
+  held.model.items[0].labels = ['type:change', ...(label === undefined ? [] : [label])];
+  writeFileSync(state, JSON.stringify(held));
+}
+
+/** Checks a genuinely mergeable or critical Owner card before and after the owner clears its label. */
+async function withheldOpenPullAction(action) {
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+    const head = '6'.repeat(40);
+    const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } };
+    const owner = action === 'merge' ? {} : { verdict: 'critical', toSound: 'Keep the user files.' };
+    const comments = [markerComment({ card: 10, pull: 11, head, body: ADMITTED }),
+      markerComment({ card: 10, pull: 11, head, body: ADMITTED, role: 'owner', ...owner })];
+    const seed = { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments }],
+      mergeable: { 11: 'MERGEABLE' } };
+    const ran = once({ items: [card(10, 'Owner', { labels: ['type:change', label] })] }, { settings, seed });
+
+    assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+    assert.match(ran.out, /no card was pullable/);
+    assert.deepEqual(ran.agentRuns(), []);
+    assert.deepEqual((await ran.model()).writes(), []);
+    assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+    assert.deepEqual(ran.fake.sent().filter(([verb, path]) => verb === 'api' && path === 'repos/acme/widgets/pulls/11/merge'), []);
+    assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+    assert.deepEqual(eventsOf(ran).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+    setEscalationLabel(ran.fake);
+
+    const resumed = ran.rerun();
+
+    assert.equal(resumed.code, 0, `${resumed.out}\n${resumed.err}`);
+    if (action === 'merge') {
+      assert.match(resumed.out, /card #10 merged pull request #11/);
+      assert.deepEqual(resumed.fake.sent().filter(([verb, path]) => verb === 'api' && path === 'repos/acme/widgets/pulls/11/merge'),
+        [['api', 'repos/acme/widgets/pulls/11/merge', '-X', 'PUT', '-f', `sha=${head}`, '-f', 'merge_method=merge']]);
+      assert.deepEqual(eventsOf(resumed).filter(({ event }) => event === 'merge.end').map(({ outcome }) => outcome), ['merged']);
+      assert.deepEqual(await columnsOf(resumed), { 10: 'Done' });
+    } else {
+      assert.match(resumed.out, /#10.*escalate.*critical/);
+      assert.deepEqual(eventsOf(resumed).filter(({ event }) => event === 'review.escalate').map(({ category }) => category), ['critical']);
+      assert.deepEqual(await columnsOf(resumed), { 10: 'Owner' });
+    }
+  }
+}
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise owed Review judge on an open pull until its label is removed', SETTLES_WITHIN, async (t) => {
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+    const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { exit: 3 } } });
+    const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+    const made = await ran;
+    assert.equal(made.code, 1, `${made.out}\n${made.err}`);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+    assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    const writesBefore = (await fake.model()).writes();
+    const eventsBefore = eventsOf({ consumer });
+    const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8',
+      env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+    setEscalationLabel(fake, label);
+
+    const waiting = invoke();
+
+    assert.equal(waiting.status, 0, `${waiting.stdout}\n${waiting.stderr}`);
+    assert.match(waiting.stdout, /no card was pullable/);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+    assert.deepEqual((await fake.model()).writes(), writesBefore);
+    assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    assert.deepEqual(eventsOf({ consumer }).slice(eventsBefore.length).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+    setEscalationLabel(fake);
+
+    const resumed = invoke();
+
+    assert.equal(resumed.status, 1, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.match(resumed.stderr, /judge `reviewer` exited 3/);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer', 'reviewer']);
+    assert.deepEqual(eventsOf({ consumer }).slice(eventsBefore.length).filter(({ event, role }) => event === 'dispatch' && role !== undefined).map(({ role }) => role), ['reviewer']);
+  }
+});
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise admitted Owner merge on an open pull until its label is removed', SETTLES_WITHIN, () => withheldOpenPullAction('merge'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise critical Owner escalation on an open pull until its label is removed', SETTLES_WITHIN, () => withheldOpenPullAction('escalate'));
