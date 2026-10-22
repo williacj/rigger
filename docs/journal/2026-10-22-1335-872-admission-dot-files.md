@@ -25,6 +25,6 @@ as closed.
 
 ## What it costs
 
-A closer can no longer be hidden from the engine by a dot-prefixed name, which is the point. The
-cost is that a person who copies a closer under a dot name, expecting it to hold admission,
+A dot-named entry is never a closer, even where its content is a valid closer, so it cannot close
+admission. The cost is that a person who copies a closer under a dot name, expecting it to hold admission,
 finds admission open. Nothing in the architecture writes such a name except the temporary file.
