@@ -195,7 +195,10 @@ if [ "$suite_mode" = host ]; then
   if [ "${GITHUB_ACTIONS-}" = true ]; then
     RIGGER_SUITE_HOST_KEY="${ImageOS}-${ImageVersion}-${RUNNER_ARCH}-node$major"
   else
-    RIGGER_SUITE_HOST_KEY="macos-$(sw_vers -productVersion)-$(uname -m)-node$major"
+    case $(uname -s) in
+      Linux) RIGGER_SUITE_HOST_KEY="linux-$(uname -r)-$(uname -m)-node$major" ;;
+      *) RIGGER_SUITE_HOST_KEY="macos-$(sw_vers -productVersion)-$(uname -m)-node$major" ;;
+    esac
   fi
   export RIGGER_SUITE_HOST_KEY
 fi

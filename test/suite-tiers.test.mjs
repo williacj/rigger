@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -377,7 +377,10 @@ for (const [title, command, args, argument, rule] of [
 test('host mode refuses a case-varied name for an unlisted test', () => {
   const result = spawnSync('sh', ['test/suite.sh', '--host', 'TEST/agent-cli-refusal.test.mjs'], { encoding: 'utf8', timeout: 60_000 });
   assert.notEqual(result.status, 0, 'the case-varied unlisted test ran');
-  assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  const refusal = existsSync('TEST/agent-cli-refusal.test.mjs')
+    ? /test\/agent-cli-refusal\.test\.mjs is not on the host list/
+    : /TEST\/agent-cli-refusal\.test\.mjs is not a literal existing file path/;
+  assert.match(result.stderr, refusal);
   assert.equal(result.stdout, '', 'a test ran before the case-varied refusal');
 });
 
@@ -758,10 +761,64 @@ test('host runner prints the local host key first', (t) => {
   const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
   const { result } = hostProbe(t, source, { env: { GITHUB_ACTIONS: '' } });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  const version = spawnSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }).stdout.trim();
+  const platform = process.platform === 'darwin' ? 'macos' : 'linux';
+  const [tool, args] = process.platform === 'darwin' ? ['sw_vers', ['-productVersion']] : ['uname', ['-r']];
+  const version = spawnSync(tool, args, { encoding: 'utf8', env: process.env }).stdout.trim();
   const arch = spawnSync('uname', ['-m'], { encoding: 'utf8' }).stdout.trim();
-  assert.equal(result.stdout.split('\n')[0], 'macos-' + version + '-' + arch + '-node' + process.versions.node.split('.')[0]);
+  assert.equal(result.stdout.split('\n')[0], platform + '-' + version + '-' + arch + '-node' + process.versions.node.split('.')[0]);
 });
+
+
+test('host mode refuses an existing case-varied alias for an unlisted test', (t) => {
+  const directory = temporaryDirectory('rigger-case-alias-', { context: t });
+  const tests = join(directory, 'test');
+  mkdirSync(tests);
+  for (const name of readdirSync('test')) {
+    const original = resolve('test', name);
+    if (name === 'agent-cli-refusal.test.mjs') writeFileSync(join(tests, name), readFileSync(original));
+    else symlinkSync(original, join(tests, name));
+  }
+  if (!existsSync(join(directory, 'TEST'))) symlinkSync(tests, join(directory, 'TEST'));
+  const result = spawnSync('sh', [resolve('test/suite.sh'), '--host', 'TEST/agent-cli-refusal.test.mjs'], {
+    cwd: directory, encoding: 'utf8', timeout: 60_000,
+  });
+  const canonical = relative(directory, realpathSync.native(join(directory, 'TEST/agent-cli-refusal.test.mjs')));
+  assert.notEqual(result.status, 0, 'the existing case-varied unlisted alias ran');
+  assert.ok(result.stderr.includes(canonical + ' is not on the host list'), result.stderr);
+  assert.equal(result.stdout, '', 'a test ran before the existing-alias refusal');
+});
+
+for (const [system, version, expected] of [
+  ['Linux', 'kernel-probe', 'linux-kernel-probe-probe-arch-node'],
+  ['Darwin', 'product-probe', 'macos-product-probe-probe-arch-node'],
+]) {
+  test('local host key asks the ' + system + ' version authority', (t) => {
+    const tools = temporaryDirectory('rigger-host-identity-', { context: t });
+    writeFileSync(join(tools, 'uname'), [
+      '#!/bin/sh',
+      '# ABOUTME: Answers the controlled host identity commands for a suite test.',
+      'case "$1" in',
+      "-s) printf '%s\\n' '" + system + "' ;;",
+      "-r) printf '%s\\n' '" + version + "' ;;",
+      "-m) printf '%s\\n' 'probe-arch' ;;",
+      '*) exit 2 ;;',
+      'esac',
+    ].join('\n') + '\n');
+    writeFileSync(join(tools, 'sw_vers'), [
+      '#!/bin/sh',
+      '# ABOUTME: Records a controlled macOS product-version lookup.',
+      ': > "$0.called"',
+      "printf '%s\\n' '" + version + "'",
+    ].join('\n') + '\n');
+    chmodSync(join(tools, 'uname'), 0o755);
+    chmodSync(join(tools, 'sw_vers'), 0o755);
+    const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
+    const { result } = hostProbe(t, source, { env: { GITHUB_ACTIONS: '', PATH: tools + ':' + process.env.PATH } });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout.split('\n')[0], expected + process.versions.node.split('.')[0]);
+    assert.equal(existsSync(join(tools, 'sw_vers.called')), system === 'Darwin', 'the wrong version authority was consulted');
+  });
+}
 
 test('host runner prints the CI image key first when GITHUB_ACTIONS is true', (t) => {
   const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
