@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { EventEmitter, getEventListeners, once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
@@ -2885,21 +2885,152 @@ test('X0 exit answered control: the reaping read precedes the confirming read', 
   await reapedCensusCell(t, 'exit');
 });
 
+/** Overrides only the nested command boundary in ownership regressions. */
+const nestedRunControls = new WeakMap();
+const nestedSpawn = (t, ...args) => (nestedRunControls.get(t)?.spawn ?? spawn)(...args);
+
+/**
+ * Reads only one recorded PID. The tool seam belongs to cancellation regressions; normal reads
+ * retain ps's exact argv and returned fields.
+ */
+async function nestedPs(pid, fields, signal, tool = {}) {
+  signal.throwIfAborted();
+  const command = tool.command ?? PS;
+  const args = tool.args ?? ['-ww', '-p', String(pid), '-o', fields];
+  const child = spawn(command, args, {
+    env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
+    stdio: ['ignore', 'pipe', 'pipe'], signal, killSignal: 'SIGKILL',
+  });
+  let stdout = '';
+  let stderr = '';
+  let error;
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.on('error', (failure) => { error = failure; });
+  const closed = new Promise((resolve) => child.once('close', (status, signal) => resolve({ status, signal })));
+  tool.onSpawn?.(child);
+  const ending = await closed;
+  const observed = { pid: child.pid, command, args, ...ending, error, stdout, stderr };
+  tool.onClose?.(observed);
+  return observed;
+}
+
+/** Reads only the explicitly recorded payload PID, retaining the OS birth and full command. */
+async function nestedProcessIdentity(pid, signal, tool) {
+  const result = await nestedPs(pid, 'lstart=,stat=,command=', signal, tool);
+  const fail = (error) => {
+    error.observation = { ...result, error: result.error ? { name: result.error.name, message: result.error.message, code: result.error.code } : undefined };
+    throw error;
+  };
+  if (signal.aborted) fail(result.error ?? new Error('recorded process observation aborted', { cause: signal.reason }));
+  if (result.status === 1 && !result.stdout.trim() && !alive(pid)) return { pid, state: 'absent' };
+  if (result.error) fail(result.error);
+  const fields = /^(.+? \d{4})\s+(\S+)\s+(.+)$/.exec(result.stdout.trim());
+  if (result.status !== 0 || !fields) fail(new Error('cannot observe recorded descendant ' + pid + ': ' + JSON.stringify(result)));
+  const [, birth, stat, command] = fields;
+  return { pid, birth, command, state: stat.startsWith('Z') ? 'Z' : 'live' };
+}
+
+/** A recorded descendant's PID never grants permission to signal a different birth or command. */
+async function endNestedDescendant(t, control) {
+  const recorded = await control?.descendant?.();
+  if (!recorded) return 'none';
+  const observe = control.observe ?? ((pid) => nestedProcessIdentity(pid, control.observationSignal ?? t.signal));
+  const signal = control.signal ?? process.kill;
+  for (;;) {
+    (control.observationSignal ?? t.signal).throwIfAborted();
+    const current = await observe(recorded.pid);
+    (control.observationSignal ?? t.signal).throwIfAborted();
+    if (current.state === 'absent') return 'absent';
+    if (current.pid !== recorded.pid || current.birth !== recorded.birth || (current.state !== 'Z' && current.command !== recorded.command)) {
+      throw new Error(`recorded descendant identity changed: ${JSON.stringify({ recorded, current })}`);
+    }
+    if (current.state === 'Z') return 'Z';
+    if (current.state !== 'live') throw new Error(`recorded descendant state unknown: ${JSON.stringify(current)}`);
+    signal(recorded.pid, 'SIGKILL');
+    const after = await observe(recorded.pid);
+    (control.observationSignal ?? t.signal).throwIfAborted();
+    if (after.state === 'absent') return 'absent';
+    if (after.pid !== recorded.pid || after.birth !== recorded.birth || (after.state !== 'Z' && after.command !== recorded.command)) {
+      throw new Error(`recorded descendant identity changed after signal: ${JSON.stringify({ recorded, current: after })}`);
+    }
+    if (after.state === 'Z') return 'Z';
+    if (after.state !== 'live') throw new Error(`recorded descendant state unknown: ${JSON.stringify(after)}`);
+    const signalForObservation = control.observationSignal ?? t.signal;
+    signalForObservation.throwIfAborted();
+    await (control.turn ?? (() => new Promise((resolve) => setImmediate(resolve))))();
+  }
+}
+
+/** Owns one recorded child/group until close; cancellation initiates cleanup before it returns. */
+async function ownedNestedRun(t, args, options) {
+  t.signal.throwIfAborted();
+  const control = nestedRunControls.get(t);
+  const run = nestedSpawn(t, process.execPath, args, { ...options, detached: true });
+  let output = '';
+  run.stdout.on('data', (chunk) => { output += chunk; });
+  run.stderr.on('data', (chunk) => { output += chunk; });
+  let live = true;
+  let cancelled = false;
+  let rejectClosed;
+  const closed = new Promise((resolve, reject) => {
+    rejectClosed = reject;
+    run.once('error', reject);
+    run.once('close', (status, signal) => {
+      live = false;
+      resolve({ status, signal });
+    });
+  });
+  const abandoned = () => {
+    if (!live) return;
+    cancelled = true;
+    if (run.exitCode !== null || run.signalCode !== null || !Number.isInteger(run.pid)) return;
+    try { (control?.signal ?? process.kill)(-run.pid, 'SIGKILL'); }
+    catch (error) {
+      if (error.code !== 'ESRCH') {
+        rejectClosed(new AggregateError([t.signal.reason, error], 'nested runner cancellation cleanup failed'));
+      }
+    }
+  };
+  t.signal.addEventListener('abort', abandoned, { once: true });
+  // Only the containing regression's existing signal bounds post-cancellation observation.
+  const observationSignal = control?.observationSignal;
+  const observationEnded = () => rejectClosed(new AggregateError([
+    cancelled ? t.signal.reason : new Error('nested runner still pending'),
+    new Error(`recorded runner ${run.pid} did not report close before its enclosing bound`, { cause: observationSignal.reason }),
+  ], 'nested runner close unconfirmed'));
+  observationSignal?.addEventListener('abort', observationEnded, { once: true });
+  if (observationSignal?.aborted) observationEnded();
+  // Abort can be requested by an injected spawn boundary itself.
+  if (t.signal.aborted) abandoned();
+  try {
+    const result = await closed;
+    let descendantState;
+    try { descendantState = await endNestedDescendant(t, control); }
+    catch (error) {
+      throw new AggregateError([cancelled ? t.signal.reason : new Error(`nested runner outcome ${JSON.stringify(result)}`), error], 'nested runner descendant cleanup failed');
+    }
+    if (cancelled) throw t.signal.reason;
+    return { ...result, output, descendantState };
+  } catch (error) {
+    // This is an aggregate capture, not evidence of ordering between the two output streams.
+    error.output = output;
+    throw error;
+  } finally {
+    t.signal.removeEventListener('abort', abandoned);
+    observationSignal?.removeEventListener('abort', observationEnded);
+  }
+}
+
 /** Runs this file's test `title` alone, in its own runner, with every exit required to answer. */
 async function answeredRun(t, title) {
   const pattern = `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
   const env = { ...process.env, EXIT_SIGHTING_REQUIRES: 'answered' };
   delete env.NODE_TEST_CONTEXT;
-  const run = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  // A nested run its test abandons at the test's bound is ended with its group, which it leads,
-  // since a run left alive holds this file's process from exiting.
-  const abandoned = () => { try { process.kill(-run.pid, 'SIGKILL'); } catch {} };
-  t.signal.addEventListener('abort', abandoned, { once: true });
-  let output = '';
-  run.stdout.on('data', (chunk) => { output += chunk; });
-  run.stderr.on('data', (chunk) => { output += chunk; });
-  const [code] = await once(run, 'close');
-  t.signal.removeEventListener('abort', abandoned);
+  const { status: code, output } = await ownedNestedRun(t, ['--test', '--test-reporter=tap', `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (nestedRunControls.has(t)) return { status: code, output };
   t.diagnostic(output.split('\n').filter((line) => /^# (tests|pass|fail)|exitSighting/.test(line)).join('\n'));
   assert.equal(code, 0, output);
   // Node 20 counts the tests the pattern skips (CI run 38755885716); Node 26 does not. Either way exactly
@@ -3052,6 +3183,44 @@ if (process.env.EXIT_LEAK_HARNESS === 'forced') {
     process.stderr.write(`leak callers at abort: ${left.filter((line) => line.includes('caller.mjs')).length}\n`);
     throw new Error('abandoned after its forced read');
   });
+}
+
+if (/^ownership-(answered|listing|publication|cells)-(direct|descendant)$/.test(process.env.EXIT_LEAK_HARNESS ?? '')) {
+  const [, entry, payload] = process.env.EXIT_LEAK_HARNESS.split('-');
+  test(`leak ownership ${entry} ${payload}`, SETTLES_WITHIN, (t) => realOwnershipRun(t, entry, payload === 'descendant'));
+}
+
+if (process.env.EXIT_LEAK_HARNESS === 'ownership-deadline') {
+  test('leak ownership actual deadline initiation', { timeout: 1 }, async (t) => {
+    // No OS startup is timed here. This ChildProcess double tests only handler initiation;
+    // ready OS payloads and their completion are proved separately by realOwnershipRun.
+    const child = controlledNestedChild();
+    const mark = (event) => process.stderr.write(`ownership deadline ${event}\n`);
+    const before = getEventListeners(t.signal, 'abort').length;
+    t.signal.addEventListener('abort', () => mark('parent abort'), { once: true });
+    nestedRunControls.set(t, {
+      spawn: () => { assert.equal(t.signal.aborted, false); mark('child start'); return child; },
+      signal: (pid) => {
+        assert.equal(pid, -4242);
+        assert.equal(child.exitCode, null);
+        mark('cleanup initiated');
+        queueMicrotask(() => { mark('child close'); child.close(null, 'SIGKILL'); });
+      },
+    });
+    const pending = ownedNestedRun(t, [], { env: process.env });
+    assert.equal(t.signal.aborted, false, 'ownership must be installed before the real deadline');
+    assert.ok(getEventListeners(t.signal, 'abort').length >= before + 2, 'both observer and ownership abort listeners are installed');
+    mark('handler installed');
+    const pumping = (async () => {
+      while (!t.signal.aborted) await new Promise((resolve) => setImmediate(resolve));
+    })();
+    await Promise.all([pending, pumping]);
+  });
+}
+
+if (/^ownership-(refusal|observation|nontermination|missingclose)$/.test(process.env.EXIT_LEAK_HARNESS ?? '')) {
+  const kind = process.env.EXIT_LEAK_HARNESS.slice('ownership-'.length);
+  test(`leak ownership cleanup ${kind}`, SETTLES_WITHIN, (t) => controlledOwnershipFailure(t, kind));
 }
 
 if (process.env.EXIT_LEAK_HARNESS) {
@@ -4654,11 +4823,8 @@ async function listingRun(t, mode, { admission = false, shared = false } = {}) {
   const { NODE_TEST_CONTEXT, C615_WORK_DEADLINE_NS, C615_STOP_MARKER, C615_SIGHTING_EVIDENCE_ROOT, ...inherited } = process.env;
   const focused = admission ? { C615_WORK_DEADLINE_NS: String(process.hrtime.bigint() + 600_000_000_000n), C615_STOP_MARKER: join(realpathSync.native(evidence), 'stop-new-work') } : {};
   const env = { ...inherited, ...focused, TMPDIR: scratchTmp, C615_EVIDENCE_ROOT: evidence, C757_TRACE: tracePath, C757_MODE: mode, NODE_OPTIONS: [inherited.NODE_OPTIONS, `--import=${observer}`].filter(Boolean).join(' ') };
-  const run = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac directory full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  run.stdout.on('data', (chunk) => { output += chunk; });
-  run.stderr.on('data', (chunk) => { output += chunk; });
-  const [status] = await once(run, 'close', { signal: t.signal });
+  const { status, output } = await ownedNestedRun(t, ['--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac directory full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (nestedRunControls.has(t)) return { status, output };
   const retained = retainNestedRun(t, { mode, admission, shared, status, output, tracePath, evidence });
   assert.deepEqual(running(directory), [], `a process the nested C615 directory run started outlived its own teardown:\n${output}`);
   const trace = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
@@ -5329,11 +5495,8 @@ async function publicationRun(t, mode) {
   const tracePath = join(directory, 'trace.jsonl');
   const { NODE_TEST_CONTEXT, C615_WORK_DEADLINE_NS, C615_STOP_MARKER, C615_SIGHTING_EVIDENCE_ROOT, ...inherited } = process.env;
   const env = { ...inherited, TMPDIR: scratchTmp, C615_EVIDENCE_ROOT: evidence, C753_TRACE: tracePath, C753_MODE: mode, NODE_OPTIONS: [inherited.NODE_OPTIONS, `--import=${observer}`].filter(Boolean).join(' ') };
-  const run = spawn(process.execPath, [`--import=${observer}`, '--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac group full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  run.stdout.on('data', (chunk) => { output += chunk; });
-  run.stderr.on('data', (chunk) => { output += chunk; });
-  const [status] = await once(run, 'close', { signal: t.signal });
+  const { status, output } = await ownedNestedRun(t, [`--import=${observer}`, '--test', '--test-reporter=spec', '--test-name-pattern=^C615 Mac group full tool exit census$', fileURLToPath(import.meta.url)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (nestedRunControls.has(t)) return { status, output };
   assert.deepEqual(running(directory), [], 'a process the nested C615 run started outlived its own teardown');
   const trace = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   const finalizer = JSON.parse(readFileSync(join(evidence, 'group', 'finalizer.json'), 'utf8'));
@@ -5468,20 +5631,22 @@ const TEARDOWN_CELLS = [
   '});',
 ];
 
-test('C615 group publication teardown ends every process a test started, and each descendant, before its scratch is removed, after a pass and after a failure', SETTLES_WITHIN, async (t) => {
-  if (process.platform !== 'darwin') return t.skip('the C615 group tests this proves run on macOS alone');
-  const directory = holding(t);
+/** Runs the existing six teardown cells through the same nested ownership boundary. */
+async function teardownCellsRun(t, directory) {
   const cells = join(directory, 'cells.test.mjs');
   writeFileSync(cells, TEARDOWN_CELLS.join('\n'));
   const log = join(directory, 'cells.jsonl');
   const scratchTmp = join(directory, 'tmp');
   mkdirSync(scratchTmp);
   const { NODE_TEST_CONTEXT, ...inherited } = process.env;
-  const run = spawn(process.execPath, ['--test', '--test-reporter=spec', cells], { cwd: directory, env: { ...inherited, TMPDIR: scratchTmp, C753_CELL_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  run.stdout.on('data', (chunk) => { output += chunk; });
-  run.stderr.on('data', (chunk) => { output += chunk; });
-  const [status] = await once(run, 'close', { signal: t.signal });
+  const { status, output } = await ownedNestedRun(t, ['--test', '--test-reporter=spec', cells], { cwd: directory, env: { ...inherited, TMPDIR: scratchTmp, C753_CELL_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
+  return { status, output, log, scratchTmp };
+}
+
+test('C615 group publication teardown ends every process a test started, and each descendant, before its scratch is removed, after a pass and after a failure', SETTLES_WITHIN, async (t) => {
+  if (process.platform !== 'darwin') return t.skip('the C615 group tests this proves run on macOS alone');
+  const directory = holding(t);
+  const { status, output, log, scratchTmp } = await teardownCellsRun(t, directory);
   assert.equal(status, 1, `the teardown cells did not fail only by design:\n${output}`);
   assert.match(output, /ℹ pass 3\n/, `three cells did not pass:\n${output}`);
   assert.match(output, /ℹ fail 3\n/, `three cells did not fail:\n${output}`);
@@ -8538,4 +8703,733 @@ test('C615 preparation refuses a returned read past its configured deadline', SE
   assert.equal(BigInt(receipt.endedNs) - BigInt(receipt.startedNs), 501_000_000n);
   assert.equal(readFileSync(join(prepared, '001.stdout.utf8'), 'utf8'), birth);
   assert.equal(readFileSync(join(prepared, '001.stderr.utf8'), 'utf8'), '');
+});
+
+// A real child reports readiness before cancellation; its PID is recorded by the spawn boundary.
+test('nested ownership listing abort ends its recorded runner', SETTLES_WITHIN, async (t) => {
+  const abort = new AbortController();
+  const context = { signal: abort.signal, after: t.after.bind(t), name: t.name };
+  let child;
+  nestedRunControls.set(context, { spawn: () => {
+    child = spawn(process.execPath, ['-e', "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)"], { env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    t.diagnostic(`recorded runner pid=${child.pid}`);
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        const closed = once(child, 'close');
+        process.kill(-child.pid, 'SIGKILL');
+        await closed;
+      }
+    });
+    return child;
+  } });
+  const pending = listingRun(context, 'ownership');
+  const rejected = assert.rejects(pending);
+  await once(child.stdout, 'data');
+  abort.abort(new Error('controlled parent abort'));
+  await rejected;
+  assert.equal(alive(child.pid), false, 'the listing runner remained alive after parent cancellation');
+});
+
+
+/** A child double follows ChildProcess's error/close and nullable exit status contracts. */
+function controlledNestedChild() {
+  const child = new EventEmitter();
+  Object.assign(child, { pid: 4242, exitCode: null, signalCode: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
+  child.close = (status = 0, signal = null) => {
+    child.exitCode = status;
+    child.signalCode = signal;
+    child.emit('close', status, signal);
+  };
+  return child;
+}
+
+test('nested ownership close cleans only its recorded live descendant and retains status', SETTLES_WITHIN, async (t) => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const context = { signal: abort.signal };
+  const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+  const signals = [];
+  let state = 'live';
+  nestedRunControls.set(context, {
+    spawn: () => { queueMicrotask(() => child.close(7)); return child; },
+    descendant: () => recorded,
+    observe: () => ({ ...recorded, state }),
+    signal: (pid) => { signals.push(pid); state = 'Z'; },
+    observationSignal: t.signal,
+  });
+  const result = await ownedNestedRun(context, [], { env: process.env });
+  assert.equal(result.status, 7);
+  assert.deepEqual(signals, [4343], 'a live recorded descendant must be ended without signalling the closed runner');
+  abort.abort();
+  assert.deepEqual(signals, [4343], 'a later abort must not signal the former runner identity');
+});
+
+
+test('nested ownership exit before stream close never signals a reaped runner identity', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const context = { signal: abort.signal };
+  const signals = [];
+  nestedRunControls.set(context, {
+    spawn: () => {
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        abort.abort(new Error('abort after child exit before output close'));
+        child.close(0);
+      });
+      return child;
+    },
+    signal: (pid) => signals.push(pid),
+  });
+  await assert.rejects(ownedNestedRun(context, [], { env: process.env }), /abort after child exit/);
+  assert.deepEqual(signals, [], 'an exited child cannot authorize signalling its old group identity');
+});
+
+
+test('nested ownership cleanup refusal preserves original cancellation and complete output', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const context = { signal: abort.signal };
+  const original = new Error('original parent cancellation');
+  const refused = Object.assign(new Error('signal denied'), { code: 'EPERM' });
+  nestedRunControls.set(context, {
+    spawn: () => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'out before abort');
+        child.stderr.emit('data', 'err before abort');
+        abort.abort(original);
+        child.close(null, 'SIGKILL');
+      });
+      return child;
+    },
+    signal: () => { throw refused; },
+  });
+  await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.deepEqual(error.errors, [original, refused]);
+    assert.equal(error.output, 'out before aborterr before abort');
+    return true;
+  });
+});
+
+
+test('nested ownership refused signal fails without fabricating child close', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const context = { signal: abort.signal };
+  const original = new Error('parent cancelled with live child');
+  const refused = new Error('signal refused before any close');
+  nestedRunControls.set(context, { spawn: () => child, signal: () => { throw refused; } });
+  let failure;
+  const pending = ownedNestedRun(context, [], { env: process.env }).catch((error) => { failure = error; });
+  abort.abort(original);
+  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+  assert.ok(failure instanceof AggregateError, 'signal refusal must fail instead of waiting forever for a close it cannot cause');
+  assert.deepEqual(failure.errors, [original, refused]);
+  assert.equal(child.exitCode, null, 'a failure is not evidence of reaping');
+  await pending;
+});
+
+
+// Independent lifecycle expectations; these literals describe ChildProcess and the ownership
+// contract, without claiming that a controlled signal terminated a real OS process.
+for (const ending of ['close 0', 'close 7', 'abort']) {
+  for (const descendant of ['none', 'absent', 'Z', 'live']) {
+    test(`nested ownership controlled table: ${ending}, descendant ${descendant}`, SETTLES_WITHIN, async (t) => {
+      const child = controlledNestedChild();
+      const abort = new AbortController();
+      const context = { signal: abort.signal };
+      const original = new Error('controlled parent abort');
+      const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+      const signals = [];
+      const order = [];
+      let state = descendant;
+      nestedRunControls.set(context, {
+        spawn: () => {
+          queueMicrotask(() => {
+            child.stdout.emit('data', 'complete stdout');
+            child.stderr.emit('data', 'complete stderr');
+            if (ending === 'abort') { order.push('abort'); abort.abort(original); }
+            else { order.push('close'); child.close(Number(ending.slice(6))); }
+          });
+          return child;
+        },
+        descendant: () => descendant === 'none' ? undefined : recorded,
+        observe: () => ({ ...recorded, state }),
+        signal: (pid) => {
+          signals.push(pid);
+          if (pid === -4242) { order.push('group signal'); queueMicrotask(() => { order.push('close'); child.close(null, 'SIGKILL'); }); }
+          else { assert.equal(pid, 4343); state = 'Z'; }
+        },
+        observationSignal: t.signal,
+      });
+      const pending = ownedNestedRun(context, [], { env: process.env });
+      if (ending === 'abort') {
+        await assert.rejects(pending, (error) => error === original);
+        assert.deepEqual(order, ['abort', 'group signal', 'close']);
+        assert.equal(child.signalCode, 'SIGKILL', 'successful abort cleanup has observed close');
+      } else {
+        const result = await pending;
+        assert.equal(result.status, Number(ending.slice(6)));
+        assert.equal(result.output, 'complete stdoutcomplete stderr');
+        assert.equal(result.descendantState, descendant === 'live' ? 'Z' : descendant);
+        abort.abort();
+      }
+      assert.deepEqual(signals, [...(ending === 'abort' ? [-4242] : []), ...(descendant === 'live' ? [4343] : [])]);
+    });
+  }
+}
+
+test('nested ownership controlled table: already aborted starts nothing', SETTLES_WITHIN, async () => {
+  const abort = new AbortController();
+  const original = new Error('already cancelled');
+  abort.abort(original);
+  const context = { signal: abort.signal };
+  let spawns = 0;
+  nestedRunControls.set(context, { spawn: () => { spawns += 1; }, signal: () => assert.fail('already-aborted run signalled') });
+  await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => error === original);
+  assert.equal(spawns, 0);
+});
+
+test('nested ownership controlled table: original spawn error needs no close', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  child.pid = undefined;
+  const original = Object.assign(new Error('original spawn failure'), { code: 'ENOENT' });
+  const context = { signal: new AbortController().signal };
+  nestedRunControls.set(context, { spawn: () => { queueMicrotask(() => child.emit('error', original)); return child; }, signal: () => assert.fail('spawn error signalled') });
+  await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => error === original);
+  assert.equal(child.exitCode, null, 'spawn failure is not a fabricated successful close');
+});
+
+for (const observation of ['throws', 'unknown', 'identity changed', 'never ends']) {
+  test(`nested ownership controlled cleanup failure: ${observation}`, SETTLES_WITHIN, async () => {
+    const child = controlledNestedChild();
+    const abort = new AbortController();
+    const enclosing = new AbortController();
+    const context = { signal: abort.signal };
+    const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+    const original = new Error('original parent cancellation');
+    const failure = new Error('existing enclosing bound expired');
+    let logicalTurns = 0;
+    const signals = [];
+    nestedRunControls.set(context, {
+      spawn: () => { queueMicrotask(() => { abort.abort(original); child.close(null, 'SIGKILL'); }); return child; },
+      descendant: () => recorded,
+      observe: () => {
+        if (observation === 'throws') throw new Error('recorded identity observation failed');
+        return { ...recorded, state: observation === 'unknown' ? 'unknown' : 'live', ...(observation === 'identity changed' ? { birth: 'another birth' } : {}) };
+      },
+      signal: (pid) => signals.push(pid),
+      observationSignal: enclosing.signal,
+      turn: async () => { logicalTurns += 1; enclosing.abort(failure); },
+    });
+    await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0], original);
+      if (observation === 'never ends') assert.equal(error.errors[1], failure);
+      else assert.match(error.errors[1].message, observation === 'throws' ? /observation failed/ : observation === 'unknown' ? /state unknown/ : /identity changed/);
+      return true;
+    });
+    assert.equal(logicalTurns, observation === 'never ends' ? 1 : 0);
+    if (observation !== 'never ends') assert.deepEqual(signals, [-4242], 'an unvalidated descendant must not be signalled');
+    else assert.deepEqual(signals, [-4242, 4343], 'the containing observation bound permits no further descendant signal');
+  });
+}
+
+
+test('nested ownership missing runner close fails at its enclosing observation bound', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const enclosing = new AbortController();
+  const context = { signal: abort.signal };
+  const original = new Error('early parent cancellation');
+  const expired = new Error('existing enclosing bound');
+  nestedRunControls.set(context, { spawn: () => child, signal: () => {}, observationSignal: enclosing.signal });
+  let failure;
+  const pending = ownedNestedRun(context, [], { env: process.env }).catch((error) => { failure = error; });
+  abort.abort(original);
+  enclosing.abort(expired);
+  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+  assert.ok(failure instanceof AggregateError, 'the existing enclosing bound must not leave a missing-close promise pending');
+  assert.equal(failure.errors[0], original);
+  assert.match(failure.errors[1].message, /4242.*close/);
+  assert.equal(failure.errors[1].cause, expired);
+  assert.equal(child.exitCode, null, 'an expired observation bound proves no child reaping');
+  await pending;
+});
+
+
+/** The four real callers retain their normal parsers; only these regression contexts replace payloads. */
+const ownershipEntries = [
+  ['answered', (t) => answeredRun(t, 'ownership payload')],
+  ['listing', (t) => listingRun(t, 'ownership payload')],
+  ['publication', (t) => publicationRun(t, 'ownership payload')],
+  ['cells', (t) => teardownCellsRun(t, holding(t))],
+];
+
+for (const [entry, invoke] of ownershipEntries) {
+  for (const ending of ['already aborted', 'spawn error', 'normal exit', 'abort live runner', 'close live descendant']) {
+    test(`nested ownership wiring: ${entry}, ${ending}`, SETTLES_WITHIN, async (t) => {
+      const abort = new AbortController();
+      const context = { signal: abort.signal, after: t.after.bind(t), name: t.name };
+      const original = new Error(ending);
+      const child = controlledNestedChild();
+      const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+      let state = 'live';
+      let spawns = 0;
+      const signals = [];
+      nestedRunControls.set(context, {
+        spawn: (_command, args, options) => {
+          spawns += 1;
+          assert.ok(args.includes('--test'), 'the actual entry point must provide its existing nested command');
+          assert.equal(options.detached, true);
+          queueMicrotask(() => {
+            if (ending === 'spawn error') child.emit('error', original);
+            else if (ending === 'abort live runner') abort.abort(original);
+            else { child.stdout.emit('data', 'nested output'); child.close(0); }
+          });
+          return child;
+        },
+        descendant: () => ending === 'close live descendant' ? recorded : undefined,
+        observe: () => ({ ...recorded, state }),
+        signal: (pid) => {
+          signals.push(pid);
+          if (pid === -4242) queueMicrotask(() => child.close(null, 'SIGKILL'));
+          else state = 'Z';
+        },
+        observationSignal: t.signal,
+      });
+      if (ending === 'already aborted') abort.abort(original);
+      if (['already aborted', 'spawn error', 'abort live runner'].includes(ending)) {
+        await assert.rejects(invoke(context), (error) => error === original);
+      } else {
+        const result = await invoke(context);
+        assert.equal(result.status, 0);
+        assert.equal(result.output, 'nested output');
+      }
+      assert.equal(spawns, ending === 'already aborted' ? 0 : 1);
+      assert.deepEqual(signals, ending === 'abort live runner' ? [-4242] : ending === 'close live descendant' ? [4343] : []);
+    });
+  }
+}
+
+/** A payload reports the PID at its descendant spawn, after that child reports readiness over IPC. */
+function ownershipPayload(descendant, close) {
+  if (!descendant) return "process.stdout.write(JSON.stringify({pid:process.pid})+'\\n'); setInterval(()=>{},1000);";
+  return [
+    "const {spawn}=require('node:child_process');",
+    "const child=spawn(process.execPath,['-e',\"process.send('ready'); setInterval(()=>{},1000);\"],{env:process.env,detached:false,stdio:['ignore','ignore','ignore','ipc']});",
+    "const recordedPid=child.pid;",
+    "child.once('message',()=>{child.disconnect();child.unref();process.stdout.write(JSON.stringify({pid:process.pid,descendant:recordedPid})+'\\n');});",
+    close ? "process.once('message',(message)=>{if(message==='identified')process.exit(7);});" : "",
+    "setInterval(()=>{},1000);",
+  ].join('\n');
+}
+
+/** Crosses each caller's actual lifecycle with a tiny OS payload, without invoking Mac tools. */
+async function realOwnershipRun(t, entry, descendant, ending = 'abort') {
+  const [, invoke] = ownershipEntries.find(([name]) => name === entry);
+  const abort = new AbortController();
+  const context = { signal: abort.signal, after: t.after.bind(t), name: t.name };
+  const original = new Error('controlled ready parent abort');
+  let child;
+  let recorded;
+  let ready;
+  let resolveRecorded;
+  const descendantRecord = new Promise((resolve) => { resolveRecorded = resolve; });
+  const record = (event, fields = {}) => t.diagnostic(JSON.stringify({ ownership: entry, descendant, event, ...fields }));
+  nestedRunControls.set(context, {
+    spawn: () => {
+      const { NODE_TEST_CONTEXT, ...env } = process.env;
+      child = spawn(process.execPath, ['-e', ownershipPayload(descendant, ending === 'close')], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+      record('runner.spawn', { pid: child.pid });
+      ready = new Promise((resolve, reject) => {
+        let output = '';
+        let reported = false;
+        child.stdout.on('data', async (chunk) => {
+          output += chunk;
+          if (!output.includes('\n') || reported) return;
+          reported = true;
+          try {
+            const report = JSON.parse(output.slice(0, output.indexOf('\n')));
+            assert.equal(report.pid, child.pid);
+            if (descendant) {
+              assert.ok(Number.isInteger(report.descendant) && report.descendant > 0);
+              recorded = await nestedProcessIdentity(report.descendant, t.signal);
+              assert.equal(recorded.state, 'live');
+              record('descendant.recorded', recorded);
+            }
+            resolveRecorded(recorded);
+            if (ending === 'close') child.send('identified');
+            resolve(report);
+          } catch (error) { resolveRecorded(undefined); reject(error); }
+        });
+        child.once('error', reject);
+        child.once('close', () => { if (!output.includes('\n')) reject(new Error('runner closed before readiness: ' + output)); });
+      });
+      child.once('close', (status, signal) => record('runner.close', { pid: child.pid, status, signal }));
+      t.after(async () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          const closed = once(child, 'close');
+          process.kill(-child.pid, 'SIGKILL');
+          await closed;
+        }
+        if (recorded) {
+          const current = await nestedProcessIdentity(recorded.pid, t.signal);
+          if (current.state === 'live' && current.birth === recorded.birth && current.command === recorded.command) process.kill(recorded.pid, 'SIGKILL');
+        }
+      });
+      return child;
+    },
+    descendant: () => descendantRecord,
+    observationSignal: t.signal,
+  });
+  const settled = invoke(context).then((value) => ({ value }), (error) => ({ error }));
+  await ready;
+  if (ending === 'abort') { record('parent.abort'); abort.abort(original); }
+  const result = await settled;
+  if (ending === 'abort') {
+    assert.equal(result.error, original, result.error?.stack);
+    assert.equal(child.signalCode, 'SIGKILL');
+  } else {
+    assert.equal(result.error, undefined, result.error?.stack);
+    assert.equal(result.value.status, 7);
+  }
+  assert.ok(child.exitCode !== null || child.signalCode !== null, 'the direct child has reported close');
+  assert.equal(alive(child.pid), false, 'the direct child was reaped');
+  if (recorded) {
+    const current = await nestedProcessIdentity(recorded.pid, t.signal);
+    record('descendant.final', current);
+    assert.ok(['Z', 'absent'].includes(current.state), 'a recorded descendant remains live');
+    // A zombie is ended; this parent does not claim to have reaped its descendant.
+  }
+  record('complete', { outcome: ending === 'abort' ? 'cancelled after close' : result.value.status });
+}
+
+for (const [entry] of ownershipEntries) {
+  for (const descendant of [false, true]) {
+    test(`nested ownership real abort: ${entry}, ${descendant ? 'descendant' : 'direct'}`, SETTLES_WITHIN, (t) => realOwnershipRun(t, entry, descendant));
+  }
+  test(`nested ownership real close: ${entry}, live descendant`, SETTLES_WITHIN, (t) => realOwnershipRun(t, entry, true, 'close'));
+}
+
+
+for (const [entry] of ownershipEntries) {
+  for (const payload of ['direct', 'descendant']) {
+    test(`nested ownership containing harness: ${entry}, ${payload}`, SETTLES_WITHIN, async (t) => {
+      const title = `leak ownership ${entry} ${payload}`;
+      const { code, output } = await leakRun(t, `ownership-${entry}-${payload}`, title);
+      t.diagnostic(output);
+      assert.equal(code, 0, output);
+      assert.match(output, new RegExp(`^ok \\d+ - ${title}$`, 'm'), output);
+      assert.match(output, /^ok \d+ - leak left nothing running$/m, output);
+      assert.match(output, /"event":"runner.close"/, output);
+      assert.match(output, /"event":"complete","outcome":"cancelled after close"/, output);
+    });
+  }
+}
+
+
+test('nested ownership containing harness: actual deadline initiates cleanup before close', SETTLES_WITHIN, async (t) => {
+  const title = 'leak ownership actual deadline initiation';
+  const { code, output } = await leakRun(t, 'ownership-deadline', title);
+  t.diagnostic(output);
+  assert.equal(code, 1, output);
+  assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
+  assert.match(output, /test timed out after 1ms/, output);
+  // These markers all come from one stderr writer, so their order is not inferred between streams.
+  assert.match(output, /ownership deadline child start[\s\S]*ownership deadline handler installed[\s\S]*ownership deadline parent abort[\s\S]*ownership deadline cleanup initiated[\s\S]*ownership deadline child close/, output);
+  assert.match(output, /^ok \d+ - leak left nothing running$/m, output);
+});
+
+
+for (const cleanup of ['signal refused', 'observation failed']) {
+  test(`nested ownership retains nonzero outcome when descendant ${cleanup}`, SETTLES_WITHIN, async () => {
+    const child = controlledNestedChild();
+    const context = { signal: new AbortController().signal };
+    const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+    const failure = new Error(cleanup);
+    nestedRunControls.set(context, {
+      spawn: () => { queueMicrotask(() => child.close(7)); return child; },
+      descendant: () => recorded,
+      observe: () => { if (cleanup === 'observation failed') throw failure; return { ...recorded, state: 'live' }; },
+      signal: () => { throw failure; },
+    });
+    await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.match(error.errors[0].message, /"status":7/);
+      assert.equal(error.errors[1], failure);
+      return true;
+    });
+  });
+}
+
+
+/** Failing nested tests preserve diagnostics without granting controlled children real reaping credit. */
+async function controlledOwnershipFailure(t, kind) {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const observation = new AbortController();
+  const original = new Error('original controlled nested cancellation');
+  const cleanup = new Error(`controlled cleanup ${kind}`);
+  const context = { signal: abort.signal };
+  const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+  nestedRunControls.set(context, {
+    spawn: () => {
+      queueMicrotask(() => {
+        abort.abort(original);
+        if (!['refusal', 'missingclose'].includes(kind)) child.close(null, 'SIGKILL');
+        if (kind === 'missingclose') observation.abort(cleanup);
+      });
+      return child;
+    },
+    descendant: () => recorded,
+    observe: () => {
+      if (kind === 'observation') throw cleanup;
+      return { ...recorded, state: 'live' };
+    },
+    signal: () => { if (kind === 'refusal') throw cleanup; },
+    observationSignal: observation.signal,
+    turn: async () => observation.abort(cleanup),
+  });
+  try { await ownedNestedRun(context, [], { env: process.env }); }
+  catch (error) {
+    process.stderr.write(JSON.stringify({
+      controlledOwnershipFailure: kind,
+      original: error.errors?.[0]?.message,
+      cleanup: error.errors?.[1]?.message,
+      cleanupCause: error.errors?.[1]?.cause?.message,
+      direct: { exitCode: child.exitCode, signalCode: child.signalCode },
+      osReapingCredit: false,
+    }) + '\n');
+    throw error;
+  }
+  assert.fail('controlled cleanup failure was incorrectly reported as success');
+}
+
+for (const kind of ['refusal', 'observation', 'nontermination', 'missingclose']) {
+  test(`nested ownership containing failure: ${kind}`, SETTLES_WITHIN, async (t) => {
+    const title = `leak ownership cleanup ${kind}`;
+    const { code, output } = await leakRun(t, `ownership-${kind}`, title);
+    t.diagnostic(output);
+    assert.equal(code, 1, output);
+    assert.match(output, new RegExp(`^not ok \\d+ - ${title}$`, 'm'), output);
+    assert.match(output, /^# fail 1$/m, output);
+    assert.match(output, /^# cancelled 0$/m, output);
+    assert.match(output, /"original":"original controlled nested cancellation"/, output);
+    assert.match(output, new RegExp(`controlled cleanup ${kind}`), output);
+    assert.match(output, /"osReapingCredit":false/, output);
+    if (['refusal', 'missingclose'].includes(kind)) assert.match(output, /"direct":\{"exitCode":null,"signalCode":null\}/, output);
+    assert.match(output, /^ok \d+ - leak left nothing running$/m, output);
+  });
+}
+
+
+// The terminal command is a literal from the retained Linux ps authority observation:
+// state Zs, unchanged lstart, command "[node-MainThread] <defunct>" after the live Node command.
+for (const at of ['already zombie', 'after signal']) {
+  test(`nested ownership terminal zombie accepts its recorded birth, ${at}`, SETTLES_WITHIN, async () => {
+    const child = controlledNestedChild();
+    const context = { signal: new AbortController().signal };
+    const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded live node command' };
+    let state = at === 'already zombie' ? 'Z' : 'live';
+    const signals = [];
+    nestedRunControls.set(context, {
+      spawn: () => { queueMicrotask(() => child.close(7)); return child; },
+      descendant: () => recorded,
+      observe: () => ({ ...recorded, state, command: state === 'Z' ? '[node-MainThread] <defunct>' : recorded.command }),
+      signal: (pid) => { signals.push(pid); state = 'Z'; },
+    });
+    const result = await ownedNestedRun(context, [], { env: process.env });
+    assert.equal(result.status, 7);
+    assert.equal(result.descendantState, 'Z');
+    assert.deepEqual(signals, at === 'already zombie' ? [] : [4343]);
+  });
+}
+
+
+test('nested ownership terminal zombie with another birth earns no ended credit', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const context = { signal: new AbortController().signal };
+  const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded live command' };
+  nestedRunControls.set(context, {
+    spawn: () => { queueMicrotask(() => child.close(0)); return child; },
+    descendant: () => recorded,
+    observe: () => ({ ...recorded, birth: 'another birth', command: '[node-MainThread] <defunct>', state: 'Z' }),
+    signal: () => assert.fail('a terminal observation must never grant a signal'),
+  });
+  await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => {
+    assert.match(error.errors[1].message, /identity changed/);
+    return true;
+  });
+});
+
+/** Retains the separate ps authority fields used to record and revalidate this one payload. */
+async function nestedAuthorityField(t, pid, field) {
+  const result = await nestedPs(pid, field + '=', t.signal);
+  t.diagnostic(JSON.stringify({ event: 'ownership.ps.returned', pid, field, status: result.status, stdout: result.stdout, stderr: result.stderr, error: result.error?.message }));
+  t.signal.throwIfAborted();
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+test('nested ownership real zombie is ended by recorded birth without requiring its live command', SETTLES_WITHIN, async (t) => {
+  const child = spawn(process.execPath, ['-e', ownershipPayload(true, false)], { env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.diagnostic(JSON.stringify({ event: 'ownership.runner.spawn', pid: child.pid }));
+  let recorded;
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const closed = once(child, 'close');
+      process.kill(child.pid, 'SIGCONT');
+      process.kill(-child.pid, 'SIGKILL');
+      await closed;
+    }
+    if (recorded && alive(recorded.pid)) {
+      const current = await nestedProcessIdentity(recorded.pid, t.signal);
+      if (current.state === 'live' && current.birth === recorded.birth && current.command === recorded.command) process.kill(recorded.pid, 'SIGKILL');
+    }
+  });
+  const [chunk] = await once(child.stdout, 'data');
+  const report = JSON.parse(String(chunk));
+  assert.equal(report.pid, child.pid);
+  assert.ok(Number.isInteger(report.descendant) && report.descendant > 0);
+  recorded = {
+    pid: report.descendant,
+    birth: await nestedAuthorityField(t, report.descendant, 'lstart'),
+    command: await nestedAuthorityField(t, report.descendant, 'command'),
+  };
+  t.diagnostic(JSON.stringify({ event: 'ownership.descendant.spawn-record', ...recorded }));
+  // Stop only our recorded unreaped direct child so it cannot reap its ended descendant.
+  process.kill(child.pid, 'SIGSTOP');
+  while (!(await nestedAuthorityField(t, child.pid, 'stat')).startsWith('T')) t.signal.throwIfAborted();
+  assert.equal(await nestedAuthorityField(t, recorded.pid, 'lstart'), recorded.birth);
+  assert.equal(await nestedAuthorityField(t, recorded.pid, 'command'), recorded.command);
+  process.kill(recorded.pid, 'SIGKILL');
+  while (!(await nestedAuthorityField(t, recorded.pid, 'stat')).startsWith('Z')) t.signal.throwIfAborted();
+  assert.equal(await nestedAuthorityField(t, recorded.pid, 'lstart'), recorded.birth);
+  const terminalCommand = await nestedAuthorityField(t, recorded.pid, 'command');
+  t.diagnostic(JSON.stringify({ event: 'ownership.zombie.command', before: recorded.command, after: terminalCommand }));
+  const state = await endNestedDescendant(t, { descendant: () => recorded, signal: () => assert.fail('a zombie must not be signalled') });
+  assert.equal(state, 'Z', 'an ended descendant is not a claim that this parent reaped it');
+});
+
+
+test('nested ownership close before same-turn abort retains the nested exit outcome', SETTLES_WITHIN, async () => {
+  const child = controlledNestedChild();
+  const abort = new AbortController();
+  const context = { signal: abort.signal };
+  nestedRunControls.set(context, {
+    spawn: () => { queueMicrotask(() => { child.close(7); abort.abort(new Error('abort after close')); }); return child; },
+    signal: () => assert.fail('close-before-abort must not signal the former runner'),
+  });
+  const result = await ownedNestedRun(context, [], { env: process.env });
+  assert.equal(result.status, 7);
+});
+
+
+test('nested ownership observer abort kills and closes its recorded hanging tool', SETTLES_WITHIN, async (t) => {
+  const observation = new AbortController();
+  const original = new Error('existing containing observation aborted');
+  t.signal.addEventListener('abort', () => observation.abort(t.signal.reason), { once: true });
+  let child;
+  let ready;
+  let closed;
+  const pending = nestedProcessIdentity(process.pid, observation.signal, {
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('observer ready'); setInterval(() => {}, 1000)"],
+    onSpawn: (started) => {
+      child = started;
+      t.diagnostic(JSON.stringify({ event: 'ownership.observer.spawn', pid: child.pid }));
+      ready = once(child.stdout, 'data');
+      t.after(async () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          const ended = once(child, 'close');
+          child.kill('SIGKILL');
+          await ended;
+        }
+      });
+    },
+    onClose: (result) => { closed = result; t.diagnostic(JSON.stringify(result)); },
+  });
+  const settled = pending.then((value) => ({ value }), (error) => ({ error }));
+  await ready;
+  observation.abort(original);
+  assert.equal(child.killed, true, 'observation abort must initiate SIGKILL on the recorded tool');
+  const result = await settled;
+  assert.equal(result.error?.cause, original);
+  assert.ok(result.error.observation, 'a failed observation must retain its tool originals');
+  assert.equal(result.error.observation.pid, child.pid);
+  assert.equal(result.error.observation.stdout, 'observer ready');
+  assert.equal(result.error.observation.stderr, '');
+  assert.equal(closed.signal, 'SIGKILL');
+  assert.equal(alive(child.pid), false, 'the tool has closed and been reaped before the read fails');
+});
+
+
+for (const where of ['initial read', 'post-signal read']) {
+  test('nested ownership observation bound expires before decision: ' + where, SETTLES_WITHIN, async () => {
+    const child = controlledNestedChild();
+    const context = { signal: new AbortController().signal };
+    const enclosing = new AbortController();
+    const expired = new Error('containing bound expired before decision');
+    const recorded = { pid: 4343, birth: 'recorded birth', command: 'recorded payload' };
+    let reads = 0;
+    const signals = [];
+    nestedRunControls.set(context, {
+      spawn: () => { queueMicrotask(() => child.close(7)); return child; },
+      descendant: () => recorded,
+      observe: async () => {
+        reads += 1;
+        const terminal = where === 'initial read' || reads > 1;
+        if (terminal) queueMicrotask(() => enclosing.abort(expired));
+        return { ...recorded, state: terminal ? 'Z' : 'live' };
+      },
+      signal: (pid) => signals.push(pid),
+      observationSignal: enclosing.signal,
+    });
+    await assert.rejects(ownedNestedRun(context, [], { env: process.env }), (error) => {
+      assert.match(error.errors[0].message, /"status":7/);
+      assert.equal(error.errors[1], expired);
+      return true;
+    });
+    assert.deepEqual(signals, where === 'initial read' ? [] : [4343]);
+  });
+}
+
+
+test('nested ownership observer closed read earns no answer after its containing signal aborts', SETTLES_WITHIN, async (t) => {
+  const observation = new AbortController();
+  const original = new Error('containing observation ended before interpretation');
+  t.signal.addEventListener('abort', () => observation.abort(t.signal.reason), { once: true });
+  let returned;
+  const pending = nestedProcessIdentity(process.pid, observation.signal, {
+    onSpawn: (child) => t.diagnostic(JSON.stringify({ event: 'ownership.observer.spawn', pid: child.pid })),
+    onClose: (result) => { returned = result; observation.abort(original); },
+  });
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.cause, original);
+    assert.ok(error.observation, 'an answered tool still needs its captured original when interpretation is cancelled');
+    assert.equal(error.observation.status, 0);
+    assert.equal(error.observation.stdout, returned.stdout);
+    assert.equal(error.observation.stderr, returned.stderr);
+    return true;
+  });
+});
+
+
+test('nested ownership observer nonzero return keeps raw output and earns no absence', SETTLES_WITHIN, async (t) => {
+  const pending = nestedProcessIdentity(process.pid, t.signal, {
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('partial listing'); process.stderr.write('listing refused'); process.exit(7)"],
+    onSpawn: (child) => t.diagnostic(JSON.stringify({ event: 'ownership.observer.spawn', pid: child.pid })),
+  });
+  await assert.rejects(pending, (error) => {
+    assert.ok(error.observation, 'a nonzero tool return must retain its original fields');
+    assert.equal(error.observation.status, 7);
+    assert.equal(error.observation.stdout, 'partial listing');
+    assert.equal(error.observation.stderr, 'listing refused');
+    return true;
+  });
 });
