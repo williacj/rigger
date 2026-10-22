@@ -2053,9 +2053,11 @@ test('one escalation claim spans every awaited owner write and a fresh labelled 
     releases[at]();
   }
   await running;
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.owner }, 'the escalated card reaches its configured Owner column');
   assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
   assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
   assert.equal(built.events().filter(({ event }) => event === 'transition').length, 1);
+  assert.equal(built.events().find(({ event }) => event === 'transition').to, 'owner');
   assert.equal(built.repository.held().issues[0].comments.length, 1);
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
   assert.deepEqual(await built.loop.pull(), []);
