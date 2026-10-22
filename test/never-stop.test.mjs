@@ -1888,6 +1888,16 @@ test('C615 fixture-cache-binding rejects a consumed value different from its pre
   assert.equal(readFileSync(join(original, 'sighted-ps.log'), 'utf8'), log,
     'the mutation altered the complete private original');
   assert.throws(() => assertPreparedCache(copy, 'U2'), /consumed cached answer differed from its preparatory original/);
+  const nameCopy = join(observation.root, `cache-name-consumed-mismatch-${randomUUID()}`);
+  cpSync(original, nameCopy, { recursive: true, force: false, errorOnExist: true });
+  const rawName = readFileSync(join(nameCopy, 'sighting-prepared', '008.stdout.utf8'), 'utf8');
+  const nameRow = rawName.replace(/\n+$/, '');
+  const changedName = log.replace(`ROW ${nameRow}\n`, 'ROW different substantive name\n');
+  assert.notEqual(changedName, log, 'the copied consumed name was not changed');
+  writeFileSync(join(nameCopy, 'sighted-ps.log'), changedName);
+  assert.throws(() => assertPreparedCache(nameCopy, 'U2'), /consumed cached answer differed from its preparatory original/);
+  assert.equal(readFileSync(join(original, 'sighted-ps.log'), 'utf8'), log,
+    'the name mutation altered the complete private original');
   const mutations = [
     { name: 'absent-state', file: 'sighting-cache.state', change: (file) => unlinkSync(file) },
     { name: 'incomplete-state', file: 'sighting-cache.state', change: (file) => {
@@ -1934,6 +1944,76 @@ function syntheticPreparationDirectory(name, ids = [42001, 42002, 42003]) {
   });
   return directory;
 }
+
+test('C615 prepared name bytes retain spaces across shell line framing', SETTLES_WITHIN, () => {
+  const cases = [
+    { label: 'unpadded', raw: 'tail', returned: 'tail\n', row: 'ROW tail\n' },
+    { label: 'spaces', raw: 'tail   ', returned: 'tail   \n', row: 'ROW tail   \n' },
+    { label: 'newline', raw: 'tail\n', returned: 'tail\n', row: 'ROW tail\n' },
+  ];
+  for (const { label, raw, returned, row } of cases) {
+    const directory = syntheticPreparationDirectory(`name-bytes-${label}`);
+    const program = sightingPs(directory);
+    const reader = (tool, argv) => {
+      assert.equal(tool, PS);
+      const stdout = argv.at(-1) === 'lstart=' ? 'Mon Oct 11 10:00:00 2026\n'
+        : argv.at(-1) === 'pid=,stat=' ? '42001 S\n42002 S\n42003 S\n'
+          : argv.at(-1) === 'pid=,command=' ? '42001 sh\n42002 sh\n42003 sh\n' : raw;
+      return { status: 0, signal: null, stdout, stderr: '' };
+    };
+    prepareSighting(directory, { reader, clock: () => 0n });
+    assert.equal(readFileSync(join(directory, 'sighting-prepared/008.stdout.utf8'), 'utf8'), raw,
+      `${label}: the preparatory original changed`);
+    assert.equal(readFileSync(join(directory, 'sighting-prepared/008.stderr.utf8'), 'utf8'), '');
+    assert.equal(readFileSync(join(directory, 'sighting-cache.name.42003'), 'utf8'), raw,
+      `${label}: cache bytes differ from the raw preparation`);
+    const consumed = spawnSync(program, ['-p', '42003', '-o', 'ucomm='],
+      { encoding: 'utf8', env: process.env, timeout: 1000 });
+    assert.equal(consumed.error, undefined);
+    assert.equal(consumed.status, 0);
+    assert.equal(consumed.stderr, '');
+    assert.equal(consumed.stdout, returned, `${label}: shell framing changed name bytes`);
+    assert.equal(readFileSync(join(directory, 'sighted-ps.log'), 'utf8'),
+      `READ -p 42003 -o ucomm=\nPHASE before-kill\n${row}END\n`,
+      `${label}: ROW logging changed consumed name bytes`);
+  }
+});
+
+test('C615 prepared name failure outcomes retain originals without admitting a cache', SETTLES_WITHIN, () => {
+  const cases = [
+    { label: 'empty-success', status: 0, stdout: '', stderr: '', error: /contained no required row/ },
+    { label: 'no-row', status: 1, stdout: '', stderr: '', error: /contained no required row/ },
+    { label: 'failed', status: 2, stdout: 'partial   \n', stderr: 'ps failed\n', error: /not a product-equivalent answer/ },
+    { label: 'timeout', status: null, stdout: 'partial   \n', stderr: 'interrupted\n',
+      readerError: { code: 'ETIMEDOUT' }, error: /not a product-equivalent answer/ },
+  ];
+  for (const variant of cases) {
+    const directory = syntheticPreparationDirectory(`name-return-${variant.label}`);
+    let reads = 0;
+    const reader = (tool, argv) => {
+      assert.equal(tool, PS);
+      reads++;
+      if (reads === 6) {
+        assert.deepEqual(argv, ['-p', '42001', '-o', 'ucomm=']);
+        return { status: variant.status, stdout: variant.stdout, stderr: variant.stderr, error: variant.readerError };
+      }
+      return { status: 0, stdout: argv.at(-1) === 'lstart=' ? 'Mon Oct 11 10:00:00 2026\n'
+        : argv.at(-1) === 'pid=,stat=' ? '42001 S\n42002 S\n42003 S\n'
+          : '42001 sh\n42002 sh\n42003 sh\n', stderr: '' };
+    };
+    assert.throws(() => prepareSighting(directory, { reader, clock: () => 0n }), variant.error);
+    assert.equal(reads, 6, `${variant.label}: the name return was not reached`);
+    assert.equal(existsSync(join(directory, 'sighting-cache.ready')), false);
+    assert.deepEqual(readdirSync(directory).filter((name) => name.startsWith('sighting-cache.')), []);
+    for (const stream of ['stdout', 'stderr']) {
+      assert.equal(readFileSync(join(directory, `sighting-prepared/006.${stream}.utf8`), 'utf8'),
+        variant[stream], `${variant.label}: original ${stream} changed`);
+    }
+    const receipt = JSON.parse(readFileSync(join(directory, 'sighting-prepared/006.json'), 'utf8'));
+    assert.equal(receipt.status, variant.status);
+    assert.equal(receipt.error?.code, variant.readerError?.code);
+  }
+});
 
 test('C615 fixture-preparation-refusal denies a missing fixture state row', SETTLES_WITHIN, () => {
   const directory = syntheticPreparationDirectory('missing-row');
