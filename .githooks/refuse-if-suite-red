@@ -1,9 +1,9 @@
 #!/bin/sh
-# ABOUTME: Runs the suite and refuses the git operation that called it when the suite is not
-# green. `AGENTS.md` holds the rule; this is the one place the commit, merge and push hooks
-# enforce it. After a green run on a working tree equal to the tree being committed, it records
-# that tree under the git dir, so `pre-push` can skip a suite already passed on it. `pre-push`
-# passes --no-record, because a push commits no tree.
+# ABOUTME: Runs the deterministic tier and refuses the git operation that called it when that
+# suite is not green. Part 3, §8, revision 4 on #816 defines the tier rule; the commit, merge
+# and push hooks enforce it here. After a green run on a working tree equal to the tree being
+# committed, it records that tree under the git dir, so `pre-push` can skip a suite already
+# passed on it. `pre-push` passes --no-record, because a push commits no tree.
 
 set -u
 

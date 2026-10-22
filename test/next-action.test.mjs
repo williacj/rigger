@@ -404,3 +404,80 @@ test('a labelled merged card keeps its ordinary stage answer and an escalation d
     }
   }
 });
+
+
+/** Facts of an open pull whose markers and merge gate admit the requested ordinary decision. */
+function openPullDecision(stage, { reviewer, owner, ownerPanel = false, rounds } = {}) {
+  const head = '6'.repeat(40);
+  const comment = (role, ruling) => ({
+    body: composeMarker({ card: 7, pull: 71, head, digest: acceptanceDigest(PASSING), role,
+      ...(role === 'owner' ? {} : { provider: 'claude' }), verdict: 'sound', items: ['met'], coverage: 'covered', ...ruling }, `Ruled by ${role}`),
+    createdAt: '2026-10-01T11:00:00Z', id: `IC_${role}`, author: 'williacj', permission: 'write', edited: false,
+  });
+  const comments = [
+    ...(reviewer === undefined ? [] : [comment('reviewer', reviewer)]),
+    ...(owner === undefined ? [] : [comment('owner', owner)]),
+  ];
+  const read = (value) => ({ status: 'fulfilled', value });
+  return {
+    given: { ...card(7, ['type:change']), forge: {
+      stage, line: 'rigger-7', branch: true, open: [{ number: 71, head, base: 'main' }], merged: [],
+      pull: read({ number: 71, base: '7'.repeat(40), head }), diff: read('diff --git a/x b/x\n'),
+      comments: read(comments), mergeable: read('mergeable'), rules: read([]), checks: read({}),
+    } },
+    kinds: { change: { ...KINDS.change, judges: ownerPanel ? ['reviewer', 'owner'] : ['reviewer'], ...(rounds === undefined ? {} : { rounds }) } },
+  };
+}
+
+// proves R-ESCALATE-10
+test('the label guard crosses every active stage and zero, one or several open pulls independently of branch presence', () => {
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    for (const branch of [false, true]) {
+      for (const count of [0, 1, 2]) {
+        for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+          const given = { ...card(7, ['type:change', label]), forge: {
+            stage, line: 'rigger-7', branch, merged: [],
+            open: Array.from({ length: count }, (_, at) => ({ number: 71 + at, head: '6'.repeat(40), base: 'main' })),
+          } };
+          assert.deepEqual(nextAction(given, KINDS, undefined, { roles: PROVIDER_ROLES, sink: quiet }),
+            { action: 'ignore', escalated: true }, `${stage}/${branch}/${count}/${label}`);
+        }
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('an open-pull label withholds each reachable ordinary judge, merge, escalation, return and column move', () => {
+  const critical = { verdict: 'critical', toSound: 'Keep the user files.' };
+  const revision = { verdict: 'needs revision', items: ['unmet'], toSound: 'Print a help line.' };
+  const insufficient = { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' };
+  const cases = [
+    { name: 'Review owed judge', stage: 'review', action: 'judge' },
+    { name: 'Review merge', stage: 'review', reviewer: {}, action: 'merge' },
+    { name: 'Owner merge', stage: 'owner', reviewer: {}, owner: {}, ownerPanel: true, action: 'merge' },
+    { name: 'Review critical', stage: 'review', reviewer: critical, action: 'escalate', category: 'critical' },
+    { name: 'Owner agent critical', stage: 'owner', reviewer: critical, ownerPanel: true, action: 'escalate', category: 'critical' },
+    { name: 'Owner owner critical', stage: 'owner', reviewer: {}, owner: critical, ownerPanel: true, action: 'escalate', category: 'critical' },
+    { name: 'Review spent round', stage: 'review', reviewer: revision, rounds: 1, action: 'escalate', category: 'ambiguous' },
+    { name: 'Review return', stage: 'review', reviewer: insufficient, action: 'return' },
+    { name: 'Owner return', stage: 'owner', reviewer: {}, owner: insufficient, ownerPanel: true, action: 'return' },
+    { name: 'Review move to Owner', stage: 'review', reviewer: {}, ownerPanel: true, action: 'move', to: 'owner' },
+    { name: 'Owner move to Review', stage: 'owner', owner: {}, ownerPanel: true, action: 'move', to: 'review' },
+    { name: 'Coding revision', stage: 'coding', reviewer: revision, action: 'continue' },
+    { name: 'Review revision', stage: 'review', reviewer: revision, action: 'continue' },
+    { name: 'Owner revision', stage: 'owner', reviewer: {}, owner: revision, ownerPanel: true, action: 'continue' },
+  ];
+  for (const each of cases) {
+    const { given, kinds } = openPullDecision(each.stage, each);
+    const options = { roles: PROVIDER_ROLES, sink: quiet };
+    const ordinary = nextAction(given, kinds, undefined, options);
+    assert.equal(ordinary.action, each.action, `${each.name}: ${JSON.stringify(ordinary)}`);
+    if (each.category !== undefined) assert.equal(ordinary.category, each.category, each.name);
+    if (each.to !== undefined) assert.equal(ordinary.to, each.to, each.name);
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      const labelled = { ...given, labels: [...given.labels, label] };
+      assert.deepEqual(nextAction(labelled, kinds, undefined, options), { action: 'ignore', escalated: true }, each.name);
+    }
+  }
+});

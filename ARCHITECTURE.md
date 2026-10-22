@@ -47,7 +47,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started, or that a directory was refused. L2 gives L3 next actions. A next action that dispatches a role carries what that
+   started, or that a directory was refused. L2 gives L3 next actions, and the number of the status issue
+   its notice function found or opened. A next action that dispatches a role carries what that
    dispatch is handed, which L2 composes. L1 delivers it unread, through L0's provider adapter. L3
    gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
@@ -59,13 +60,18 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    its own runner, which refuses any request outside its side:
 
    - The read side changes nothing on the forge, and any layer or verb may use it.
-   - The item-write side changes a board item, and only L2 reaches it.
+   - The item-write side changes a board item, and adds an issue to the board, and only L2 reaches
+     it.
    - The schema-write side changes the board's fields and their options and the repository's
      labels. Only the CLI's verbs reach it, never a layer.
-   - The repository-write side admits four writes: a merge of a pull request, a comment on one, a
-     comment on a card's issue, and adding a label to a card's issue. L2 is the one layer that
-     reaches it. The `verdict` verb also reaches it, for one write: a comment on a pull request
-     holding the owner's verdict, which L2's `composeMarker` composes.
+   - The repository-write side admits these writes:
+     - a merge of a pull request;
+     - a comment on a pull request, or on an issue;
+     - adding a label to a card's issue, and removing the status label from an issue;
+     - opening an issue, and closing one.
+
+     L2 is the one layer that reaches it. The `verdict` verb also reaches it, for one write: a
+     comment on a pull request holding the owner's verdict, which L2's `composeMarker` composes.
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
@@ -105,7 +111,7 @@ flowchart TB
   L0 -->|exit code| L1
   L0 -->|board items| L3
   L0 -->|card facts| L2
-  L2 -->|column changes, labels, merges and comments| L0
+  L2 -->|column changes, labels, merges, comments and issues| L0
   L0 -.->|events| L5
   L1 -.->|events| L5
   L2 -.->|events| L5
@@ -141,10 +147,15 @@ workaround.
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
 | **Role skills** | Skills in the consumer's repository, invoked by a role's agent file: the review procedure a judge runs, and how an author writes a card's acceptance | Nothing in Rigger reads them; the role does | Yes |
 | **Verdict vocabulary** | Fixed by Rigger. A judge returns sound, needs revision, or critical | L2 | Fixed |
-| **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not. A maker raises one by an escalation note on the card's issue | L2 | Fixed |
+| **Escalation categories** | Fixed by Rigger: recorded-decision change, critical, ambiguous. A maker or the loop raises one; a judge does not. A maker raises one by an escalation note on the card's issue. L2's escalate answer carries which raised it, `maker` or `loop` | L2 | Fixed |
 | **Document checking** | Which documents the resolver checks and at what fail level, which sources it reads anchors from, and what each check exempts | The resolver ships under scripts/ in the package. The consumer's own checks invoke it with the consumer repository's root as an argument. No layer reads it | Yes |
 | **Provisioning steps** | A command line, which L1 runs under `/bin/sh` in the card's workspace. Optionally a working directory under that workspace, and the time the step may run. Whether the work requires it, and the labels that select it. A kind's list and a step's own labels both apply, and a step runs when both admit it. | L2 selects a card's steps and reads whether each is required. L3 dispatches each. L1 runs it. | Yes |
-| **Escalation set** | Which of the fixed categories are the owner's to decide. A consumer chooses among them and adds none | L2 | Yes, default is all three |
+| **Escalation destinations** | Where each of the fixed categories goes: the owner, or one of the consumer's roles. A category given no destination goes to the owner. A role may receive only an ambiguity a maker raised, never critical or a recorded-decision change | L2 routes. The config validator refuses `escalate` where any of these holds: | Yes, every category to the owner by default |
+| | | — it is a list; | |
+| | | — a key is no category; | |
+| | | — a destination is not a string; | |
+| | | — a destination names no declared role; | |
+| | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
@@ -495,10 +506,14 @@ the pull request, so one place holds every escalation, a maker's and a refusal's
 
 The escalation label is `rigger:escalated`, one of Rigger's fixed labels. `src/config/` names them
 beside the escalation categories, so the validator, `setup-board` and L2 read one list. The
-repository-write side's runner admits a label write by its shape, one label added to one issue, and
-never checks which label: L2 alone chooses it. L2 answers no action for a card carrying the
-escalation label, in every column, with one exception. L2 answers a card whose pull request the
-forge holds as merged as `R-WORK-33` and its table require. No code of Rigger's removes the label:
+repository-write side's runner admits a label write, and an issue's opening or closing, by its
+shape alone: one label added to or removed from one issue, or one issue opened or closed. It never
+checks which label, and L2 alone chooses it, an opened issue's title and body, and which issue it comments on or
+closes. L2 answers no action, in every column, for an item carrying any of Rigger's fixed labels,
+before it asks which kind selects it. The status label is the second. The one exception is the
+escalation label's, and it never reaches an item carrying the status label, whatever other label it
+carries: L2 answers a card whose pull request the forge holds as merged as `R-WORK-33` and its table
+require. No code of Rigger's removes the label:
 the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
@@ -507,8 +522,26 @@ and the dispatch id its instruction names. `src/workflow/escalation.mjs` compose
 for the note and parses the note back, so the two cannot drift, as `marker.mjs` does for markers.
 L2 reads notes when it answers the maker's outcome, through the forge adapter's read side. It reads
 only notes written by an account with write access to the repository. A note a session writes with
-the owner's token is the same residual a marker carries ("What the gate cannot tell apart"). While
-every category goes to the owner, such a note can only halt a card.
+the owner's token is the same residual a marker carries ("What the gate cannot tell apart"). Such
+a note can halt a card. Where a maker's `ambiguous` may go to a role, it can also dispatch that
+role, which may change the acceptance, and the card's judges then rule again.
+
+L2 answers each escalation's destination from one function in `src/workflow/escalation.mjs`. It
+reads the category, the raiser, the configured destination, the card's kind's maker and judges,
+and L2's routing comment on the card's issue. An escalation goes to the owner, whatever its
+configured destination, where any of these holds:
+
+- the loop raised it;
+- the card already carries L2's routing comment;
+- its configured destination is the card's maker or one of its kind's judges.
+
+When L2 sends a card to a role, it posts the routing comment on the card's issue first. The
+comment's first line is one `escalation.mjs` fixes, and L2 finds the comment by that line. L3
+dispatches the role only after that comment is posted, so a crash between the two sends the card
+to the owner at its next note. Where the forge refuses the routing comment, L3 dispatches no role.
+The card is then an escalation whose write the forge refused, a case L3 keeps out of later pulls.
+No code of Rigger's removes the routing comment. A person who deletes it lets the card go to a
+role again.
 
 ## Failure model
 
@@ -546,10 +579,10 @@ verb, which exits non-zero naming it.
 L3 then reads the board, and L2 computes each card's next action from its stage and observable
 facts. Those facts are the card's column, its pull request, that request's head SHA, the head SHA
 and acceptance digest each marker names, and the last transition the board shows. They also include
-the escalation label the card carries and the escalation notes on its issue. L2 derives them on
-every read, so no card state is kept. The one exception is L3's memory of the cards it does not
-pull again in one invocation, set out below, after the rule that an environment failure retries
-the card once.
+the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
+where it sent the card to a role. L2 derives them on every read, so no card state is kept. The one
+exception is L3's memory of the cards it does not pull again in one invocation, set out below,
+after the rule that an environment failure retries the card once.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
@@ -600,6 +633,124 @@ closer and replaces nothing.
 L3's own event family records each change of admission. `pause` and `resume` append those events to
 the same stream from their own process, beside a running engine's.
 
+A hold's closer also carries, once L3 attaches it, the number of the status issue, in its file name.
+A hold runs in this order:
+
+1. L3 links the hold's closer, `hold-<id>.json`, because closing is the safe direction.
+2. L3 calls L2's notice function, handing it the hold's id and the issue numbers the other hold
+   closers name.
+3. L2 reads each issue those numbers name, by its number, and picks the first that is open and
+   carries the status label. Otherwise it asks L0's read side for the repository's open issues
+   carrying the status label, by label and not through the search index, and picks one.
+4. Where L2 picked an issue `<n>`, L3 has `admission.mjs` attach its number by renaming the closer
+   to `hold-<id>-issue-<n>.json`. L2 then comments on it as `R-SCHED-25` requires, naming the
+   hold's id.
+5. Where L2 picked none, it reads the number `<k>` of the repository's newest issue or pull request.
+   L3 renames the closer to `hold-<id>-after-<k>.json`. L2 then opens issue `<n>`, its body naming
+   the hold's id, and L3 attaches `<n>` by renaming the closer to `hold-<id>-issue-<n>.json`.
+6. L2 places the issue on the board in Owner where the board does not hold it there.
+
+Each name the closer takes says where its notice can be: `hold-<id>.json` that L2 has written
+none, `hold-<id>-after-<k>.json` that an issue numbered above `<k>` may hold it, and
+`hold-<id>-issue-<n>.json` that issue `<n>` holds it. A crash between any two steps therefore
+leaves a name from which L2 finds the notice by the hold's id, whatever labels or state that issue
+then has. One module under `src/workflow/` composes the comment and the body, and parses the hold's
+id back from them, as `escalation.mjs` does for notes. L2 reads only those written by an account
+with write access to the repository.
+
+L3 makes its calls to L2's notice function one at a time, as its repo lane makes merges. One call's
+steps 2 to 6 finish before the next call's step 2 starts, so a later hold is handed the number an
+earlier one attached, and reads that issue by number. One engine works a repository (`D11`), and
+`resume` opens no issue, so no other process opens a notice beside it.
+
+A rename needs no temporary file. Where `resume` already removed that file, the rename fails, so the
+hold does not come back. Where the issue a hold's closer names is deleted or transferred, or is
+otherwise no longer that hold's notice, L2's notice finds or opens another, `<m>`. L3 then has
+`admission.mjs` rename `hold-<id>-issue-<n>.json` to `hold-<id>-issue-<m>.json`. Where L2 opens
+`<m>`, the closer passes through `hold-<id>-after-<k>.json` first, as step 5 says. Every name a rename
+gives carries the hold's id, so no other write reuses it. No write touches another closer's file.
+
+The issue's body links the failing card, the two attempts' class and step, their dispatch ids, the
+run id and the path of `.rigger/admission/`. The owner's `pause` opens no issue. A hold while the
+owner's `pause` holds admission still opens the notice and attaches its number, so the failure
+reaches the owner.
+
+`rigger resume` runs in this order:
+
+1. It reads each hold closer's issue number from its file name, because a person may have removed
+   the label from that issue.
+2. It has `admission.mjs` remove the closers it read.
+3. It calls L2's notice function to close that issue and every other open issue carrying the status
+   label. For each, L2 removes the status label, then closes the issue. Where the label's removal is
+   refused, L2 leaves that issue open, and `resume` exits non-zero naming it.
+
+Where `resume` changes nothing, it removes no label and closes no issue. The CLI never reaches a
+write side itself. An issue whose label `resume` removed is no longer the status issue
+(`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold linked after `resume`'s read
+may still attach such an issue, and `resume` leaves its closer. At the next trigger that issue is no
+longer the closer's notice, so L2 finds or opens another. `resume` removes the closers it read
+before it removes any label, so no closer it read outlives the label's removal.
+
+The closers in `.rigger/admission/` govern, and the status issue is a notice the owner can act on.
+While a hold's closer names an issue, L3 reads that issue's state by its number, once per trigger
+and never per claim. It reads through L0's read side, which gains an issue's state. L3 never reads
+a label. A read that fails or times out counts as unreadable: admission stays closed, and the next
+trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
+
+- For a hold's closer that names no issue, L3 calls L2's notice function for it. For
+  `hold-<id>.json`, the hold's steps 2 to 6 run.
+- For `hold-<id>-after-<k>.json`, L2 reads each issue numbered above `<k>`, by its number, in any
+  state and with any labels. Where one's body names the hold's id, L3 renames the closer to name
+  that issue, and the next bullet applies. Otherwise the hold's steps 2 to 6 run again.
+- For a hold's closer naming an issue whose state L3 read, L3 hands L2's notice function the hold's
+  id and that number. Where neither the issue's opening nor a comment on it names the hold's id, as
+  after a crash in step 4, the notice never reached it. L2 then comments as step 4 says where the
+  issue is open and labelled, and otherwise answers that it is no longer the notice. L2 answers one
+  of three things:
+  - the notice closed for that hold, and L3 removes that hold's closer;
+  - the issue is still that hold's notice, and open, and L2 places it on the board in Owner where
+    the board does not hold it there;
+  - the issue is no longer that hold's notice, and L2 finds or opens another, and L3 has
+    `admission.mjs` rename the closer to name it.
+
+L2 answers from the issue's labels and its timeline of comments, label changes, closes and reopens,
+which L0's read side also gains. Where L2 cannot read them, the issue counts as unreadable, as above.
+A hold's notice reached the issue at the issue's opening or L2's comment, whichever first names the
+hold's id. The notice closed for that hold where the timeline shows a close after that point, made
+while the issue carried the status label. That holds whatever state L3 read, so a close and a
+reopen between two triggers still count. Otherwise the issue is no longer that hold's notice in any
+of these cases:
+
+- it is deleted, or transferred;
+- it carries no status label, as after a person's removal or `resume`'s two writes;
+- it is closed, by a close before the hold's notice reached it or without the status label.
+
+A close of the status issue after a hold's notice reached it therefore reopens an admission that
+hold alone closed, whoever closed it. A close older than the hold's notice applies only to the holds
+whose notices it followed. The closers and the issue can disagree:
+
+| Closers | Issue | Admission | What happens |
+|---|---|---|---|
+| a hold's closer naming the issue | open | closed | — |
+| a hold's closer naming the issue | closed by anyone, then reopened before the next trigger | opens | L2 finds the close in the issue's timeline, after the hold's notice, and L3 removes that hold's closer; admission opens where no other closer remains |
+| a hold's closer naming the issue, which an earlier close preceded | the earlier close came before the hold's notice reached the issue | closed | that close is not the hold's; where the issue is open and labelled it stays the notice, and where it is closed L2's notice finds or opens another |
+| a hold's closer naming the issue | closed, by anyone | opens | L3 removes that hold's closer, and admission opens where no other closer remains; the event names the issue's close as what reopened it |
+| a hold's closer naming the issue | deleted, or transferred | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; deleting the issue never clears a hold |
+| a hold's closer naming the issue | unreadable, or its read timed out | closed | L3 claims nothing, names the issue, and reads again at the next trigger |
+| a hold's closer naming the issue, or one that has not yet attached it | closed by anyone while it carried the status label, then its label removed | opens | the close followed the hold's notice and carried the label, so L3 removes that hold's closer |
+| a hold's closer naming the issue | its status label removed, by a person or by a `resume` that then stopped, and only then closed, or still open | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; the former notice's close reopens nothing |
+| a hold's closer `resume` did not read, naming the issue `resume` closed | its status label removed, then closed, by `resume` | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; the closer survives `resume`, as one it did not read |
+| a hold's closer naming the issue | opened, and its placing on the board refused | closed | Rigger names the failure in its output and its event, and L2 places it again at the next trigger |
+| a hold's closer naming no issue | never opened, or its opening refused or timed out | closed | Rigger names the failure in its output and its event; at the next trigger L2's notice finds or opens the issue, and L3 has `admission.mjs` rename the closer to name it |
+| a hold's closer naming the issue, then the owner's `pause` | closed | closed | L3 removes the hold's closer; the owner's closer stays; `rigger resume` removes it |
+| the owner's closer, then a hold's | open | closed | the notice names the card; its close reopens nothing; `rigger resume` removes every closer and closes the issue |
+| a hold's closer naming the issue, then a second card's hold | open | closed | L2 comments on the open issue, naming the second card |
+| an unreadable closer, then `rigger resume` | open | closed | `resume` names the closer, changes nothing, and closes no issue |
+| no closer, after `resume` | `resume`'s close refused | open | `resume` removes every closer first, then closes the issue, and exits non-zero naming the issue left open |
+| no closer | open | open | absent means open, and the issue is stale; a later hold reuses it and comments naming the new card |
+| no closer | reopened by a person | open | a reopened issue changes nothing while admission is open |
+| any | the status label copied onto another issue by a person | unchanged | that issue is never worked, and `rigger resume` closes it too |
+
 The result of a command is its exit code and captured output. The direct child decides the exit
 code, and no process that outlives it changes that. A command ended by a signal has a non-zero
 integer exit code, and so has a command L0 ended at its timeout, whatever it then exited with. The
@@ -607,7 +758,8 @@ captured output is everything that reached the command's standard output and sta
 stopped reading them. L0 stops once they close after it has killed what was left of the group. A
 command that never started has no result: L1 reports to its caller that it did not start, naming
 what was missing. L2 classifies a failure as the work's or as its environment's. An environment
-failure retries the card once. Where the second attempt fails the same way as the first, as
+failure retries the card once, except a role's dispatch that never started, which L3 retries
+alone as set out below. Where the second attempt fails the same way as the first, as
 `R-FAIL-5`'s table counts it, L2 answers `hold` in place of `stop`, and L3 closes admission. L3
 hands L2 the first attempt's failure unread, as it hands the attempt number, so the count needs no
 memory and is never persisted.
@@ -630,7 +782,9 @@ a file-system error leaves a hold unsaved.
 
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
 admission. An escalated card needs none either, because L2 answers no action for a card carrying the
-escalation label.
+escalation label. A card sent to a role needs no case of its own. Each outcome of the role's
+dispatch either escalates the card, or leaves it for the next pull to answer, and a refused
+routing comment is the case of a refused escalation write.
 
 An attempt at a card runs in this order, under the card's one claim and slot:
 
@@ -640,32 +794,68 @@ An attempt at a card runs in this order, under the card's one claim and slot:
    card's work exits 0, L3 has L1 read the tip of the card's line of work in the workspace.
 4. L3 dispatches every agent judge L2 names, at once, once L2 finds the maker's work delivered.
    For each judge, L3 first has L1 make the judge's directory, and dispatches the card's
-   selected steps there.
+   selected steps there. Where L2 instead routes the maker's note to a role, L3 dispatches that
+   role in the judges' place, first having L1 make the role's escalation directory.
 
 A card L3 pulls from Review starts at step 4.
+
+The role an escalation goes to runs no provisioning steps, and L2 answers its provider from the
+one function that answers every role's. `src/workflow/escalation.mjs` composes its instruction
+from the card's number, title and acceptance, the maker's note, and the pull request and its head,
+where they exist. The instruction also says that only the card's author changes an acceptance. It
+hands the role no marker, so the role can change the bar as the author, but never rules on a
+verdict. While the role works, `R-ESCALATE-23` sets the card's column and label.
+
+A role that exits 0 with no note under its dispatch id has handled the card. What follows turns on
+the pull request and on what the forge holds of the card's line of work:
+
+- **An open pull request.** The card moves to Review, and its judges rule against the revised
+  acceptance.
+- **No pull request, and nothing of the line of work on the forge.** The card stays in Coding, and
+  the maker's next attempt starts from the beginning.
+- **No pull request, but the maker pushed its line of work.** The card stays in Coding.
+  `R-WORK-19` refuses the next attempt's start from the beginning, and `R-ESCALATE-12` sends the
+  card to the owner.
+
+Two other ends of the role's dispatch escalate the card. L2 answers each with raiser `loop`, so
+`R-ESCALATE-15` sends it to the owner:
+
+- **A note under the role's dispatch id** (`R-ESCALATE-24`). L2 keeps the note's category.
+- **A non-zero exit** (`R-ESCALATE-25`). L2 answers it as `ambiguous`.
 
 While L2 reads a continuing attempt's pull request at a head other than the tip L1 read, L3 has L2
 read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
 L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
-directories: its workspace, and each of its roles' judge and scratch directories. L2 moves the card
-to Done once no removal failed. A directory the replace rule refuses is left and named, and does not
-hold the move back. Where a removal failed, the card stays where it is, and the next pull that reads
-it removes again.
+directories: its workspace, and each of its roles' judge, escalation and scratch directories
+(`R-WORK-33`). L2 moves the card to Done once no removal failed. A directory the replace rule
+refuses is left and named, and does not hold the move back. Where a removal failed, the card stays
+where it is, and the next pull that reads it removes again.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
-dispatch, so L1 records its group as it records any dispatch's. L2 classifies four failures as
+dispatch, so L1 records its group as it records any dispatch's. L2 classifies five failures as
 the environment's:
 
 - a workspace L1 could not make;
 - a required step that never started;
 - a required step that failed;
-- a maker whose dispatch never started.
+- a maker whose dispatch never started;
+- a dispatch of the role an escalation goes to that never started.
 
-A directory L1 refused under `R-WORK-13`, `R-WORK-20` or `R-WORK-26`, and a continuing workspace
-`R-WORK-25` refuses for a failure `R-FAIL-5`'s table classes card-local, is never one of them. L1
-reports it as a refusal, and L2 escalates the card, never answering `again` or `hold`.
+A directory L1 refused under `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32`, and a
+continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-5`'s table classes card-local, is
+never one of them. L1 reports it as a refusal, and L2 escalates the card, never answering `again`
+or `hold`.
+L2 escalates a role's escalation directory refused under `R-WORK-32` with raiser `loop`, as
+`ambiguous`, so `R-ESCALATE-15` sends it to the owner. That refusal is never retried: the fifth
+failure's one retry, set out next, covers only a dispatch that never started.
+
+The fifth environment failure never answers `hold`, and never closes admission
+(`R-ESCALATE-26`). L3 retries it once by dispatching the role alone, under the same routing
+comment, and never attempts the card again for it. Where the role's dispatch fails to start a
+second time, L2 escalates the card with raiser `loop`, as `ambiguous`, so `R-ESCALATE-15` sends
+it to the owner.
 
 L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 
@@ -696,23 +886,27 @@ under `D16` rule 3.
 A dispatch runs in a directory Rigger made for it, which no other dispatch uses while it runs. A
 card's maker and its provisioning steps run one at a time in the card's workspace. Each judge runs
 in a directory of its own, `judges/<topic>/<role>` under the worktree root, which L1 makes fresh
-before L3 dispatches that judge. Each role's dispatch also has a scratch directory,
-`scratch/<topic>/<role>` under the worktree root and outside every worktree, which L1 makes fresh
-before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that belongs in
-no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's own user
-whose working directory is the dispatch's directory, or its scratch directory where it has one, or
-lies under either. L0 records each as it records a survivor. Where such a process is one L0 may not
-signal, or outlives that kill for the longer bound above, L0 records it by name and command line as
-a process it could not end, and waits on it no further. Where L0 cannot read which processes work in
-one of them, it records that directory and why in their place, and waits on them no further. L1
-hands L0 each of them and records it in the dispatch's entry. A later start does the same for each
-only where the directory at its path is still the one recorded. Where it is not, or L0 cannot tell,
-the start sweeps nothing there and records why. A command that is not a dispatch has no such
+before L3 dispatches that judge. The role an escalation goes to runs in an escalation directory
+of its own, `escalations/<topic>/<role>` under the worktree root. L1 makes it fresh before L3
+dispatches that role, under `R-WORK-32`'s replace rule. Each role's dispatch also has a scratch
+directory, `scratch/<topic>/<role>` under the worktree root and outside every worktree, which L1
+makes fresh before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that
+belongs in no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's
+own user whose working directory is the dispatch's directory, or its scratch directory where it has
+one, or lies under either. L0 records each as it records a survivor. Where such a process is one L0
+may not signal, or outlives that kill for the longer bound above, L0 records it by name and command
+line as a process it could not end, and waits on it no further. Where L0 cannot read which processes
+work in one of them, it records that directory and why in their place, and waits on them no further.
+L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
+each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
+tell, the start sweeps nothing there and records why. A command that is not a dispatch has no such
 directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
 the head of the card's pull request, and L3 dispatches the card's provisioning steps there.
+A role's escalation directory holds `main`, and the role's agent CLI runs there, as a judge's does.
+It holds `head` only where the card has an open pull request.
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated

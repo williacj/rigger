@@ -650,9 +650,10 @@ export async function removeCardDirectories({ root, topic, card, repository, sin
     let names;
     try {
       const above = lstatOrAbsent(parent);
-      const there = lstatOrAbsent(base);
-      if (above === undefined || there === undefined) return;
+      if (above === undefined) return;
       if (!above.isDirectory()) throw notDirectory(parent, above);
+      const there = lstatOrAbsent(base);
+      if (there === undefined) return;
       if (!there.isDirectory()) throw notDirectory(base, there);
       names = readdirSync(base).sort();
     } catch (failure) {
@@ -677,13 +678,15 @@ export async function removeCardDirectories({ root, topic, card, repository, sin
       failures.push(failure);
     }
   };
-  await children('judges', async ({ path, begin }) => {
+  const removeDetached = async ({ path, begin }) => {
     const found = await judgeChecked({ adapter, path, repository });
     if (!found.present) return false;
     begin();
     await judgeCleared(adapter, found);
     return true;
-  });
+  };
+  await children('judges', removeDetached);
+  await children('escalations', removeDetached);
   await children('scratch', async ({ path, base, begin }) => {
     const there = await scratchReplaceable({ base, path, repository, adapter });
     if (!there) return false;
@@ -692,31 +695,34 @@ export async function removeCardDirectories({ root, topic, card, repository, sin
     rmSync(path, { recursive: true });
     return true;
   });
-  const judges = join(root, 'judges');
-  const judgeBase = join(judges, name);
-  try {
-    const parent = lstatOrAbsent(judges);
-    const topicDirectory = lstatOrAbsent(judgeBase);
-    if ((parent === undefined || parent.isDirectory()) && (topicDirectory === undefined || topicDirectory.isDirectory())) {
-      const base = nearestReal(judgeBase);
-      for (const record of await adapter.listing()) {
-        if (record.locked === undefined || lstatOrAbsent(record.at) !== undefined) continue;
-        const at = nearestReal(record.at);
-        if (!underOrAt(at, base) || at === base) continue;
-        const role = relative(base, at).split(sep)[0];
-        if (record.detached && record.locked === ADDING) {
-          await adapter.unlock(record.at);
-          continue;
+  for (const kind of ['judges', 'escalations']) {
+    const parentPath = join(root, kind);
+    const topicPath = join(parentPath, name);
+    try {
+      const parent = lstatOrAbsent(parentPath);
+      if (parent !== undefined && !parent.isDirectory()) continue;
+      const topicDirectory = lstatOrAbsent(topicPath);
+      if ((parent === undefined || parent.isDirectory()) && (topicDirectory === undefined || topicDirectory.isDirectory())) {
+        const base = nearestReal(topicPath);
+        for (const record of await adapter.listing()) {
+          if (record.locked === undefined || lstatOrAbsent(record.at) !== undefined) continue;
+          const at = nearestReal(record.at);
+          if (!underOrAt(at, base) || at === base) continue;
+          const role = relative(base, at).split(sep)[0];
+          if (record.detached && record.locked === ADDING) {
+            await adapter.unlock(record.at);
+            continue;
+          }
+          const failure = new Error(`${record.at} is registered with a person's lock, ${JSON.stringify(record.locked)}`);
+          left(record.at, failure.message, role);
+          failures.push(failure);
         }
-        const failure = new Error(`${record.at} is registered with a person's lock, ${JSON.stringify(record.locked)}`);
-        left(record.at, failure.message, role);
-        failures.push(failure);
       }
+    } catch (failure) {
+      if (failure.code === EVENT_REFUSED) throw failure;
+      left(topicPath, `git could not inspect gone ${kind} worktrees: ${failure.message}`);
+      failures.push(failure);
     }
-  } catch (failure) {
-    if (failure.code === EVENT_REFUSED) throw failure;
-    left(judgeBase, `git could not inspect gone judge worktrees: ${failure.message}`);
-    failures.push(failure);
   }
   try {
     await adapter.prune();
