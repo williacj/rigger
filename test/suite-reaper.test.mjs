@@ -2,6 +2,7 @@
 
 import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -120,21 +121,90 @@ async function checkEnding(t, tmp, runName, output, { processes = processesIn, e
   }
 }
 
-async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
+// Start time and command are the host's identity, not just a PID copied from a file.
+function readinessProcess(pid, within = 10_000, run = spawnSync, cwdBudget) {
+  if (!(within > 0) || !Number.isFinite(within)) return { live: false };
+  const result = run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', timeout: Math.ceil(within), killSignal: 'SIGKILL' });
+  if (result.error || result.status !== 0) return { live: false };
+  const row = /^\s*(\S+)\s+(.{24})\s+(\d+)\s+(.*)$/.exec(result.stdout.trimEnd());
+  if (!row) return { live: false };
+  const observed = { live: !row[1].startsWith('Z'), signature: row.slice(2).join(' '), group: Number(row[3]), command: row[4] };
+  if (cwdBudget) {
+    const remaining = cwdBudget.deadline - cwdBudget.now();
+    if (!(remaining > 0)) return observed;
+    const cwd = run(LSOF, ['-w', '-n', '-P', '-a', '-p', String(pid), '-d', 'cwd', '-F', 'pn'], {
+      env: process.env, encoding: 'utf8', timeout: Math.ceil(remaining), killSignal: 'SIGKILL',
+    });
+    if (!cwd.error && cwd.status === 0) observed.cwd = cwd.stdout.split('\n').find((line) => line.startsWith('n'))?.slice(1);
+  }
+  return observed;
+}
+
+async function waitForReadiness(t, {
+  invocation, kind, directory, read, observe = readinessProcess, failure = () => undefined,
+  now = performance.now.bind(performance), turn = () => new Promise((resolve) => setImmediate(resolve)),
+  deadline = now() + 10_000,
+}) {
+  let stage = 'missing record';
+  for (;;) {
+    if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
+    const failed = failure();
+    if (failed) throw new Error(`setup failed before readiness: ${failed}`);
+    if (now() >= deadline) throw new Error(`setup never became ready by 10000ms: ${stage}`);
+    const bytes = read();
+    if (now() >= deadline) throw new Error('setup never became ready by 10000ms: publication read exceeded deadline');
+    let record;
+    try { record = JSON.parse(bytes); } catch { /* An incomplete publication is not readiness. */ }
+    if (record && Number.isSafeInteger(record.pid) && record.pid > 0) {
+      if (record.invocation !== invocation) throw new Error('setup rejected stale invocation identity');
+      if (record.kind !== kind) throw new Error('setup rejected wrong fixture identity');
+      const pids = kind === 'F4' ? [record.leader, record.pid] : [record.pid];
+      if (pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && Array.isArray(record.processes)
+          && pids.every((pid) => record.processes.some((entry) => entry.pid === pid && typeof entry.signature === 'string'))) {
+        for (const pid of pids) {
+          const actual = observe(pid, deadline - now(), undefined, kind === 'F5' ? { deadline, now } : undefined);
+          if (now() >= deadline) throw new Error('setup never became ready by 10000ms: process observation exceeded deadline');
+          if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
+          const recorded = record.processes.find((entry) => entry.pid === pid);
+          if (!actual.live) throw new Error(`setup recorded pid ${pid} is not live`);
+          if (actual.signature !== recorded.signature || !actual.command?.includes(directory)) throw new Error(`setup rejected reused or foreign pid ${pid}`);
+          if ((kind === 'F3' || kind === 'F5') && actual.group !== record.pid) throw new Error('setup tail does not lead its own group');
+          if (kind === 'F5' && actual.cwd === undefined) throw new Error('setup could not observe tail working directory');
+          if (kind === 'F5' && actual.cwd !== record.working) throw new Error('setup tail is outside its intended working directory');
+          if (kind === 'F7' && (record.group !== record.pid || actual.group !== record.group)) throw new Error('setup rejected group identity');
+        }
+        return record;
+      }
+      stage = 'incomplete process identity';
+    } else stage = bytes == null ? 'missing record' : 'incomplete or malformed PID';
+    await turn();
+  }
+}
+
+async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetup = false, signal = t.signal, onPhase = () => {} } = {}) {
+  const context = { get signal() { return signal.aborted ? signal : t.signal; } };
   const directory = scratch(t);
+  const invocation = randomUUID();
   const tmp = join(directory, 'tmp');
   mkdirSync(tmp);
   const file = join(directory, 'holding.test.mjs');
   writeFileSync(file, [
     "import { test } from 'node:test';",
-    "import { spawn } from 'node:child_process';",
+    "import { spawn, spawnSync } from 'node:child_process';",
     "import { once } from 'node:events';",
     "import { existsSync, writeFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
     `import { scratch, fixture, leave, leaveWorking, read, startGroup, tailIn, TAIL } from ${JSON.stringify(fixtureModule)};`,
     kind === 'F6' ? `import { installStandInAgent } from ${JSON.stringify(agentModule)};` : '',
-    kind === 'F7' ? `import { runCommand } from ${JSON.stringify(processModule)};` : '',
-    `test('holds a ${kind} fixture', { timeout: ${ending === 'E2' ? '1_000' : '600_000'} }, async (t) => {`,
+    `import { LSOF${kind === 'F7' ? ', runCommand' : ''} } from ${JSON.stringify(processModule)};`,
+    readinessProcess.toString(),
+    `test('holds a ${kind} fixture', { timeout: 600_000 }, async (t) => {`,
+    '  const setupDeadline = performance.now() + 10_000;',
+    ...(gateSetup ? [
+      `  writeFileSync(${JSON.stringify(join(directory, 'setup-entered'))}, '');`,
+      `  while (!existsSync(${JSON.stringify(join(directory, 'setup-release'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+      '  t.signal.throwIfAborted();',
+    ] : []),
     '  const directory = scratch(t);',
     ...(kind === 'F1' ? [
       "  const child = spawn(fixture(directory, 'busy', ': > \"$here/alive\"; while [ ! -f \"$here/release\" ]; do :; done'), [], { stdio: 'ignore' });",
@@ -176,13 +246,16 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
       "  const fixturePid = Number(read(directory, 'group.pid'));",
       "  process.kill(fixturePid, 0);",
     ]),
-    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, String(fixturePid));`,
+    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} ${kind === 'F5' ? "working: join(directory, 'working')," : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid, setupDeadline - performance.now()) })) };`,
+    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, JSON.stringify(ready));`,
+    `  while (!existsSync(${JSON.stringify(join(directory, 'ready-accepted'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+
     ...(holdPidPublication ? [
       `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, '');`,
       `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
     ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
-    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : '  await new Promise(() => {});',
+    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? `  await t.test('holds a ready fixture', { timeout: 1_000 }, async () => { writeFileSync(${JSON.stringify(join(directory, 'holding-entered'))}, ''); await new Promise(() => {}); });` : '  await new Promise(() => {});',
     '});',
   ].join('\n'));
   const output = join(directory, 'suite-output');
@@ -190,46 +263,91 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
   const { NODE_TEST_CONTEXT, ...env } = process.env;
   const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
-  t.after(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  const setupDeadline = performance.now() + 10_000;
+  let spawnError;
+  child.once('error', (error) => { spawnError = error; });
+  const teardown = async () => {
+    await ended(child);
     sweep(directory);
-  });
-  assert.equal(await until(() => existsSync(join(directory, 'started')), 10_000, t), true, `the fixture never started:\n${readFileSync(output, 'utf8')}`);
-  const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
-  assert.ok(runName, `the suite made no run directory under ${tmp}`);
-  if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
-    activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: Number(readFileSync(join(directory, 'started'), 'utf8')), evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
-    trace({ event: 'start', reaper: reaperState(activeTrace.run) });
-    t.after(() => {
-      trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
-      activeTrace = undefined;
+  };
+  t.after(teardown);
+  let phase = 'setup';
+  onPhase(phase);
+  try {
+    let gateEntered;
+    const ready = await waitForReadiness(context, {
+      invocation, kind, directory, deadline: setupDeadline,
+      read: () => existsSync(join(directory, 'started')) ? readFileSync(join(directory, 'started'), 'utf8') : undefined,
+      failure: () => spawnError?.message ?? (child.exitCode !== null || child.signalCode !== null ? `nested suite exited (${child.exitCode ?? child.signalCode}): ${readFileSync(output, 'utf8')}` : undefined),
+      turn: async () => {
+        if (gateSetup && existsSync(join(directory, 'setup-entered'))) {
+          gateEntered ??= performance.now();
+          if (performance.now() - gateEntered >= 1_200) writeFileSync(join(directory, 'setup-release'), '');
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      },
     });
+    phase = 'hold';
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+    writeFileSync(join(directory, 'ready-accepted'), '');
+    if (ending === 'E2') {
+      while (!existsSync(join(directory, 'holding-entered'))) {
+        if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+        if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: nested holding body did not enter');
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: holding entry exceeded deadline');
+    }
+    onPhase(phase, { holding: join(directory, 'holding-entered') });
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+
+    const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
+    assert.ok(runName, `the suite made no run directory under ${tmp}`);
+    if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
+      activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: ready.pid, evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
+      trace({ event: 'start', reaper: reaperState(activeTrace.run) });
+      t.after(() => {
+        trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
+        activeTrace = undefined;
+      });
+    }
+    if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
+    if (ending === 'E3' || ending === 'E7') {
+      const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
+      assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
+      assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
+      process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
+    }
+    if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
+    if (ending === 'E6') {
+      if (holdPidPublication) setImmediate(() => {
+        if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
+      });
+      const pidFile = join(directory, 'file-pid');
+      let filePid = 0;
+      assert.equal(await until(() => {
+        if (!existsSync(pidFile)) return false;
+        filePid = Number(readFileSync(pidFile, 'utf8'));
+        return Number.isSafeInteger(filePid) && filePid > 0;
+      }, 10_000, context), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
+      assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
+      const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
+      assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
+      process.kill(filePid, 'SIGKILL');
+    }
+    await checkEnding(context, tmp, runName, output);
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+    if (ending === 'E2') {
+      const report = readFileSync(output, 'utf8');
+      assert.match(report, /holds a ready fixture/);
+      assert.match(report, /test timed out after 1000ms/);
+    }
+  } catch (error) {
+    try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
+    onPhase('teardown');
+    if (context.signal.aborted && phase === 'hold') throw new Error('hold cancelled after readiness', { cause: error });
+    throw error;
   }
-  if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
-  if (ending === 'E3' || ending === 'E7') {
-    const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
-    assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
-    assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
-    process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
-  }
-  if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
-  if (ending === 'E6') {
-    if (holdPidPublication) setImmediate(() => {
-      if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
-    });
-    const pidFile = join(directory, 'file-pid');
-    let filePid = 0;
-    assert.equal(await until(() => {
-      if (!existsSync(pidFile)) return false;
-      filePid = Number(readFileSync(pidFile, 'utf8'));
-      return Number.isSafeInteger(filePid) && filePid > 0;
-    }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
-    assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
-    const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
-    assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
-    process.kill(filePid, 'SIGKILL');
-  }
-  await checkEnding(t, tmp, runName, output);
 }
 
 test('E6 waits for a complete positive file pid before signaling', { timeout: 30_000 }, (t) => runEnding(t, 'E6', 'F1', { holdPidPublication: true }));
@@ -438,4 +556,184 @@ test('trace refuses TMPDIR inside a pre-existing checkout', (t) => {
     else process.env.TMPDIR = previousTmp;
   });
   assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
+});
+
+test('E2 holds its real one-second timer until delayed setup is ready', { timeout: 30_000 }, (t) => runEnding(t, 'E2', 'F1', { gateSetup: true }));
+
+test('readiness accepts an independently live fixture identity', async (t) => {
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }] };
+  const ready = await waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', group: 123, command: '/bin/bash /fixture/busy' }),
+  });
+  assert.equal(ready.pid, 123);
+});
+
+// Host observations below use literal identities; they never derive an expected answer with the waiter.
+for (const [label, bytes] of [
+  ['missing', undefined],
+  ['incomplete', '{"pid":'],
+  ['malformed', '{"pid":"123tail"}'],
+  ['nonpositive', '{"pid":0}'],
+]) {
+  test(`readiness rejects ${label} PID at the setup boundary`, async (t) => {
+    let clock = 0;
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => bytes,
+      observe: () => { assert.fail('an invalid PID must never reach the host observer'); },
+      now: () => clock, turn: async () => { clock = 10_000; },
+    }), /setup never became ready by 10000ms/);
+  });
+}
+
+for (const [label, change, actual, message] of [
+  ['stale invocation', { invocation: 'old' }, {}, /stale invocation/],
+  ['wrong fixture', { kind: 'F2' }, {}, /wrong fixture/],
+  ['absent process', {}, { live: false }, /not live/],
+  ['reused PID', {}, { signature: 'Fri Oct 23 10:00:00 2026 123 /fixture/busy' }, /reused or foreign/],
+]) {
+  test(`readiness rejects ${label} without cleanup credit`, async (t) => {
+    const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }], ...change };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', command: '/fixture/busy', ...actual }),
+    }), message);
+  });
+}
+
+for (const failure of ['spawn error: ENOENT', 'early exit: 1']) {
+  test(`readiness reports setup ${failure}`, async (t) => {
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => undefined,
+      failure: () => failure,
+    }), new RegExp(`setup failed before readiness: ${failure}`));
+  });
+}
+
+for (const phase of ['setup', 'hold']) {
+  test(`parent abort during ${phase} tears down its recorded suite child`, { timeout: 30_000 }, async (t) => {
+    const controller = new AbortController();
+    const phases = [];
+    let entered;
+    await assert.rejects(runEnding(t, 'E2', 'F1', {
+      signal: controller.signal,
+      onPhase: (current, detail) => {
+        phases.push(current);
+        if (phase === 'setup' && current === 'setup') controller.abort(new Error('controlled parent ending'));
+        if (phase === 'hold' && current === 'hold') entered = until(() => existsSync(detail.holding), 10_000, t).then((seen) => {
+          assert.equal(seen, true, 'the nested holding body must actually begin');
+          phases.push('holding-entered');
+          controller.abort(new Error('controlled parent ending'));
+        });
+      },
+    }), phase === 'setup' ? /setup cancelled before readiness/ : /hold cancelled after readiness/);
+    await entered;
+    assert.deepEqual(phases, phase === 'setup' ? ['setup', 'teardown'] : ['setup', 'hold', 'holding-entered', 'teardown']);
+  });
+}
+
+test('readiness cannot accept a publication after the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => clock === 0 ? undefined : JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' }),
+    now: () => clock, turn: async () => { clock = 10_001; },
+  }), /setup never became ready by 10000ms/);
+});
+
+test('readiness rejects a process observation that crosses its setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => {
+      clock = 10_001;
+      return { live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' };
+    },
+    now: () => clock,
+  }), /setup never became ready by 10000ms/);
+});
+
+test('readiness shares its observation budget across the required leader and member', async (t) => {
+  let clock = 0;
+  const budgets = [];
+  const record = { invocation: 'one', kind: 'F4', leader: 456, pid: 123, processes: [
+    { pid: 456, signature: 'known-leader /fixture/leader' },
+    { pid: 123, signature: 'known-member /fixture/member' },
+  ] };
+  await waitForReadiness(t, {
+    invocation: 'one', kind: 'F4', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: (pid, remaining) => {
+      budgets.push(remaining);
+      clock += 2_500;
+      return { live: true, signature: pid === 456 ? 'known-leader /fixture/leader' : 'known-member /fixture/member', command: '/fixture/command' };
+    },
+    now: () => clock,
+  });
+  assert.deepEqual(budgets, [10_000, 7_500]);
+});
+
+test('the host readiness read bounds its ps invocation by the remaining budget', () => {
+  let timeout;
+  const result = readinessProcess(123, 17, (_command, _args, options) => {
+    timeout = options.timeout;
+    assert.equal(options.killSignal, 'SIGKILL');
+    return { error: Object.assign(new Error('spawnSync /bin/ps ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+  });
+  assert.equal(timeout, 17);
+  assert.deepEqual(result, { live: false });
+});
+
+for (const kind of ['F3', 'F5']) {
+  test(`readiness rejects an ${kind} tail that does not lead its own group`, async (t) => {
+    const record = { invocation: 'one', kind, pid: 123, working: '/fixture/working',
+      processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind, directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 456, cwd: '/fixture/working' }),
+    }), /tail does not lead its own group/);
+  });
+}
+
+test('readiness rejects an F5 tail outside its intended working directory', async (t) => {
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 123, cwd: '/fixture/elsewhere' }),
+  }), /tail is outside its intended working directory/);
+});
+
+test('the F5 cwd read consumes only the remaining shared observation budget', () => {
+  let clock = 0;
+  const timeouts = [];
+  const observed = readinessProcess(123, 10_000, (command, _args, options) => {
+    timeouts.push(options.timeout);
+    assert.equal(options.killSignal, 'SIGKILL');
+    if (command === '/bin/ps') {
+      clock = 2_500;
+      return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+    }
+    assert.equal(command, LSOF);
+    return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+  }, { deadline: 10_000, now: () => clock });
+  assert.equal(observed.cwd, '/fixture/working');
+  assert.deepEqual(timeouts, [10_000, 7_500]);
+});
+
+test('readiness rejects an F5 cwd observation completed past the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record), now: () => clock,
+    observe: (pid, remaining, _run, budget) => readinessProcess(pid, remaining, (command) => {
+      if (command === '/bin/ps') return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+      clock = 10_001;
+      return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+    }, budget),
+  }), /setup never became ready by 10000ms/);
 });

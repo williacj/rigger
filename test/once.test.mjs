@@ -29,6 +29,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
+import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -1103,4 +1104,327 @@ test('once, given two Review cards each ready to merge, finishes one card: it me
   assert.deepEqual(await columnsOf(ran), { 10: 'Done', 20: 'Review' });
   assert.match(ran.out, /card #10 merged pull request #11\b/);
   assert.doesNotMatch(ran.out, /#20/);
+});
+
+test('once dispatches and writes nothing for labelled unmerged cards across active stages and selection conflicts', SETTLES_WITHIN, async () => {
+  const cases = [
+    { labels: ['type:change'], body: ADMITTED },
+    { labels: ['type:change'], body: '' },
+    { labels: ['type:change'], title: 'Paint a widget', body: '## Acceptance\n\n- Paint a widget.\n' },
+    { labels: ['area:other'], body: ADMITTED },
+    { labels: ['type:change', 'type:spec'], body: ADMITTED },
+    { labels: ['type:change', 'type:epic'], body: ADMITTED },
+    { labels: ['type:change', 'tier:standard', 'tier:high'], body: ADMITTED },
+    { labels: ['type:change', 'provider:claude', 'provider:codex'], body: ADMITTED },
+  ];
+  const settings = config();
+  settings.roles = { ...settings.roles, engineer: { ...settings.roles.engineer,
+    labels: { 'tier:standard': 'standard', 'tier:high': 'high' },
+    providerLabels: { 'provider:claude': 'claude', 'provider:codex': 'codex' } } };
+  const items = [];
+  for (const column of ['Ready', 'Coding', 'Review', 'Owner']) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      for (const each of cases) items.push(card(items.length + 1, column, { ...each, labels: [...each.labels, label] }));
+    }
+  }
+  const ran = once({ items }, { settings,
+    seed: { branches: items.filter((item) => item.number % 2).map((item) => `rigger-${item.number}`) } });
+  assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+  assert.match(ran.out, /no card was pullable/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(await columnsOf(ran), Object.fromEntries(items.map((item) => [item.number, item.column])));
+  assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+  const events = existsSync(join(ran.consumer, '.rigger', 'events.jsonl')) ? eventsOf(ran) : [];
+  assert.deepEqual(events.filter(({ event }) => /dispatch|escalat|transition/.test(event)), []);
+  for (const args of ran.fake.sent()) {
+    assert.equal(args[0], 'api', JSON.stringify(args));
+    if (args[1] === 'graphql') {
+      assert.ok(parseDocument(args[3].slice('query='.length)).operations.every(({ type }) => type === 'query'), JSON.stringify(args));
+    } else {
+      assert.equal(args[args.indexOf('-X') + 1], 'GET', JSON.stringify(args));
+    }
+  }
+});
+
+// proves R-ESCALATE-11
+test('once reads the owner removing an escalation label before its next invocation and resumes ordinary work', async () => {
+  const ran = once({ items: [card(151, 'Ready', { labels: ['type:change', 'RIGGER:ESCALATED'] })] });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(ran.agentRuns(), []);
+  setEscalationLabel(ran.fake);
+
+  const resumed = ran.rerun();
+
+  assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
+  assert.match(resumed.err, /claimed #151.*maker exited 0 and opened no pull request/, resumed.err);
+  assert.equal(resumed.agentRuns().length, 1);
+  assert.deepEqual(await columnsOf(resumed), { 151: 'Coding' });
+  assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-151')), true);
+  const after = await (await resumed.model()).operations.readItems();
+  assert.deepEqual(after[0].labels, ['type:change']);
+});
+
+/** A labelled card with a merged PR and a real workspace holding an uncommitted marker. */
+function labelledMerge(column, branch, label) {
+  const worktrees = temporaryDirectory('rigger-once-escalated-merge-');
+  const path = join(worktrees, 'rigger-161');
+  const settings = { ...config(), worktrees: { root: worktrees } };
+  const ran = once({ items: [card(161, column, { labels: ['type:change', label] })] }, {
+    settings,
+    seed: { branches: branch ? ['rigger-161'] : [], pullRequests: [{ number: 162, head: 'rigger-161', sha: '6'.repeat(40), merged: true }] },
+    prepare: ({ consumer }) => {
+      worktreeAt(consumer, path, 'rigger-161');
+      writeFileSync(join(path, 'marker'), 'uncommitted fixture\n');
+    },
+  });
+  return { ran, path };
+}
+
+// proves R-ESCALATE-10
+test('once cleans a labelled merged Review or Owner card before moving it to Done', async () => {
+  for (const column of ['Review', 'Owner']) {
+    for (const branch of [false, true]) {
+      for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+        const { ran, path } = labelledMerge(column, branch, label);
+        assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+        assert.deepEqual(await columnsOf(ran), { 161: 'Done' });
+        assert.equal(existsSync(path), false, path);
+        assert.equal(worktreeList(ran.consumer).includes(path), false);
+        assert.deepEqual(ran.agentRuns(), []);
+        const events = eventsOf(ran);
+        const removed = events.findIndex(({ event, path: at }) => event === 'workspace.removed' && at === path);
+        const done = events.findIndex(({ event, to }) => event === 'transition' && to === 'done');
+        assert.ok(removed >= 0 && done > removed, JSON.stringify(events));
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-10
+test('once preserves a labelled merged Ready or Coding card workspace under its existing forge refusal', async () => {
+  for (const column of ['Ready', 'Coding']) {
+    for (const branch of [false, true]) {
+      for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+        const { ran, path } = labelledMerge(column, branch, label);
+        assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+        assert.match(`${ran.out}\n${ran.err}`, /forge holds pull request #162, merged/);
+        assert.equal(readFileSync(join(path, 'marker'), 'utf8'), 'uncommitted fixture\n');
+        assert.ok(worktreeList(ran.consumer).includes(path));
+        assert.deepEqual(await columnsOf(ran), { 161: column });
+        assert.deepEqual((await ran.model()).writes(), []);
+        assert.deepEqual(ran.agentRuns(), []);
+        const events = existsSync(join(ran.consumer, '.rigger', 'events.jsonl')) ? eventsOf(ran) : [];
+        assert.equal(events.some(({ event }) => event === 'workspace.removed'), false);
+      }
+    }
+  }
+});
+
+test('once leaves merged labelled epics and unselected cards unpulled in every active stage', async () => {
+  const items = ['Ready', 'Coding', 'Review', 'Owner'].map((column, at) =>
+    card(171 + at, column, { labels: [...(at % 2 ? ['type:change', 'type:epic'] : ['area:other']), 'rigger:escalated'] }));
+  const ran = once({ items }, { seed: { pullRequests: items.map(({ number }) => ({ number: number + 100, head: `rigger-${number}`, sha: '6'.repeat(40), merged: true })) } });
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /no card was pullable/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+});
+
+/** Checks a labelled card against the fresh maker that starts once a person clears its label. */
+async function withheldDispatch(column) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      const ran = once({ items: [card(181, column, { labels: ['type:change', label] })] });
+      assert.equal(ran.code, 0, `${column}: ${ran.out}\n${ran.err}`);
+      assert.match(ran.out, /no card was pullable/);
+      assert.deepEqual(ran.agentRuns(), []);
+      assert.deepEqual((await ran.model()).writes(), []);
+      assert.deepEqual(await columnsOf(ran), { 181: column });
+      assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+      setEscalationLabel(ran.fake);
+
+      const resumed = ran.rerun();
+
+      assert.equal(resumed.code, 1, `${column}: ${resumed.out}\n${resumed.err}`);
+      assert.match(resumed.err, /claimed #181.*maker exited 0 and opened no pull request/);
+      assert.equal(resumed.agentRuns().length, 1);
+      assert.deepEqual(await columnsOf(resumed), { 181: 'Coding' });
+      assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-181')), true);
+    }
+}
+
+/** Checks a labelled card against a governed continuation that starts once its label is cleared. */
+async function withheldContinuation(t, column) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      const agent = standInAgent({ 10: { engineer: { push: true }, reviewer: { exit: 3 } } });
+      const owner = column === 'Owner';
+      const settings = owner ? { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } } : config();
+      const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, column, { labels: ['type:change', label] })] },
+        { settings, prepare: prepareContinuation({ ruling: owner ? 'owner' : 'reviewer', owner }) });
+      const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8',
+        env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+
+      const waiting = await ran;
+
+      assert.equal(waiting.code, 0, `${column}: ${waiting.out}\n${waiting.err}`);
+      assert.match(waiting.out, /no card was pullable/);
+      assert.deepEqual(agent.runs(), []);
+      assert.deepEqual((await fake.model()).writes(), []);
+      assert.equal((await (await fake.model()).operations.readItems())[0].column, column);
+      assert.deepEqual(eventsOf({ consumer }).filter(({ event }) => /dispatch|escalat|transition/.test(event)), []);
+      setEscalationLabel(fake);
+
+      const resumed = invoke();
+
+      assert.equal(resumed.status, 1, `${column}: ${resumed.stdout}\n${resumed.stderr}`);
+      assert.match(resumed.stderr, /continued #10 on pull request #11/);
+      assert.match(resumed.stderr, /judge `reviewer` exited 3/);
+      assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+      assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    }
+}
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Ready card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Ready'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Coding card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Coding'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise dispatchable labelled Review card until its label is removed', SETTLES_WITHIN, () => withheldDispatch('Review'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Coding card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Coding'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Review card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Review'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise continuing labelled Owner card until its label is removed', SETTLES_WITHIN, (t) => withheldContinuation(t, 'Owner'));
+
+
+/** Changes only the label whose removal is the owner's acknowledgement. */
+function setEscalationLabel(fake, label) {
+  const state = join(dirname(fake.gh), 'board.json');
+  const held = JSON.parse(readFileSync(state, 'utf8'));
+  const item = held.model.items[0];
+  item.labels = ['type:change', ...(label === undefined ? [] : [label])];
+  const repository = (item.repository ?? held.repo).toLowerCase();
+  const issue = held.repository?.issues?.find((candidate) => candidate.number === item.number
+    && (candidate.repository ?? held.repo).toLowerCase() === repository);
+  if (issue !== undefined) issue.labels = [...item.labels];
+  writeFileSync(state, JSON.stringify(held));
+}
+
+/** Checks a genuinely mergeable or critical Owner card before and after the owner clears its label. */
+async function withheldOpenPullAction(action) {
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+    const head = '6'.repeat(40);
+    const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['reviewer', 'owner'] } } };
+    const owner = action === 'merge' ? {} : { verdict: 'critical', toSound: 'Keep the user files.' };
+    const comments = [markerComment({ card: 10, pull: 11, head, body: ADMITTED }),
+      markerComment({ card: 10, pull: 11, head, body: ADMITTED, role: 'owner', ...owner })];
+    const seed = { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: '7'.repeat(40), comments }],
+      mergeable: { 11: 'MERGEABLE' } };
+    const ran = once({ items: [card(10, 'Owner', { labels: ['type:change', label] })] }, { settings, seed });
+
+    assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+    assert.match(ran.out, /no card was pullable/);
+    assert.deepEqual(ran.agentRuns(), []);
+    assert.deepEqual((await ran.model()).writes(), []);
+    assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+    assert.deepEqual(ran.fake.sent().filter(([verb, path]) => verb === 'api' && path === 'repos/acme/widgets/pulls/11/merge'), []);
+    assert.equal(existsSync(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees')), false);
+    assert.deepEqual(eventsOf(ran).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+    setEscalationLabel(ran.fake);
+
+    const resumed = ran.rerun();
+
+    assert.equal(resumed.code, 0, `${resumed.out}\n${resumed.err}`);
+    if (action === 'merge') {
+      assert.match(resumed.out, /card #10 merged pull request #11/);
+      assert.deepEqual(resumed.fake.sent().filter(([verb, path]) => verb === 'api' && path === 'repos/acme/widgets/pulls/11/merge'),
+        [['api', 'repos/acme/widgets/pulls/11/merge', '-X', 'PUT', '-f', `sha=${head}`, '-f', 'merge_method=merge']]);
+      assert.deepEqual(eventsOf(resumed).filter(({ event }) => event === 'merge.end').map(({ outcome }) => outcome), ['merged']);
+      assert.deepEqual(await columnsOf(resumed), { 10: 'Done' });
+    } else {
+      assert.match(resumed.out, /#10.*escalate.*critical/);
+      assert.deepEqual(eventsOf(resumed).filter(({ event }) => event === 'review.escalate').map(({ category }) => category), ['critical']);
+      assert.deepEqual(await columnsOf(resumed), { 10: 'Owner' });
+    }
+  }
+}
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise owed Review judge on an open pull until its label is removed', SETTLES_WITHIN, async (t) => {
+  for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+    const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { exit: 3 } } });
+    const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+    const made = await ran;
+    assert.equal(made.code, 1, `${made.out}\n${made.err}`);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+    assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    const writesBefore = (await fake.model()).writes();
+    const eventsBefore = eventsOf({ consumer });
+    const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8',
+      env: { ...process.env, PATH: [agent.dir, dirname(fake.gh), process.env.PATH].join(delimiter) } });
+    setEscalationLabel(fake, label);
+
+    const waiting = invoke();
+
+    assert.equal(waiting.status, 0, `${waiting.stdout}\n${waiting.stderr}`);
+    assert.match(waiting.stdout, /no card was pullable/);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer']);
+    assert.deepEqual((await fake.model()).writes(), writesBefore);
+    assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+    assert.deepEqual(eventsOf({ consumer }).slice(eventsBefore.length).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+    setEscalationLabel(fake);
+
+    const resumed = invoke();
+
+    assert.equal(resumed.status, 1, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.match(resumed.stderr, /judge `reviewer` exited 3/);
+    assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer', 'reviewer', 'reviewer']);
+    assert.deepEqual(eventsOf({ consumer }).slice(eventsBefore.length).filter(({ event, role }) => event === 'dispatch' && role !== undefined).map(({ role }) => role), ['reviewer']);
+  }
+});
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise admitted Owner merge on an open pull until its label is removed', SETTLES_WITHIN, () => withheldOpenPullAction('merge'));
+
+// proves R-ESCALATE-10, R-ESCALATE-11
+test('once withholds an otherwise critical Owner escalation on an open pull until its label is removed', SETTLES_WITHIN, () => withheldOpenPullAction('escalate'));
+
+
+test('the owner label control updates seeded issue facts by repository and issue identity', () => {
+  // #860's seedRepository/boardOf at bb41bb5 shares these actual issue facts with board reads.
+  const fake = installFakeGh(temporaryDirectory('rigger-owner-label-control-'), {
+    repo: REPO, project: PROJECT,
+    board: { columns: COLUMNS, items: [card(10, 'Owner', { labels: ['type:change', 'RIGGER:ESCALATED'] })] },
+  });
+  seedRepository(fake, { issues: [
+    { number: 10, repository: 'ACME/WIDGETS', labels: ['type:change', 'RIGGER:ESCALATED'], body: 'Keep the owner evidence.' },
+    { number: 10, repository: 'someone/widgets', labels: ['foreign', 'rigger:escalated'] },
+    { number: 11, repository: REPO, labels: ['other', 'rigger:escalated'] },
+  ] });
+  const state = join(dirname(fake.gh), 'board.json');
+  const before = JSON.parse(readFileSync(state, 'utf8'));
+
+  setEscalationLabel(fake);
+
+  const cleared = JSON.parse(readFileSync(state, 'utf8'));
+  assert.deepEqual(cleared.repository.issues, [
+    { ...before.repository.issues[0], labels: ['type:change'] },
+    before.repository.issues[1], before.repository.issues[2],
+  ]);
+  assert.deepEqual(cleared.model.items[0].labels, ['type:change']);
+  assert.deepEqual({ ...cleared, model: before.model, repository: before.repository }, before);
+
+  setEscalationLabel(fake, 'rigger:escalated');
+
+  const labelled = JSON.parse(readFileSync(state, 'utf8'));
+  assert.deepEqual(labelled.repository.issues[0], { ...before.repository.issues[0], labels: ['type:change', 'rigger:escalated'] });
+  assert.deepEqual(labelled.repository.issues.slice(1), before.repository.issues.slice(1));
+  assert.deepEqual(labelled.model.items[0].labels, ['type:change', 'rigger:escalated']);
 });

@@ -4520,6 +4520,42 @@ function assertFocusedAdmission() {
   assert.ok(!stopped && process.hrtime.bigint() < BigInt(deadlineText), 'the focused runner closed new test work before fixture start');
 }
 
+/** Accepts exactly the two process identities justified by the reached census reads. */
+function assertSupportedEvents(events, expectedPids) {
+  assert.equal(events.length, 2, 'the answered group and directory reads did not justify another forced-end event');
+  assert.deepEqual(new Set(events.map(({ pid }) => pid)), new Set(expectedPids),
+    'the group and directory results included an unobserved PID');
+}
+
+// proves R-STATE-26
+test('C615 event support: the two observed PID records are accepted', () => {
+  assertSupportedEvents([{ pid: 101 }, { pid: 202 }], [101, 202]);
+});
+
+// proves R-STATE-26
+test('C615 event support: an extra unobserved PID record is rejected', () => {
+  assert.throws(() => assertSupportedEvents([{ pid: 101 }, { pid: 202 }, { pid: 303 }], [101, 202]), {
+    code: 'ERR_ASSERTION',
+    message: /the answered group and directory reads did not justify another forced-end event/,
+  });
+});
+
+// proves R-STATE-26
+test('C615 event support: a wrong PID record is rejected', () => {
+  assert.throws(() => assertSupportedEvents([{ pid: 101 }, { pid: 303 }], [101, 202]), {
+    code: 'ERR_ASSERTION',
+    message: /the group and directory results included an unobserved PID/,
+  });
+});
+
+// proves R-STATE-26
+test('C615 event support: a duplicate PID record is rejected', () => {
+  assert.throws(() => assertSupportedEvents([{ pid: 101 }, { pid: 101 }], [101, 202]), {
+    code: 'ERR_ASSERTION',
+    message: /the group and directory results included an unobserved PID/,
+  });
+});
+
 // proves R-STATE-9, R-STATE-26
 test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
   if (process.platform !== 'darwin') return t.skip('this real lsof/ps control requires macOS');
@@ -4722,9 +4758,7 @@ test('C615 Mac directory full tool exit census', SETTLES_WITHIN, async (t) => {
     commandEvent?.event === 'survivor.killed' &&
     commandEvent.name === groupName.stdout.trim() && commandEvent.cmd === observedCommand && commandEvent.reason === undefined,
   'the group result did not match the actual command identity reads');
-  assert.equal(allEvents.length, 2, 'the answered group and directory reads did not justify another forced-end event');
-  assert.deepEqual(new Set(allEvents.map(({ pid }) => pid)), new Set([command, tailBirth.pid]),
-    'the group and directory results included an unobserved PID');
+  assertSupportedEvents(allEvents, [command, tailBirth.pid]);
 
   bodyStage = 'per-read-original-guard';
   const { traceEnds } = assertReturnedToolOriginals(directory, trace);
