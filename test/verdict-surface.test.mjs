@@ -429,8 +429,8 @@ const isVerbFile = (spelled) => {
 
 /**
  * Every route by which a judge made a module under src/ import the verb past this check, rounds
- * 1 to 6 on #810, each as the module it changes and the source it gives that module. A route
- * through a spelling the filesystem may or may not alias is named only where it does.
+ * 1 to 6 on #810, each as the module it changes and the source it gives that module. A direct
+ * unresolved import is named conservatively; a fixed CONFIG filename is named only where it aliases.
  */
 function judgedEscapes() {
   const tree = sourceTree(ROOT);
@@ -445,8 +445,8 @@ function judgedEscapes() {
     { round: 4, route: 'an uppercase FILE: scheme', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', `export const escape = () => import(${JSON.stringify(url.replace(/^file:/, 'FILE:'))});`) },
     { round: 5, route: 'an uppercase ;BASE64 data: URL', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', `export const escape = () => import(${JSON.stringify(`data:text/javascript;BASE64,${Buffer.from(`export * from ${JSON.stringify(url)};`).toString('base64')}`)});`) },
     { round: 5, route: 'doctor\'s config path chosen by the target', file: 'src/cli/doctor.mjs', source: doctor.replace('  const path = join(target, CONFIG);\n', "  const path = target.endsWith('/judge-verdict') ? join(dirname(fileURLToPath(import.meta.url)), 'verdict.mjs') : join(target, CONFIG);\n") },
-    { round: 6, route: 'a dynamic import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export const escape = () => import('./Verdict.mjs');"), aliased: join(ROOT, 'src/cli/Verdict.mjs') },
-    { round: 6, route: 'a static import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export * from './VERDICT.mjs';"), aliased: join(ROOT, 'src/cli/VERDICT.mjs') },
+    { round: 6, route: 'a dynamic import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export const escape = () => import('./Verdict.mjs');") },
+    { round: 6, route: 'a static import of the verb\'s name in another case', file: 'src/cli/once.mjs', source: appended('src/cli/once.mjs', "export * from './VERDICT.mjs';") },
     { round: 6, route: 'doctor joining CONFIG spelled as the verb\'s name in another case', file: 'src/cli/doctor.mjs', changes: 'src/cli/init.mjs', source: init.replace("export const CONFIG = 'rigger.config.mjs';", "export const CONFIG = 'Verdict.mjs';"), aliased: join(ROOT, 'src/cli/Verdict.mjs') },
   ];
 }
@@ -457,10 +457,10 @@ test('every route by which a judge made a module under src/ import the verb past
     const tree = new Map(sourceTree(ROOT));
     assert.notEqual(source, tree.get(changes), `round ${round}, ${route}: the fixture changed nothing`);
     tree.set(changes, source);
-    // A spelling in another case loads the verb only where the filesystem folds case, as macOS's
-    // default does; the check names it exactly where the filesystem makes it the verb's file.
-    const loadsVerb = aliased === undefined || isVerbFile(aliased);
-    assert.equal(importersOf(tree, VERB).includes(file), loadsVerb, `round ${round}, ${route}: ${file} is ${loadsVerb ? 'not ' : ''}named`);
+    // A direct import is named even when its other-case path is unresolved. Doctor's sanctioned
+    // fixed CONFIG filename is named only where the filesystem makes that name the verb's file.
+    const isNamed = aliased === undefined || isVerbFile(aliased);
+    assert.equal(importersOf(tree, VERB).includes(file), isNamed, `round ${round}, ${route}: ${file} is ${isNamed ? 'not ' : ''}named`);
   }
 });
 
